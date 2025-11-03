@@ -1,0 +1,8 @@
+[package]
+name = "rastersong"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+gstreamer = "0.24.3"
+

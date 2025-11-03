@@ -1,0 +1,9 @@
+[package]
+name = "rastersong-gui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rastersong = { path = "../rastersong" }
+iced = "0.13.1"
+
