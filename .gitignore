@@ -42,3 +42,7 @@ Thumbs.db
 # For executable projects, Cargo.lock should typically be committed to ensure reproducible builds.
 # For library projects, you might choose to ignore it.
 # Cargo.lock
+
+
+# Code references for ease of development. DOn't wanna commit this.
+/references/
