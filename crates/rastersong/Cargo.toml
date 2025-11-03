@@ -4,5 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-gstreamer = "0.24.3"
-
+gstreamer = "0.24"
+gstreamer-video = "0.24"
+gstreamer-app = "0.24"
+anyhow = "1.0"
