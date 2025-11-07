@@ -13,7 +13,7 @@ pub mod video_signal_processor;
 pub use media_player::MediaPlayer;
 pub use video_decoder::VideoFrame;
 pub use video_signal::{MappingMode, VideoSignalCodec, VideoSignalMetadata};
-pub use video_signal_processor::{EffectSettings, VideoSignalProcessor};
+pub use video_signal_processor::{EffectSettings, InterpolationMode, VideoSignalProcessor};
 
 pub fn init() {
     // Initialize GStreamer

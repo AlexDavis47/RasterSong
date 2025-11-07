@@ -1,6 +1,6 @@
 use iced::widget::{checkbox, column, container, row, slider, text};
 use iced::{Element, Length};
-use rastersong::EffectSettings;
+use rastersong::{EffectSettings, InterpolationMode};
 
 /// Effects panel component with all audio modulation controls
 pub struct EffectsPanel;
@@ -224,6 +224,36 @@ impl EffectsPanel {
                     },
                 ]
                 .spacing(5),
+            );
+            
+            // Interpolation Mode (quality vs performance)
+            let is_sinc = effects.interpolation == InterpolationMode::Sinc;
+            content = content.push(
+                column![
+                    row![
+                        checkbox("High Quality Interpolation (Sinc)", is_sinc).on_toggle(
+                            move |enabled| {
+                                let mut s = effects.clone();
+                                s.interpolation = if enabled {
+                                    InterpolationMode::Sinc
+                                } else {
+                                    InterpolationMode::Linear
+                                };
+                                on_settings_change(s)
+                            }
+                        ),
+                    ],
+                    row![
+                        text(if is_sinc {
+                            "Lanczos windowed-sinc (DAW quality, slower)"
+                        } else {
+                            "Linear interpolation (fast, good quality)"
+                        })
+                        .size(11)
+                        .color(iced::Color::from_rgb(0.6, 0.6, 0.6))
+                    ],
+                ]
+                .spacing(2),
             );
         }
 

@@ -279,6 +279,79 @@ pub fn low_pass_filter(signal: &[u8], cutoff_hz: f32, sample_rate: f32) -> Vec<u
     output
 }
 
+/// Resample audio using Lanczos-windowed sinc interpolation (high quality)
+///
+/// This is the same interpolation algorithm used by professional DAWs for sample rate conversion.
+/// Uses a Lanczos kernel with configurable lobe count.
+///
+/// # Arguments
+/// * `input` - Input signal samples (f32, normalized -1.0 to 1.0)
+/// * `output_length` - Number of samples to generate
+/// * `lobes` - Number of Lanczos lobes (2-4 typical, 3 is a good balance)
+///
+/// # Returns
+/// Resampled signal with `output_length` samples
+pub fn sinc_resample(input: &[f32], output_length: usize, lobes: usize) -> Vec<f32> {
+    if input.is_empty() || output_length == 0 {
+        return vec![0.0; output_length];
+    }
+
+    let mut output = Vec::with_capacity(output_length);
+    let ratio = input.len() as f32 / output_length as f32;
+    let a = lobes as f32;
+
+    for i in 0..output_length {
+        // Calculate the position in the input signal
+        let src_pos = (i as f32 + 0.5) * ratio;
+        let src_idx = src_pos as i32;
+
+        let mut sum = 0.0;
+        let mut weight_sum = 0.0;
+
+        // Sum contributions from nearby samples using Lanczos kernel
+        let window_start = (src_idx - lobes as i32).max(0);
+        let window_end = (src_idx + lobes as i32 + 1).min(input.len() as i32);
+
+        for j in window_start..window_end {
+            let x = src_pos - j as f32;
+            let weight = lanczos_kernel(x, a);
+
+            sum += input[j as usize] * weight;
+            weight_sum += weight;
+        }
+
+        // Normalize and clamp
+        let sample = if weight_sum > 0.0001 {
+            (sum / weight_sum).clamp(-1.0, 1.0)
+        } else {
+            0.0
+        };
+
+        output.push(sample);
+    }
+
+    output
+}
+
+/// Lanczos kernel function (windowed sinc)
+///
+/// L(x) = sinc(x) * sinc(x/a) for -a <= x <= a, 0 otherwise
+fn lanczos_kernel(x: f32, a: f32) -> f32 {
+    if x.abs() < 0.00001 {
+        return 1.0;
+    }
+
+    if x.abs() >= a {
+        return 0.0;
+    }
+
+    let pi_x = std::f32::consts::PI * x;
+    let sinc_x = pi_x.sin() / pi_x;
+    let sinc_x_over_a = (pi_x / a).sin() / (pi_x / a);
+
+    sinc_x * sinc_x_over_a
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
