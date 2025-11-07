@@ -1,0 +1,104 @@
+@startuml
+!theme plain
+skinparam packageStyle rectangle
+skinparam rectangle {
+    BackgroundColor LightBlue
+}
+
+title RasterSong System Overview
+
+left to right direction
+
+actor User
+
+' ============================================
+' INPUT STAGE
+' ============================================
+package "Input Sources" #LightYellow {
+    rectangle "Video File" as video_file
+    rectangle "Audio File" as audio_file
+}
+
+User --> video_file
+User --> audio_file
+
+' ============================================
+' DECODING STAGE
+' ============================================
+package "Decoding" #LightGreen {
+    package "Video Decoder" {
+        component "Video\nDecoder" as video_decoder
+    }
+    
+    package "Audio Decoder" {
+        component "Audio\nDecoder" as audio_decoder
+    }
+}
+
+video_file --> video_decoder
+audio_file --> audio_decoder
+
+' Carrier signals (grouped representation)
+rectangle "Carrier Signals\n(Red, Green, Blue, Alpha)\n(32-bit float audio)" as carriers #LightCyan
+rectangle "Embedded Audio\n(from video)" as embedded_audio #LightCyan
+rectangle "Modulator Signal\n(32-bit float audio)" as modulator #LightCyan
+
+video_decoder --> carriers
+video_decoder --> embedded_audio
+embedded_audio --> audio_decoder
+audio_decoder --> modulator
+
+' ============================================
+' PROCESSING STAGE
+' ============================================
+package "Effects Graph Processing" #LightPink {
+    rectangle "Input Nodes\n(Carriers + Modulator)" as input_nodes
+    
+    rectangle "Three-Band\nSplitter" as splitter
+    
+    rectangle "AM Modulation\nNodes" as am_nodes
+    
+    rectangle "Effect Nodes" as effect_nodes
+    note right of effect_nodes
+        • Sample Delay
+        • Bit Crush
+        • Low Pass Filter
+    end note
+    
+    rectangle "Output Nodes" as output_nodes
+}
+
+carriers --> input_nodes
+modulator --> input_nodes
+
+input_nodes --> splitter
+splitter --> am_nodes
+input_nodes --> am_nodes
+am_nodes --> effect_nodes
+effect_nodes --> output_nodes
+
+' Modulated carriers (grouped representation)
+rectangle "Modulated Carriers\n(Red, Green, Blue, Alpha)\n32-bit float audio" as modulated_carriers #LightCyan
+
+output_nodes --> modulated_carriers
+
+' ============================================
+' ENCODING STAGE
+' ============================================
+package "Encoding" #LightGreen {
+    component "Video\nEncoder" as video_encoder
+}
+
+modulated_carriers --> video_encoder
+
+' ============================================
+' OUTPUT STAGE
+' ============================================
+package "Output" #LightYellow {
+    rectangle "Output Video File" as output_video
+}
+
+video_encoder --> output_video
+output_video --> User
+
+@enduml
