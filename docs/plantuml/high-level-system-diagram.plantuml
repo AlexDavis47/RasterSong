@@ -5,7 +5,7 @@ skinparam rectangle {
     BackgroundColor LightBlue
 }
 
-title RasterSong System Overview
+title RasterSong System Overview (Updated Engine Architecture)
 
 left to right direction
 
@@ -26,22 +26,16 @@ User --> audio_file
 ' DECODING STAGE
 ' ============================================
 package "Decoding" #LightGreen {
-    package "Video Decoder" {
-        component "Video\nDecoder" as video_decoder
-    }
-    
-    package "Audio Decoder" {
-        component "Audio\nDecoder" as audio_decoder
-    }
+    component "Video\nDecoder" as video_decoder
+    component "Audio\nDecoder" as audio_decoder
 }
 
 video_file --> video_decoder
 audio_file --> audio_decoder
 
-' Carrier signals (grouped representation)
-rectangle "Carrier Signals\n(Red, Green, Blue, Alpha)\n(32-bit float audio)" as carriers #LightCyan
-rectangle "Embedded Audio\n(from video)" as embedded_audio #LightCyan
-rectangle "Modulator Signal\n(32-bit float audio)" as modulator #LightCyan
+rectangle "Carrier Signals\n(Red, Green, Blue, Alpha)\n(32-bit float)" as carriers #LightCyan
+rectangle "Embedded Audio" as embedded_audio #LightCyan
+rectangle "Modulator Signal\n(32-bit float)" as modulator #LightCyan
 
 video_decoder --> carriers
 video_decoder --> embedded_audio
@@ -49,47 +43,81 @@ embedded_audio --> audio_decoder
 audio_decoder --> modulator
 
 ' ============================================
-' PROCESSING STAGE
+' RESAMPLING & TIMELINE NORMALIZATION
 ' ============================================
-package "Effects Graph Processing" #LightPink {
-    rectangle "Input Nodes\n(Carriers + Modulator)" as input_nodes
-    
+package "Preprocessing" #LightGray {
+    rectangle "Modulator Resampler\n(aligns modulators to carrier timeline)" as resampler
+    rectangle "Carrier Timeline\n(Base sample rate = video decode rate)" as timeline
+}
+
+modulator --> resampler
+carriers --> timeline
+resampler --> timeline
+
+' ============================================
+' ENGINE CORE
+' ============================================
+package "Audio-Video Engine" #LightPink {
+    rectangle "Graph Scheduler\n(orders nodes, manages latency, lookahead, feedback)" as scheduler
+    rectangle "Node Processor\n(32-bit float DSP operations)" as processor
+    rectangle "State Manager\n(stores node states, delay buffers, feedback)" as state_manager
+    rectangle "Cache Manager\n(pre-renders & stores recent/future frames)" as cache_manager
+    rectangle "Continuous Engine Loop\n(runs background pre-rendering)" as engine_loop
+}
+
+timeline --> scheduler
+scheduler --> processor
+processor --> state_manager
+processor --> cache_manager
+state_manager --> scheduler
+engine_loop --> cache_manager
+engine_loop --> scheduler
+
+note bottom of scheduler
+  • Resolves node dependencies
+  • Aligns carrier/modulator latency
+  • Expands temporal margins
+end note
+
+note right of state_manager
+  • Maintains delay & feedback buffers
+  • Handles backprocessing for state reconstruction
+end note
+
+note right of cache_manager
+  • Predictive pre-rendering
+  • Invalidates regions on node change
+  • Shares data between preview & export
+end note
+
+' ============================================
+' EFFECTS GRAPH
+' ============================================
+package "Graph Nodes" #LightCoral {
+    rectangle "Input Nodes\n(Carriers + Modulators)" as input_nodes
     rectangle "Three-Band\nSplitter" as splitter
-    
     rectangle "AM Modulation\nNodes" as am_nodes
-    
-    rectangle "Effect Nodes" as effect_nodes
-    note right of effect_nodes
-        • Sample Delay
-        • Bit Crush
-        • Low Pass Filter
-    end note
-    
+    rectangle "Effect Nodes\n(Sample Delay, Bit Crush, LPF, etc.)" as effect_nodes
     rectangle "Output Nodes" as output_nodes
 }
 
-carriers --> input_nodes
-modulator --> input_nodes
-
+scheduler --> input_nodes
 input_nodes --> splitter
 splitter --> am_nodes
 input_nodes --> am_nodes
 am_nodes --> effect_nodes
 effect_nodes --> output_nodes
-
-' Modulated carriers (grouped representation)
-rectangle "Modulated Carriers\n(Red, Green, Blue, Alpha)\n32-bit float audio" as modulated_carriers #LightCyan
-
-output_nodes --> modulated_carriers
+output_nodes --> processor
 
 ' ============================================
 ' ENCODING STAGE
 ' ============================================
 package "Encoding" #LightGreen {
-    component "Video\nEncoder" as video_encoder
+    component "Video Encoder\n(normalize to bit depth, pack pixels)" as video_encoder
 }
 
-modulated_carriers --> video_encoder
+cache_manager --> video_encoder
+video_encoder --> User : "Preview / Export"
 
 ' ============================================
 ' OUTPUT STAGE
