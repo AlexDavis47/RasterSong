@@ -509,20 +509,20 @@ struct StateSnapshot {
 
 5. User tweaks again → repeat invalidation and warmup
 
-**Optimization for paused editing:**
+**Note on frequent editing:**
 
-- When paused, prioritize rendering the current frame + small buffer ahead
-- Don't waste resources rendering hundreds of frames forward if user is tweaking
-- Once tweaking stops (e.g., 2 seconds of no changes), begin aggressive forward caching
+- When user is rapidly tweaking parameters, frames may be invalidated faster than they're consumed during playback
+- The dynamic playback system naturally handles this: playback slows as buffer shrinks
+- No special logic needed — the system self-regulates
 
 ### Continuous Processing & Caching
 
 **Always-running processing engine:**
 
-- The processing engine is **always running** in the background, continuously pre-rendering frames ahead of the playhead
+- The processing engine is **always running** in the background at full speed, continuously pre-rendering frames ahead of the playhead
 - Takes advantage of any available CPU/GPU time to build up the buffer, maximizing playback speed
 - Works in tandem with the dynamic playback system:
-  - When paused: aggressively renders forward frames to build buffer (with awareness of editing mode—see state management)
+  - When paused: continues rendering forward frames to build buffer
   - When playing: maintains balance between playback consumption and frame production
   - After seeking: immediately starts warmup + buffering from the new position
 - **Cache invalidation:** whenever the node chain is modified, invalidate affected regions based on state continuity rules (see Cache Validity section)
@@ -548,17 +548,10 @@ struct StateSnapshot {
 **Buffer management for dynamic playback:**
 
 - Continuously monitor buffer depth (distance to furthest pre-rendered frame)
-- Processing thread priority adjusts based on buffer health AND editing mode:
-  - **Active editing** (frequent parameter changes):
-    - Focus on current frame + small lookahead (2-5 frames)
-    - Avoid wasting work on frames that will be invalidated
-  - **Playback mode** (no recent changes):
-    - Low buffer (< 0.5s): high priority rendering
-    - Healthy buffer (> 1.0s): lower priority, allow CPU for other tasks
-  - **Post-seek**:
-    - High priority for warmup frames (K frames back)
-    - Then forward buffering
+- Processing engine **always runs at full speed**, continuously building cache forward
+- No priority adjustments or throttling — simplicity over micro-optimizations
 - Buffer depth directly drives playback speed via the formula `min(buffer_distance_in_seconds, 1.0)`
+- The "adaptive" nature is in the playback speed adjustment, not the rendering speed
 
 **Cache coherency with stateful effects:**
 
@@ -702,13 +695,8 @@ Optimization strategies:
     - Periodic snapshot creation (every N frames)
     - Snapshot-based seeking
 
-14. **Interactive editing optimizations**:
+14. **Performance optimization**:
 
-    - Detect active editing mode (frequent parameter changes)
-    - Adaptive caching strategy (small lookahead during edits)
-    - Aggressive forward caching after editing stops
-
-15. **Performance optimization**:
     - SIMD for CPU-based effects
     - GPU compute shaders for heavy operations
     - Lazy float conversion for carriers
