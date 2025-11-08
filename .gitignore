@@ -43,5 +43,8 @@ Thumbs.db
 # For library projects, you might choose to ignore it.
 # Cargo.lock
 
-/test_assets
-/references
+
+# Code references for ease of development. DOn't wanna commit this.
+/references/
+
+/test_assets/

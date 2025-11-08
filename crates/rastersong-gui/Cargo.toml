@@ -5,5 +5,7 @@ edition.workspace = true
 
 [dependencies]
 rastersong = { path = "../rastersong" }
-iced = "0.13.1"
-
+iced = { version = "0.13.1", features = ["image", "tokio"] }
+anyhow = "1.0"
+tokio = { version = "1.0", features = ["time"] }
+rfd = "0.15"
