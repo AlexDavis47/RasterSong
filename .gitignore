@@ -46,3 +46,5 @@ Thumbs.db
 
 # Code references for ease of development. DOn't wanna commit this.
 /references/
+
+/test_assets/
