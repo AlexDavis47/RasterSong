@@ -122,7 +122,8 @@ The solution is a **hybrid frame-and-sample approach**: treat the timeline as **
 - **Inputs are frame packages** at the top level
 - A frame-package can be decoded into **channel streams** (per-channel sequences of `pixels_per_frame` samples) using a `FrameDecoder` node.
 - **Nodes operate on blocks of samples** (per-channel) and declare `lookback`/`lookahead` (in samples) and `latency` (in samples)
-- The graph is **pull-based** from the Output node: when output needs frame N, it pulls the necessary sample range from its inputs, which recursively pulls from upstream with the requested padding (lookback/ahead)
+- The graph is **pull-based** from the Output node: when output needs frame N, it pulls the necessary sample range from its inputs, which recursively pulls from upstream with the requested padding (lookback/ahead). This is opposed to push-based, where input would be sent into the graph first,
+  and output would be retrieved from the graph after the input has been processed.
 - For **real-time preview**: use a dynamic buffered playback system where playback speed is determined by the distance between the current playhead and the end of buffered frames.
   The playback rate is calculated as: `playback_speed = min(buffer_distance_in_seconds, 1.0)`.
   This means:
@@ -168,6 +169,8 @@ The solution is a **hybrid frame-and-sample approach**: treat the timeline as **
 - **lookback** = how many _past_ samples the node needs to compute current outputs
 - **latency** = the delay (in samples) introduced by the node
 
+To the user, most effects will be expressed in terms of frames or milliseconds, but these units will be converted internally for the system to work with. We can use the carrier metadata to dynamically convert between them.
+
 ### Why Frame-Top, Sample-Inside (Hybrid)
 
 The UI and scrubbing are inherently **frame-based** — you need whole frames to display.
@@ -176,17 +179,19 @@ Many effects are naturally **sample-based** (e.g., delays, convolutions, per-pix
 
 **Hybrid = easier UX** (timeline remains frame) + full expressiveness inside the graph. Also simpler latency mapping: everything is measured in carrier samples.
 
+Most importantly, this approach allows a clear separation of concerns between the timeline and processor. The processor has no knowledge of a "frame" or "pixel". It simply processes samples. Likewise, the timeline has no knowledge of a "sample". It simply sends and receives frames to display.
+
 ### Multi-Rate Handling (Audio ↔ Carriers)
 
-**Up-front resampling approach:**
+**Dynamic resampling approach:**
 
-- Modulator signals are **fully resampled up-front** to carrier sample rate using highest-quality resampling
-- This completely offloads real-time processing requirements
-- A full resample is quick and only happens once when the audio is loaded
-- After resampling, there is **no multi-rate issue** — carrier rate is the sole internal timeline unit
-- All subsequent processing operates at carrier sample rate
+Due to the massive amount of samples required for a carrier signal, it is highly impractical to resample the modulator signals to the carrier sample rate. Instead, the modulator signal will be sent into the processor as is. This means that on input, the modulator signals will have massively lower numbers of samples than the carrier signals. We solve this in one of three ways:
 
-This approach simplifies the architecture significantly and eliminates the need for real-time resampling nodes.
+- Since the number of samples in the modulator and carrier signals are both part of the chunk metadata, any processing node can simply do an interpolation (nearest neighbor, linear, etc) to the carrier sample rate internally.
+- Alternatively, we add a resampling or interpolation node to the graph that will resample or interpolate signal A to signal B's sample rate.
+- **!Currently Recommended Approach!**: Last, we just have a property on the modulator clips that says what kind of interpolation or resampling to use when sending chunks to the graph.
+  Then the input processor of the graph would use the property to determine how to resample the modulator signal to the carrier.
+  This is likely the most "intuitive" and sturdy approach, but would take a marginal amount of control away from the user to choose how each effect handles interpolation.
 
 ### Block Data Types & Formats
 
@@ -194,64 +199,95 @@ Nodes in the effect graph need to communicate sample data in various formats dep
 
 **Block format types:**
 
-1. **Separate Channels** (`SeparateChannels`)
+1. **Frame** (`Frame`)
 
-   - Three separate buffers: `Vec<f32>` for R, G, B
-   - Each buffer contains `samples_per_frame` values
-   - Best for: per-channel effects, channel-specific processing
-   - Example: separate AM modulation on each color channel
+   - Represents one frame of video
+   - Highest level form of input and output. This is the form that the input and output nodes will receive and send.
+   - Contains all three color channels, each as a `Vec<f32>` of the raw pixel data.
+   - When sent into an effect, this should be interpreted as an object that needs all three color channels to be processed together.
+   - For example, an AM node that receives a Frame would average the modulator signal across the entire frame, and then modulate all color channels by that average value. This results in the exact same effect all over the frame.
 
-2. **Interleaved RGB** (`InterleavedRGB`)
+2. **Channel** (`Channel`)
 
-   - Single buffer with R, G, B values interleaved: `[R0, G0, B0, R1, G1, B1, ...]`
-   - Total length: `samples_per_frame × 3`
-   - Best for: effects that treat RGB as a unit, spatial effects
-   - Example: pixel shifting, rotation
+   - Represents one color channel of a frame.
+   - Single 'Vec<f32>' of `samples'
+   - Best for: per-channel effects, channel-specific processing.
+   - Simplest possible format for a node to receive and process.
+   - Sending a Channel to an AM node would result in only that channel being modulated by the modulator signal.
+   - Note this is also the format used for the modulator signals.
 
-3. **Sequential Packed** (`SequentialPacked`)
+3. **Interleaved** (`Interleaved`)
 
-   - All R values, then all G values, then all B values: `[R0...Rn, G0...Gn, B0...Bn]`
-   - Total length: `samples_per_frame × 3`
-   - Custom ordering possible (e.g., BGR, GBR)
-   - Best for: treating video as continuous audio stream
-   - Example: user wants to hear/modulate the video as pure audio
+   - Single `Vec<f32>` with R, G, B values interleaved: `[R0, G0, B0, R1, G1, B1, ...]`
+   - Total length: `samples_per_channel × 3`
+   - Arbitrary ordering possible (e.g., RGB, BGR, GBR)
+   - Best for creating rainbow effects, or just sending one channel into an effect to process all three color channels at once.
 
-4. **Single Channel** (`SingleChannel`)
-   - One buffer: `Vec<f32>`
-   - Used for modulators, mono audio, or single-channel extractions
-   - Length: `samples_per_frame` (at carrier rate after resampling)
+4. **Sequential Packed** (`SequentialPacked`)
 
-**Format conversion nodes:**
+   - Similar to Interleaved, but color channels are simply packed next to each other in the vector.
+   - Example: [R0, ...Rn, G0, ...Gn, B0, ...Bn] Where n is the number of samples in the color channel.
 
-The graph includes utility nodes for format conversion:
+More may be added in the future, but these are the most fundamental ones.
 
-- `ChannelSplitter`: SeparateChannels → 3× SingleChannel
-- `ChannelMerger`: 3× SingleChannel → SeparateChannels
-- `ToInterleaved`: SeparateChannels → InterleavedRGB
-- `ToSeparate`: InterleavedRGB → SeparateChannels
-- `ToSequential`: SeparateChannels → SequentialPacked (with ordering options)
-- `FromSequential`: SequentialPacked → SeparateChannels
+**Format conversion**
+
+A converter node will be included in the graph that will be able to convert between any two of the above formats.
+To use the node, the user will configure the node with the input and output formats they want to convert between.
+The node will setup it's input and outputs to match the configured format, and automatically convert input to the output format.
 
 **Synchronization example (AM node with 3-channel carrier):**
 
-When an AM node receives an `InterleavedRGB` carrier (3× samples) and a `SingleChannel` modulator (1× samples):
+When an AM node receives an `Interleaved` carrier (3× samples) and a `Channel` modulator (1× samples):
 
-- Carrier: `[R0, G0, B0, R1, G1, B1, R2, G2, B2, ...]` (129,600 values for 240×180)
-- Modulator: `[M0, M1, M2, ...]` (43,200 values, resampled to carrier rate)
+- Carrier: `[R0, G0, B0, R1, G1, B1, R2, G2, B2, ...]` (129,600 values for a 240×180 frame, 43,200 samples per channel x3)
+- Modulator: `[M0, M1, M2, ...]` (43,200 values, 44.1kHz original interpolated at graph input processor to carrier channel sample rate)
 - Application: `M0` modulates `R0, G0, B0`; `M1` modulates `R1, G1, B1`; etc.
 - Each modulator sample affects one pixel across all channels, maintaining sync
 
+**Block wrapper type:**
+
+All block formats are wrapped in a unified `Block` enum that nodes receive:
+
+```rust
+enum Block {
+    Frame { r: Vec<f32>, g: Vec<f32>, b: Vec<f32> },
+    Channel(Vec<f32>),
+    Interleaved(Vec<f32>),
+    SequentialPacked { r: Vec<f32>, g: Vec<f32>, b: Vec<f32> },
+}
+```
+
+This allows nodes to accept multiple formats and implement format-specific processing logic. The dispatch overhead is negligible since chunks are processed once per frame (not per sample).
+
 **Node input/output type declarations:**
+
+Each node declares which input formats it accepts and what format it outputs:
 
 ```rust
 trait EffectGraphNode {
-    fn input_format(&self) -> BlockFormat;
+    // Returns the list of block formats this node can accept as input
+    // Used by the graph engine to validate connections at connection time
+    fn accepted_input_formats(&self) -> Vec<BlockFormat>;
+
+    // Returns the format this node outputs
     fn output_format(&self) -> BlockFormat;
     // ... other methods
 }
 ```
 
-The graph engine automatically inserts conversion nodes when connecting incompatible formats, or errors if conversion would lose semantic meaning.
+The graph engine validates connections by checking if the upstream node's output format is in the downstream node's `accepted_input_formats()`. If not, it either:
+
+- Automatically inserts a conversion node when conversion is possible
+- Errors if conversion would lose semantic meaning or is not supported
+
+**Format-specific processing:**
+
+Nodes that accept multiple formats implement different processing logic for each format. For example, an AM node might:
+
+- **Frame**: Average the modulator signal across the entire frame, then modulate all color channels uniformly by that average value
+- **Channel**: Apply per-sample modulation to the single channel independently
+- **Interleaved**: Apply per-pixel modulation where each modulator sample affects the corresponding RGB triplet
 
 ### Node Contract (API)
 
@@ -259,9 +295,14 @@ Each node implements (at the minimum):
 
 ```rust
 trait EffectGraphNode {
+    // Declare which formats this node accepts (for connection validation)
+    fn accepted_input_formats(&self) -> Vec<BlockFormat>;
+    fn output_format(&self) -> BlockFormat;
+
     // Called to fill 'out' for sample indices [start, start+len)
     // sampleIndex is in carrier-sample units relative to timeline
-    fn process(&mut self, start: usize, len: usize, out: &mut SampleBuffer);
+    // Takes a Block enum and handles format dispatch internally
+    fn process(&mut self, start: usize, len: usize, input: Block, out: &mut Block);
 
     // If node needs extra context, it returns:
     fn get_lookback(&self) -> usize;   // samples required before start
@@ -271,8 +312,10 @@ trait EffectGraphNode {
 }
 ```
 
+- `process` receives a `Block` enum and implements format-specific handling via internal dispatch (match/switch)
 - `process` must be deterministic and pure given the same input ranges (except for nodes explicitly stateful like random/noise)
 - The engine uses these declarations to calculate total graph latency and request appropriate sample ranges from upstream nodes
+- Format dispatch overhead is negligible since it occurs once per frame (chunk boundary), not per sample
 
 ### Pull-Based Evaluation with Padding
 
@@ -357,14 +400,22 @@ When the user seeks to an uncached position, stateful effects have no valid inte
 
 **Warmup strategy:**
 
-1. User seeks to frame N (no cache exists)
-2. Playback speed drops to 0 (per dynamic buffer system)
-3. Processing engine begins rendering from frame N-K, where K = maximum lookback required by any stateful node
-4. First K frames are marked as "warming up" — state is being built but is not historically accurate
-5. As frames render, buffer fills, and playback speed rises naturally
-6. After K frames, state is "warm" and rendering continues normally
+The processing graph does not handle state warmup. Instead, the timeline manages warmup by coordinating with the graph:
 
-**Important:** The warmup frames are what the user will see during this period. They won't be perfectly accurate (as if we processed from the start of the video), but this is acceptable for interactive editing. Export should process from the beginning or a valid state checkpoint.
+1. The graph reports its warmup requirement: `get_warmup_frames()` returns K, the maximum lookback required by any stateful node (in frames)
+2. User seeks to frame N (no cache exists)
+3. Timeline moves back K frames to frame N-K to account for warmup requirement
+4. Timeline requests frames starting from N-K, simulating them from scratch
+5. The graph processes frames N-K through N-1, updating internal state, but the timeline discards the output from these warmup frames
+6. Frame N is then processed with properly warmed state and displayed
+7. This handles any non-linearity in the timeline (seeking to N actually processes from N-K) transparently
+
+**Important:**
+
+- The warmup frames are processed but their output is discarded — the user never sees them
+- Frame N will be accurate (as if processed from the start) because state was properly warmed
+- This approach keeps the processing graph stateless regarding warmup — it just processes what it's asked for
+- Export should process from the beginning or a valid state checkpoint for full accuracy
 
 ---
 
@@ -408,27 +459,28 @@ fn process(&mut self, start: usize, len: usize, out: &mut SampleBuffer) {
 
 ---
 
-#### Cache Validity & State Continuity
+#### Cache Validity
 
-A cached frame is only valid if it was computed with the correct preceding state. This creates complex invalidation rules:
+With the timeline handling state warmup, cache validity is greatly simplified:
 
-**Valid cache scenarios:**
+**Cache validity rule:**
 
-1. **Continuous forward processing**: Frames rendered sequentially from N to N+100 are all valid as long as the effect graph hasn't changed
-2. **State checkpoint exists**: If we saved a state snapshot at frame N, frames N+1 onwards computed from that state are valid
+A cached frame is valid as long as the effect graph configuration hasn't changed. Since the timeline handles warmup by requesting frames from N-K and discarding their output, seeking does not invalidate the cache.
+
+**Why seeking doesn't invalidate cache:**
+
+- Cached frames store the deterministic output of processing with a specific graph configuration
+- State is transient and rebuilt on-demand when frames are requested
+- When seeking to frame N, the timeline requests frames N-K through N to warm up state, but this doesn't affect cached frames
+- Cached frames remain valid regardless of seek history because they represent correct output for their graph configuration
 
 **Invalid cache scenarios:**
 
-1. **Seek breaks continuity**:
-
-   - Cache contains frames 100-200 (rendered with continuous state)
-   - User seeks to frame 500 (state resets)
-   - User seeks back to frame 200
-   - Cached frame 200 is NO LONGER VALID — it was computed with state from frames 100-199, but current state is empty
-
-2. **Effect graph changes**:
-   - User tweaks a feedback node's parameters at frame 150
-   - All cached frames 150+ are now invalid and must be recomputed
+1. **Effect graph changes**:
+   - User tweaks a node's parameters
+   - User adds/removes nodes
+   - User changes node connections
+   - All cached frames become invalid and must be recomputed
 
 **Cache invalidation rules:**
 
@@ -436,34 +488,20 @@ A cached frame is only valid if it was computed with the correct preceding state
 struct CachedFrame {
     frame_index: usize,
     data: FrameData,
-    state_hash: u64,  // Hash of the effect graph + state continuity
-    computed_with_state_from: Option<usize>,  // Previous frame that provided state
+    effect_graph_hash: u64,  // Hash of the effect graph configuration
 }
 
 // Invalidate when:
-// 1. Effect graph changes (state_hash changes)
-// 2. State continuity breaks (computed_with_state_from doesn't match)
+// 1. Effect graph changes (effect_graph_hash changes)
+// That's it! Seeking doesn't affect cache validity.
 ```
 
 **Implementation strategy:**
 
-- Each cached frame stores metadata about what state it was computed with
-- When seeking back to a cached region after state reset, one of two approaches:
-
-  **Option A: Recompute from warmup point**
-
-  - Discard invalid cache entries
-  - Start warmup from frame N-K
-  - Recompute forward, overwriting old cache
-
-  **Option B: State snapshots**
-
-  - Store full node state snapshots at regular intervals (e.g., every 5 seconds)
-  - When seeking back, load nearest prior snapshot
-  - Recompute from snapshot to target frame
-  - More memory, but faster seeks
-
----
+- Each cached frame stores the effect graph hash it was computed with
+- When the effect graph changes, invalidate all cached frames
+- When seeking, check cache first — if frame exists and graph hash matches, use cached frame
+- If cache miss, timeline handles warmup by requesting frames from N-K, then caches the result
 
 #### State Snapshot System (Optional Optimization)
 
@@ -500,11 +538,12 @@ struct StateSnapshot {
 1. User pauses on frame 500
 2. User adjusts feedback delay time
 3. Effect graph changes → frame 500 cache invalidated
-4. System automatically:
+4. Timeline automatically:
 
-   - Starts warmup from frame 500-K
-   - Processes to frame 500
-   - Shows result (playback speed still 0, since we're paused)
+   - Gets warmup requirement K from graph
+   - Moves back to frame 500-K
+   - Requests frames 500-K through 500, discarding output from 500-K through 499
+   - Displays frame 500 with properly warmed state
    - Continues buffering forward
 
 5. User tweaks again → repeat invalidation and warmup
@@ -513,7 +552,8 @@ struct StateSnapshot {
 
 - When user is rapidly tweaking parameters, frames may be invalidated faster than they're consumed during playback
 - The dynamic playback system naturally handles this: playback slows as buffer shrinks
-- No special logic needed — the system self-regulates
+- The timeline handles the warmup non-linearity transparently — user always sees the frame they seeked to
+- No special logic needed in the processing graph — it just processes what it's asked for
 
 ### Continuous Processing & Caching
 
@@ -524,15 +564,16 @@ struct StateSnapshot {
 - Works in tandem with the dynamic playback system:
   - When paused: continues rendering forward frames to build buffer
   - When playing: maintains balance between playback consumption and frame production
-  - After seeking: immediately starts warmup + buffering from the new position
-- **Cache invalidation:** whenever the node chain is modified, invalidate affected regions based on state continuity rules (see Cache Validity section)
+  - After seeking: timeline handles warmup by requesting frames starting from N-K, then the engine processes normally from the seek position
+- **Cache invalidation:** whenever the node chain is modified, invalidate all cached frames (see Cache Validity section)
+- **No warmup logic:** The processing engine does not handle state warmup — it simply processes frames as requested by the timeline
 
 **Caching strategy with state awareness:**
 
-- **Rendered frame cache**: Store processed frames with metadata about state continuity
-  - Each frame tagged with: `frame_index`, `effect_graph_hash`, `computed_with_state_from`
-  - Allows intelligent invalidation when seeks break state continuity
-  - Target size: 1+ second of frames ahead of playhead, plus warmup frames behind
+- **Rendered frame cache**: Store processed frames with effect graph hash
+  - Each frame tagged with: `frame_index`, `effect_graph_hash`
+  - Cache remains valid across seeks — only graph changes invalidate cache
+  - Target size: 1+ second of frames ahead of playhead
 - **Source frame cache**: Keep decoded video frames in an LRU cache for quick access to raw carriers
   - Independent of effect graph state
   - Persists across effect graph changes
@@ -542,8 +583,8 @@ struct StateSnapshot {
 - **Sample buffer pool**: Maintain reusable buffers to reduce allocations during processing
 - **Hot cache strategy**:
   - Prioritize frames around playhead position
-  - Maintain warmup frames (K frames behind) for stateful effects
   - Satisfy node lookahead requirements
+  - Note: Warmup frames are handled by the timeline, not cached (they're discarded after processing)
 
 **Buffer management for dynamic playback:**
 
@@ -553,21 +594,22 @@ struct StateSnapshot {
 - Buffer depth directly drives playback speed via the formula `min(buffer_distance_in_seconds, 1.0)`
 - The "adaptive" nature is in the playback speed adjustment, not the rendering speed
 
-**Cache coherency with stateful effects:**
+**Cache coherency:**
 
-The processing engine must track state continuity to determine cache validity:
+Cache validity is simple — only check if the effect graph hash matches:
 
 ```rust
 struct ProcessingEngine {
     frame_cache: HashMap<usize, CachedFrame>,
-    current_state_lineage: StateLineage,  // Tracks continuous processing ranges
-    last_processed_frame: Option<usize>,
+    current_effect_graph_hash: u64,
 }
 
 // On frame request:
-// 1. Check if frame is cached AND state lineage matches
+// 1. Check if frame is cached AND effect_graph_hash matches current graph
 // 2. If valid: return cached frame
-// 3. If invalid: determine warmup point, reprocess from there
+// 3. If cache miss: timeline handles warmup by requesting frames starting from N-K
+//    Processing engine just processes what it's asked for — no warmup logic here
+// 4. Cache the result with current effect_graph_hash
 ```
 
 ### Export / Offline Rendering
@@ -588,8 +630,8 @@ The key difference from preview is that export doesn't need to maintain the real
 Optimization strategies:
 
 - Use **SIMD** on CPU for node operations across samples
-- Offload heavy operations (convolutions, AM, bitcrush) to **GPU compute shaders** — carriers map naturally to large linear arrays that GPUs handle well
-- Use **uint8** or packed bytes for carriers until effects need float — convert to float lazily
+- Offload heavy linear operations (convolutions, AM, bitcrush) to **GPU compute shaders** — carriers map naturally to large linear arrays that GPUs handle well
+- Break up blocks into smaller chunks to allow higher concurrent node operations to maximize CPU parallelism
 - Provide lower-resolution proxy pipeline: process at reduced resolution for live preview when needed
 
 ### Example Node Behaviors
@@ -679,15 +721,15 @@ Optimization strategies:
 11. **Stateful effect support**:
 
     - Add is_stateful() to node API
-    - Implement state warmup on seek (process from frame N-K)
-    - Mark warmup frames in UI
+    - Add get_warmup_frames() to graph API (returns max lookback in frames)
+    - Timeline handles warmup: requests frames from N-K, discards warmup output
     - Build and test with feedback delay node
 
 12. **Cache validity tracking**:
 
-    - Add state_hash and computed_with_state_from to CachedFrame
-    - Implement state continuity checking
-    - Intelligent cache invalidation on seeks and graph changes
+    - Add effect_graph_hash to CachedFrame
+    - Implement cache invalidation on graph changes only
+    - Cache remains valid across seeks (timeline handles warmup)
 
 13. **State snapshot system** (optional optimization):
 
