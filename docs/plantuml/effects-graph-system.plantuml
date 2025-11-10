@@ -1,0 +1,337 @@
+@startuml
+!theme plain
+allow_mixing
+
+title Effects Graph System - Component API
+
+' ============================================
+' CORE NODE TRAIT (API)
+' ============================================
+interface "EffectGraphNode" as node_trait {
+  + accepted_input_formats() -> Vec<BlockFormat>
+  + output_format() -> BlockFormat
+  + process(start: usize, len: usize, input: Block, out: &mut Block)
+  + get_lookback() -> usize
+  + get_lookahead() -> usize
+  + get_latency() -> usize
+  + is_stateful() -> bool
+  + get_warmup_samples() -> usize
+}
+
+note right of node_trait
+  **Core Node Contract:**
+  
+  All effect nodes implement this trait.
+  
+  **Format Handling:**
+  • Declare accepted input formats
+  • Declare output format
+  • Graph validates connections automatically
+  
+  **Processing:**
+  • process() receives Block enum (format dispatch)
+  • start/len in carrier-sample units
+  • Must handle lookback/lookahead padding
+  
+  **State Management:**
+  • is_stateful() indicates if node maintains state
+  • Stateful nodes process ALL samples (incl. padding)
+  • State updates happen during processing
+  • get_warmup_samples() returns samples needed to warm up state
+    - For stateful nodes: typically equals lookback
+    - For stateless nodes: returns 0
+    - Used by timeline to determine warmup frames
+  
+  **Timing:**
+  • lookback = samples needed from past
+  • lookahead = samples needed from future
+  • latency = delay introduced by node
+  • warmup = samples needed to initialize state (stateful nodes only)
+end note
+
+' ============================================
+' BLOCK FORMATS
+' ============================================
+package "Block Format Types" #LightYellow {
+    enum Block {
+        Frame { r: Vec<f32>, g: Vec<f32>, b: Vec<f32> }
+        Channel(Vec<f32>)
+        Interleaved(Vec<f32>)
+        SequentialPacked { r: Vec<f32>, g: Vec<f32>, b: Vec<f32> }
+    }
+    
+    enum BlockFormat {
+        Frame
+        Channel
+        Interleaved
+        SequentialPacked
+    }
+    
+    note bottom of Block
+      **Unified Block Wrapper:**
+      
+      All formats wrapped in single enum.
+      Nodes receive Block and dispatch internally.
+      
+      **Frame:** Complete video frame
+      • r, g, b: Vec<f32> per channel
+      • Best for: frame-wide effects
+      
+      **Channel:** Single color channel
+      • Vec<f32> of samples
+      • Best for: per-channel processing
+      • Also used for modulator signals
+      
+      **Interleaved:** RGB interleaved
+      • [R0, G0, B0, R1, G1, B1, ...]
+      • Best for: per-pixel effects
+      
+      **SequentialPacked:** Channels packed sequentially
+      • [R0...Rn, G0...Gn, B0...Bn]
+      • Best for: channel-specific operations
+    end note
+}
+
+' ============================================
+' EXAMPLE NODE TYPE
+' ============================================
+package "Effect Nodes" #LightCoral {
+    class AMNode {
+        + modulation_depth: f32
+        + accepted_input_formats() -> [Frame, Channel, Interleaved]
+        + output_format() -> same as input
+        + process(...) -> amplitude modulation
+        + get_lookback() -> 0
+        + get_lookahead() -> 0
+        + get_latency() -> 0
+        + is_stateful() -> false
+        + get_warmup_samples() -> 0
+    }
+}
+
+AMNode ..|> node_trait
+
+' ============================================
+' GRAPH ENGINE
+' ============================================
+package "Graph Engine" #LightBlue {
+    class EffectGraph {
+        + nodes: HashMap<NodeId, Box<dyn EffectGraphNode>>
+        + connections: Vec<Connection>
+        + input_nodes: Vec<NodeId>
+        + output_node_id: NodeId
+        + add_node(node: Box<dyn EffectGraphNode>) -> NodeId
+        + connect(from: NodeId, to: NodeId, input_index: usize) -> Result<()>
+        + remove_node(id: NodeId) -> Result<()>
+        + get_warmup_frames() -> usize
+        + compute_frame(frame_index: usize) -> Frame
+        + get_total_latency() -> usize
+    }
+    
+    class Connection {
+        + from_node: NodeId
+        + to_node: NodeId
+        + to_input_index: usize
+    }
+    
+    class NodeId {
+        + uuid: Uuid
+    }
+    
+    note right of EffectGraph
+      **Graph Management:**
+      
+      • Stores all nodes and connections
+      • Validates format compatibility
+      • Auto-inserts converter nodes if needed
+      • Manages pull-based evaluation
+      
+      **Warmup Calculation:**
+      get_warmup_frames() queries all nodes:
+      • Calls get_warmup_samples() on each node
+      • Finds maximum warmup requirement
+      • Converts samples → frames using carrier metadata
+      • Returns max warmup frames needed
+      
+      Timeline uses this to handle state warmup:
+      • When seeking to frame N, requests frames from N-K
+      • K = get_warmup_frames()
+      • Processes warmup frames to initialize state
+    end note
+}
+
+EffectGraph --> Connection
+Connection --> NodeId
+EffectGraph --> node_trait : "manages nodes"
+
+' ============================================
+' PULL-BASED EVALUATION
+' ============================================
+package "Pull Evaluation Engine" #LightPink {
+    class PullEvaluator {
+        - graph: &EffectGraph
+        - sample_buffer_pool: BufferPool
+        + evaluate_frame(frame_index: usize) -> Frame
+        - pull_samples(node_id: NodeId, start: usize, len: usize) -> Block
+        - expand_range(node_id: NodeId, start: usize, len: usize) -> (usize, usize)
+        - get_node_lookback(node_id: NodeId) -> usize
+        - get_node_lookahead(node_id: NodeId) -> usize
+    }
+    
+    class BufferPool {
+        + acquire_buffer(size: usize) -> Vec<f32>
+        + release_buffer(buffer: Vec<f32>)
+    }
+    
+    note bottom of PullEvaluator
+      **Pull-Based Evaluation Flow:**
+      
+      1. Output node requests frame N
+      2. Convert to sample range [S, S+len]
+      3. For each upstream connection:
+         a. Calculate expanded range (add lookback/lookahead)
+         b. Recursively pull from upstream
+         c. Cache intermediate results
+      4. Process node with expanded input
+      5. Extract requested range (account for latency)
+      6. Return to caller
+      
+      **Range Expansion:**
+      • start_expanded = start - lookback
+      • len_expanded = len + lookback + lookahead
+      • Process full range, extract [start, start+len)
+      
+      **Stateful Nodes:**
+      Must process ALL samples in expanded range
+      to update internal state correctly.
+    end note
+}
+
+PullEvaluator --> EffectGraph
+PullEvaluator --> BufferPool
+
+' ============================================
+' INPUT SOURCES
+' ============================================
+package "Input Sources" #Wheat {
+    rectangle "Timeline\n(provides frame slices + modulator chunks)" as timeline
+    rectangle "BlockConverter\n(converts raw timeline data to Blocks)" as block_converter
+}
+
+timeline --> block_converter : "raw frames + modulator chunks"
+
+note right of block_converter
+  **Block Converter:**
+  
+  Takes raw timeline data and converts to Block format:
+  • Receives video frame(s) from timeline
+  • Receives corresponding modulator chunk(s)
+  • Converts frame pixels → Block (Frame)
+  • Converts modulator samples → Block (Channel)
+  
+  Handles lookback/lookahead:
+  • Timeline may send multiple frames if needed
+  • Converter extracts appropriate sample ranges
+  • Produces Block format ready for graph processing
+end note
+
+' ============================================
+' PROCESSING FLOW EXAMPLE
+' ============================================
+note bottom of EffectGraph
+  **Example Processing Flow with AM Node:**
+  
+  User connects carrier and modulator to AM Node.
+  
+  **When AM Node processes frame 100:**
+  
+  1. AM.process(100) called
+     • Converts frame 100 → samples [S, S+len]
+     • S = 100 × samples_per_frame
+  
+  2. AM pulls carrier input:
+     • Requests [S, S+len] (no expansion needed, lookback=0)
+     • Carrier provides Frame/Channel/Interleaved
+  
+  3. AM pulls modulator input:
+     • Requests [S, S+len] (no expansion needed)
+     • Modulator provides Channel signal
+  
+  4. AM processes:
+     • Modulates carrier amplitude by modulator
+     • For each sample: output = carrier × (1.0 + modulator × depth)
+     • Returns Block in same format as input
+  
+  5. Result returned to graph engine
+  
+  **AM Node Characteristics:**
+  • Stateless: no internal buffers
+  • No lookback/lookahead needed
+  • Processes sample-by-sample independently
+  • Supports multiple input formats (Frame, Channel, Interleaved)
+end note
+
+' ============================================
+' FORMAT VALIDATION
+' ============================================
+package "Format Validation" #Lavender {
+    class FormatValidator {
+        + validate_connection(from: NodeId, to: NodeId) -> Result<()>
+        + can_auto_convert(from: BlockFormat, to: BlockFormat) -> bool
+        + insert_converter(graph: &mut EffectGraph, from: NodeId, to: NodeId) -> NodeId
+    }
+    
+    note right of FormatValidator
+      **Connection Validation:**
+      
+      When user connects nodes:
+      1. Check if upstream output_format matches
+         downstream accepted_input_formats
+      2. If match: allow connection
+      3. If mismatch but convertible:
+         auto-insert converter node (future)
+      4. If not convertible: error
+      
+      **Format Compatibility:**
+      AM Node accepts Frame, Channel, or Interleaved.
+      Output format matches input format.
+    end note
+}
+
+FormatValidator --> EffectGraph
+
+' ============================================
+' STATE MANAGEMENT
+' ============================================
+package "State Management" #LightYellow {
+    class StatefulNodeState {
+        + node_id: NodeId
+        + state_data: Vec<u8>
+        + frame_index: usize
+    }
+    
+    note bottom of StatefulNodeState
+      **Stateful Node Handling:**
+      
+      Stateful nodes maintain internal buffers:
+      • Delay buffers
+      • Filter state
+      • Feedback history
+      
+      **State Warmup:**
+      • Timeline requests frames from N-K
+      • K = max lookback of stateful nodes
+      • Process warmup frames (discard output)
+      • Frame N has correct state
+      
+      **State Snapshots (optional):**
+      • Periodic snapshots every N frames
+      • Fast seeking by loading snapshot
+      • Process from snapshot to target frame
+    end note
+}
+
+StatefulNodeState --> NodeId
+
+@enduml
+
