@@ -9,3 +9,4 @@ gstreamer-video = "0.24"
 gstreamer-app = "0.24"
 anyhow = "1.0"
 hound = "3.5"
+uuid = { version = "1.0", features = ["v4"] }

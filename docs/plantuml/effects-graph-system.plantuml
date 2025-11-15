@@ -54,10 +54,10 @@ end note
 ' ============================================
 package "Block Format Types" #LightYellow {
     enum Block {
-        Frame { r: Vec<f32>, g: Vec<f32>, b: Vec<f32> }
-        Channel(Vec<f32>)
-        Interleaved(Vec<f32>)
-        SequentialPacked { r: Vec<f32>, g: Vec<f32>, b: Vec<f32> }
+        Frame { data: Vec<f32>, width: usize, height: usize, order: [char; 3] }
+        Channel { data: Vec<f32> }
+        Interleaved { data: Vec<f32>, channels: usize, order: Vec<String> }
+        SequentialPacked { data: Vec<f32>, channels: usize }
     }
     
     enum BlockFormat {
@@ -71,23 +71,29 @@ package "Block Format Types" #LightYellow {
       **Unified Block Wrapper:**
       
       All formats wrapped in single enum.
+      Each variant contains data vector and format-specific metadata.
       Nodes receive Block and dispatch internally.
       
       **Frame:** Complete video frame
-      • r, g, b: Vec<f32> per channel
+      • data: [R0...Rn, G0...Gn, B0...Bn] - sequential channels
+      • width, height: frame dimensions
+      • order: [char; 3] - channel order (e.g., ['R', 'G', 'B'])
       • Best for: frame-wide effects
       
       **Channel:** Single color channel
-      • Vec<f32> of samples
+      • data: Vec<f32> of samples
       • Best for: per-channel processing
       • Also used for modulator signals
       
-      **Interleaved:** RGB interleaved
-      • [R0, G0, B0, R1, G1, B1, ...]
+      **Interleaved:** RGB interleaved pixel-by-pixel
+      • data: [R0, G0, B0, R1, G1, B1, ...]
+      • channels: number of channels
+      • order: Vec<String> - channel names (e.g., ["R", "G", "B"])
       • Best for: per-pixel effects
       
       **SequentialPacked:** Channels packed sequentially
-      • [R0...Rn, G0...Gn, B0...Bn]
+      • data: [R0...Rn, G0...Gn, B0...Bn]
+      • channels: number of channels
       • Best for: channel-specific operations
     end note
 }
