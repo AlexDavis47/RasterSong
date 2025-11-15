@@ -266,7 +266,7 @@ Each node declares which input formats it accepts and what format it outputs:
 
 ```rust
 trait EffectGraphNode {
-    // Returns the list of block formats this node can accept as input
+    // Returns the list of effect_processor formats this node can accept as input
     // Used by the graph engine to validate connections at connection time
     fn accepted_input_formats(&self) -> Vec<BlockFormat>;
 
