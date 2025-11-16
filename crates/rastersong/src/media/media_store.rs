@@ -15,6 +15,18 @@ impl MediaId {
     fn new() -> Self {
         MediaId(Uuid::new_v4())
     }
+
+    /// Parse a MediaId from a string representation
+    pub fn from_string(s: &str) -> Result<Self> {
+        let uuid =
+            Uuid::parse_str(s).map_err(|e| anyhow::anyhow!("Invalid media ID format: {}", e))?;
+        Ok(MediaId(uuid))
+    }
+
+    /// Get the string representation of this MediaId
+    pub fn to_string(&self) -> String {
+        self.0.to_string()
+    }
 }
 
 /// Information about a registered media file
@@ -24,6 +36,7 @@ pub struct MediaFileInfo {
     pub path: PathBuf,
     pub media_type: MediaType,
     pub offset_seconds: f64,
+    pub duration_seconds: Option<f64>,
 }
 
 /// Type of media file
@@ -45,13 +58,19 @@ impl MediaStore {
         }
     }
 
-    fn register(&mut self, path: PathBuf, media_type: MediaType) -> MediaId {
+    fn register(
+        &mut self,
+        path: PathBuf,
+        media_type: MediaType,
+        duration_seconds: Option<f64>,
+    ) -> MediaId {
         let id = MediaId::new();
         let info = MediaFileInfo {
             id,
             path,
             media_type,
             offset_seconds: 0.0,
+            duration_seconds,
         };
         self.files.insert(id, info);
         id
@@ -70,6 +89,10 @@ impl MediaStore {
     fn list(&self) -> Vec<MediaId> {
         self.files.keys().copied().collect()
     }
+
+    fn remove(&mut self, id: &MediaId) -> bool {
+        self.files.remove(id).is_some()
+    }
 }
 
 // Global media store (thread-safe via Mutex)
@@ -81,23 +104,29 @@ fn get_store() -> &'static Mutex<MediaStore> {
 }
 
 /// Register a video file and return its identifier
-pub fn register_video_file<P: AsRef<Path>>(path: P) -> Result<MediaId> {
+pub fn register_video_file<P: AsRef<Path>>(
+    path: P,
+    duration_seconds: Option<f64>,
+) -> Result<MediaId> {
     let path = path.as_ref().to_path_buf();
     if !path.exists() {
         anyhow::bail!("File does not exist: {:?}", path);
     }
     let mut store = get_store().lock().unwrap();
-    Ok(store.register(path, MediaType::Video))
+    Ok(store.register(path, MediaType::Video, duration_seconds))
 }
 
 /// Register an audio file and return its identifier
-pub fn register_audio_file<P: AsRef<Path>>(path: P) -> Result<MediaId> {
+pub fn register_audio_file<P: AsRef<Path>>(
+    path: P,
+    duration_seconds: Option<f64>,
+) -> Result<MediaId> {
     let path = path.as_ref().to_path_buf();
     if !path.exists() {
         anyhow::bail!("File does not exist: {:?}", path);
     }
     let mut store = get_store().lock().unwrap();
-    Ok(store.register(path, MediaType::Audio))
+    Ok(store.register(path, MediaType::Audio, duration_seconds))
 }
 
 /// Get information about a registered media file
@@ -110,6 +139,13 @@ pub fn get_file_info(id: &MediaId) -> Option<MediaFileInfo> {
 pub fn list_media_files() -> Vec<MediaId> {
     let store = get_store().lock().unwrap();
     store.list()
+}
+
+/// Remove a media file from the registry
+/// Returns true if the file was found and removed, false otherwise
+pub fn remove_media_file(id: &MediaId) -> bool {
+    let mut store = get_store().lock().unwrap();
+    store.remove(id)
 }
 
 #[cfg(test)]
@@ -125,7 +161,7 @@ mod tests {
             return;
         }
 
-        let id = register_video_file(video_path).unwrap();
+        let id = register_video_file(video_path, None).unwrap();
         assert!(get_file_info(&id).is_some());
 
         let info = get_file_info(&id).unwrap();
@@ -141,7 +177,7 @@ mod tests {
             return;
         }
 
-        let id = register_audio_file(audio_path).unwrap();
+        let id = register_audio_file(audio_path, None).unwrap();
         assert!(get_file_info(&id).is_some());
 
         let info = get_file_info(&id).unwrap();
@@ -159,8 +195,8 @@ mod tests {
             return;
         }
 
-        let video_id = register_video_file(video_path).unwrap();
-        let audio_id = register_audio_file(audio_path).unwrap();
+        let video_id = register_video_file(video_path, None).unwrap();
+        let audio_id = register_audio_file(audio_path, None).unwrap();
 
         let list = list_media_files();
         println!("Media files: {:?}", list);
@@ -170,7 +206,7 @@ mod tests {
 
     #[test]
     fn test_register_nonexistent_file() {
-        let result = register_video_file("nonexistent.mp4");
+        let result = register_video_file("nonexistent.mp4", None);
         assert!(result.is_err());
     }
 }

@@ -1,17 +1,21 @@
-<script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+<script setup lang="ts">
+import { ref, onMounted, onUnmounted } from 'vue'
 import TimelineTrack from './TimelineTrack.vue'
 import TimelineControlTrack from './TimelineControlTrack.vue'
+import { useTimelineStore } from '../../composables/useTimelineStore'
+import { removeMultipleMedia } from '../../utils/media'
+
+const { videoTracks, audioTracks, removeVideoTrack, removeAudioTrack } = useTimelineStore()
 
 const pixelsPerSecond = ref(20)
-const minZoom = 5
-const maxZoom = 200
-const zoomStep = 5
+const minZoom = 0.1
+const maxZoom = 1000
+const zoomStep = 1
 
 const playheadPosition = ref(5) // seconds
-const selectionStart = ref(null)
-const selectionEnd = ref(null)
-const timelineContentRef = ref(null)
+const selectionStart = ref<number | null>(null)
+const selectionEnd = ref<number | null>(null)
+const timelineContentRef = ref<HTMLElement | null>(null)
 const timelineViewportWidth = ref(0)
 
 // Timeline viewport: tracks what time range we're currently viewing
@@ -69,7 +73,7 @@ const isPanning = ref(false)
 const panStartX = ref(0)
 const panStartTime = ref(0)
 
-const handleWheel = (event) => {
+const handleWheel = (event: WheelEvent) => {
   // Only zoom if Ctrl/Cmd key is held (standard zoom behavior)
   if (event.ctrlKey || event.metaKey) {
     event.preventDefault()
@@ -92,7 +96,7 @@ const handleWheel = (event) => {
   }
 }
 
-const handleMouseDown = (event) => {
+const handleMouseDown = (event: MouseEvent) => {
   // Middle mouse button or space+left button for panning
   if (event.button === 1 || (event.button === 0 && event.shiftKey)) {
     event.preventDefault()
@@ -102,7 +106,7 @@ const handleMouseDown = (event) => {
   }
 }
 
-const handleMouseMove = (event) => {
+const handleMouseMove = (event: MouseEvent) => {
   if (isPanning.value) {
     const pixelDelta = panStartX.value - event.clientX
     const timeDelta = pixelDelta / pixelsPerSecond.value
@@ -119,38 +123,6 @@ const handleMouseUp = () => {
   isPanning.value = false
 }
 
-// Video tracks - contains carrier clips
-const videoTracks = ref([
-  {
-    id: 0,
-    label: 'Video Carrier',
-    isCarrier: true,
-    clips: [
-      { id: 1, name: 'Video Carrier', start: 0, duration: 5, isCarrier: true }
-    ]
-  }
-])
-
-// Audio tracks - contains modulator clips
-const audioTracks = ref([
-  {
-    id: 1,
-    label: 'Modulator 1',
-    isCarrier: false,
-    clips: [
-      { id: 3, name: 'Modulator 1', start: 2, duration: 6, isCarrier: false }
-    ]
-  },
-  {
-    id: 2,
-    label: 'Modulator 2',
-    isCarrier: false,
-    clips: [
-      { id: 4, name: 'Modulator 2', start: 8, duration: 3, isCarrier: false }
-    ]
-  }
-])
-
 const updateViewportWidth = () => {
   if (timelineContentRef.value) {
     timelineViewportWidth.value = timelineContentRef.value.clientWidth
@@ -158,7 +130,7 @@ const updateViewportWidth = () => {
   }
 }
 
-let resizeObserver = null
+let resizeObserver: ResizeObserver | null = null
 
 onMounted(() => {
   updateViewportWidth()
@@ -188,7 +160,7 @@ onUnmounted(() => {
   document.removeEventListener('mouseup', handleMouseUp)
 })
 
-const handleClipStartUpdate = (data) => {
+const handleClipStartUpdate = (data: { trackId: number; clipId: number; newStartTime: number }) => {
   const { trackId, clipId, newStartTime } = data
   
   // Search in video tracks
@@ -214,13 +186,29 @@ const handleClipStartUpdate = (data) => {
   }
 }
 
-const handlePlayheadUpdate = (time) => {
+const handlePlayheadUpdate = (time: number) => {
   playheadPosition.value = time
 }
 
-const handleSelectionUpdate = (data) => {
+const handleSelectionUpdate = (data: { start: number | null; end: number | null }) => {
   selectionStart.value = data.start
   selectionEnd.value = data.end
+}
+
+const handleRemoveVideoTrack = async (trackId: number) => {
+  const mediaIds = removeVideoTrack(trackId)
+  if (mediaIds.length > 0) {
+    const removedCount = await removeMultipleMedia(mediaIds)
+    console.log(`Removed ${removedCount} media files from backend`)
+  }
+}
+
+const handleRemoveAudioTrack = async (trackId: number) => {
+  const mediaIds = removeAudioTrack(trackId)
+  if (mediaIds.length > 0) {
+    const removedCount = await removeMultipleMedia(mediaIds)
+    console.log(`Removed ${removedCount} media files from backend`)
+  }
 }
 </script>
 
@@ -260,6 +248,7 @@ const handleSelectionUpdate = (data) => {
           :timeline-start="timelineStart"
           :timeline-end="timelineEnd"
           @update:clip-start="handleClipStartUpdate"
+          @remove-track="handleRemoveVideoTrack"
         />
         <div class="track-separator"></div>
         <TimelineTrack
@@ -271,6 +260,7 @@ const handleSelectionUpdate = (data) => {
           :timeline-start="timelineStart"
           :timeline-end="timelineEnd"
           @update:clip-start="handleClipStartUpdate"
+          @remove-track="handleRemoveAudioTrack"
         />
       </div>
     </div>

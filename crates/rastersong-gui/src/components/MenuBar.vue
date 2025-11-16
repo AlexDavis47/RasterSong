@@ -1,11 +1,14 @@
-<script setup>
+<script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useTimelineStore, type MediaInfo } from '../composables/useTimelineStore'
 
 const activeTab = ref(null)
 const showFileMenu = ref(false)
 
 const tabs = ['File', 'Options', 'Settings', 'Help']
+
+const { addVideoClip, addAudioClip } = useTimelineStore()
 
 const setActiveTab = (tab) => {
   if (tab === 'File') {
@@ -18,9 +21,10 @@ const setActiveTab = (tab) => {
 
 const importVideo = async () => {
   try {
-    const filePath = await invoke('open_video_dialog')
-    if (filePath) {
-      console.log('Selected video file:', filePath)
+    const mediaInfo = await invoke<MediaInfo | null>('open_video_dialog')
+    if (mediaInfo) {
+      console.log('Selected video file:', mediaInfo)
+      addVideoClip(mediaInfo)
     } else {
       console.log('No video file selected')
     }
@@ -32,9 +36,10 @@ const importVideo = async () => {
 
 const importAudio = async () => {
   try {
-    const filePath = await invoke('open_audio_dialog')
-    if (filePath) {
-      console.log('Selected audio file:', filePath)
+    const mediaInfo = await invoke<MediaInfo | null>('open_audio_dialog')
+    if (mediaInfo) {
+      console.log('Selected audio file:', mediaInfo)
+      addAudioClip(mediaInfo)
     } else {
       console.log('No audio file selected')
     }

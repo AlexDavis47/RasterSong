@@ -60,6 +60,15 @@ const lastMousePosition = ref({
 
 const DRAG_THRESHOLD = 3 // pixels - minimum movement to be considered a drag
 
+// Mapping of pixels per second to marker interval
+const PIXELS_PER_SECOND_TO_INTERVAL = {
+  1.0: 50,
+  5.0: 10,
+  10.0: 5,
+  20.0: 2,
+  50.0: 1,
+}
+
 const timeMarkers = computed(() => {
   const markers = []
 
@@ -68,17 +77,14 @@ const timeMarkers = computed(() => {
   const visibleEnd = props.timelineEnd
 
   // Determine marker interval based on zoom level
-  let interval = 5
-  if (pixelsPerSecond < 10) {
-    interval = 30
-  } else if (pixelsPerSecond < 20) {
-    interval = 10
-  } else if (pixelsPerSecond < 50) {
-    interval = 5
-  } else if (pixelsPerSecond < 100) {
-    interval = 2
-  } else {
-    interval = 1
+  let interval = 600 // Default for lowest zoom
+  const thresholds = Object.keys(PIXELS_PER_SECOND_TO_INTERVAL).map(Number).sort((a, b) => b - a)
+  
+  for (const threshold of thresholds) {
+    if (pixelsPerSecond >= threshold) {
+      interval = PIXELS_PER_SECOND_TO_INTERVAL[threshold]
+      break
+    }
   }
 
   // Find first marker that should be visible

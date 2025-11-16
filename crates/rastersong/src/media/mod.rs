@@ -17,11 +17,11 @@ pub use gstreamer::{init, is_initialized};
 // Re-export identifier types and functions
 pub use media_store::{
     MediaFileInfo, MediaId, MediaType, get_file_info, list_media_files, register_audio_file,
-    register_video_file,
+    register_video_file, remove_media_file,
 };
 
-// Re-export video decoder
-pub use video::decode_video;
+// Re-export video decoder and duration
+pub use video::{decode_video, get_video_duration};
 
-// Re-export audio decoder
-pub use audio::decode_audio;
+// Re-export audio decoder and duration
+pub use audio::{decode_audio, get_audio_duration};

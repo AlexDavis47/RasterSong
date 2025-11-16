@@ -161,3 +161,74 @@ pub fn decode_video(identifier: MediaId, frame_index: usize) -> Result<Sample> {
 
     Ok(sample)
 }
+
+/// Get the duration of a video file in seconds
+///
+/// # Arguments
+/// * `identifier` - The MediaId of the registered video file
+///
+/// # Returns
+/// Duration in seconds as f64
+pub fn get_video_duration(identifier: MediaId) -> Result<f64> {
+    let file_info = get_file_info(&identifier)
+        .ok_or_else(|| anyhow::anyhow!("Media file not found for identifier"))?;
+
+    // Create a simple pipeline to query duration
+    let pipeline = gstreamer::Pipeline::new();
+
+    let src = gstreamer::ElementFactory::make("filesrc")
+        .property("location", file_info.path.to_string_lossy().as_ref())
+        .build()?;
+
+    let decodebin = gstreamer::ElementFactory::make("decodebin").build()?;
+    let fakesink = gstreamer::ElementFactory::make("fakesink").build()?;
+
+    pipeline.add_many(&[&src, &decodebin, &fakesink])?;
+    src.link(&decodebin)?;
+
+    // Connect decodebin pads to fakesink
+    let fakesink_clone = fakesink.clone();
+    decodebin.connect_pad_added(move |_, src_pad| {
+        let sink_pad = fakesink_clone
+            .static_pad("sink")
+            .expect("fakesink has no sink pad");
+        if sink_pad.is_linked() {
+            return;
+        }
+        if let Err(err) = src_pad.link(&sink_pad) {
+            eprintln!("Failed to link decodebin to fakesink: {:?}", err);
+        }
+    });
+
+    // Set pipeline to paused state to get duration
+    pipeline.set_state(State::Paused)?;
+
+    // Wait for state change to complete
+    let bus = pipeline.bus().unwrap();
+    for msg in bus.iter_timed(gstreamer::ClockTime::from_seconds(10)) {
+        use gstreamer::MessageView;
+        match msg.view() {
+            MessageView::Error(err) => {
+                pipeline.set_state(State::Null)?;
+                anyhow::bail!("Pipeline error: {:?}", err.error());
+            }
+            MessageView::Eos(_) => {
+                break;
+            }
+            MessageView::AsyncDone(_) => {
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    // Query duration
+    let duration = pipeline.query_duration::<gstreamer::ClockTime>();
+
+    pipeline.set_state(State::Null)?;
+
+    match duration {
+        Some(d) => Ok(d.seconds() as f64 + (d.nseconds() as f64 / 1_000_000_000.0)),
+        None => anyhow::bail!("Failed to query video duration"),
+    }
+}

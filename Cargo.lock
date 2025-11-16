@@ -3221,6 +3221,7 @@ dependencies = [
 name = "rastersong-gui"
 version = "0.1.0"
 dependencies = [
+ "rastersong",
  "serde",
  "serde_json",
  "tauri",
