@@ -23,6 +23,7 @@ pub struct MediaFileInfo {
     pub id: MediaId,
     pub path: PathBuf,
     pub media_type: MediaType,
+    pub offset_seconds: f64,
 }
 
 /// Type of media file
@@ -50,9 +51,16 @@ impl MediaStore {
             id,
             path,
             media_type,
+            offset_seconds: 0.0,
         };
         self.files.insert(id, info);
         id
+    }
+
+    fn set_offset(&mut self, id: &MediaId, offset_seconds: f64) {
+        if let Some(info) = self.files.get_mut(id) {
+            info.offset_seconds = offset_seconds;
+        }
     }
 
     fn get(&self, id: &MediaId) -> Option<&MediaFileInfo> {

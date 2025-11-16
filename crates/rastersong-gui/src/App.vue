@@ -1,7 +1,7 @@
 <script setup>
 import MenuBar from './components/MenuBar.vue'
 import PreviewPanel from './components/PreviewPanel.vue'
-import TimelinePanel from './components/TimelinePanel.vue'
+import TimelinePanel from './components/timeline/TimelinePanel.vue'
 import NodeGraphPanel from './components/NodeGraphPanel.vue'
 import PropertiesPanel from './components/PropertiesPanel.vue'
 </script>
