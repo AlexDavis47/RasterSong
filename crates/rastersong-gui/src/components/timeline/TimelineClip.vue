@@ -44,7 +44,7 @@ const clipStyle = computed(() => {
   let clipStartTime = props.clip.start
   if (isDragging.value) {
     const deltaTime = dragOffsetX.value / props.pixelsPerSecond
-    clipStartTime = dragStartTime.value + deltaTime
+    clipStartTime = Math.max(0, dragStartTime.value + deltaTime) // Clamp to prevent going past time 0
   }
   
   // Position clip relative to the viewport start
@@ -57,6 +57,12 @@ const clipStyle = computed(() => {
 })
 
 const handleMouseDown = (event) => {
+  // Only respond to left mouse button (button === 0)
+  // Middle mouse (button === 1) and right mouse (button === 2) should not drag clips
+  if (event.button !== 0) {
+    return
+  }
+  
   isDragging.value = true
   dragStartX.value = event.clientX
   dragStartTime.value = props.clip.start
@@ -72,17 +78,20 @@ const handleMouseMove = (event) => {
   if (!isDragging.value) return
   
   const deltaX = event.clientX - dragStartX.value
-  dragOffsetX.value = deltaX // Update local offset immediately for smooth visual feedback
+  const deltaTime = deltaX / props.pixelsPerSecond
+  const newStartTime = dragStartTime.value + deltaTime
+  
+  // Clamp to prevent dragging past time 0
+  const clampedStartTime = Math.max(0, newStartTime)
+  const clampedDeltaTime = clampedStartTime - dragStartTime.value
+  dragOffsetX.value = clampedDeltaTime * props.pixelsPerSecond // Update local offset immediately for smooth visual feedback
   
   // Throttle prop updates to avoid excessive re-renders
   const now = performance.now()
   if (now - lastUpdateTime >= UPDATE_THROTTLE) {
-    const deltaTime = deltaX / props.pixelsPerSecond
-    const newStartTime = Math.max(0, dragStartTime.value + deltaTime)
-    
     emit('update:start', {
       clipId: props.clip.id,
-      newStartTime: newStartTime
+      newStartTime: clampedStartTime
     })
     
     lastUpdateTime = now
@@ -91,9 +100,8 @@ const handleMouseMove = (event) => {
 
 const handleMouseUp = () => {
   if (isDragging.value) {
-    // Final update to ensure position is synced
-    const deltaX = dragOffsetX.value
-    const deltaTime = deltaX / props.pixelsPerSecond
+    // Final update to ensure position is synced (dragOffsetX is already clamped)
+    const deltaTime = dragOffsetX.value / props.pixelsPerSecond
     const newStartTime = Math.max(0, dragStartTime.value + deltaTime)
     
     emit('update:start', {
