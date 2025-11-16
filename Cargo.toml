@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/rastersong", "crates/rastersong-gui"]
+members = ["crates/rastersong", "crates/rastersong-gui/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
