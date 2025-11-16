@@ -44,6 +44,22 @@ const isSelecting = ref(false)
 const isDraggingStartMarker = ref(false)
 const isDraggingEndMarker = ref(false)
 
+// Track mouse down state to distinguish clicks from drags
+const mouseDownState = ref({
+  isDown: false,
+  startX: 0,
+  startTime: 0,
+  hasMoved: false
+})
+
+// Track last mouse position for mouseup handling
+const lastMousePosition = ref({
+  x: 0,
+  time: 0
+})
+
+const DRAG_THRESHOLD = 3 // pixels - minimum movement to be considered a drag
+
 const timeMarkers = computed(() => {
   const markers = []
 
@@ -126,33 +142,44 @@ const pixelToTime = (pixelX) => {
 }
 
 const handleControlTrackMouseDown = (event) => {
+  // Only respond to left mouse button
+  if (event.button !== 0) return
+  
   if (!controlTrackRef.value) return
   const rect = controlTrackRef.value.getBoundingClientRect()
   const x = event.clientX - rect.left
   const time = pixelToTime(x)
   
-  // Check if clicking near playhead
+  // Record mouse down state
+  mouseDownState.value = {
+    isDown: true,
+    startX: x,
+    startTime: time,
+    hasMoved: false
+  }
+  
+  // Initialize last mouse position
+  lastMousePosition.value = { x, time }
+  
+  // Check if clicking near playhead (for potential drag)
   const playheadX = timeToPixel(props.playheadPosition)
   if (Math.abs(x - playheadX) < 8) {
     isDraggingPlayhead.value = true
-  } else {
-    // Start selection
-    isSelecting.value = true
-    emit('update:selection', {
-      start: time,
-      end: time
-    })
   }
   
   event.preventDefault()
 }
 
 const handleSelectionMarkerMouseDown = (isStart, event) => {
+  // Only respond to left mouse button
+  if (event.button !== 0) return
+  
   if (isStart) {
     isDraggingStartMarker.value = true
   } else {
     isDraggingEndMarker.value = true
   }
+  
   event.stopPropagation()
 }
 
@@ -162,6 +189,28 @@ const handleGlobalMouseMove = (event) => {
   const x = event.clientX - rect.left
   const time = pixelToTime(x)
   
+  // Track last mouse position for mouseup handling
+  lastMousePosition.value = { x, time }
+  
+  // Check if mouse has moved beyond threshold to start dragging
+  if (mouseDownState.value.isDown && !mouseDownState.value.hasMoved) {
+    const deltaX = Math.abs(x - mouseDownState.value.startX)
+    if (deltaX >= DRAG_THRESHOLD) {
+      mouseDownState.value.hasMoved = true
+      
+      // Start selection drag if not dragging playhead or markers
+      if (!isDraggingPlayhead.value && !isDraggingStartMarker.value && !isDraggingEndMarker.value) {
+        isSelecting.value = true
+        // Set selection START to the mouse down position
+        emit('update:selection', {
+          start: mouseDownState.value.startTime,
+          end: mouseDownState.value.startTime // Initially same as start
+        })
+      }
+    }
+  }
+  
+  // Handle active drags
   if (isDraggingStartMarker.value || isDraggingEndMarker.value) {
     if (isDraggingStartMarker.value) {
       emit('update:selection', {
@@ -177,30 +226,51 @@ const handleGlobalMouseMove = (event) => {
   } else if (isDraggingPlayhead.value) {
     emit('update:playhead', time)
   } else if (isSelecting.value) {
+    // During selection drag, update the END position
     emit('update:selection', {
-      start: props.selectionStart,
-      end: time
+      start: mouseDownState.value.startTime, // Keep start fixed
+      end: time // Update end as we drag
     })
   }
 }
 
-const handleGlobalMouseUp = () => {
+const handleGlobalMouseUp = (event) => {
+  let time = lastMousePosition.value.time
+  
+  // Try to get current position from event if control track is available
+  if (controlTrackRef.value) {
+    const rect = controlTrackRef.value.getBoundingClientRect()
+    const x = event.clientX - rect.left
+    // Only use event position if it's within bounds
+    if (x >= 0 && x <= rect.width) {
+      time = pixelToTime(x)
+      lastMousePosition.value = { x, time }
+    }
+  }
+  
+  // If it was a selection drag, set the END position on mouse up
+  if (isSelecting.value) {
+    emit('update:selection', {
+      start: mouseDownState.value.startTime,
+      end: time // Final end position
+    })
+  }
+  // If mouse was down but didn't move (click, not drag), move playhead
+  else if (mouseDownState.value.isDown && !mouseDownState.value.hasMoved && 
+      !isDraggingPlayhead.value && !isDraggingStartMarker.value && !isDraggingEndMarker.value) {
+    emit('update:playhead', mouseDownState.value.startTime)
+  }
+  
+  // Reset all drag states
   isDraggingStartMarker.value = false
   isDraggingEndMarker.value = false
   isDraggingPlayhead.value = false
   isSelecting.value = false
+  mouseDownState.value.isDown = false
+  mouseDownState.value.hasMoved = false
 }
 
-const handleControlTrackClick = (event) => {
-  // Only move playhead if we didn't just finish a drag
-  if (!isDraggingPlayhead.value && !isSelecting.value && !isDraggingStartMarker.value && !isDraggingEndMarker.value) {
-    if (!controlTrackRef.value) return
-    const rect = controlTrackRef.value.getBoundingClientRect()
-    const x = event.clientX - rect.left
-    const time = pixelToTime(x)
-    emit('update:playhead', time)
-  }
-}
+// Removed: handleControlTrackClick - clicks are now handled in handleGlobalMouseUp
 
 onMounted(() => {
   document.addEventListener('mousemove', handleGlobalMouseMove)
@@ -219,8 +289,7 @@ onUnmounted(() => {
     <div
       ref="controlTrackRef"
       class="control-track"
-      @mousedown="handleControlTrackMouseDown"
-      @click="handleControlTrackClick">
+      @mousedown="handleControlTrackMouseDown">
       <div
         v-if="hasSelection"
         class="selection-region"

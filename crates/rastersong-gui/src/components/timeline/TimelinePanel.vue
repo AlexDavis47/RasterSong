@@ -28,14 +28,40 @@ const updateTimelineEnd = () => {
 
 const zoomIn = () => {
   const oldPPS = pixelsPerSecond.value
-  pixelsPerSecond.value = Math.min(maxZoom, pixelsPerSecond.value + zoomStep)
-  updateTimelineEnd()
+  const newPPS = Math.min(maxZoom, pixelsPerSecond.value + zoomStep)
+  
+  if (newPPS !== oldPPS && timelineViewportWidth.value > 0) {
+    // Update zoom
+    pixelsPerSecond.value = newPPS
+    
+    // Adjust timelineStart so playhead ends up at the center of the viewport
+    // Center pixel position = viewportWidth / 2
+    // playheadTime = timelineStart + (centerPixel / newPPS)
+    // timelineStart = playheadTime - (centerPixel / newPPS)
+    const centerPixel = timelineViewportWidth.value / 2
+    const newStart = playheadPosition.value - (centerPixel / newPPS)
+    timelineStart.value = Math.max(0, newStart)
+    updateTimelineEnd()
+  }
 }
 
 const zoomOut = () => {
   const oldPPS = pixelsPerSecond.value
-  pixelsPerSecond.value = Math.max(minZoom, pixelsPerSecond.value - zoomStep)
-  updateTimelineEnd()
+  const newPPS = Math.max(minZoom, pixelsPerSecond.value - zoomStep)
+  
+  if (newPPS !== oldPPS && timelineViewportWidth.value > 0) {
+    // Update zoom
+    pixelsPerSecond.value = newPPS
+    
+    // Adjust timelineStart so playhead ends up at the center of the viewport
+    // Center pixel position = viewportWidth / 2
+    // playheadTime = timelineStart + (centerPixel / newPPS)
+    // timelineStart = playheadTime - (centerPixel / newPPS)
+    const centerPixel = timelineViewportWidth.value / 2
+    const newStart = playheadPosition.value - (centerPixel / newPPS)
+    timelineStart.value = Math.max(0, newStart)
+    updateTimelineEnd()
+  }
 }
 
 // Panning state
