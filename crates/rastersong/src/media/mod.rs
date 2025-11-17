@@ -1,27 +1,41 @@
 //! Media module for file I/O, caching, decoding and encoding frames
 //!
-//! This module provides a public-facing GStreamer API for RasterSong.
+//! This module provides a public-facing FFmpeg API for RasterSong.
 //! It handles file I/O, caching, decoding and encoding frames.
 
-pub mod audio;
-pub mod gstreamer;
+pub mod audio_decoder;
+pub mod ffmpeg;
+pub mod media_file;
+pub mod media_id;
 pub mod media_store;
-pub mod video;
+pub mod video_decoder;
 
 #[cfg(test)]
 mod tests;
 
-// Re-export initialization
-pub use gstreamer::{init, is_initialized};
+// Re-export FFmpeg initialization
+pub use ffmpeg::{init, is_initialized};
 
-// Re-export identifier types and functions
+// Re-export types
+pub use media_file::MediaFile;
+pub use media_id::MediaId;
+
+// Re-export MediaStore functions
 pub use media_store::{
-    MediaFileInfo, MediaId, MediaType, get_file_info, list_media_files, register_audio_file,
-    register_video_file, remove_media_file,
+    MediaFileInfo,
+    decode_frames,
+    decode_samples,
+    get_audio_duration,
+    get_audio_info,
+    get_file_info,
+    get_media_info,
+    get_video_duration,
+    get_video_info,
+    list_media,
+    load_media,
+    register_audio_file,
+    // Backward compatibility exports
+    register_video_file,
+    remove_media,
+    remove_media_file,
 };
-
-// Re-export video decoder and duration
-pub use video::{decode_video, get_video_duration};
-
-// Re-export audio decoder and duration
-pub use audio::{decode_audio, get_audio_duration};

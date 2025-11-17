@@ -42,21 +42,13 @@ async fn open_video_dialog(window: tauri::Window) -> Result<Option<MediaInfo>, S
         Some(path) => {
             let path_str = path.to_string();
 
-            // Register the video file first (without duration)
-            let media_id = rastersong::media::register_video_file(&path_str, None)
-                .map_err(|e| format!("Failed to register video file: {}", e))?;
+            // Load the video file - this automatically extracts all metadata
+            let media_id = rastersong::media::load_media(&path_str)
+                .map_err(|e| format!("Failed to load video file: {}", e))?;
 
-            // Get the duration
+            // Get the duration from the loaded media
             let duration = rastersong::media::get_video_duration(media_id)
                 .map_err(|e| format!("Failed to get video duration: {}", e))?;
-
-            // Update the registration with the duration by getting file info
-            let file_info = rastersong::media::get_file_info(&media_id)
-                .ok_or_else(|| "Failed to get file info".to_string())?;
-
-            // Re-register with duration
-            let media_id = rastersong::media::register_video_file(&file_info.path, Some(duration))
-                .map_err(|e| format!("Failed to re-register video file: {}", e))?;
 
             Ok(Some(MediaInfo {
                 path: path_str,
@@ -95,21 +87,13 @@ async fn open_audio_dialog(window: tauri::Window) -> Result<Option<MediaInfo>, S
         Some(path) => {
             let path_str = path.to_string();
 
-            // Register the audio file first (without duration)
-            let media_id = rastersong::media::register_audio_file(&path_str, None)
-                .map_err(|e| format!("Failed to register audio file: {}", e))?;
+            // Load the audio file - this automatically extracts all metadata
+            let media_id = rastersong::media::load_media(&path_str)
+                .map_err(|e| format!("Failed to load audio file: {}", e))?;
 
-            // Get the duration
+            // Get the duration from the loaded media
             let duration = rastersong::media::get_audio_duration(media_id)
                 .map_err(|e| format!("Failed to get audio duration: {}", e))?;
-
-            // Update the registration with the duration by getting file info
-            let file_info = rastersong::media::get_file_info(&media_id)
-                .ok_or_else(|| "Failed to get file info".to_string())?;
-
-            // Re-register with duration
-            let media_id = rastersong::media::register_audio_file(&file_info.path, Some(duration))
-                .map_err(|e| format!("Failed to re-register audio file: {}", e))?;
 
             Ok(Some(MediaInfo {
                 path: path_str,
@@ -131,8 +115,8 @@ fn remove_media(id: String) -> Result<bool, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Initialize GStreamer
-    rastersong::media::init().expect("Failed to initialize GStreamer");
+    // Initialize FFmpeg
+    rastersong::media::init().expect("Failed to initialize FFmpeg");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())

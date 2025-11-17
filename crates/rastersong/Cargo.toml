@@ -4,9 +4,13 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-gstreamer = "0.24"
-gstreamer-video = "0.24"
-gstreamer-app = "0.24"
+# Using static linking to embed FFmpeg (no runtime DLL dependencies)
+ffmpeg-next = { version = "8.0.0", default-features = false, features = [
+    "codec",
+    "format",
+    "software-resampling",
+    "software-scaling",
+] }
 anyhow = "1.0"
 hound = "3.5"
 uuid = { version = "1.0", features = ["v4"] }

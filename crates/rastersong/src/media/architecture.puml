@@ -1,0 +1,189 @@
+@startuml
+!theme plain
+skinparam packageStyle rectangle
+skinparam rectangle {
+    BackgroundColor LightBlue
+}
+
+title RasterSong Media System Architecture (FFmpeg)
+
+' ============================================
+' External Dependencies
+' ============================================
+package "External Libraries" #LightGray {
+    rectangle "FFmpeg Library" as ffmpeg
+    rectangle "File System" as filesystem
+}
+
+' ============================================
+' Public API Layer
+' ============================================
+package "Media Module (Public API)" #LightGreen {
+    rectangle "Media Module API" as media_api
+    
+    note right of media_api
+        **Public API Functions:**
+        + decode_video(MediaId, frame_index) -> Frame
+        + decode_audio(MediaId, sample_start, sample_end) -> AudioBuffer
+        + get_video_duration(MediaId) -> f64
+        + get_audio_duration(MediaId) -> f64
+        + register_video_file(path) -> MediaId
+        + register_audio_file(path) -> MediaId
+        + get_file_info(MediaId) -> MediaFileInfo
+        + list_media_files() -> Vec<MediaId>
+        + remove_media_file(MediaId) -> bool
+        + init() -> Result<()>
+        + is_initialized() -> bool
+    end note
+}
+
+' ============================================
+' Core Components
+' ============================================
+package "Media Store" #LightYellow {
+    rectangle "MediaStore" as media_store
+    rectangle "MediaId" as media_id
+    rectangle "MediaFileInfo" as file_info
+    rectangle "MediaType\n(Video | Audio)" as media_type
+}
+
+package "Media File & Decoders" #LightCoral {
+    rectangle "MediaFile" as media_file
+    rectangle "VideoDecoder\n(if video)" as video_decoder
+    rectangle "AudioDecoder\n(if audio)" as audio_decoder
+    
+    note right of media_file
+        **Ownership Hierarchy:**
+        - MediaFile owns FormatContext (one per file)
+        - MediaFile owns VideoDecoder (if video stream exists)
+        - MediaFile owns AudioDecoder (if audio stream exists)
+        - VideoDecoder owns VideoCodecContext
+        - AudioDecoder owns AudioCodecContext
+        - Both decoders share MediaFile's FormatContext
+        - Decoders created when MediaFile is registered
+        - All contexts stay open for efficient seeking
+    end note
+}
+
+package "FFmpeg Contexts" #LightPink {
+    rectangle "FFmpegContext\n(Global Init)" as ffmpeg_ctx
+    rectangle "FormatContext\n(per file)" as format_ctx
+    rectangle "VideoCodecContext\n(per video stream)" as video_codec_ctx
+    rectangle "AudioCodecContext\n(per audio stream)" as audio_codec_ctx
+}
+
+package "Data Types" #LightCyan {
+    rectangle "Frame" as frame
+    rectangle "AudioBuffer" as audio_buffer
+    rectangle "VideoMetadata" as video_meta
+    rectangle "AudioMetadata" as audio_meta
+}
+
+' ============================================
+' Module Structure
+' ============================================
+package "Module Files" #LightCyan {
+    rectangle "mod.rs" as mod_rs
+    rectangle "ffmpeg.rs" as ffmpeg_rs
+    rectangle "video.rs" as video_rs
+    rectangle "audio.rs" as audio_rs
+    rectangle "media_store.rs" as store_rs
+}
+
+' ============================================
+' Relationships - Ownership Hierarchy
+' ============================================
+media_api --> media_store : queries
+media_api --> media_file : accesses via MediaId
+
+' MediaStore manages MediaFile instances
+media_store --> media_id : contains
+media_store --> file_info : stores
+media_store --> media_file : owns/manages
+file_info --> media_id : references
+file_info --> media_type : uses
+
+' MediaFile owns its decoders
+media_file *-- video_decoder : owns (if video)
+media_file *-- audio_decoder : owns (if audio)
+media_file --> file_info : contains MediaFileInfo
+
+' MediaFile owns FormatContext (shared by both decoders if both exist)
+media_file *-- format_ctx : owns
+
+' Decoders own their codec contexts and use shared FormatContext
+video_decoder *-- video_codec_ctx : owns
+video_decoder --> format_ctx : uses (from MediaFile)
+audio_decoder *-- audio_codec_ctx : owns
+audio_decoder --> format_ctx : uses (from MediaFile)
+
+' FFmpeg contexts use FFmpeg library
+format_ctx --> ffmpeg : uses
+video_codec_ctx --> ffmpeg : uses
+audio_codec_ctx --> ffmpeg : uses
+ffmpeg_ctx --> ffmpeg : initializes library
+
+' Decoders read from filesystem
+video_decoder --> filesystem : reads file
+audio_decoder --> filesystem : reads file
+
+' Decoders produce data types
+video_decoder ..> frame : creates
+video_decoder ..> video_meta : extracts
+audio_decoder ..> audio_buffer : creates
+audio_decoder ..> audio_meta : extracts
+
+mod_rs --> ffmpeg_rs : exports
+mod_rs --> video_rs : exports
+mod_rs --> audio_rs : exports
+mod_rs --> store_rs : exports
+
+ffmpeg_rs --> ffmpeg_ctx : implements
+video_rs --> video_decoder : implements
+video_rs --> media_file : implements
+audio_rs --> audio_decoder : implements
+audio_rs --> media_file : implements
+store_rs --> media_store : implements
+store_rs --> media_file : manages
+
+' ============================================
+' Data Flow & Lifecycle
+' ============================================
+note right of video_decoder
+  **Video Decoding Flow:**
+  1. MediaFile already owns VideoDecoder
+  2. VideoDecoder uses cached FormatContext
+  3. Seek to frame position (efficient, context open)
+  4. Decode frame using VideoCodecContext
+  5. Convert to RGB format
+  6. Return Frame
+end note
+
+note right of audio_decoder
+  **Audio Decoding Flow:**
+  1. MediaFile already owns AudioDecoder
+  2. AudioDecoder uses cached FormatContext
+  3. Seek to sample position (efficient, context open)
+  4. Decode audio packets using AudioCodecContext
+  5. Convert to f32 format
+  6. Return AudioBuffer
+end note
+
+note bottom of ffmpeg_ctx
+  **FFmpeg Global Initialization:**
+  - One-time library initialization
+  - Thread-safe singleton
+  - Must be called before any FFmpeg operations
+  - Manages global FFmpeg library state
+end note
+
+note bottom of media_file
+  **MediaFile Lifecycle:**
+  - Created when file is registered
+  - Decoders initialized on creation
+  - FormatContext and CodecContexts stay open
+  - Destroyed when file is removed from store
+  - Enables efficient random access seeking
+end note
+
+@enduml
