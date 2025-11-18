@@ -3,14 +3,14 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useTimelineStore, type MediaInfo } from '../composables/useTimelineStore'
 
-const activeTab = ref(null)
+const activeTab = ref<string | null>(null)
 const showFileMenu = ref(false)
 
 const tabs = ['File', 'Options', 'Settings', 'Help']
 
 const { addVideoClip, addAudioClip } = useTimelineStore()
 
-const setActiveTab = (tab) => {
+const setActiveTab = (tab: string) => {
   if (tab === 'File') {
     showFileMenu.value = !showFileMenu.value
   } else {
@@ -50,8 +50,9 @@ const importAudio = async () => {
 }
 
 // Close menu when clicking outside
-const handleClickOutside = (event) => {
-  if (!event.target.closest('.menu-item') && !event.target.closest('.file-menu')) {
+const handleClickOutside = (event: MouseEvent) => {
+  const target = event.target as HTMLElement | null
+  if (target && !target.closest('.menu-item') && !target.closest('.file-menu')) {
     showFileMenu.value = false
   }
 }

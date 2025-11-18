@@ -1,12 +1,65 @@
-<script setup>
-import { ref } from 'vue'
+<script setup lang="ts">
+import { ref, watch, computed } from 'vue'
+import { getFrameAtTimestamp, displayFrameOnCanvas } from '../utils/media'
+import { useTimelineStore } from '../composables/useTimelineStore'
+
+const props = defineProps<{
+  playheadPosition: number
+}>()
+
+const { videoTracks } = useTimelineStore()
 
 const viewMode = ref('processed') // 'original', 'side-by-side', 'processed'
 const playbackRate = ref(1.0)
 const isLooping = ref(false)
 const globalVolume = ref(100)
 
-const setViewMode = (mode) => {
+// Canvas refs
+const canvasRef = ref<HTMLCanvasElement | null>(null)
+const isLoadingFrame = ref(false)
+const frameError = ref<string | null>(null)
+
+// Get the first video track's media ID (for now, we'll just use the first video)
+const currentMediaId = computed(() => {
+  if (videoTracks.value.length === 0) return null
+  const firstTrack = videoTracks.value[0]
+  if (firstTrack.clips.length === 0) return null
+  return firstTrack.clips[0].mediaId
+})
+
+// Watch playhead position and load frames
+watch(
+  [() => props.playheadPosition, currentMediaId],
+  async ([newPosition, mediaId]) => {
+    console.log('PreviewPanel watcher triggered:', { newPosition, mediaId })
+    
+    if (!canvasRef.value || !mediaId) {
+      console.log('Skipping frame load:', { hasCanvas: !!canvasRef.value, mediaId })
+      return
+    }
+    
+    isLoadingFrame.value = true
+    frameError.value = null
+    
+    try {
+      console.log(`Loading frame at timestamp: ${newPosition}s for media ${mediaId}`)
+      const frame = await getFrameAtTimestamp(mediaId, newPosition)
+      console.log(`Frame loaded: ${frame.width}x${frame.height} at ${frame.timestamp}s`)
+      displayFrameOnCanvas(canvasRef.value, frame)
+    } catch (error) {
+      console.error('Failed to load frame:', error)
+      frameError.value = `Failed to load frame: ${error}`
+    } finally {
+      isLoadingFrame.value = false
+    }
+  },
+  { 
+    immediate: true,
+    flush: 'post' // Ensure DOM updates before running
+  }
+)
+
+const setViewMode = (mode: string) => {
   viewMode.value = mode
 }
 
@@ -22,18 +75,25 @@ const playbackRates = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
     <div class="panel-header">Preview</div>
     <div class="preview-content">
       <div class="preview-area" :class="viewMode">
-        <div class="preview-placeholder">
-          <div v-if="viewMode === 'original'" class="single-view">
-            <div class="video-placeholder">Original Video</div>
-          </div>
-          <div v-else-if="viewMode === 'side-by-side'" class="dual-view">
-            <div class="video-placeholder">Original</div>
-            <div class="video-placeholder">Processed</div>
-          </div>
-          <div v-else class="single-view">
-            <div class="video-placeholder">Processed Video</div>
+        <!-- Canvas for video preview -->
+        <canvas 
+          v-if="currentMediaId"
+          ref="canvasRef" 
+          class="video-canvas"
+        />
+        <div v-else class="preview-placeholder">
+          <div class="single-view">
+            <div class="video-placeholder">
+              {{ isLoadingFrame ? 'Loading frame...' : 'Import a video to preview' }}
+            </div>
           </div>
         </div>
+        <!-- Debug info overlay -->
+        <div v-if="currentMediaId" class="debug-info">
+          Playhead: {{ playheadPosition.toFixed(2) }}s
+          {{ isLoadingFrame ? '(loading...)' : '' }}
+        </div>
+        <div v-if="frameError" class="error-message">{{ frameError }}</div>
       </div>
       <div class="preview-controls">
         <div class="view-mode-toggle">
@@ -168,6 +228,40 @@ const playbackRates = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
   color: #666;
   font-size: 18px;
   font-weight: 500;
+}
+
+.video-canvas {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  background: #000;
+  display: block;
+}
+
+.debug-info {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #4a90e2;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: 'Courier New', monospace;
+  z-index: 100;
+}
+
+.error-message {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  right: 10px;
+  background: rgba(255, 68, 68, 0.9);
+  color: white;
+  padding: 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  z-index: 100;
 }
 
 .preview-controls {

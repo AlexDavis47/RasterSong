@@ -5,8 +5,10 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
+use super::audio_samples::AudioSamples;
 use super::media_file::MediaFile;
 use super::media_id::MediaId;
+use super::video_frame::VideoFrame;
 
 /// Internal MediaStore implementation
 struct MediaStore {
@@ -109,38 +111,61 @@ pub fn remove_media(id: &MediaId) -> bool {
 
 /// Decode frames from a media file
 ///
-/// # Arguments
-/// * `id` - MediaId of the file
-/// * `start_time` - Start time in seconds
-/// * `end_time` - End time in seconds
-pub fn decode_frames(
-    id: &MediaId,
-    start_time: f64,
-    end_time: f64,
-) -> Result<Vec<ffmpeg_next::frame::Video>> {
-    let mut store = get_store().lock().unwrap();
-    let media_file = store
-        .get_media_mut(id)
-        .context("MediaId not found in store")?;
-    media_file.decode_frames(start_time, end_time)
-}
-
-/// Decode audio samples from a media file
+/// Returns VideoFrame wrappers containing RGBA pixel data and metadata.
 ///
 /// # Arguments
 /// * `id` - MediaId of the file
 /// * `start_time` - Start time in seconds
 /// * `end_time` - End time in seconds
-pub fn decode_samples(
-    id: &MediaId,
-    start_time: f64,
-    end_time: f64,
-) -> Result<ffmpeg_next::frame::Audio> {
+///
+/// # Returns
+/// Vector of VideoFrame objects with RGBA pixel data
+pub fn decode_frames(id: &MediaId, start_time: f64, end_time: f64) -> Result<Vec<VideoFrame>> {
     let mut store = get_store().lock().unwrap();
     let media_file = store
         .get_media_mut(id)
         .context("MediaId not found in store")?;
-    media_file.decode_samples(start_time, end_time)
+
+    // Decode FFmpeg frames
+    let ffmpeg_frames = media_file.decode_frames(start_time, end_time)?;
+
+    // Convert to VideoFrame wrappers
+    let video_info = media_file.video_info().context("No video stream")?;
+    let fps = video_info.2;
+    let frame_duration = 1.0 / fps;
+
+    let mut frames = Vec::new();
+    for (i, ffmpeg_frame) in ffmpeg_frames.iter().enumerate() {
+        let timestamp = start_time + (i as f64 * frame_duration);
+        let frame = VideoFrame::from_ffmpeg(ffmpeg_frame, timestamp)?;
+        frames.push(frame);
+    }
+
+    Ok(frames)
+}
+
+/// Decode audio samples from a media file
+///
+/// Returns AudioSamples wrapper containing f32 interleaved audio data.
+///
+/// # Arguments
+/// * `id` - MediaId of the file
+/// * `start_time` - Start time in seconds
+/// * `end_time` - End time in seconds
+///
+/// # Returns
+/// AudioSamples object with f32 interleaved sample data
+pub fn decode_samples(id: &MediaId, start_time: f64, end_time: f64) -> Result<AudioSamples> {
+    let mut store = get_store().lock().unwrap();
+    let media_file = store
+        .get_media_mut(id)
+        .context("MediaId not found in store")?;
+
+    // Decode FFmpeg audio frame
+    let ffmpeg_audio = media_file.decode_samples(start_time, end_time)?;
+
+    // Convert to AudioSamples wrapper
+    AudioSamples::from_ffmpeg(&ffmpeg_audio, start_time, end_time)
 }
 
 /// Get metadata for a media file
@@ -175,6 +200,44 @@ pub fn get_audio_info(id: &MediaId) -> Option<(u32, u16)> {
     store
         .get_media(id)
         .and_then(|media_file| media_file.audio_info())
+}
+
+/// Get the frame boundaries for a given timestamp
+///
+/// Given a timestamp, returns the start and end time of the video frame
+/// that contains that timestamp. This is useful for syncing audio samples
+/// with video frames.
+///
+/// # Arguments
+/// * `id` - MediaId of the media file
+/// * `timestamp` - Time in seconds
+///
+/// # Returns
+/// Some((frame_start, frame_end)) if the media has video, None otherwise
+///
+/// # Example
+/// ```ignore
+/// let (start, end) = get_frame_boundaries(&media_id, 1.5).unwrap();
+/// // For 30fps video: start = 1.5, end = 1.533...
+/// ```
+pub fn get_frame_boundaries(id: &MediaId, timestamp: f64) -> Option<(f64, f64)> {
+    let store = get_store().lock().unwrap();
+    let media_file = store.get_media(id)?;
+
+    // Only works for media with video
+    let (_, _, fps) = media_file.video_info()?;
+
+    // Calculate frame duration
+    let frame_duration = 1.0 / fps;
+
+    // Find which frame this timestamp falls into
+    let frame_number = (timestamp / frame_duration).floor();
+
+    // Calculate frame boundaries
+    let frame_start = frame_number * frame_duration;
+    let frame_end = (frame_number + 1.0) * frame_duration;
+
+    Some((frame_start, frame_end))
 }
 
 // ============================================

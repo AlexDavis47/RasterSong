@@ -7,6 +7,10 @@ import { removeMultipleMedia } from '../../utils/media'
 
 const { videoTracks, audioTracks, removeVideoTrack, removeAudioTrack } = useTimelineStore()
 
+const emit = defineEmits<{
+  'update:playhead': [time: number]
+}>()
+
 const pixelsPerSecond = ref(20)
 const minZoom = 0.1
 const maxZoom = 1000
@@ -188,6 +192,7 @@ const handleClipStartUpdate = (data: { trackId: number; clipId: number; newStart
 
 const handlePlayheadUpdate = (time: number) => {
   playheadPosition.value = time
+  emit('update:playhead', time)
 }
 
 const handleSelectionUpdate = (data: { start: number | null; end: number | null }) => {

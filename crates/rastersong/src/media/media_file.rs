@@ -24,11 +24,11 @@ pub struct MediaFile {
 
 impl MediaFile {
     /// Open a media file and create decoders eagerly
-    /// 
+    ///
     /// # Arguments
     /// * `path` - Path to the media file
     /// * `id` - MediaId to assign to this file
-    /// 
+    ///
     /// Opens the file, probes for streams, and creates decoders for any
     /// video or audio streams found. All metadata is extracted upfront.
     pub fn open(path: PathBuf, id: MediaId) -> Result<Self> {
@@ -57,11 +57,11 @@ impl MediaFile {
     }
 
     /// Decode video frames between start and end timestamps
-    /// 
+    ///
     /// # Arguments
     /// * `start_time` - Start time in seconds
     /// * `end_time` - End time in seconds
-    /// 
+    ///
     /// # Returns
     /// Vector of decoded video frames
     pub fn decode_frames(
@@ -74,15 +74,66 @@ impl MediaFile {
             .as_mut()
             .context("No video decoder available")?;
 
-        let mut frames = Vec::new();
         let fps = video_decoder.fps();
         let frame_duration = 1.0 / fps;
 
-        // Decode frames at each time step
+        // OPTIMIZATION: Seek ONCE at the start, then decode sequentially
+        // This avoids multiple seeks which would each start from the beginning
+        let stream = self
+            .format_context
+            .stream(video_decoder.video_stream_index())
+            .context("Video stream not found")?;
+
+        let time_base = f64::from(stream.time_base());
+        let seek_target = (start_time / time_base) as i64;
+
+        // Seek backwards from start_time to find nearest keyframe
+        let max_gop_size = (10.0 / time_base) as i64; // 10 seconds in time base units
+        let seek_start = (seek_target - max_gop_size).max(0);
+
+        self.format_context
+            .seek(seek_target, seek_start..seek_target)
+            .context("Failed to seek to start time")?;
+
+        video_decoder.flush();
+
+        let mut frames = Vec::new();
         let mut current_time = start_time;
+
+        // Decode frames sequentially without re-seeking
         while current_time < end_time {
-            let frame = video_decoder.decode_frame(&mut self.format_context, current_time)?;
-            frames.push(frame);
+            // Read packets and decode until we get the frame at current_time
+            let mut decoded_frame = None;
+
+            for (stream, packet) in self.format_context.packets() {
+                if stream.index() == video_decoder.video_stream_index() {
+                    video_decoder.send_packet(&packet)?;
+
+                    let mut frame = ffmpeg::frame::Video::empty();
+                    while video_decoder.receive_frame(&mut frame).is_ok() {
+                        let pts = frame.pts().unwrap_or(0);
+                        let frame_time = pts as f64 * time_base;
+
+                        // If this frame is at or after our target time, use it
+                        if frame_time >= current_time - frame_duration * 0.5 {
+                            decoded_frame = Some(frame);
+                            break;
+                        }
+                    }
+
+                    if decoded_frame.is_some() {
+                        break;
+                    }
+                }
+            }
+
+            if let Some(frame) = decoded_frame {
+                frames.push(frame);
+            } else {
+                // If we didn't get a frame, we've probably reached the end
+                break;
+            }
+
             current_time += frame_duration;
         }
 
@@ -90,11 +141,11 @@ impl MediaFile {
     }
 
     /// Decode audio samples between start and end timestamps
-    /// 
+    ///
     /// # Arguments
     /// * `start_time` - Start time in seconds
     /// * `end_time` - End time in seconds
-    /// 
+    ///
     /// # Returns
     /// Audio frame containing decoded samples
     pub fn decode_samples(
@@ -144,16 +195,15 @@ impl MediaFile {
 
     /// Get video metadata (width, height, fps) if video stream exists
     pub fn video_info(&self) -> Option<(u32, u32, f64)> {
-        self.video_decoder.as_ref().map(|decoder| {
-            (decoder.width(), decoder.height(), decoder.fps())
-        })
+        self.video_decoder
+            .as_ref()
+            .map(|decoder| (decoder.width(), decoder.height(), decoder.fps()))
     }
 
     /// Get audio metadata (sample_rate, channels) if audio stream exists
     pub fn audio_info(&self) -> Option<(u32, u16)> {
-        self.audio_decoder.as_ref().map(|decoder| {
-            (decoder.sample_rate(), decoder.channels())
-        })
+        self.audio_decoder
+            .as_ref()
+            .map(|decoder| (decoder.sample_rate(), decoder.channels()))
     }
 }
-

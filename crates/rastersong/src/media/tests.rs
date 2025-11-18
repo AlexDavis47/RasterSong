@@ -87,12 +87,32 @@ fn test_decode_frame() {
         // Load the video
         let media_id = load_media(test_video).unwrap();
 
-        // Try to decode frames
+        // Try to decode frames - now returns VideoFrame wrappers
         let result = decode_frames(&media_id, 0.0, 0.1);
 
         match result {
             Ok(frames) => {
                 assert!(!frames.is_empty(), "Should decode at least one frame");
+
+                // Test the VideoFrame wrapper functionality
+                let first_frame = &frames[0];
+                let (width, height) = first_frame.dimensions();
+                println!(
+                    "Decoded frame: {}x{} at {:.3}s",
+                    width,
+                    height,
+                    first_frame.timestamp()
+                );
+                println!("Frame data size: {} bytes", first_frame.data_size());
+
+                // Verify we can convert to base64
+                let base64 = first_frame.to_base64();
+                assert!(!base64.is_empty(), "Base64 encoding should not be empty");
+
+                // Verify serializable conversion
+                let serializable = first_frame.to_serializable();
+                assert_eq!(serializable.width, width);
+                assert_eq!(serializable.height, height);
             }
             Err(e) => {
                 println!("Failed to decode frames: {}", e);
@@ -117,16 +137,264 @@ fn test_decode_random_access_frames() {
         // Load the video
         let media_id = load_media(test_video).unwrap();
 
-        // Try to decode frames from a random access point
-        let result = decode_frames(&media_id, 5.0, 15.1);
+        // Get video info to know the duration
+        let video_info = get_video_info(&media_id);
+        let (width, height, fps) = video_info.expect("Should have video info");
+        let duration = get_media_info(&media_id)
+            .map(|(_, _, d)| d)
+            .unwrap_or(120.0);
 
-        match result {
-            Ok(frames) => {
-                assert!(!frames.is_empty(), "Should decode at least one frame");
+        println!(
+            "Video: {}x{} @ {} fps, duration: {:.2}s",
+            width, height, fps, duration
+        );
+
+        // Generate 15 random timestamps between 0 and 120 seconds
+        use std::collections::HashSet;
+        let mut timestamps = Vec::new();
+        let mut seen = HashSet::new();
+
+        // Use a simple seeded approach for reproducibility
+        let mut seed: u64 = 42;
+        for _ in 0..15 {
+            // Simple LCG for pseudo-randomness
+            seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+            let random_float = (seed % 1000000) as f64 / 1000000.0;
+            let timestamp = random_float * 120.0;
+
+            // Ensure we don't request beyond video duration
+            let timestamp = timestamp.min(duration - 0.1);
+
+            // Avoid duplicates
+            let rounded = (timestamp * 1000.0) as u64;
+            if seen.insert(rounded) {
+                timestamps.push(timestamp);
             }
-            Err(e) => {
-                println!("Failed to decode frames: {}", e);
+        }
+
+        // Sort for easier debugging
+        timestamps.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        println!("\nTesting {} random access points:", timestamps.len());
+        for (i, &ts) in timestamps.iter().enumerate() {
+            println!("  {}. Requesting frame at {:.3}s", i + 1, ts);
+        }
+
+        // Decode frames at each random timestamp
+        let mut decoded_count = 0;
+        let mut failed_count = 0;
+        let mut total_decode_time = std::time::Duration::ZERO;
+        let mut decode_times = Vec::new();
+
+        for (i, &requested_timestamp) in timestamps.iter().enumerate() {
+            // Decode a small window around the requested timestamp
+            let frame_duration = 1.0 / fps;
+            let decode_start = (requested_timestamp - frame_duration).max(0.0);
+            let decode_end = decode_start + frame_duration;
+
+            // Time the decode operation
+            let start_time = std::time::Instant::now();
+            let result = decode_frames(&media_id, decode_start, decode_end);
+            let decode_duration = start_time.elapsed();
+            total_decode_time += decode_duration;
+            decode_times.push((requested_timestamp, decode_duration));
+
+            match result {
+                Ok(frames) => {
+                    if frames.is_empty() {
+                        println!(
+                            "  ❌ Frame {}: No frames decoded at {:.3}s",
+                            i + 1,
+                            requested_timestamp
+                        );
+                        failed_count += 1;
+                        continue;
+                    }
+
+                    // Find the frame closest to requested timestamp
+                    let closest_frame = frames
+                        .iter()
+                        .min_by(|a, b| {
+                            let a_diff = (a.timestamp() - requested_timestamp).abs();
+                            let b_diff = (b.timestamp() - requested_timestamp).abs();
+                            a_diff.partial_cmp(&b_diff).unwrap()
+                        })
+                        .unwrap();
+
+                    let actual_timestamp = closest_frame.timestamp();
+                    let time_diff = (actual_timestamp - requested_timestamp).abs();
+
+                    // Allow up to 1 frame duration of difference
+                    if time_diff <= frame_duration * 1.5 {
+                        println!(
+                            "  ✅ Frame {}: Requested {:.3}s, got {:.3}s (diff: {:.3}s) - {}x{} - Decode time: {:.2}ms - Number of frames decoded: {}",
+                            i + 1,
+                            requested_timestamp,
+                            actual_timestamp,
+                            time_diff,
+                            closest_frame.width(),
+                            closest_frame.height(),
+                            decode_duration.as_secs_f64() * 1000.0,
+                            frames.len()
+                        );
+                        decoded_count += 1;
+                    } else {
+                        println!(
+                            "  ⚠️  Frame {}: Requested {:.3}s, got {:.3}s (diff: {:.3}s) - TOO FAR - Decode time: {:.2}ms",
+                            i + 1,
+                            requested_timestamp,
+                            actual_timestamp,
+                            time_diff,
+                            decode_duration.as_secs_f64() * 1000.0
+                        );
+                        failed_count += 1;
+                    }
+                }
+                Err(e) => {
+                    println!(
+                        "  ❌ Frame {}: Failed to decode at {:.3}s - {} - Decode time: {:.2}ms",
+                        i + 1,
+                        requested_timestamp,
+                        e,
+                        decode_duration.as_secs_f64() * 1000.0
+                    );
+                    failed_count += 1;
+                }
             }
+        }
+
+        // Calculate timing statistics
+        let avg_decode_time = total_decode_time.as_secs_f64() / timestamps.len() as f64;
+        let min_decode_time = decode_times
+            .iter()
+            .map(|(_, d)| d.as_secs_f64() * 1000.0)
+            .fold(f64::INFINITY, f64::min);
+        let max_decode_time = decode_times
+            .iter()
+            .map(|(_, d)| d.as_secs_f64() * 1000.0)
+            .fold(0.0, f64::max);
+
+        println!(
+            "\nResults: {} decoded successfully, {} failed out of {} total",
+            decoded_count,
+            failed_count,
+            timestamps.len()
+        );
+        println!(
+            "Timing Statistics:\n  Total: {:.2}ms\n  Average: {:.2}ms\n  Min: {:.2}ms\n  Max: {:.2}ms",
+            total_decode_time.as_secs_f64() * 1000.0,
+            avg_decode_time * 1000.0,
+            min_decode_time,
+            max_decode_time
+        );
+
+        // Show timing breakdown by video position
+        println!("\nTiming by video position:");
+        println!("  Early (0-40s):");
+        let early_times: Vec<_> = decode_times
+            .iter()
+            .filter(|(ts, _)| *ts < 40.0)
+            .map(|(_, d)| d.as_secs_f64() * 1000.0)
+            .collect();
+        if !early_times.is_empty() {
+            let early_avg = early_times.iter().sum::<f64>() / early_times.len() as f64;
+            println!("    Count: {}, Avg: {:.2}ms", early_times.len(), early_avg);
+        }
+
+        println!("  Mid (40-80s):");
+        let mid_times: Vec<_> = decode_times
+            .iter()
+            .filter(|(ts, _)| *ts >= 40.0 && *ts < 80.0)
+            .map(|(_, d)| d.as_secs_f64() * 1000.0)
+            .collect();
+        if !mid_times.is_empty() {
+            let mid_avg = mid_times.iter().sum::<f64>() / mid_times.len() as f64;
+            println!("    Count: {}, Avg: {:.2}ms", mid_times.len(), mid_avg);
+        }
+
+        println!("  Late (80-120s):");
+        let late_times: Vec<_> = decode_times
+            .iter()
+            .filter(|(ts, _)| *ts >= 80.0)
+            .map(|(_, d)| d.as_secs_f64() * 1000.0)
+            .collect();
+        if !late_times.is_empty() {
+            let late_avg = late_times.iter().sum::<f64>() / late_times.len() as f64;
+            println!("    Count: {}, Avg: {:.2}ms", late_times.len(), late_avg);
+        }
+
+        // All frames should decode successfully
+        assert_eq!(
+            failed_count,
+            0,
+            "All random access frames should decode successfully, but {} failed out of {}.",
+            failed_count,
+            timestamps.len()
+        );
+
+        // Clean up
+        remove_media(&media_id);
+    } else {
+        println!("Skipping test - no test video file at {}", test_video);
+    }
+}
+
+#[test]
+fn test_get_frame_boundaries() {
+    // Initialize FFmpeg first
+    init().unwrap();
+
+    let test_video = "C:\\Users\\boobo\\RustroverProjects\\RasterSong\\test_assets\\test.mp4";
+
+    if std::path::Path::new(test_video).exists() {
+        // Load the video
+        let media_id = load_media(test_video).unwrap();
+
+        // Get video info to know the FPS
+        let video_info = get_video_info(&media_id);
+        if let Some((width, height, fps)) = video_info {
+            println!("Testing with video: {}x{} @ {} fps", width, height, fps);
+
+            // Test various timestamps
+            let test_cases = vec![
+                0.0,   // First frame
+                0.5,   // Mid-video
+                1.0,   // 1 second in
+                1.234, // Arbitrary timestamp
+            ];
+
+            for timestamp in test_cases {
+                let result = get_frame_boundaries(&media_id, timestamp);
+                assert!(result.is_some(), "Should get frame boundaries");
+
+                let (start, end) = result.unwrap();
+                println!(
+                    "Timestamp {:.3}s -> Frame [{:.6}s, {:.6}s)",
+                    timestamp, start, end
+                );
+
+                // Verify the frame boundaries are correct
+                let frame_duration = 1.0 / fps;
+                assert!(start <= timestamp, "Frame start should be <= timestamp");
+                assert!(
+                    end > timestamp,
+                    "Frame end should be > timestamp (unless at exact boundary)"
+                );
+                assert!(
+                    (end - start - frame_duration).abs() < 0.0001,
+                    "Frame duration should match 1/fps"
+                );
+
+                // Verify start is at a frame boundary
+                let frame_number = (start * fps).round();
+                let expected_start = frame_number / fps;
+                assert!(
+                    (start - expected_start).abs() < 0.0001,
+                    "Frame start should be at a frame boundary"
+                );
+            }
+        } else {
+            println!("No video stream found in test file");
         }
 
         // Clean up

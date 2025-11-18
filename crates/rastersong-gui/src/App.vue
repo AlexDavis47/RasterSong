@@ -1,20 +1,29 @@
-<script setup>
+<script setup lang="ts">
+import { ref } from 'vue'
 import MenuBar from './components/MenuBar.vue'
 import PreviewPanel from './components/PreviewPanel.vue'
 import TimelinePanel from './components/timeline/TimelinePanel.vue'
 import NodeGraphPanel from './components/NodeGraphPanel.vue'
 import PropertiesPanel from './components/PropertiesPanel.vue'
+
+// Track playhead position globally (start at 5s to match TimelinePanel)
+const playheadPosition = ref(5)
+
+const handlePlayheadUpdate = (time: number) => {
+  console.log('App received playhead update:', time)
+  playheadPosition.value = time
+}
 </script>
 
 <template>
   <div class="app-container">
     <MenuBar />
-    <PreviewPanel />
+    <PreviewPanel :playhead-position="playheadPosition" />
     <div class="node-graph-wrapper">
       <NodeGraphPanel />
       <PropertiesPanel />
     </div>
-    <TimelinePanel />
+    <TimelinePanel @update:playhead="handlePlayheadUpdate" />
   </div>
 </template>
 
