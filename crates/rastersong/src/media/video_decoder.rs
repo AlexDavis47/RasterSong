@@ -293,7 +293,7 @@ impl VideoDecoder {
 
         // Try byte-based seeking first if we have the offset (fastest, but not supported by all containers)
         let seek_successful = if let Some(byte_offset) = keyframe.file_offset {
-            self.seek_to_byte_offset(format_ctx, byte_offset).is_ok()
+            self.seek_to_byte_offset(format_ctx, byte_offset).is_ok() // TODO: This is failing on mp4, should be functional
         } else {
             false
         };

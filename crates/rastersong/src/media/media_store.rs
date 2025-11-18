@@ -4,7 +4,8 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
-
+use std::time::SystemTime;
+use uuid::Timestamp;
 use super::audio_samples::AudioSamples;
 use super::media_file::MediaFile;
 use super::media_id::MediaId;
@@ -121,6 +122,7 @@ pub fn remove_media(id: &MediaId) -> bool {
 /// # Returns
 /// Vector of VideoFrame objects with RGBA pixel data
 pub fn decode_frames(id: &MediaId, start_time: f64, end_time: f64) -> Result<Vec<VideoFrame>> {
+    let start_timestamp = SystemTime::now();
     let mut store = get_store().lock().unwrap();
     let media_file = store
         .get_media_mut(id)
@@ -128,7 +130,9 @@ pub fn decode_frames(id: &MediaId, start_time: f64, end_time: f64) -> Result<Vec
 
     // Decode frames - already returns VideoFrame objects (RGBA format)
     // Frames are automatically cached in LRU cache
-    media_file.decode_frames(start_time, end_time)
+    let frames = media_file.decode_frames(start_time, end_time);
+    println!("Decoded frames in {:?}", SystemTime::now().duration_since(start_timestamp).unwrap());
+    return frames;
 }
 
 /// Decode audio samples from a media file

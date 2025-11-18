@@ -46,7 +46,7 @@ impl FrameCache {
 
     /// Create a default frame cache (100 GOPs, 500MB)
     pub fn default_size() -> Self {
-        Self::new(100, 500)
+        Self::new(500, 5000)
     }
 
     /// Get a frame from the cache
