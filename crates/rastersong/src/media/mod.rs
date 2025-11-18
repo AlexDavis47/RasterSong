@@ -6,6 +6,8 @@
 pub mod audio_decoder;
 pub mod audio_samples;
 pub mod ffmpeg;
+pub mod frame_cache;
+pub mod frame_metadata;
 pub mod media_file;
 pub mod media_id;
 pub mod media_store;

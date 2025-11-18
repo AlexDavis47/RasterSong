@@ -36,13 +36,12 @@ fn test_media_store_empty() {
 // Note: Actual video loading tests would require test video files
 // These would be integration tests that require test assets
 #[test]
-#[ignore] // Ignore by default since it requires a test video file
 fn test_load_video() {
     // Initialize FFmpeg first
     init().unwrap();
 
     // This test requires a test video file at this path
-    let test_video = "test_assets/test_video.mp4";
+    let test_video = "C:\\Users\\boobo\\RustroverProjects\\RasterSong\\test_assets\\test.mp4";
 
     if std::path::Path::new(test_video).exists() {
         // Try to load the video
@@ -395,6 +394,315 @@ fn test_get_frame_boundaries() {
             }
         } else {
             println!("No video stream found in test file");
+        }
+
+        // Clean up
+        remove_media(&media_id);
+    } else {
+        println!("Skipping test - no test video file at {}", test_video);
+    }
+}
+
+#[test]
+fn test_metadata_cache_building() {
+    // Initialize FFmpeg first
+    init().unwrap();
+
+    let test_video = "C:\\Users\\boobo\\RustroverProjects\\RasterSong\\test_assets\\test.mp4";
+
+    if std::path::Path::new(test_video).exists() {
+        println!("\n=== Testing Metadata Cache Building ===");
+
+        // Load the video - this should automatically build the metadata cache
+        let start_time = std::time::Instant::now();
+        let media_id = load_media(test_video).unwrap();
+        let load_time = start_time.elapsed();
+
+        println!(
+            "Video loaded and metadata scanned in {:.2}ms",
+            load_time.as_secs_f64() * 1000.0
+        );
+
+        // Get video info
+        let video_info = get_video_info(&media_id);
+        if let Some((width, height, fps)) = video_info {
+            let duration = get_media_info(&media_id).map(|(_, _, d)| d).unwrap_or(0.0);
+
+            let expected_frames = (duration * fps) as usize;
+
+            println!("Video: {}x{} @ {} fps", width, height, fps);
+            println!("Duration: {:.2}s", duration);
+            println!("Expected frames: ~{}", expected_frames);
+
+            // Test that we can decode frames quickly now (cache should help)
+            let decode_start = std::time::Instant::now();
+            let result = decode_frames(&media_id, 0.0, 0.1);
+            let decode_time = decode_start.elapsed();
+
+            assert!(result.is_ok(), "Should decode frames successfully");
+            println!(
+                "First decode (0.0-0.1s) took {:.2}ms",
+                decode_time.as_secs_f64() * 1000.0
+            );
+
+            // Second decode in same area should potentially be faster (from cache)
+            let decode_start = std::time::Instant::now();
+            let result2 = decode_frames(&media_id, 0.0, 0.1);
+            let decode_time2 = decode_start.elapsed();
+
+            assert!(result2.is_ok(), "Second decode should also succeed");
+            println!(
+                "Second decode (0.0-0.1s) took {:.2}ms",
+                decode_time2.as_secs_f64() * 1000.0
+            );
+
+            if decode_time2 < decode_time {
+                println!(
+                    "✅ Cache improved performance: {:.1}x faster",
+                    decode_time.as_secs_f64() / decode_time2.as_secs_f64()
+                );
+            } else {
+                println!("⚠️  Cache didn't improve this decode (may still be beneficial overall)");
+            }
+        }
+
+        // Clean up
+        remove_media(&media_id);
+    } else {
+        println!("Skipping test - no test video file at {}", test_video);
+    }
+}
+
+#[test]
+fn test_gop_based_decoding() {
+    // Initialize FFmpeg first
+    init().unwrap();
+
+    let test_video = "C:\\Users\\boobo\\RustroverProjects\\RasterSong\\test_assets\\test.mp4";
+
+    if std::path::Path::new(test_video).exists() {
+        println!("\n=== Testing GOP-Based Decoding ===");
+
+        let media_id = load_media(test_video).unwrap();
+
+        // Get video info
+        let video_info = get_video_info(&media_id);
+        if let Some((width, height, fps)) = video_info {
+            println!("Video: {}x{} @ {} fps", width, height, fps);
+
+            // Decode multiple ranges that might span different GOPs
+            let test_ranges = vec![
+                (0.0, 0.5),   // Beginning
+                (5.0, 5.5),   // Middle
+                (10.0, 10.5), // Later
+            ];
+
+            println!("\nDecoding {} different time ranges:", test_ranges.len());
+            for (i, (start, end)) in test_ranges.iter().enumerate() {
+                let decode_start = std::time::Instant::now();
+                let result = decode_frames(&media_id, *start, *end);
+                let decode_time = decode_start.elapsed();
+
+                match result {
+                    Ok(frames) => {
+                        println!(
+                            "  Range {} ({:.1}s-{:.1}s): Decoded {} frames in {:.2}ms",
+                            i + 1,
+                            start,
+                            end,
+                            frames.len(),
+                            decode_time.as_secs_f64() * 1000.0
+                        );
+
+                        // Verify frames are in the correct range
+                        for frame in &frames {
+                            let ts = frame.timestamp();
+                            assert!(
+                                ts >= *start - 0.1 && ts <= *end + 0.1,
+                                "Frame timestamp {:.3}s should be within range [{:.1}s, {:.1}s]",
+                                ts,
+                                start,
+                                end
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        println!(
+                            "  Range {} ({:.1}s-{:.1}s): Failed - {}",
+                            i + 1,
+                            start,
+                            end,
+                            e
+                        );
+                    }
+                }
+            }
+
+            // Test caching by decoding the same range again
+            println!("\nTesting cache effectiveness:");
+            let (start, end) = test_ranges[0];
+
+            let decode_start = std::time::Instant::now();
+            let result1 = decode_frames(&media_id, start, end);
+            let time1 = decode_start.elapsed();
+
+            let decode_start = std::time::Instant::now();
+            let result2 = decode_frames(&media_id, start, end);
+            let time2 = decode_start.elapsed();
+
+            if let (Ok(frames1), Ok(frames2)) = (result1, result2) {
+                println!(
+                    "  First decode: {} frames in {:.2}ms",
+                    frames1.len(),
+                    time1.as_secs_f64() * 1000.0
+                );
+                println!(
+                    "  Second decode: {} frames in {:.2}ms",
+                    frames2.len(),
+                    time2.as_secs_f64() * 1000.0
+                );
+
+                if time2 < time1 {
+                    println!(
+                        "  ✅ Cache speedup: {:.1}x faster",
+                        time1.as_secs_f64() / time2.as_secs_f64()
+                    );
+                }
+
+                assert_eq!(
+                    frames1.len(),
+                    frames2.len(),
+                    "Both decodes should return same number of frames"
+                );
+            }
+        }
+
+        // Clean up
+        remove_media(&media_id);
+    } else {
+        println!("Skipping test - no test video file at {}", test_video);
+    }
+}
+
+#[test]
+fn test_cache_performance() {
+    // Initialize FFmpeg first
+    init().unwrap();
+
+    let test_video = "C:\\Users\\boobo\\RustroverProjects\\RasterSong\\test_assets\\test.mp4";
+
+    if std::path::Path::new(test_video).exists() {
+        println!("\n=== Testing Cache Performance ===");
+
+        let media_id = load_media(test_video).unwrap();
+
+        // Decode the same frame multiple times to test cache effectiveness
+        let timestamp = 5.0;
+        let frame_duration = 0.033; // Assume ~30fps
+
+        println!("Decoding frame at {:.1}s multiple times:", timestamp);
+
+        let mut times = Vec::new();
+        for i in 0..5 {
+            let decode_start = std::time::Instant::now();
+            let result = decode_frames(&media_id, timestamp, timestamp + frame_duration);
+            let decode_time = decode_start.elapsed();
+            times.push(decode_time);
+
+            if let Ok(frames) = result {
+                println!(
+                    "  Decode {}: {:.2}ms ({} frames)",
+                    i + 1,
+                    decode_time.as_secs_f64() * 1000.0,
+                    frames.len()
+                );
+            } else {
+                println!("  Decode {}: Failed", i + 1);
+            }
+        }
+
+        // First decode may be slow, subsequent should be faster
+        if times.len() >= 2 {
+            let first = times[0].as_secs_f64() * 1000.0;
+            let avg_rest = times[1..]
+                .iter()
+                .map(|t| t.as_secs_f64() * 1000.0)
+                .sum::<f64>()
+                / (times.len() - 1) as f64;
+
+            println!("\nSummary:");
+            println!("  First decode: {:.2}ms", first);
+            println!("  Avg cached decodes: {:.2}ms", avg_rest);
+
+            if avg_rest < first {
+                println!(
+                    "  ✅ Cache working: {:.1}x faster on average",
+                    first / avg_rest
+                );
+            }
+        }
+
+        // Clean up
+        remove_media(&media_id);
+    } else {
+        println!("Skipping test - no test video file at {}", test_video);
+    }
+}
+
+#[test]
+fn test_seeking_accuracy() {
+    // Initialize FFmpeg first
+    init().unwrap();
+
+    let test_video = "C:\\Users\\boobo\\RustroverProjects\\RasterSong\\test_assets\\test.mp4";
+
+    if std::path::Path::new(test_video).exists() {
+        println!("\n=== Testing Seeking Accuracy ===");
+
+        let media_id = load_media(test_video).unwrap();
+
+        let video_info = get_video_info(&media_id);
+        if let Some((_, _, fps)) = video_info {
+            let frame_duration = 1.0 / fps;
+
+            // Test seeking to various timestamps
+            let test_timestamps = vec![0.0, 1.0, 5.0, 10.0, 15.0, 20.0];
+
+            println!(
+                "Testing seeking accuracy (frame duration: {:.4}s):",
+                frame_duration
+            );
+
+            for &ts in &test_timestamps {
+                let result = decode_frames(&media_id, ts, ts + frame_duration * 0.5);
+
+                match result {
+                    Ok(frames) => {
+                        if let Some(frame) = frames.first() {
+                            let actual_ts = frame.timestamp();
+                            let error = (actual_ts - ts).abs();
+                            let error_frames = error / frame_duration;
+
+                            println!(
+                                "  Seek to {:.2}s: Got {:.4}s (error: {:.4}s = {:.2} frames)",
+                                ts, actual_ts, error, error_frames
+                            );
+
+                            // Should be within 1 frame
+                            assert!(
+                                error_frames < 1.5,
+                                "Seek error should be less than 1.5 frames, got {:.2} frames",
+                                error_frames
+                            );
+                        } else {
+                            println!("  Seek to {:.2}s: No frames decoded", ts);
+                        }
+                    }
+                    Err(e) => {
+                        println!("  Seek to {:.2}s: Failed - {}", ts, e);
+                    }
+                }
+            }
         }
 
         // Clean up

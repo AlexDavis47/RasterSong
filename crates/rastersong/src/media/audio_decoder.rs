@@ -5,11 +5,25 @@ use ffmpeg::format::context::Input;
 use ffmpeg::media::Type;
 use ffmpeg_next as ffmpeg;
 
+/// Extension trait for FFmpeg Rational to convert to f64
+trait TimeBaseExt {
+    fn as_f64(&self) -> f64;
+}
+
+impl TimeBaseExt for ffmpeg::Rational {
+    fn as_f64(&self) -> f64 {
+        // FFmpeg Rational is a tuple struct (numerator, denominator)
+        self.0 as f64 / self.1 as f64
+    }
+}
+
 /// Audio decoder that owns the codec context for an audio stream
 pub struct AudioDecoder {
     /// Index of the audio stream in the format context
+    #[allow(dead_code)]
     audio_stream_index: usize,
     /// FFmpeg audio decoder
+    #[allow(dead_code)]
     decoder: ffmpeg::decoder::Audio,
     /// Sample rate in Hz
     sample_rate: u32,
@@ -49,7 +63,7 @@ impl AudioDecoder {
         // Get duration - duration() returns i64 directly, not Option
         let duration_value = audio_stream.duration();
         let duration = if duration_value > 0 {
-            duration_value as f64 * f64::from(audio_stream.time_base())
+            duration_value as f64 * audio_stream.time_base().as_f64()
         } else {
             let format_duration = format_ctx.duration();
             if format_duration > 0 {

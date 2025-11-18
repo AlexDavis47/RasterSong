@@ -63,6 +63,16 @@ impl VideoFrame {
         let width = frame.width();
         let height = frame.height();
 
+        // Validate frame dimensions
+        if width == 0 || height == 0 {
+            anyhow::bail!("Invalid frame dimensions: {}x{}", width, height);
+        }
+
+        // Validate frame format
+        if frame.format() == Pixel::None {
+            anyhow::bail!("Frame has no pixel format");
+        }
+
         // Create a scaler to convert to RGBA
         let mut scaler = Context::get(
             frame.format(),

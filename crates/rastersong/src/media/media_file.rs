@@ -30,14 +30,21 @@ impl MediaFile {
     /// * `id` - MediaId to assign to this file
     ///
     /// Opens the file, probes for streams, and creates decoders for any
-    /// video or audio streams found. All metadata is extracted upfront.
+    /// video or audio streams found. All metadata is extracted upfront,
+    /// including scanning frame metadata for efficient seeking.
     pub fn open(path: PathBuf, id: MediaId) -> Result<Self> {
         // Open the format context
-        let format_context = ffmpeg::format::input(&path)
+        let mut format_context = ffmpeg::format::input(&path)
             .with_context(|| format!("Failed to open media file: {:?}", path))?;
 
-        // Try to create video decoder
-        let video_decoder = VideoDecoder::new(&format_context).ok();
+        // Try to create video decoder and scan metadata
+        let mut video_decoder = VideoDecoder::new(&format_context).ok();
+        if let Some(ref mut decoder) = video_decoder {
+            // Scan entire video to build metadata cache for efficient seeking
+            decoder
+                .scan_metadata(&mut format_context)
+                .with_context(|| format!("Failed to scan video metadata: {:?}", path))?;
+        }
 
         // Try to create audio decoder
         let audio_decoder = AudioDecoder::new(&format_context).ok();
@@ -63,81 +70,49 @@ impl MediaFile {
     /// * `end_time` - End time in seconds
     ///
     /// # Returns
-    /// Vector of decoded video frames
+    /// Vector of decoded VideoFrame objects (already in RGBA format)
     pub fn decode_frames(
         &mut self,
         start_time: f64,
         end_time: f64,
-    ) -> Result<Vec<ffmpeg::frame::Video>> {
+    ) -> Result<Vec<super::video_frame::VideoFrame>> {
+        use std::collections::HashSet;
+
         let video_decoder = self
             .video_decoder
             .as_mut()
             .context("No video decoder available")?;
 
-        let fps = video_decoder.fps();
-        let frame_duration = 1.0 / fps;
+        // Get GOPs needed for this time range
+        let gop_ids: HashSet<usize> = {
+            let metadata_cache = video_decoder.metadata_cache();
+            metadata_cache
+                .get_frames_in_range(start_time, end_time)
+                .into_iter()
+                .map(|f| f.gop_id)
+                .collect()
+        };
 
-        // OPTIMIZATION: Seek ONCE at the start, then decode sequentially
-        // This avoids multiple seeks which would each start from the beginning
-        let stream = self
-            .format_context
-            .stream(video_decoder.video_stream_index())
-            .context("Video stream not found")?;
-
-        let time_base = f64::from(stream.time_base());
-        let seek_target = (start_time / time_base) as i64;
-
-        // Seek backwards from start_time to find nearest keyframe
-        let max_gop_size = (10.0 / time_base) as i64; // 10 seconds in time base units
-        let seek_start = (seek_target - max_gop_size).max(0);
-
-        self.format_context
-            .seek(seek_target, seek_start..seek_target)
-            .context("Failed to seek to start time")?;
-
-        video_decoder.flush();
-
-        let mut frames = Vec::new();
-        let mut current_time = start_time;
-
-        // Decode frames sequentially without re-seeking
-        while current_time < end_time {
-            // Read packets and decode until we get the frame at current_time
-            let mut decoded_frame = None;
-
-            for (stream, packet) in self.format_context.packets() {
-                if stream.index() == video_decoder.video_stream_index() {
-                    video_decoder.send_packet(&packet)?;
-
-                    let mut frame = ffmpeg::frame::Video::empty();
-                    while video_decoder.receive_frame(&mut frame).is_ok() {
-                        let pts = frame.pts().unwrap_or(0);
-                        let frame_time = pts as f64 * time_base;
-
-                        // If this frame is at or after our target time, use it
-                        if frame_time >= current_time - frame_duration * 0.5 {
-                            decoded_frame = Some(frame);
-                            break;
-                        }
-                    }
-
-                    if decoded_frame.is_some() {
-                        break;
-                    }
-                }
-            }
-
-            if let Some(frame) = decoded_frame {
-                frames.push(frame);
-            } else {
-                // If we didn't get a frame, we've probably reached the end
-                break;
-            }
-
-            current_time += frame_duration;
+        if gop_ids.is_empty() {
+            return Ok(Vec::new());
         }
 
-        Ok(frames)
+        // Decode all needed GOPs (they will be cached automatically)
+        let mut all_frames = Vec::new();
+        for gop_id in gop_ids {
+            let gop_frames = video_decoder.decode_gop(&mut self.format_context, gop_id)?;
+            all_frames.extend(gop_frames);
+        }
+
+        // Filter frames to the requested time range and sort by timestamp
+        let mut result: Vec<_> = all_frames
+            .into_iter()
+            .filter(|f| f.timestamp() >= start_time && f.timestamp() < end_time)
+            .collect();
+
+        result.sort_by(|a, b| a.timestamp().partial_cmp(&b.timestamp()).unwrap());
+
+        Ok(result)
     }
 
     /// Decode audio samples between start and end timestamps

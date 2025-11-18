@@ -126,22 +126,9 @@ pub fn decode_frames(id: &MediaId, start_time: f64, end_time: f64) -> Result<Vec
         .get_media_mut(id)
         .context("MediaId not found in store")?;
 
-    // Decode FFmpeg frames
-    let ffmpeg_frames = media_file.decode_frames(start_time, end_time)?;
-
-    // Convert to VideoFrame wrappers
-    let video_info = media_file.video_info().context("No video stream")?;
-    let fps = video_info.2;
-    let frame_duration = 1.0 / fps;
-
-    let mut frames = Vec::new();
-    for (i, ffmpeg_frame) in ffmpeg_frames.iter().enumerate() {
-        let timestamp = start_time + (i as f64 * frame_duration);
-        let frame = VideoFrame::from_ffmpeg(ffmpeg_frame, timestamp)?;
-        frames.push(frame);
-    }
-
-    Ok(frames)
+    // Decode frames - already returns VideoFrame objects (RGBA format)
+    // Frames are automatically cached in LRU cache
+    media_file.decode_frames(start_time, end_time)
 }
 
 /// Decode audio samples from a media file
