@@ -18,12 +18,16 @@ const handlePlayheadUpdate = (time: number) => {
 <template>
   <div class="app-container">
     <MenuBar />
-    <PreviewPanel :playhead-position="playheadPosition" />
+    <PreviewPanel 
+      :playhead-position="playheadPosition" 
+      @update:playhead="handlePlayheadUpdate" />
     <div class="node-graph-wrapper">
       <NodeGraphPanel />
       <PropertiesPanel />
     </div>
-    <TimelinePanel @update:playhead="handlePlayheadUpdate" />
+    <TimelinePanel 
+      :playhead-position="playheadPosition"
+      @update:playhead="handlePlayheadUpdate" />
   </div>
 </template>
 

@@ -1,9 +1,13 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import TimelineTrack from './TimelineTrack.vue'
 import TimelineControlTrack from './TimelineControlTrack.vue'
 import { useTimelineStore } from '../../composables/useTimelineStore'
 import { removeMultipleMedia } from '../../utils/media'
+
+const props = defineProps<{
+  playheadPosition: number
+}>()
 
 const { videoTracks, audioTracks, removeVideoTrack, removeAudioTrack } = useTimelineStore()
 
@@ -16,7 +20,16 @@ const minZoom = 0.1
 const maxZoom = 1000
 const zoomStep = 1
 
-const playheadPosition = ref(5) // seconds
+// Local playhead position for internal use (synced with prop)
+const playheadPosition = ref(props.playheadPosition)
+
+// Sync local playhead with prop (for external updates like playback)
+watch(() => props.playheadPosition, (newPosition) => {
+  // Only update if different to avoid unnecessary updates
+  if (Math.abs(playheadPosition.value - newPosition) > 0.001) {
+    playheadPosition.value = newPosition
+  }
+})
 const selectionStart = ref<number | null>(null)
 const selectionEnd = ref<number | null>(null)
 const timelineContentRef = ref<HTMLElement | null>(null)

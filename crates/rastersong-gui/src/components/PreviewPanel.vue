@@ -1,23 +1,36 @@
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
-import { getFrameAtTimestamp, displayFrameOnCanvas } from '../utils/media'
+import { ref, watch, computed, onUnmounted } from 'vue'
+import { getFrameAtTimestamp, getFrameBoundaries, displayFrameOnCanvas } from '../utils/media'
 import { useTimelineStore } from '../composables/useTimelineStore'
 
 const props = defineProps<{
   playheadPosition: number
 }>()
 
-const { videoTracks } = useTimelineStore()
+const emit = defineEmits<{
+  'update:playhead': [time: number]
+}>()
+
+const { videoTracks, audioTracks } = useTimelineStore()
 
 const viewMode = ref('processed') // 'original', 'side-by-side', 'processed'
 const playbackRate = ref(1.0)
 const isLooping = ref(false)
 const globalVolume = ref(100)
+const isPlaying = ref(false)
 
 // Canvas refs
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const isLoadingFrame = ref(false)
 const frameError = ref<string | null>(null)
+
+// Track current frame boundaries to avoid unnecessary decodes
+const currentFrameBoundaries = ref<{ start: number; end: number } | null>(null)
+
+// Playback loop
+let playbackAnimationFrame: number | null = null
+let lastPlaybackTime: number | null = null
+let expectedNextPosition: number | null = null
 
 // Get the first video track's media ID (for now, we'll just use the first video)
 const currentMediaId = computed(() => {
@@ -27,7 +40,112 @@ const currentMediaId = computed(() => {
   return firstTrack.clips[0].mediaId
 })
 
-// Watch playhead position and load frames
+// Reset frame boundaries when media changes
+watch(currentMediaId, () => {
+  currentFrameBoundaries.value = null
+})
+
+// Calculate maximum duration from all tracks
+const maxDuration = computed(() => {
+  let max = 0
+  for (const track of [...videoTracks.value, ...audioTracks.value]) {
+    for (const clip of track.clips) {
+      const endTime = clip.start + clip.duration
+      if (endTime > max) {
+        max = endTime
+      }
+    }
+  }
+  return max > 0 ? max : 60 // Default to 60s if no clips
+})
+
+// Playback loop function
+const playbackLoop = (timestamp: number) => {
+  if (!isPlaying.value) {
+    playbackAnimationFrame = null
+    expectedNextPosition = null
+    return
+  }
+
+  if (lastPlaybackTime === null) {
+    lastPlaybackTime = timestamp
+    expectedNextPosition = props.playheadPosition
+    playbackAnimationFrame = requestAnimationFrame(playbackLoop)
+    return
+  }
+
+  // Check if playhead was moved externally (e.g., manual seek)
+  // If the current position differs significantly from what we expected, reset the timer
+  if (expectedNextPosition !== null) {
+    const positionDiff = Math.abs(props.playheadPosition - expectedNextPosition)
+    // If difference is more than 0.1 seconds, assume external seek
+    if (positionDiff > 0.1) {
+      lastPlaybackTime = timestamp
+      expectedNextPosition = props.playheadPosition
+    }
+  }
+
+  const deltaTime = (timestamp - lastPlaybackTime) / 1000 // Convert to seconds
+  const newPosition = props.playheadPosition + (deltaTime * playbackRate.value)
+
+  // Check if we've reached the end
+  if (newPosition >= maxDuration.value) {
+    if (isLooping.value) {
+      // Loop back to start
+      emit('update:playhead', 0)
+      expectedNextPosition = 0
+    } else {
+      // Stop playback
+      isPlaying.value = false
+      emit('update:playhead', maxDuration.value)
+      expectedNextPosition = null
+    }
+    lastPlaybackTime = null
+    playbackAnimationFrame = null
+    return
+  }
+
+  emit('update:playhead', newPosition)
+  expectedNextPosition = newPosition
+  lastPlaybackTime = timestamp
+  playbackAnimationFrame = requestAnimationFrame(playbackLoop)
+}
+
+// Start playback
+const startPlayback = () => {
+  if (isPlaying.value) return
+  isPlaying.value = true
+  lastPlaybackTime = null
+  expectedNextPosition = null
+  playbackAnimationFrame = requestAnimationFrame(playbackLoop)
+}
+
+// Stop playback
+const stopPlayback = () => {
+  isPlaying.value = false
+  lastPlaybackTime = null
+  expectedNextPosition = null
+  if (playbackAnimationFrame !== null) {
+    cancelAnimationFrame(playbackAnimationFrame)
+    playbackAnimationFrame = null
+  }
+}
+
+// Toggle play/pause
+const togglePlayPause = () => {
+  if (isPlaying.value) {
+    stopPlayback()
+  } else {
+    startPlayback()
+  }
+}
+
+// Cleanup on unmount
+onUnmounted(() => {
+  stopPlayback()
+})
+
+// Watch playhead position and load frames only when crossing frame boundaries
 watch(
   [() => props.playheadPosition, currentMediaId],
   async ([newPosition, mediaId]) => {
@@ -35,9 +153,47 @@ watch(
     
     if (!canvasRef.value || !mediaId) {
       console.log('Skipping frame load:', { hasCanvas: !!canvasRef.value, mediaId })
+      currentFrameBoundaries.value = null
       return
     }
     
+    // Don't request a new frame if we're already loading one
+    if (isLoadingFrame.value) {
+      console.log('Frame already loading, skipping request')
+      return
+    }
+    
+    // First, check if we're still within the current frame boundaries (fast check)
+    if (currentFrameBoundaries.value) {
+      const { start, end } = currentFrameBoundaries.value
+      if (newPosition >= start && newPosition < end) {
+        console.log(`Still in same frame [${start.toFixed(3)}s, ${end.toFixed(3)}s), skipping decode`)
+        return
+      }
+    }
+    
+    // Get frame boundaries for the new position to verify we've crossed into a new frame
+    let frameBoundaries: { start: number; end: number } | null = null
+    try {
+      frameBoundaries = await getFrameBoundaries(mediaId, newPosition)
+      console.log(`Frame boundaries for ${newPosition}s: [${frameBoundaries.start.toFixed(3)}s, ${frameBoundaries.end.toFixed(3)}s)`)
+      
+      // Double-check: if we have current boundaries and the new boundaries are the same, skip
+      if (currentFrameBoundaries.value) {
+        const { start, end } = currentFrameBoundaries.value
+        if (frameBoundaries.start === start && frameBoundaries.end === end) {
+          console.log(`Still in same frame [${start.toFixed(3)}s, ${end.toFixed(3)}s), skipping decode`)
+          // Update boundaries in case of floating point precision issues
+          currentFrameBoundaries.value = frameBoundaries
+          return
+        }
+      }
+    } catch (error) {
+      console.error('Failed to get frame boundaries:', error)
+      // Fall back to decoding anyway
+    }
+    
+    // We've crossed into a new frame, decode it
     isLoadingFrame.value = true
     frameError.value = null
     
@@ -46,9 +202,22 @@ watch(
       const frame = await getFrameAtTimestamp(mediaId, newPosition)
       console.log(`Frame loaded: ${frame.width}x${frame.height} at ${frame.timestamp}s`)
       displayFrameOnCanvas(canvasRef.value, frame)
+      
+      // Update current frame boundaries
+      if (frameBoundaries) {
+        currentFrameBoundaries.value = frameBoundaries
+      } else {
+        // Fallback: estimate frame boundaries from FPS (if we can't get them from backend)
+        // This shouldn't happen, but just in case
+        currentFrameBoundaries.value = {
+          start: frame.timestamp,
+          end: frame.timestamp + (1.0 / 30.0) // Assume 30fps as fallback
+        }
+      }
     } catch (error) {
       console.error('Failed to load frame:', error)
       frameError.value = `Failed to load frame: ${error}`
+      currentFrameBoundaries.value = null
     } finally {
       isLoadingFrame.value = false
     }
@@ -128,7 +297,19 @@ const playbackRates = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
           </button>
         </div>
         <div class="playback-controls">
-          <button class="control-btn" title="Play/Pause">⏸</button>
+          <button 
+            class="control-btn" 
+            :class="{ active: isPlaying }"
+            @click="togglePlayPause"
+            title="Play/Pause">
+            <svg v-if="isPlaying" width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
+              <rect x="4" y="2" width="3" height="10" />
+              <rect x="7" y="2" width="3" height="10" />
+            </svg>
+            <svg v-else width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
+              <path d="M4 2 L12 7 L4 12 Z" />
+            </svg>
+          </button>
           <button 
             class="control-btn"
             :class="{ active: isLooping }"
