@@ -29,6 +29,7 @@ pub use video_frame::{PixelFormat, SerializableVideoFrame, VideoFrame};
 // Re-export MediaStore functions
 pub use media_store::{
     MediaFileInfo,
+    decode_frame,
     decode_frames,
     decode_samples,
     get_audio_duration,

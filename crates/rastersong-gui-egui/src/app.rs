@@ -79,16 +79,10 @@ impl RasterSongApp {
 
     fn update_frame(&mut self, ctx: &egui::Context) {
         if let Some(video_id) = &self.video_id {
-            // Decode a small time window around current time (one frame)
-            let frame_duration = 1.0 / self.video_fps;
-            let start_time = self.current_time;
-            let end_time = (self.current_time + frame_duration).min(self.video_duration);
-
-            match media::decode_frames(video_id, start_time, end_time) {
-                Ok(frames) => {
-                    if let Some(frame) = frames.first() {
-                        self.display_frame(ctx, frame);
-                    }
+            // Decode the frame at the current timestamp
+            match media::decode_frame(video_id, self.current_time) {
+                Ok(frame) => {
+                    self.display_frame(ctx, &frame);
                 }
                 Err(e) => {
                     self.error_message = Some(format!("Failed to decode frame: {}", e));
@@ -252,7 +246,7 @@ impl eframe::App for RasterSongApp {
                     }
 
                     // Time slider
-                    let mut slider_response = ui.add(
+                    let slider_response = ui.add(
                         egui::Slider::new(&mut self.current_time, 0.0..=self.video_duration)
                             .text("Time")
                             .custom_formatter(|n, _| format!("{:.2}s", n)),
@@ -260,9 +254,7 @@ impl eframe::App for RasterSongApp {
 
                     // Update frame if slider was dragged
                     if slider_response.drag_stopped() || slider_response.changed() {
-                        if let Some(video_id) = &self.video_id {
-                            self.update_frame(ctx);
-                        }
+                        self.update_frame(ctx);
                     }
 
                     // Time display

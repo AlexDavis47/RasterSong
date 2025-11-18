@@ -1,15 +1,13 @@
 //! MediaStore - singleton registry for managing media files
 
-use anyhow::{Context, Result};
-use std::collections::HashMap;
-use std::path::Path;
-use std::sync::{Mutex, OnceLock};
-use std::time::SystemTime;
-use uuid::Timestamp;
 use super::audio_samples::AudioSamples;
 use super::media_file::MediaFile;
 use super::media_id::MediaId;
 use super::video_frame::VideoFrame;
+use anyhow::{Context, Result};
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::{Mutex, OnceLock};
 
 /// Internal MediaStore implementation
 struct MediaStore {
@@ -110,9 +108,32 @@ pub fn remove_media(id: &MediaId) -> bool {
     store.remove_media(id)
 }
 
+/// Decode a single frame from a media file at a specific timestamp
+///
+/// Returns a VideoFrame wrapper containing RGBA pixel data and metadata.
+/// The frame is retrieved from the LRU cache if available, otherwise
+/// the entire GOP containing the frame is decoded and cached.
+///
+/// # Arguments
+/// * `id` - MediaId of the file
+/// * `timestamp` - Time in seconds
+///
+/// # Returns
+/// VideoFrame object with RGBA pixel data
+pub fn decode_frame(id: &MediaId, timestamp: f64) -> Result<VideoFrame> {
+    let mut store = get_store().lock().unwrap();
+    let media_file = store
+        .get_media_mut(id)
+        .context("MediaId not found in store")?;
+
+    media_file.decode_frame(timestamp)
+}
+
 /// Decode frames from a media file
 ///
 /// Returns VideoFrame wrappers containing RGBA pixel data and metadata.
+/// This function is kept for backward compatibility and internally uses
+/// decode_frame for each frame in the time range.
 ///
 /// # Arguments
 /// * `id` - MediaId of the file
@@ -122,17 +143,13 @@ pub fn remove_media(id: &MediaId) -> bool {
 /// # Returns
 /// Vector of VideoFrame objects with RGBA pixel data
 pub fn decode_frames(id: &MediaId, start_time: f64, end_time: f64) -> Result<Vec<VideoFrame>> {
-    let start_timestamp = SystemTime::now();
     let mut store = get_store().lock().unwrap();
     let media_file = store
         .get_media_mut(id)
         .context("MediaId not found in store")?;
 
-    // Decode frames - already returns VideoFrame objects (RGBA format)
-    // Frames are automatically cached in LRU cache
-    let frames = media_file.decode_frames(start_time, end_time);
-    println!("Decoded frames in {:?}", SystemTime::now().duration_since(start_timestamp).unwrap());
-    return frames;
+    // MediaFile::decode_frames now uses decode_frame internally
+    media_file.decode_frames(start_time, end_time)
 }
 
 /// Decode audio samples from a media file

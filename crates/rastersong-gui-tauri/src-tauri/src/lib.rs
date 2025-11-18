@@ -145,39 +145,11 @@ fn get_frame_at_timestamp(
     let media_id = rastersong::media::MediaId::from_string(&id)
         .map_err(|e| format!("Invalid media ID: {}", e))?;
 
-    // Get video info to calculate frame boundaries
-    let video_info = rastersong::media::get_video_info(&media_id)
-        .ok_or_else(|| "Media has no video stream or not found".to_string())?;
-
-    let (_width, _height, fps) = video_info;
-    let frame_duration = 1.0 / fps;
-
-    // Calculate the exact frame start time
-    let frame_number = (timestamp / frame_duration).floor();
-    let frame_start = frame_number * frame_duration;
-
-    // Decode just a small window around the target frame (only 2-3 frames)
-    let decode_start = (frame_start).max(0.0);
-    let decode_end = frame_start + frame_duration;
-
-    // This will only decode ~2-3 frames instead of many
-    let frames = rastersong::media::decode_frames(&media_id, decode_start, decode_end)
+    // Decode the frame at the specified timestamp
+    let frame = rastersong::media::decode_frame(&media_id, timestamp)
         .map_err(|e| format!("Failed to decode frame: {}", e))?;
 
-    // Print number of frames decoded
-    println!("Decoded {} frames", frames.len());
-
-    // Find the frame closest to our target timestamp
-    let target_frame = frames
-        .iter()
-        .min_by(|a, b| {
-            let a_diff = (a.timestamp() - timestamp).abs();
-            let b_diff = (b.timestamp() - timestamp).abs();
-            a_diff.partial_cmp(&b_diff).unwrap()
-        })
-        .ok_or_else(|| format!("No frame found near timestamp {}s", timestamp))?;
-
-    Ok(target_frame.to_serializable())
+    Ok(frame.to_serializable())
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

@@ -195,6 +195,13 @@ impl VideoDecoder {
         &self.metadata_cache
     }
 
+    /// Get a cached frame from the LRU cache
+    ///
+    /// Returns None if the frame is not cached.
+    pub fn get_cached_frame(&mut self, gop_id: usize, frame_number: usize) -> Option<VideoFrame> {
+        self.frame_cache.get_frame(gop_id, frame_number)
+    }
+
     /// Seek to a specific PTS using the video stream's time base (much more precise than format_ctx.seek)
     fn seek_to_stream_pts(&self, format_ctx: &mut Input, pts: i64) -> Result<()> {
         unsafe {
@@ -297,6 +304,7 @@ impl VideoDecoder {
         } else {
             false
         };
+        println!("Byte seek successful?: {}", seek_successful);
 
         // If byte seek failed, use stream-specific PTS seeking (much more accurate than format_ctx.seek)
         if !seek_successful {
@@ -352,39 +360,6 @@ impl VideoDecoder {
         let mut result: Vec<_> = decoded_video_frames.into_iter().collect();
         result.sort_by_key(|(frame_num, _)| *frame_num);
         Ok(result.into_iter().map(|(_, frame)| frame).collect())
-    }
-
-    /// Decode a frame at a specific timestamp
-    ///
-    /// Uses metadata cache and GOP-based decoding for efficient seeking.
-    ///
-    /// # Arguments
-    /// * `format_ctx` - The format context to read packets from
-    /// * `timestamp` - Time in seconds to seek to and decode
-    pub fn decode_frame(&mut self, format_ctx: &mut Input, timestamp: f64) -> Result<VideoFrame> {
-        // Find the frame closest to timestamp using metadata cache
-        let frame_metadata = self
-            .metadata_cache
-            .get_frame_by_timestamp(timestamp)
-            .context("No frame found at specified timestamp")?;
-
-        let gop_id = frame_metadata.gop_id;
-        let frame_number = frame_metadata.frame_number;
-
-        // Check cache first
-        if let Some(cached_frame) = self.frame_cache.get_frame(gop_id, frame_number) {
-            // Frame is in cache, return it
-            return Ok(cached_frame);
-        }
-
-        // Decode entire GOP
-        let gop_frames = self.decode_gop(format_ctx, gop_id)?;
-
-        // Find the requested frame in the decoded GOP by timestamp
-        gop_frames
-            .into_iter()
-            .find(|f| (f.timestamp() - timestamp).abs() < 0.001)
-            .context("Frame not found in decoded GOP")
     }
 
     /// Get the video width in pixels

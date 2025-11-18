@@ -63,6 +63,52 @@ impl MediaFile {
         })
     }
 
+    /// Decode a single video frame at a specific timestamp
+    ///
+    /// # Arguments
+    /// * `timestamp` - Time in seconds
+    ///
+    /// # Returns
+    /// Decoded VideoFrame object (already in RGBA format)
+    ///
+    /// This method checks the LRU cache first. If the frame is not cached,
+    /// it decodes the entire GOP containing the frame and stores it in the cache.
+    pub fn decode_frame(&mut self, timestamp: f64) -> Result<super::video_frame::VideoFrame> {
+        let video_decoder = self
+            .video_decoder
+            .as_mut()
+            .context("No video decoder available")?;
+
+        // Get frame metadata for timestamp
+        let frame_metadata = video_decoder
+            .metadata_cache()
+            .get_frame_by_timestamp(timestamp)
+            .context("No frame found at specified timestamp")?;
+
+        let gop_id = frame_metadata.gop_id;
+        let frame_number = frame_metadata.frame_number;
+
+        // Check LRU cache first
+        if let Some(cached_frame) = video_decoder.get_cached_frame(gop_id, frame_number) {
+            return Ok(cached_frame);
+        }
+
+        // Frame not in cache, decode the entire GOP
+        video_decoder
+            .decode_gop(&mut self.format_context, gop_id)
+            .with_context(|| {
+                format!(
+                    "Failed to decode GOP {} for frame at timestamp {}",
+                    gop_id, timestamp
+                )
+            })?;
+
+        // After GOP decoding, retrieve the frame from cache
+        video_decoder
+            .get_cached_frame(gop_id, frame_number)
+            .context("Frame not found in cache after GOP decoding")
+    }
+
     /// Decode video frames between start and end timestamps
     ///
     /// # Arguments
@@ -71,48 +117,49 @@ impl MediaFile {
     ///
     /// # Returns
     /// Vector of decoded VideoFrame objects (already in RGBA format)
+    ///
+    /// This method uses decode_frame internally for each frame in the range,
+    /// which ensures proper cache utilization.
     pub fn decode_frames(
         &mut self,
         start_time: f64,
         end_time: f64,
     ) -> Result<Vec<super::video_frame::VideoFrame>> {
-        use std::collections::HashSet;
+        // Get all frame timestamps in the requested range (immutable borrow)
+        let frame_metadata_list: Vec<_> = {
+            let video_decoder = self
+                .video_decoder
+                .as_ref()
+                .context("No video decoder available")?;
 
-        let video_decoder = self
-            .video_decoder
-            .as_mut()
-            .context("No video decoder available")?;
-
-        // Get GOPs needed for this time range
-        let gop_ids: HashSet<usize> = {
-            let metadata_cache = video_decoder.metadata_cache();
-            metadata_cache
+            video_decoder
+                .metadata_cache()
                 .get_frames_in_range(start_time, end_time)
                 .into_iter()
-                .map(|f| f.gop_id)
+                .map(|f| f.timestamp)
                 .collect()
         };
 
-        if gop_ids.is_empty() {
+        if frame_metadata_list.is_empty() {
             return Ok(Vec::new());
         }
 
-        // Decode all needed GOPs (they will be cached automatically)
-        let mut all_frames = Vec::new();
-        for gop_id in gop_ids {
-            let gop_frames = video_decoder.decode_gop(&mut self.format_context, gop_id)?;
-            all_frames.extend(gop_frames);
+        // Decode each frame using decode_frame (which handles caching)
+        let mut frames = Vec::new();
+        for timestamp in frame_metadata_list {
+            match self.decode_frame(timestamp) {
+                Ok(frame) => frames.push(frame),
+                Err(e) => {
+                    // Log error but continue with other frames
+                    eprintln!("Failed to decode frame at timestamp {}: {}", timestamp, e);
+                }
+            }
         }
 
-        // Filter frames to the requested time range and sort by timestamp
-        let mut result: Vec<_> = all_frames
-            .into_iter()
-            .filter(|f| f.timestamp() >= start_time && f.timestamp() < end_time)
-            .collect();
+        // Sort frames by timestamp to ensure consistent ordering
+        frames.sort_by(|a, b| a.timestamp().partial_cmp(&b.timestamp()).unwrap());
 
-        result.sort_by(|a, b| a.timestamp().partial_cmp(&b.timestamp()).unwrap());
-
-        Ok(result)
+        Ok(frames)
     }
 
     /// Decode audio samples between start and end timestamps
