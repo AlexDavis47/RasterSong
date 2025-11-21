@@ -26,24 +26,5 @@ pub use media_file::MediaFile;
 pub use media_id::MediaId;
 pub use video_frame::{PixelFormat, SerializableVideoFrame, VideoFrame};
 
-// Re-export MediaStore functions
-pub use media_store::{
-    MediaFileInfo,
-    decode_frame,
-    decode_frames,
-    decode_samples,
-    get_audio_duration,
-    get_audio_info,
-    get_file_info,
-    get_frame_boundaries,
-    get_media_info,
-    get_video_duration,
-    get_video_info,
-    list_media,
-    load_media,
-    register_audio_file,
-    // Backward compatibility exports
-    register_video_file,
-    remove_media,
-    remove_media_file,
-};
+// Re-export MediaStore
+pub use media_store::MediaStore;

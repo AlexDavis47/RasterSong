@@ -1,12 +1,15 @@
 //! Main application structure for RasterSong EGUI frontend
 
 use eframe::egui;
-use rastersong::media::{self, MediaId, VideoFrame};
+use rastersong::media::{self, MediaId, MediaStore, VideoFrame};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 /// Main application state and UI
 pub struct RasterSongApp {
+    // Media Store
+    media_store: MediaStore,
+
     // Video state
     video_id: Option<MediaId>,
     video_path: Option<PathBuf>,
@@ -28,6 +31,7 @@ pub struct RasterSongApp {
 impl Default for RasterSongApp {
     fn default() -> Self {
         Self {
+            media_store: MediaStore::new(),
             video_id: None,
             video_path: None,
             video_duration: 0.0,
@@ -47,26 +51,26 @@ impl RasterSongApp {
     fn load_video(&mut self, path: PathBuf) {
         self.error_message = None;
 
-        match media::load_media(&path) {
+        match self.media_store.load_media(&path) {
             Ok(media_id) => {
                 // Get video info
-                if let Some((width, height, fps)) = media::get_video_info(&media_id) {
-                    if let Some((_, _, duration)) = media::get_media_info(&media_id) {
-                        self.video_id = Some(media_id);
-                        self.video_path = Some(path);
-                        self.video_width = width;
-                        self.video_height = height;
-                        self.video_fps = fps;
-                        self.video_duration = duration;
-                        self.current_time = 0.0;
-                        self.is_playing = false;
-                        self.last_frame_time = None;
-                        self.current_frame_texture = None;
-                        // Load first frame immediately
-                        // Note: We'll need to update the frame in the UI update loop
-                    } else {
-                        self.error_message = Some("Failed to get video duration".to_string());
-                    }
+                let media_info = self.media_store.get_media(&media_id).and_then(|f| {
+                    f.video_info().map(|(w, h, fps)| (w, h, fps, f.duration()))
+                });
+
+                if let Some((width, height, fps, duration)) = media_info {
+                    self.video_id = Some(media_id);
+                    self.video_path = Some(path);
+                    self.video_width = width;
+                    self.video_height = height;
+                    self.video_fps = fps;
+                    self.video_duration = duration;
+                    self.current_time = 0.0;
+                    self.is_playing = false;
+                    self.last_frame_time = None;
+                    self.current_frame_texture = None;
+                    // Load first frame immediately
+                    // Note: We'll need to update the frame in the UI update loop
                 } else {
                     self.error_message = Some("Failed to get video info".to_string());
                 }
@@ -80,13 +84,17 @@ impl RasterSongApp {
     fn update_frame(&mut self, ctx: &egui::Context) {
         if let Some(video_id) = &self.video_id {
             // Decode the frame at the current timestamp
-            match media::decode_frame(video_id, self.current_time) {
-                Ok(frame) => {
-                    self.display_frame(ctx, &frame);
+            if let Some(media_file) = self.media_store.get_media_mut(video_id) {
+                match media_file.decode_frame(self.current_time) {
+                    Ok(frame) => {
+                        self.display_frame(ctx, &frame);
+                    }
+                    Err(e) => {
+                        self.error_message = Some(format!("Failed to decode frame: {}", e));
+                    }
                 }
-                Err(e) => {
-                    self.error_message = Some(format!("Failed to decode frame: {}", e));
-                }
+            } else {
+                self.error_message = Some("Media file not found in store".to_string());
             }
         }
     }

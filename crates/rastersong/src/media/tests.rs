@@ -28,9 +28,11 @@ fn test_media_id_creation() {
 #[test]
 fn test_media_store_empty() {
     // Test that media store starts empty or can list media
-    let media_list = list_media();
+    let media_store = MediaStore::new();
+    let media_list = media_store.list_media();
     // Just verify this doesn't panic
     println!("Current media files: {:?}", media_list);
+    assert!(media_list.is_empty(), "New MediaStore should be empty");
 }
 
 // Note: Actual video loading tests would require test video files
@@ -44,17 +46,23 @@ fn test_load_video() {
     let test_video = "C:\\Users\\boobo\\RustroverProjects\\RasterSong\\test_assets\\test.mp4";
 
     if std::path::Path::new(test_video).exists() {
+        let mut media_store = MediaStore::new();
+
         // Try to load the video
-        let result = load_media(test_video);
+        let result = media_store.load_media(std::path::Path::new(test_video));
         assert!(result.is_ok(), "Failed to load test video");
 
         let media_id = result.unwrap();
 
         // Check that we can get info about it
-        let info = get_media_info(&media_id);
-        assert!(info.is_some(), "Should be able to get media info");
+        let media_file = media_store.get_media(&media_id);
+        assert!(media_file.is_some(), "Should be able to get media file");
 
-        let (has_video, has_audio, duration) = info.unwrap();
+        let media_file = media_file.unwrap();
+        let has_video = media_file.has_video();
+        let has_audio = media_file.has_audio();
+        let duration = media_file.duration();
+
         println!(
             "Video info - has_video: {}, has_audio: {}, duration: {}s",
             has_video, has_audio, duration
@@ -62,14 +70,14 @@ fn test_load_video() {
 
         // Try to get video info
         if has_video {
-            let video_info = get_video_info(&media_id);
+            let video_info = media_file.video_info();
             assert!(video_info.is_some(), "Should have video info");
             let (width, height, fps) = video_info.unwrap();
             println!("Video: {}x{} @ {} fps", width, height, fps);
         }
 
         // Clean up
-        remove_media(&media_id);
+        media_store.remove_media(&media_id);
     } else {
         println!("Skipping test - no test video file at {}", test_video);
     }
@@ -83,11 +91,18 @@ fn test_decode_frame() {
     let test_video = "C:\\Users\\boobo\\RustroverProjects\\RasterSong\\test_assets\\test.mp4";
 
     if std::path::Path::new(test_video).exists() {
+        let mut media_store = MediaStore::new();
+
         // Load the video
-        let media_id = load_media(test_video).unwrap();
+        let media_id = media_store
+            .load_media(std::path::Path::new(test_video))
+            .unwrap();
 
         // Try to decode frames - now returns VideoFrame wrappers
-        let result = decode_frames(&media_id, 0.0, 0.1);
+        let result = media_store
+            .get_media_mut(&media_id)
+            .unwrap()
+            .decode_frames(0.0, 0.1);
 
         match result {
             Ok(frames) => {
@@ -119,7 +134,7 @@ fn test_decode_frame() {
         }
 
         // Clean up
-        remove_media(&media_id);
+        media_store.remove_media(&media_id);
     } else {
         println!("Skipping test - no test video file at {}", test_video);
     }
@@ -133,15 +148,19 @@ fn test_decode_random_access_frames() {
     let test_video = "C:\\Users\\boobo\\RustroverProjects\\RasterSong\\test_assets\\test.mp4";
 
     if std::path::Path::new(test_video).exists() {
+        let mut media_store = MediaStore::new();
+
         // Load the video
-        let media_id = load_media(test_video).unwrap();
+        let media_id = media_store
+            .load_media(std::path::Path::new(test_video))
+            .unwrap();
 
         // Get video info to know the duration
-        let video_info = get_video_info(&media_id);
-        let (width, height, fps) = video_info.expect("Should have video info");
-        let duration = get_media_info(&media_id)
-            .map(|(_, _, d)| d)
-            .unwrap_or(120.0);
+        let media_file = media_store
+            .get_media(&media_id)
+            .expect("Should have media file");
+        let (width, height, fps) = media_file.video_info().expect("Should have video info");
+        let duration = media_file.duration();
 
         println!(
             "Video: {}x{} @ {} fps, duration: {:.2}s",
@@ -193,7 +212,10 @@ fn test_decode_random_access_frames() {
 
             // Time the decode operation
             let start_time = std::time::Instant::now();
-            let result = decode_frames(&media_id, decode_start, decode_end);
+            let result = media_store
+                .get_media_mut(&media_id)
+                .unwrap()
+                .decode_frames(decode_start, decode_end);
             let decode_duration = start_time.elapsed();
             total_decode_time += decode_duration;
             decode_times.push((requested_timestamp, decode_duration));
@@ -332,7 +354,7 @@ fn test_decode_random_access_frames() {
         );
 
         // Clean up
-        remove_media(&media_id);
+        media_store.remove_media(&media_id);
     } else {
         println!("Skipping test - no test video file at {}", test_video);
     }
@@ -346,12 +368,18 @@ fn test_get_frame_boundaries() {
     let test_video = "C:\\Users\\boobo\\RustroverProjects\\RasterSong\\test_assets\\test.mp4";
 
     if std::path::Path::new(test_video).exists() {
+        let mut media_store = MediaStore::new();
+
         // Load the video
-        let media_id = load_media(test_video).unwrap();
+        let media_id = media_store
+            .load_media(std::path::Path::new(test_video))
+            .unwrap();
 
         // Get video info to know the FPS
-        let video_info = get_video_info(&media_id);
-        if let Some((width, height, fps)) = video_info {
+        let media_file = media_store
+            .get_media(&media_id)
+            .expect("Should have media file");
+        if let Some((width, height, fps)) = media_file.video_info() {
             println!("Testing with video: {}x{} @ {} fps", width, height, fps);
 
             // Test various timestamps
@@ -363,7 +391,7 @@ fn test_get_frame_boundaries() {
             ];
 
             for timestamp in test_cases {
-                let result = get_frame_boundaries(&media_id, timestamp);
+                let result = media_file.frame_boundaries(timestamp);
                 assert!(result.is_some(), "Should get frame boundaries");
 
                 let (start, end) = result.unwrap();
@@ -397,7 +425,7 @@ fn test_get_frame_boundaries() {
         }
 
         // Clean up
-        remove_media(&media_id);
+        media_store.remove_media(&media_id);
     } else {
         println!("Skipping test - no test video file at {}", test_video);
     }
@@ -413,9 +441,13 @@ fn test_metadata_cache_building() {
     if std::path::Path::new(test_video).exists() {
         println!("\n=== Testing Metadata Cache Building ===");
 
+        let mut media_store = MediaStore::new();
+
         // Load the video - this should automatically build the metadata cache
         let start_time = std::time::Instant::now();
-        let media_id = load_media(test_video).unwrap();
+        let media_id = media_store
+            .load_media(std::path::Path::new(test_video))
+            .unwrap();
         let load_time = start_time.elapsed();
 
         println!(
@@ -424,9 +456,11 @@ fn test_metadata_cache_building() {
         );
 
         // Get video info
-        let video_info = get_video_info(&media_id);
-        if let Some((width, height, fps)) = video_info {
-            let duration = get_media_info(&media_id).map(|(_, _, d)| d).unwrap_or(0.0);
+        let media_file = media_store
+            .get_media(&media_id)
+            .expect("Should have media file");
+        if let Some((width, height, fps)) = media_file.video_info() {
+            let duration = media_file.duration();
 
             let expected_frames = (duration * fps) as usize;
 
@@ -436,7 +470,10 @@ fn test_metadata_cache_building() {
 
             // Test that we can decode frames quickly now (cache should help)
             let decode_start = std::time::Instant::now();
-            let result = decode_frames(&media_id, 0.0, 0.1);
+            let result = media_store
+                .get_media_mut(&media_id)
+                .unwrap()
+                .decode_frames(0.0, 0.1);
             let decode_time = decode_start.elapsed();
 
             assert!(result.is_ok(), "Should decode frames successfully");
@@ -447,7 +484,10 @@ fn test_metadata_cache_building() {
 
             // Second decode in same area should potentially be faster (from cache)
             let decode_start = std::time::Instant::now();
-            let result2 = decode_frames(&media_id, 0.0, 0.1);
+            let result2 = media_store
+                .get_media_mut(&media_id)
+                .unwrap()
+                .decode_frames(0.0, 0.1);
             let decode_time2 = decode_start.elapsed();
 
             assert!(result2.is_ok(), "Second decode should also succeed");
@@ -467,7 +507,7 @@ fn test_metadata_cache_building() {
         }
 
         // Clean up
-        remove_media(&media_id);
+        media_store.remove_media(&media_id);
     } else {
         println!("Skipping test - no test video file at {}", test_video);
     }
@@ -483,11 +523,16 @@ fn test_gop_based_decoding() {
     if std::path::Path::new(test_video).exists() {
         println!("\n=== Testing GOP-Based Decoding ===");
 
-        let media_id = load_media(test_video).unwrap();
+        let mut media_store = MediaStore::new();
+        let media_id = media_store
+            .load_media(std::path::Path::new(test_video))
+            .unwrap();
 
         // Get video info
-        let video_info = get_video_info(&media_id);
-        if let Some((width, height, fps)) = video_info {
+        let media_file = media_store
+            .get_media(&media_id)
+            .expect("Should have media file");
+        if let Some((width, height, fps)) = media_file.video_info() {
             println!("Video: {}x{} @ {} fps", width, height, fps);
 
             // Decode multiple ranges that might span different GOPs
@@ -500,7 +545,10 @@ fn test_gop_based_decoding() {
             println!("\nDecoding {} different time ranges:", test_ranges.len());
             for (i, (start, end)) in test_ranges.iter().enumerate() {
                 let decode_start = std::time::Instant::now();
-                let result = decode_frames(&media_id, *start, *end);
+                let result = media_store
+                    .get_media_mut(&media_id)
+                    .unwrap()
+                    .decode_frames(*start, *end);
                 let decode_time = decode_start.elapsed();
 
                 match result {
@@ -543,11 +591,17 @@ fn test_gop_based_decoding() {
             let (start, end) = test_ranges[0];
 
             let decode_start = std::time::Instant::now();
-            let result1 = decode_frames(&media_id, start, end);
+            let result1 = media_store
+                .get_media_mut(&media_id)
+                .unwrap()
+                .decode_frames(start, end);
             let time1 = decode_start.elapsed();
 
             let decode_start = std::time::Instant::now();
-            let result2 = decode_frames(&media_id, start, end);
+            let result2 = media_store
+                .get_media_mut(&media_id)
+                .unwrap()
+                .decode_frames(start, end);
             let time2 = decode_start.elapsed();
 
             if let (Ok(frames1), Ok(frames2)) = (result1, result2) {
@@ -578,7 +632,7 @@ fn test_gop_based_decoding() {
         }
 
         // Clean up
-        remove_media(&media_id);
+        media_store.remove_media(&media_id);
     } else {
         println!("Skipping test - no test video file at {}", test_video);
     }
@@ -594,7 +648,10 @@ fn test_cache_performance() {
     if std::path::Path::new(test_video).exists() {
         println!("\n=== Testing Cache Performance ===");
 
-        let media_id = load_media(test_video).unwrap();
+        let mut media_store = MediaStore::new();
+        let media_id = media_store
+            .load_media(std::path::Path::new(test_video))
+            .unwrap();
 
         // Decode the same frame multiple times to test cache effectiveness
         let timestamp = 5.0;
@@ -605,7 +662,10 @@ fn test_cache_performance() {
         let mut times = Vec::new();
         for i in 0..5 {
             let decode_start = std::time::Instant::now();
-            let result = decode_frames(&media_id, timestamp, timestamp + frame_duration);
+            let result = media_store
+                .get_media_mut(&media_id)
+                .unwrap()
+                .decode_frames(timestamp, timestamp + frame_duration);
             let decode_time = decode_start.elapsed();
             times.push(decode_time);
 
@@ -643,7 +703,7 @@ fn test_cache_performance() {
         }
 
         // Clean up
-        remove_media(&media_id);
+        media_store.remove_media(&media_id);
     } else {
         println!("Skipping test - no test video file at {}", test_video);
     }
@@ -659,10 +719,15 @@ fn test_seeking_accuracy() {
     if std::path::Path::new(test_video).exists() {
         println!("\n=== Testing Seeking Accuracy ===");
 
-        let media_id = load_media(test_video).unwrap();
+        let mut media_store = MediaStore::new();
+        let media_id = media_store
+            .load_media(std::path::Path::new(test_video))
+            .unwrap();
 
-        let video_info = get_video_info(&media_id);
-        if let Some((_, _, fps)) = video_info {
+        let media_file = media_store
+            .get_media(&media_id)
+            .expect("Should have media file");
+        if let Some((_, _, fps)) = media_file.video_info() {
             let frame_duration = 1.0 / fps;
 
             // Test seeking to various timestamps
@@ -674,7 +739,10 @@ fn test_seeking_accuracy() {
             );
 
             for &ts in &test_timestamps {
-                let result = decode_frames(&media_id, ts, ts + frame_duration * 0.5);
+                let result = media_store
+                    .get_media_mut(&media_id)
+                    .unwrap()
+                    .decode_frames(ts, ts + frame_duration * 0.5);
 
                 match result {
                     Ok(frames) => {
@@ -706,7 +774,7 @@ fn test_seeking_accuracy() {
         }
 
         // Clean up
-        remove_media(&media_id);
+        media_store.remove_media(&media_id);
     } else {
         println!("Skipping test - no test video file at {}", test_video);
     }

@@ -5,6 +5,7 @@ use ffmpeg_next as ffmpeg;
 use std::path::PathBuf;
 
 use super::audio_decoder::AudioDecoder;
+use super::audio_samples::AudioSamples;
 use super::media_id::MediaId;
 use super::video_decoder::VideoDecoder;
 
@@ -169,18 +170,19 @@ impl MediaFile {
     /// * `end_time` - End time in seconds
     ///
     /// # Returns
-    /// Audio frame containing decoded samples
-    pub fn decode_samples(
-        &mut self,
-        start_time: f64,
-        end_time: f64,
-    ) -> Result<ffmpeg::frame::Audio> {
+    /// AudioSamples object with f32 interleaved sample data
+    pub fn decode_samples(&mut self, start_time: f64, end_time: f64) -> Result<AudioSamples> {
         let audio_decoder = self
             .audio_decoder
             .as_mut()
             .context("No audio decoder available")?;
 
-        audio_decoder.decode_samples(&mut self.format_context, start_time, end_time)
+        // Decode FFmpeg audio frame
+        let ffmpeg_audio =
+            audio_decoder.decode_samples(&mut self.format_context, start_time, end_time)?;
+
+        // Convert to AudioSamples wrapper
+        AudioSamples::from_ffmpeg(&ffmpeg_audio, start_time, end_time)
     }
 
     /// Get the MediaId for this file
@@ -227,5 +229,33 @@ impl MediaFile {
         self.audio_decoder
             .as_ref()
             .map(|decoder| (decoder.sample_rate(), decoder.channels()))
+    }
+
+    /// Get the frame boundaries for a given timestamp
+    ///
+    /// Given a timestamp, returns the start and end time of the video frame
+    /// that contains that timestamp. This is useful for syncing audio samples
+    /// with video frames.
+    ///
+    /// # Arguments
+    /// * `timestamp` - Time in seconds
+    ///
+    /// # Returns
+    /// Some((frame_start, frame_end)) if the media has video, None otherwise
+    pub fn frame_boundaries(&self, timestamp: f64) -> Option<(f64, f64)> {
+        // Only works for media with video
+        let (_, _, fps) = self.video_info()?;
+
+        // Calculate frame duration
+        let frame_duration = 1.0 / fps;
+
+        // Find which frame this timestamp falls into
+        let frame_number = (timestamp / frame_duration).floor();
+
+        // Calculate frame boundaries
+        let frame_start = frame_number * frame_duration;
+        let frame_end = (frame_number + 1.0) * frame_duration;
+
+        Some((frame_start, frame_end))
     }
 }
