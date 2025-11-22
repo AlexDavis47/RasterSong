@@ -1,6 +1,7 @@
 //! Media identifier type for tracking media files
 
 use uuid::Uuid;
+use std::fmt;
 
 /// Unique identifier for a media file
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -17,13 +18,13 @@ impl MediaId {
         let uuid = Uuid::parse_str(s)?;
         Ok(MediaId(uuid))
     }
-
-    /// Get the string representation of this MediaId
-    pub fn to_string(&self) -> String {
-        self.0.to_string()
-    }
 }
 
+impl fmt::Display for MediaId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 impl Default for MediaId {
     fn default() -> Self {
         Self::new()
