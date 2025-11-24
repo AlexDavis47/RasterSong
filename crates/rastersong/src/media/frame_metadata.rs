@@ -20,6 +20,7 @@ pub struct FrameMetadata {
 }
 
 /// Cache of all frame metadata for efficient seeking
+#[derive(Clone)]
 pub struct FrameMetadataCache {
     /// All frame metadata, indexed by frame number
     frames: Vec<FrameMetadata>,

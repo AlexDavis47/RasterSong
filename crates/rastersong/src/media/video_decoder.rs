@@ -8,6 +8,7 @@ use ffmpeg_next as ffmpeg;
 use super::frame_cache::FrameCache;
 use super::frame_metadata::{FrameMetadata, FrameMetadataCache};
 use super::video_frame::VideoFrame;
+use std::sync::Arc;
 
 /// Extension trait for FFmpeg Rational to convert to f64
 trait TimeBaseExt {
@@ -39,8 +40,6 @@ pub struct VideoDecoder {
     metadata_cache: FrameMetadataCache,
     /// Time base as f64 (cached for performance)
     time_base: f64,
-    /// LRU frame cache for decoded frames
-    frame_cache: FrameCache,
 }
 
 impl VideoDecoder {
@@ -99,7 +98,6 @@ impl VideoDecoder {
             duration,
             metadata_cache: FrameMetadataCache::new(),
             time_base,
-            frame_cache: FrameCache::default(),
         })
     }
 
@@ -195,12 +193,6 @@ impl VideoDecoder {
         &self.metadata_cache
     }
 
-    /// Get a cached frame from the LRU cache
-    ///
-    /// Returns None if the frame is not cached.
-    pub fn get_cached_frame(&mut self, gop_id: usize, frame_number: usize) -> Option<VideoFrame> {
-        self.frame_cache.get_frame(gop_id, frame_number)
-    }
 
     /// Seek to a specific PTS using the video stream's time base (much more precise than format_ctx.seek)
     fn seek_to_stream_pts(&self, format_ctx: &mut Input, pts: i64) -> Result<()> {
@@ -259,27 +251,37 @@ impl VideoDecoder {
     /// Decode an entire GOP
     ///
     /// Decodes all frames in the specified GOP, converts them to VideoFrame,
-    /// and stores them in the cache.
+    /// and stores them in the shared cache.
     /// Uses the metadata cache to find the keyframe position.
     ///
     /// # Arguments
     /// * `format_ctx` - The format context to read packets from
     /// * `gop_id` - The GOP ID to decode
+    /// * `cache` - Shared frame cache to store decoded frames
     ///
     /// # Returns
     /// Vec of VideoFrame for all frames in the GOP
-    pub fn decode_gop(&mut self, format_ctx: &mut Input, gop_id: usize) -> Result<Vec<VideoFrame>> {
+    pub fn decode_gop(
+        &mut self,
+        format_ctx: &mut Input,
+        gop_id: usize,
+        cache: &Arc<FrameCache>,
+    ) -> Result<Vec<VideoFrame>> {
         use std::collections::HashMap;
 
+        println!("[VideoDecoder::decode_gop] Starting decode for GOP {}", gop_id);
+        
         // Check cache first
-        if self.frame_cache.contains_gop(gop_id) {
+        if cache.contains_gop(gop_id) {
+            println!("[VideoDecoder::decode_gop] GOP {} found in cache", gop_id);
             // GOP is already cached, return frames
-            return self
-                .frame_cache
+            return cache
                 .get_gop(gop_id)
                 .context("GOP not in cache despite contains_gop being true");
         }
 
+        println!("[VideoDecoder::decode_gop] GOP {} not in cache, decoding...", gop_id);
+        
         // Get frames in this GOP from metadata
         let gop_frames = self
             .metadata_cache
@@ -289,6 +291,8 @@ impl VideoDecoder {
         if gop_frames.is_empty() {
             anyhow::bail!("GOP {} has no frames in metadata cache", gop_id);
         }
+        
+        println!("[VideoDecoder::decode_gop] GOP {} has {} frames", gop_id, gop_frames.len());
 
         // Find the keyframe (first frame in GOP)
         let keyframe = gop_frames
@@ -297,6 +301,7 @@ impl VideoDecoder {
             .context("No keyframe found in GOP")?;
 
         let keyframe_pts = keyframe.pts;
+        println!("[VideoDecoder::decode_gop] Seeking to keyframe at PTS: {}", keyframe_pts);
 
         // Try byte-based seeking first if we have the offset (fastest, but not supported by all containers)
         let seek_successful = if let Some(byte_offset) = keyframe.file_offset {
@@ -304,15 +309,17 @@ impl VideoDecoder {
         } else {
             false
         };
-        println!("Byte seek successful?: {}", seek_successful);
+        println!("[VideoDecoder::decode_gop] Byte seek successful?: {}", seek_successful);
 
         // If byte seek failed, use stream-specific PTS seeking (much more accurate than format_ctx.seek)
         if !seek_successful {
+            println!("[VideoDecoder::decode_gop] Using PTS seek");
             self.seek_to_stream_pts(format_ctx, keyframe_pts)
                 .context("Failed to seek to keyframe")?;
         }
 
         self.decoder.flush();
+        println!("[VideoDecoder::decode_gop] Decoder flushed, starting packet decoding");
 
         // Decode all frames in this GOP
         let mut decoded_video_frames: HashMap<usize, VideoFrame> = HashMap::new();
@@ -352,13 +359,16 @@ impl VideoDecoder {
             }
         }
 
+        println!("[VideoDecoder::decode_gop] Decoded {} frames for GOP {}", decoded_video_frames.len(), gop_id);
+        
         // Store in cache
-        self.frame_cache
-            .store_gop(gop_id, decoded_video_frames.clone());
+        println!("[VideoDecoder::decode_gop] Storing GOP {} in cache", gop_id);
+        cache.store_gop(gop_id, decoded_video_frames.clone());
 
         // Return as Vec sorted by frame number
         let mut result: Vec<_> = decoded_video_frames.into_iter().collect();
         result.sort_by_key(|(frame_num, _)| *frame_num);
+        println!("[VideoDecoder::decode_gop] GOP {} decode complete", gop_id);
         Ok(result.into_iter().map(|(_, frame)| frame).collect())
     }
 

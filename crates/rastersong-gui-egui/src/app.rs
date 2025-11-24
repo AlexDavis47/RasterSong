@@ -1,7 +1,7 @@
 //! Main application structure for RasterSong EGUI frontend
 
 use eframe::egui;
-use rastersong::media::{self, MediaId, MediaStore, VideoFrame};
+use rastersong::media::{FrameReceiver, MediaId, MediaStore, VideoFrame};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -26,6 +26,12 @@ pub struct RasterSongApp {
     // Display state
     current_frame_texture: Option<egui::TextureHandle>,
     error_message: Option<String>,
+
+    // Async decode state
+    pending_frame_receiver: Option<(f64, FrameReceiver)>,
+
+    // Prefetch state
+    last_prefetched_gop: Option<usize>,
 }
 
 impl Default for RasterSongApp {
@@ -43,6 +49,8 @@ impl Default for RasterSongApp {
             last_frame_time: None,
             current_frame_texture: None,
             error_message: None,
+            pending_frame_receiver: None,
+            last_prefetched_gop: None,
         }
     }
 }
@@ -54,9 +62,10 @@ impl RasterSongApp {
         match self.media_store.load_media(&path) {
             Ok(media_id) => {
                 // Get video info
-                let media_info = self.media_store.get_media(&media_id).and_then(|f| {
-                    f.video_info().map(|(w, h, fps)| (w, h, fps, f.duration()))
-                });
+                let media_info = self
+                    .media_store
+                    .get_media(&media_id)
+                    .and_then(|f| f.video_info().map(|(w, h, fps)| (w, h, fps, f.duration())));
 
                 if let Some((width, height, fps, duration)) = media_info {
                     self.video_id = Some(media_id);
@@ -83,18 +92,133 @@ impl RasterSongApp {
 
     fn update_frame(&mut self, ctx: &egui::Context) {
         if let Some(video_id) = &self.video_id {
-            // Decode the frame at the current timestamp
-            if let Some(media_file) = self.media_store.get_media_mut(video_id) {
-                match media_file.decode_frame(self.current_time) {
-                    Ok(frame) => {
-                        self.display_frame(ctx, &frame);
+            // Fast path: try to get frame directly from cache first
+            let cached_frame = self
+                .media_store
+                .get_media(video_id)
+                .and_then(|media_file| media_file.get_frame(self.current_time));
+
+            if let Some(frame) = cached_frame {
+                // Frame is cached, display immediately (<1ms)
+                self.display_frame(ctx, &frame);
+                self.pending_frame_receiver = None;
+                return;
+            }
+
+            // Slow path: frame not cached, check if we have a pending decode
+            let should_start_new_decode =
+                if let Some((requested_time, receiver)) = &mut self.pending_frame_receiver {
+                    // Check if this pending request is for the current timestamp
+                    let is_for_current_time = (*requested_time - self.current_time).abs() < 0.001;
+
+                    if is_for_current_time {
+                        // Check if frame is ready (non-blocking)
+                        match receiver.try_receive() {
+                            Ok(Some(frame)) => {
+                                println!("[GUI] Frame received from worker! Displaying frame");
+                                self.display_frame(ctx, &frame);
+                                self.pending_frame_receiver = None;
+                                return;
+                            }
+                            Ok(None) => {
+                                // Frame not ready yet, keep waiting (don't start new decode)
+                                // Continue to show current frame if available
+                                return;
+                            }
+                            Err(e) => {
+                                println!("[GUI] Error receiving frame: {}", e);
+                                self.error_message = Some(format!("Failed to decode frame: {}", e));
+                                self.pending_frame_receiver = None;
+                                true // Start new decode after error
+                            }
+                        }
+                    } else {
+                        // Timestamp changed, cancel old request and start new one
+                        self.pending_frame_receiver = None;
+                        true
                     }
-                    Err(e) => {
-                        self.error_message = Some(format!("Failed to decode frame: {}", e));
+                } else {
+                    // No pending decode, start a new one
+                    true
+                };
+
+            // Start a new decode if needed
+            if should_start_new_decode {
+                if let Some(media_file) = self.media_store.get_media(video_id) {
+                    match media_file.decode_frame_async(self.current_time) {
+                        Ok(receiver) => {
+                            // Check immediately if frame is ready (decode_frame_async checks cache first,
+                            // so cached frames will be available immediately)
+                            match receiver.try_receive() {
+                                Ok(Some(frame)) => {
+                                    // Frame was cached and is ready immediately
+                                    self.display_frame(ctx, &frame);
+                                    self.pending_frame_receiver = None;
+                                }
+                                Ok(None) => {
+                                    // Frame not ready yet, store receiver to poll later
+                                    self.pending_frame_receiver =
+                                        Some((self.current_time, receiver));
+                                }
+                                Err(e) => {
+                                    println!("[GUI] Error receiving frame: {}", e);
+                                    self.error_message =
+                                        Some(format!("Failed to decode frame: {}", e));
+                                    self.pending_frame_receiver = None;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            println!("[GUI] Failed to start decode: {}", e);
+                            self.error_message = Some(format!("Failed to start decode: {}", e));
+                        }
+                    }
+                } else {
+                    self.error_message = Some("Media file not found in store".to_string());
+                }
+            }
+        }
+    }
+
+    /// Prefetch GOPs ahead of current playback position (manual prefetching)
+    ///
+    /// This prefetches the next 1-2 GOPs ahead of the current frame to ensure
+    /// smooth playback. Only prefetches when playing forward, not when seeking.
+    fn prefetch_gops_ahead(&mut self) {
+        if !self.is_playing || self.video_id.is_none() {
+            return;
+        }
+
+        // Get current GOP index first (without holding borrow)
+        let current_gop = self
+            .video_id
+            .and_then(|id| self.media_store.get_media(&id))
+            .and_then(|media_file| media_file.get_gop_index(self.current_time));
+
+        // Only prefetch if we've moved to a new GOP
+        if let Some(current_gop) = current_gop {
+            if self.last_prefetched_gop != Some(current_gop) {
+                self.last_prefetched_gop = Some(current_gop);
+
+                // Prefetch next 1-2 GOPs ahead
+                let prefetch_count = 2;
+                for i in 1..=prefetch_count {
+                    let gop_to_prefetch = current_gop + i;
+
+                    // Check if already cached and start decode if needed
+                    if let Some(media_file) =
+                        self.video_id.and_then(|id| self.media_store.get_media(&id))
+                    {
+                        if !media_file.is_gop_decoded(gop_to_prefetch) {
+                            // Start async GOP decode
+                            if let Ok(_receiver) = media_file.decode_gop_async(gop_to_prefetch) {
+                                println!("[GUI] Prefetching GOP {}", gop_to_prefetch);
+                                // Note: We don't need to track these receivers since
+                                // we only care that they're decoded, not when they complete
+                            }
+                        }
                     }
                 }
-            } else {
-                self.error_message = Some("Media file not found in store".to_string());
             }
         }
     }
@@ -148,6 +272,9 @@ impl RasterSongApp {
         // Update frame
         self.update_frame(ctx);
 
+        // Prefetch GOPs ahead for smooth playback
+        self.prefetch_gops_ahead();
+
         // Request repaint for smooth playback
         ctx.request_repaint_after(Duration::from_secs_f64(1.0 / self.video_fps));
     }
@@ -157,6 +284,16 @@ impl eframe::App for RasterSongApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Update playback if playing
         self.update_playback(ctx);
+
+        // Always check for pending frames, even when playback is stopped
+        // This ensures frames decode after seeking are displayed
+        if self.pending_frame_receiver.is_some() {
+            self.update_frame(ctx);
+            // If still waiting for frame, request another repaint soon
+            if self.pending_frame_receiver.is_some() {
+                ctx.request_repaint_after(Duration::from_millis(16)); // ~60fps polling
+            }
+        }
 
         // Load initial frame if video is loaded but no frame is displayed
         if self.video_id.is_some() && self.current_frame_texture.is_none() {
@@ -248,6 +385,7 @@ impl eframe::App for RasterSongApp {
                         self.is_playing = false;
                         self.current_time = 0.0;
                         self.last_frame_time = None;
+                        self.last_prefetched_gop = None; // Reset prefetch state
                         if self.video_id.is_some() {
                             self.update_frame(ctx);
                         }
@@ -260,9 +398,69 @@ impl eframe::App for RasterSongApp {
                             .custom_formatter(|n, _| format!("{:.2}s", n)),
                     );
 
-                    // Update frame if slider was dragged
-                    if slider_response.drag_stopped() || slider_response.changed() {
-                        self.update_frame(ctx);
+                    // Update frame when slider dragging stops (not on every change to avoid spam)
+                    if slider_response.drag_stopped() {
+                        // Reset prefetch state when seeking (manual control)
+                        self.last_prefetched_gop = None;
+
+                        // Check if pending receiver is for current timestamp and has frame ready
+                        let frame_already_displayed = if let Some((requested_time, receiver)) =
+                            &mut self.pending_frame_receiver
+                        {
+                            let is_for_current_time =
+                                (*requested_time - self.current_time).abs() < 0.001;
+                            if is_for_current_time {
+                                // Check if frame is ready before canceling
+                                match receiver.try_receive() {
+                                    Ok(Some(frame)) => {
+                                        // Frame is ready! Display it immediately
+                                        self.display_frame(ctx, &frame);
+                                        self.pending_frame_receiver = None;
+                                        true // Frame already displayed
+                                    }
+                                    Ok(None) => {
+                                        // Frame not ready yet, keep the receiver (don't cancel)
+                                        false
+                                    }
+                                    Err(_) => {
+                                        // Error, cancel and start new decode
+                                        self.pending_frame_receiver = None;
+                                        false
+                                    }
+                                }
+                            } else {
+                                // Different timestamp, cancel old request
+                                self.pending_frame_receiver = None;
+                                false
+                            }
+                        } else {
+                            // No pending receiver
+                            false
+                        };
+
+                        // Only call update_frame if we haven't already displayed the frame
+                        if !frame_already_displayed {
+                            // Force immediate frame update after seeking stops
+                            // This ensures the frame is displayed even if playback is stopped
+                            self.update_frame(ctx);
+                        }
+                        // Request repaint to ensure frame is displayed immediately
+                        ctx.request_repaint();
+                    } else if slider_response.changed() {
+                        // While dragging, only update if frame is cached (fast path)
+                        // This allows smooth seeking through cached frames without blocking
+                        self.last_prefetched_gop = None;
+                        if let Some(video_id) = &self.video_id {
+                            if let Some(media_file) = self.media_store.get_media(video_id) {
+                                if let Some(frame) = media_file.get_frame(self.current_time) {
+                                    // Frame is cached, display immediately
+                                    self.display_frame(ctx, &frame);
+                                    // Cancel any pending decode since we have the frame
+                                    self.pending_frame_receiver = None;
+                                }
+                                // If not cached, don't start decode while dragging (wait for drag_stopped)
+                            }
+                        }
                     }
 
                     // Time display
