@@ -22,6 +22,7 @@ pub use ffmpeg::{init, is_initialized};
 pub use audio_samples::{AudioFormat, AudioSamples};
 pub use media_file::{FrameReceiver, MediaFile};
 pub use media_id::MediaId;
+pub use media_store::LoadMediaReceiver;
 pub use video_frame::{PixelFormat, SerializableVideoFrame, VideoFrame};
 
 // Re-export MediaStore

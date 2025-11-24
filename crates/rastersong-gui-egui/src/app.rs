@@ -1,7 +1,7 @@
 //! Main application structure for RasterSong EGUI frontend
 
 use eframe::egui;
-use rastersong::media::{FrameReceiver, MediaId, MediaStore, VideoFrame};
+use rastersong::media::{FrameReceiver, LoadMediaReceiver, MediaId, MediaStore, VideoFrame};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -30,6 +30,9 @@ pub struct RasterSongApp {
     // Async decode state
     pending_frame_receiver: Option<(f64, FrameReceiver)>,
 
+    // Async loading state
+    pending_load_receiver: Option<(PathBuf, LoadMediaReceiver)>,
+
     // Prefetch state
     last_prefetched_gop: Option<usize>,
 }
@@ -50,6 +53,7 @@ impl Default for RasterSongApp {
             current_frame_texture: None,
             error_message: None,
             pending_frame_receiver: None,
+            pending_load_receiver: None,
             last_prefetched_gop: None,
         }
     }
@@ -58,34 +62,69 @@ impl Default for RasterSongApp {
 impl RasterSongApp {
     fn load_video(&mut self, path: PathBuf) {
         self.error_message = None;
+        self.pending_load_receiver = None;
 
-        match self.media_store.load_media(&path) {
-            Ok(media_id) => {
-                // Get video info
-                let media_info = self
-                    .media_store
-                    .get_media(&media_id)
-                    .and_then(|f| f.video_info().map(|(w, h, fps)| (w, h, fps, f.duration())));
-
-                if let Some((width, height, fps, duration)) = media_info {
-                    self.video_id = Some(media_id);
-                    self.video_path = Some(path);
-                    self.video_width = width;
-                    self.video_height = height;
-                    self.video_fps = fps;
-                    self.video_duration = duration;
-                    self.current_time = 0.0;
-                    self.is_playing = false;
-                    self.last_frame_time = None;
-                    self.current_frame_texture = None;
-                    // Load first frame immediately
-                    // Note: We'll need to update the frame in the UI update loop
-                } else {
-                    self.error_message = Some("Failed to get video info".to_string());
-                }
+        // Start async loading
+        match self.media_store.load_media_async(&path) {
+            Ok(receiver) => {
+                // Store receiver to poll in update loop
+                self.pending_load_receiver = Some((path.clone(), receiver));
             }
             Err(e) => {
-                self.error_message = Some(format!("Failed to load video: {}", e));
+                self.error_message = Some(format!("Failed to start loading video: {}", e));
+            }
+        }
+    }
+
+    fn check_loading_status(&mut self, ctx: &egui::Context) {
+        let receiver_result = self.pending_load_receiver.as_mut().map(|(path, receiver)| {
+            (path.clone(), receiver.try_receive())
+        });
+
+        if let Some((path, result)) = receiver_result {
+            match result {
+                Ok(Some(loaded_data)) => {
+                    let media_id = loaded_data.id;
+                    println!("[GUI] Media loaded successfully! ID: {}", media_id);
+                    
+                    // Store the loaded media in the store
+                    self.media_store.store_loaded_media(loaded_data);
+                    
+                    // Get video info
+                    let media_info = self
+                        .media_store
+                        .get_media(&media_id)
+                        .and_then(|f| f.video_info().map(|(w, h, fps)| (w, h, fps, f.duration())));
+
+                    if let Some((width, height, fps, duration)) = media_info {
+                        self.video_id = Some(media_id);
+                        self.video_path = Some(path);
+                        self.video_width = width;
+                        self.video_height = height;
+                        self.video_fps = fps;
+                        self.video_duration = duration;
+                        self.current_time = 0.0;
+                        self.is_playing = false;
+                        self.last_frame_time = None;
+                        self.current_frame_texture = None;
+                        // Load first frame immediately
+                        // Note: We'll need to update the frame in the UI update loop
+                    } else {
+                        self.error_message = Some("Failed to get video info".to_string());
+                    }
+                    
+                    // Clear loading receiver
+                    self.pending_load_receiver = None;
+                }
+                Ok(None) => {
+                    // Still loading, request repaint to check again soon
+                    ctx.request_repaint_after(Duration::from_millis(16)); // ~60fps polling
+                }
+                Err(e) => {
+                    println!("[GUI] Error loading media: {}", e);
+                    self.error_message = Some(format!("Failed to load video: {}", e));
+                    self.pending_load_receiver = None;
+                }
             }
         }
     }
@@ -282,6 +321,9 @@ impl RasterSongApp {
 
 impl eframe::App for RasterSongApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Check for pending media loading
+        self.check_loading_status(ctx);
+
         // Update playback if playing
         self.update_playback(ctx);
 
@@ -330,6 +372,24 @@ impl eframe::App for RasterSongApp {
             // Show error if any
             if let Some(error) = &self.error_message {
                 ui.colored_label(egui::Color32::RED, format!("Error: {}", error));
+            }
+
+            // Show loading indicator if loading
+            if self.pending_load_receiver.is_some() {
+                ui.centered_and_justified(|ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.spinner();
+                        ui.add_space(10.0);
+                        if let Some((path, _)) = &self.pending_load_receiver {
+                            ui.label(format!(
+                                "Loading: {}",
+                                path.file_name().unwrap_or_default().to_string_lossy()
+                            ));
+                        }
+                        ui.label("Pre-processing media...");
+                    });
+                });
+                return;
             }
 
             // Video display area

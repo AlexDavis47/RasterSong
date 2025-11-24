@@ -6,7 +6,6 @@
 use super::audio_decoder::AudioDecoder;
 use super::ffmpeg;
 use super::frame_cache::FrameCache;
-use super::frame_metadata::FrameMetadataCache;
 use super::media_file::{MediaFile, MediaMetadata};
 use super::media_id::MediaId;
 use super::media_worker::{MediaWorker, spawn_worker};
@@ -17,6 +16,43 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::thread::JoinHandle;
+
+/// Result of async media loading containing all data needed to store the media
+pub struct LoadedMediaData {
+    pub id: MediaId,
+    pub media_file: MediaFile,
+    pub worker_handle: JoinHandle<()>,
+}
+
+/// Receiver for async media loading operations
+///
+/// This wraps the internal channel receiver to avoid exposing crossbeam types.
+/// Use `try_receive()` to check if loading is complete without blocking.
+pub struct LoadMediaReceiver(crossbeam::channel::Receiver<Result<LoadedMediaData>>);
+
+impl LoadMediaReceiver {
+    /// Try to receive the loaded media data from a load request (non-blocking)
+    ///
+    /// # Returns
+    /// - `Ok(Some(data))` if loading is complete, containing MediaId, MediaFile, and worker handle
+    /// - `Ok(None)` if loading is still in progress
+    /// - `Err(e)` if there was an error or channel disconnected
+    pub fn try_receive(&self) -> Result<Option<LoadedMediaData>> {
+        match self.0.try_recv() {
+            Ok(result) => {
+                println!("[LoadMediaReceiver] Media loaded from worker");
+                result.map(Some)
+            }
+            Err(crossbeam::channel::TryRecvError::Empty) => {
+                // Loading not complete yet
+                Ok(None)
+            }
+            Err(crossbeam::channel::TryRecvError::Disconnected) => {
+                anyhow::bail!("Loading thread disconnected")
+            }
+        }
+    }
+}
 
 /// MediaStore implementation with threaded media files
 pub struct MediaStore {
@@ -40,17 +76,47 @@ impl MediaStore {
         }
     }
 
-    /// Load a media file and return its MediaId
+    /// Load a media file asynchronously and return a receiver
     ///
-    /// This opens the file, creates decoders, spawns a worker thread,
-    /// and returns a MediaFile that communicates with the worker.
-    pub fn load_media(&mut self, path: &Path) -> Result<MediaId> {
-        println!("[MediaStore] Loading media file: {:?}", path);
+    /// This spawns a background thread that opens the file, creates decoders,
+    /// scans metadata, spawns a worker thread, and returns loaded media data when complete.
+    /// The GUI can poll the receiver to check loading status without blocking.
+    ///
+    /// # Returns
+    /// A `LoadMediaReceiver` that can be polled with `try_receive()` to check
+    /// if loading is complete. Returns `Ok(None)` while loading, `Ok(Some(data))`
+    /// when complete (containing MediaId, MediaFile, and worker handle), or `Err(e)` on error.
+    ///
+    /// After receiving the data, call `store_loaded_media()` to store it in the MediaStore.
+    pub fn load_media_async(&mut self, path: &Path) -> Result<LoadMediaReceiver> {
+        println!(
+            "[MediaStore] Starting async load for media file: {:?}",
+            path
+        );
 
-        // Validate path exists
+        // Validate path exists (quick check before spawning thread)
         if !path.exists() {
             anyhow::bail!("File does not exist: {:?}", path);
         }
+
+        // Create channel for loading result
+        let (result_tx, result_rx) = channel::bounded(1);
+        let path_buf = path.to_path_buf();
+
+        // Spawn background thread to do the heavy loading work
+        std::thread::spawn(move || {
+            let result = Self::load_media_internal(&path_buf);
+            let _ = result_tx.send(result);
+        });
+
+        Ok(LoadMediaReceiver(result_rx))
+    }
+
+    /// Internal method that performs the actual media loading work
+    ///
+    /// This runs in a background thread to avoid blocking the GUI.
+    fn load_media_internal(path: &Path) -> Result<LoadedMediaData> {
+        println!("[MediaStore] Loading media file: {:?}", path);
 
         // Ensure FFmpeg is initialized
         println!("[MediaStore] Initializing FFmpeg");
@@ -149,16 +215,25 @@ impl MediaStore {
             metadata,
         );
 
-        // Store media file and worker handle
-        println!("[MediaStore] Storing MediaFile and worker handle");
-        self.workers.insert(id, worker_handle);
-        self.files.insert(id, media_file);
-
         println!(
             "[MediaStore] Media file loaded successfully with ID: {}",
             id
         );
-        Ok(id)
+
+        Ok(LoadedMediaData {
+            id,
+            media_file,
+            worker_handle,
+        })
+    }
+
+    /// Store a loaded media file (called after async loading completes)
+    ///
+    /// This is called from the main thread after receiving the LoadedMediaData from
+    /// the async load operation.
+    pub fn store_loaded_media(&mut self, data: LoadedMediaData) {
+        self.workers.insert(data.id, data.worker_handle);
+        self.files.insert(data.id, data.media_file);
     }
 
     /// Get a reference to a MediaFile by its MediaId
