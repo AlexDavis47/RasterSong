@@ -1,7 +1,7 @@
 //! Main application structure for RasterSong EGUI frontend
 
 use eframe::egui;
-use rastersong::media::{FrameReceiver, LoadMediaReceiver, MediaId, MediaStore, VideoFrame};
+use rastersong::media::{LoadMediaReceiver, MediaId, MediaStore, VideoFrame};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -27,8 +27,8 @@ pub struct RasterSongApp {
     current_frame_texture: Option<egui::TextureHandle>,
     error_message: Option<String>,
 
-    // Async decode state
-    pending_frame_receiver: Option<(f64, FrameReceiver)>,
+    // Async GOP decode state (GOP index being decoded)
+    pending_gop_decode: Option<(usize, crossbeam::channel::Receiver<anyhow::Result<()>>)>,
 
     // Async loading state
     pending_load_receiver: Option<(PathBuf, LoadMediaReceiver)>,
@@ -52,7 +52,7 @@ impl Default for RasterSongApp {
             last_frame_time: None,
             current_frame_texture: None,
             error_message: None,
-            pending_frame_receiver: None,
+            pending_gop_decode: None,
             pending_load_receiver: None,
             last_prefetched_gop: None,
         }
@@ -77,19 +77,20 @@ impl RasterSongApp {
     }
 
     fn check_loading_status(&mut self, ctx: &egui::Context) {
-        let receiver_result = self.pending_load_receiver.as_mut().map(|(path, receiver)| {
-            (path.clone(), receiver.try_receive())
-        });
+        let receiver_result = self
+            .pending_load_receiver
+            .as_mut()
+            .map(|(path, receiver)| (path.clone(), receiver.try_receive()));
 
         if let Some((path, result)) = receiver_result {
             match result {
                 Ok(Some(loaded_data)) => {
                     let media_id = loaded_data.id;
                     println!("[GUI] Media loaded successfully! ID: {}", media_id);
-                    
+
                     // Store the loaded media in the store
                     self.media_store.store_loaded_media(loaded_data);
-                    
+
                     // Get video info
                     let media_info = self
                         .media_store
@@ -112,7 +113,7 @@ impl RasterSongApp {
                     } else {
                         self.error_message = Some("Failed to get video info".to_string());
                     }
-                    
+
                     // Clear loading receiver
                     self.pending_load_receiver = None;
                 }
@@ -130,90 +131,121 @@ impl RasterSongApp {
     }
 
     fn update_frame(&mut self, ctx: &egui::Context) {
-        if let Some(video_id) = &self.video_id {
-            // Fast path: try to get frame directly from cache first
-            let cached_frame = self
-                .media_store
-                .get_media(video_id)
-                .and_then(|media_file| media_file.get_frame(self.current_time));
+        let video_id = match self.video_id {
+            Some(id) => id,
+            None => return,
+        };
 
-            if let Some(frame) = cached_frame {
-                // Frame is cached, display immediately (<1ms)
-                self.display_frame(ctx, &frame);
-                self.pending_frame_receiver = None;
+        let media_file = match self.media_store.get_media(&video_id) {
+            Some(file) => file,
+            None => {
+                self.error_message = Some("Media file not found in store".to_string());
                 return;
             }
+        };
 
-            // Slow path: frame not cached, check if we have a pending decode
-            let should_start_new_decode =
-                if let Some((requested_time, receiver)) = &mut self.pending_frame_receiver {
-                    // Check if this pending request is for the current timestamp
-                    let is_for_current_time = (*requested_time - self.current_time).abs() < 0.001;
+        // Fast path: try to get frame directly from cache
+        if let Some(frame) = media_file.get_frame(self.current_time) {
+            // Frame is cached, display immediately (<1ms)
+            self.display_frame(ctx, &frame);
+            self.pending_gop_decode = None;
+            return;
+        }
 
-                    if is_for_current_time {
-                        // Check if frame is ready (non-blocking)
-                        match receiver.try_receive() {
-                            Ok(Some(frame)) => {
-                                println!("[GUI] Frame received from worker! Displaying frame");
+        // Frame not cached - need to decode the GOP containing it
+        let current_gop = match media_file.get_gop_index(self.current_time) {
+            Some(gop) => gop,
+            None => {
+                // Invalid timestamp or no video stream
+                return;
+            }
+        };
+
+        // Check if GOP is already decoded (shouldn't happen if frame wasn't cached, but check anyway)
+        if media_file.is_gop_decoded(current_gop) {
+            // GOP is decoded, frame should be available now
+            if let Some(frame) = media_file.get_frame(self.current_time) {
+                self.display_frame(ctx, &frame);
+                self.pending_gop_decode = None;
+                return;
+            }
+        }
+
+        // GOP is not decoded - check if we're already decoding it
+        let should_start_gop_decode =
+            if let Some((decoding_gop, receiver)) = &mut self.pending_gop_decode {
+                if *decoding_gop == current_gop {
+                    // We're already decoding this GOP - check if it's complete
+                    match receiver.try_recv() {
+                        Ok(Ok(())) => {
+                            // GOP decode completed! Clear receiver and try to get frame
+                            self.pending_gop_decode = None;
+                            if let Some(frame) = media_file.get_frame(self.current_time) {
                                 self.display_frame(ctx, &frame);
-                                self.pending_frame_receiver = None;
                                 return;
                             }
-                            Ok(None) => {
-                                // Frame not ready yet, keep waiting (don't start new decode)
-                                // Continue to show current frame if available
-                                return;
-                            }
-                            Err(e) => {
-                                println!("[GUI] Error receiving frame: {}", e);
-                                self.error_message = Some(format!("Failed to decode frame: {}", e));
-                                self.pending_frame_receiver = None;
-                                true // Start new decode after error
-                            }
+                            // Frame still not available (shouldn't happen), start decode again
+                            true
                         }
-                    } else {
-                        // Timestamp changed, cancel old request and start new one
-                        self.pending_frame_receiver = None;
-                        true
+                        Ok(Err(e)) => {
+                            // GOP decode failed
+                            println!("[GUI] GOP {} decode failed: {}", current_gop, e);
+                            self.error_message = Some(format!("Failed to decode GOP: {}", e));
+                            self.pending_gop_decode = None;
+                            true // Try again
+                        }
+                        Err(_) => {
+                            // Still decoding (Empty) or channel disconnected - wait for it or try again
+                            // For Empty, we wait; for Disconnected, we'll try again on next frame
+                            return;
+                        }
                     }
                 } else {
-                    // No pending decode, start a new one
+                    // We're decoding a different GOP - cancel and start new one
+                    println!(
+                        "[GUI] Cancelling GOP {} decode, starting GOP {} decode",
+                        decoding_gop, current_gop
+                    );
+                    self.pending_gop_decode = None;
                     true
-                };
+                }
+            } else {
+                // No pending GOP decode, start one
+                true
+            };
 
-            // Start a new decode if needed
-            if should_start_new_decode {
-                if let Some(media_file) = self.media_store.get_media(video_id) {
-                    match media_file.decode_frame_async(self.current_time) {
-                        Ok(receiver) => {
-                            // Check immediately if frame is ready (decode_frame_async checks cache first,
-                            // so cached frames will be available immediately)
-                            match receiver.try_receive() {
-                                Ok(Some(frame)) => {
-                                    // Frame was cached and is ready immediately
-                                    self.display_frame(ctx, &frame);
-                                    self.pending_frame_receiver = None;
-                                }
-                                Ok(None) => {
-                                    // Frame not ready yet, store receiver to poll later
-                                    self.pending_frame_receiver =
-                                        Some((self.current_time, receiver));
-                                }
-                                Err(e) => {
-                                    println!("[GUI] Error receiving frame: {}", e);
-                                    self.error_message =
-                                        Some(format!("Failed to decode frame: {}", e));
-                                    self.pending_frame_receiver = None;
-                                }
+        // Start GOP decode if needed
+        if should_start_gop_decode {
+            match media_file.decode_gop_async(current_gop) {
+                Ok(receiver) => {
+                    // Check immediately if GOP was already decoded (decode_gop_async checks cache first)
+                    match receiver.try_recv() {
+                        Ok(Ok(())) => {
+                            // GOP was already decoded, get frame
+                            if let Some(frame) = media_file.get_frame(self.current_time) {
+                                self.display_frame(ctx, &frame);
+                                self.pending_gop_decode = None;
+                            } else {
+                                // Shouldn't happen, but store receiver anyway
+                                self.pending_gop_decode = Some((current_gop, receiver));
                             }
                         }
-                        Err(e) => {
-                            println!("[GUI] Failed to start decode: {}", e);
-                            self.error_message = Some(format!("Failed to start decode: {}", e));
+                        Ok(Err(e)) => {
+                            println!("[GUI] GOP {} decode failed: {}", current_gop, e);
+                            self.error_message = Some(format!("Failed to decode GOP: {}", e));
+                            self.pending_gop_decode = None;
+                        }
+                        Err(_) => {
+                            // GOP decode started (Empty) or channel disconnected
+                            // For Empty, store receiver to poll later
+                            // For Disconnected, we'll handle it on next poll
+                            self.pending_gop_decode = Some((current_gop, receiver));
                         }
                     }
-                } else {
-                    self.error_message = Some("Media file not found in store".to_string());
+                }
+                Err(e) => {
+                    println!("[GUI] Failed to start GOP decode: {}", e);
+                    self.error_message = Some(format!("Failed to start GOP decode: {}", e));
                 }
             }
         }
@@ -327,12 +359,12 @@ impl eframe::App for RasterSongApp {
         // Update playback if playing
         self.update_playback(ctx);
 
-        // Always check for pending frames, even when playback is stopped
+        // Always check for pending GOP decodes, even when playback is stopped
         // This ensures frames decode after seeking are displayed
-        if self.pending_frame_receiver.is_some() {
+        if self.pending_gop_decode.is_some() {
             self.update_frame(ctx);
-            // If still waiting for frame, request another repaint soon
-            if self.pending_frame_receiver.is_some() {
+            // If still waiting for GOP decode, request another repaint soon
+            if self.pending_gop_decode.is_some() {
                 ctx.request_repaint_after(Duration::from_millis(16)); // ~60fps polling
             }
         }
@@ -462,48 +494,11 @@ impl eframe::App for RasterSongApp {
                     if slider_response.drag_stopped() {
                         // Reset prefetch state when seeking (manual control)
                         self.last_prefetched_gop = None;
-
-                        // Check if pending receiver is for current timestamp and has frame ready
-                        let frame_already_displayed = if let Some((requested_time, receiver)) =
-                            &mut self.pending_frame_receiver
-                        {
-                            let is_for_current_time =
-                                (*requested_time - self.current_time).abs() < 0.001;
-                            if is_for_current_time {
-                                // Check if frame is ready before canceling
-                                match receiver.try_receive() {
-                                    Ok(Some(frame)) => {
-                                        // Frame is ready! Display it immediately
-                                        self.display_frame(ctx, &frame);
-                                        self.pending_frame_receiver = None;
-                                        true // Frame already displayed
-                                    }
-                                    Ok(None) => {
-                                        // Frame not ready yet, keep the receiver (don't cancel)
-                                        false
-                                    }
-                                    Err(_) => {
-                                        // Error, cancel and start new decode
-                                        self.pending_frame_receiver = None;
-                                        false
-                                    }
-                                }
-                            } else {
-                                // Different timestamp, cancel old request
-                                self.pending_frame_receiver = None;
-                                false
-                            }
-                        } else {
-                            // No pending receiver
-                            false
-                        };
-
-                        // Only call update_frame if we haven't already displayed the frame
-                        if !frame_already_displayed {
-                            // Force immediate frame update after seeking stops
-                            // This ensures the frame is displayed even if playback is stopped
-                            self.update_frame(ctx);
-                        }
+                        // Cancel any pending GOP decode since we're seeking to a new position
+                        self.pending_gop_decode = None;
+                        // Force immediate frame update after seeking stops
+                        // This ensures the frame is displayed even if playback is stopped
+                        self.update_frame(ctx);
                         // Request repaint to ensure frame is displayed immediately
                         ctx.request_repaint();
                     } else if slider_response.changed() {
@@ -515,8 +510,8 @@ impl eframe::App for RasterSongApp {
                                 if let Some(frame) = media_file.get_frame(self.current_time) {
                                     // Frame is cached, display immediately
                                     self.display_frame(ctx, &frame);
-                                    // Cancel any pending decode since we have the frame
-                                    self.pending_frame_receiver = None;
+                                    // Cancel any pending GOP decode since we have the frame
+                                    self.pending_gop_decode = None;
                                 }
                                 // If not cached, don't start decode while dragging (wait for drag_stopped)
                             }

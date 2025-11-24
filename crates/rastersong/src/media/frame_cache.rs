@@ -3,10 +3,9 @@
 use super::video_frame::VideoFrame;
 use dashmap::DashMap;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// Cached GOP containing all decoded frames
-#[derive(Clone)]
 pub struct CachedGop {
     /// GOP ID
     pub gop_id: usize,
@@ -14,12 +13,15 @@ pub struct CachedGop {
     pub frames: HashMap<usize, VideoFrame>,
     /// Size estimate in bytes (for cache management)
     pub size_bytes: usize,
+    /// Last access sequence number (for LRU eviction)
+    last_access: AtomicU64,
 }
 
 /// Concurrent LRU cache for decoded video frames organized by GOP
 ///
 /// This cache is fully thread-safe and uses lock-free reads.
 /// Writes use atomic operations for size tracking.
+/// Implements proper LRU eviction based on access order.
 pub struct FrameCache {
     /// Map from GOP ID to cached GOP (concurrent hash map)
     gops: DashMap<usize, CachedGop>,
@@ -29,6 +31,8 @@ pub struct FrameCache {
     current_size: AtomicUsize,
     /// Maximum cache size in bytes (soft limit)
     max_size_bytes: usize,
+    /// Access sequence counter (incremented on each access for LRU tracking)
+    access_sequence: AtomicU64,
 }
 
 impl FrameCache {
@@ -43,6 +47,7 @@ impl FrameCache {
             max_gops,
             current_size: AtomicUsize::new(0),
             max_size_bytes: max_size_mb * 1024 * 1024,
+            access_sequence: AtomicU64::new(0),
         }
     }
 
@@ -55,19 +60,29 @@ impl FrameCache {
     ///
     /// Returns None if the GOP or frame is not cached.
     /// This is a non-blocking read operation.
+    /// Updates LRU access order on successful retrieval.
     pub fn get_frame(&self, gop_id: usize, frame_number: usize) -> Option<VideoFrame> {
-        self.gops
-            .get(&gop_id)
-            .and_then(|gop| gop.frames.get(&frame_number).cloned())
+        self.gops.get(&gop_id).and_then(|gop| {
+            // Update access order for LRU tracking
+            let access_seq = self.access_sequence.fetch_add(1, Ordering::Relaxed);
+            gop.last_access.store(access_seq, Ordering::Relaxed);
+
+            gop.frames.get(&frame_number).cloned()
+        })
     }
 
     /// Get all frames in a GOP
     ///
     /// Returns None if the GOP is not cached.
     /// This is a non-blocking read operation.
+    /// Updates LRU access order on successful retrieval.
     pub fn get_gop(&self, gop_id: usize) -> Option<Vec<VideoFrame>> {
         // Get a reference to the GOP and clone its frames
         self.gops.get(&gop_id).map(|gop| {
+            // Update access order for LRU tracking
+            let access_seq = self.access_sequence.fetch_add(1, Ordering::Relaxed);
+            gop.last_access.store(access_seq, Ordering::Relaxed);
+
             // Clone all frames from the HashMap
             gop.frames.values().cloned().collect()
         })
@@ -90,6 +105,7 @@ impl FrameCache {
     ///
     /// Evicts LRU GOPs if necessary to maintain size limits.
     /// This operation is thread-safe and uses atomic operations.
+    /// Properly implements LRU eviction by removing least recently accessed GOPs first.
     pub fn store_gop(&self, gop_id: usize, frames: HashMap<usize, VideoFrame>) {
         // Calculate size estimate from VideoFrame data
         let size_bytes: usize = frames.values().map(|frame| frame.data_size()).sum();
@@ -101,28 +117,41 @@ impl FrameCache {
         }
 
         // Evict LRU GOPs if we exceed limits
-        // Note: DashMap doesn't maintain insertion order, so we use a simple
-        // eviction strategy: remove entries until we're under limits
+        // Find and remove the least recently used GOPs until we have space
         while self.gops.len() >= self.max_gops
             || self.current_size.load(Ordering::Relaxed) + size_bytes > self.max_size_bytes
         {
-            // Remove the first entry we find
-            if let Some(entry) = self.gops.iter().next() {
-                let evicted_gop_id = *entry.key();
-                if let Some((_, evicted_gop)) = self.gops.remove(&evicted_gop_id) {
+            // Find the GOP with the lowest (oldest) last_access value
+            let mut lru_gop_id: Option<usize> = None;
+            let mut lru_access: Option<u64> = None;
+
+            for entry in self.gops.iter() {
+                let access = entry.last_access.load(Ordering::Relaxed);
+                if lru_access.is_none() || access < lru_access.unwrap() {
+                    lru_access = Some(access);
+                    lru_gop_id = Some(*entry.key());
+                }
+            }
+
+            // Remove the LRU GOP
+            if let Some(evict_gop_id) = lru_gop_id {
+                if let Some((_, evicted_gop)) = self.gops.remove(&evict_gop_id) {
                     self.current_size
                         .fetch_sub(evicted_gop.size_bytes, Ordering::Relaxed);
                 }
             } else {
-                break; // No more GOPs to evict
+                // No more GOPs to evict (shouldn't happen, but safety check)
+                break;
             }
         }
 
-        // Store new GOP
+        // Store new GOP with current access sequence
+        let access_seq = self.access_sequence.fetch_add(1, Ordering::Relaxed);
         let cached_gop = CachedGop {
             gop_id,
             frames,
             size_bytes,
+            last_access: AtomicU64::new(access_seq),
         };
 
         self.current_size.fetch_add(size_bytes, Ordering::Relaxed);
@@ -130,6 +159,7 @@ impl FrameCache {
     }
 
     /// Store a single frame in the cache (adds to existing GOP or creates new one)
+    /// Updates LRU access order when adding to existing GOP.
     pub fn store_frame(&self, gop_id: usize, frame_number: usize, frame: VideoFrame) {
         let frame_size = frame.data_size();
 
@@ -141,6 +171,9 @@ impl FrameCache {
                 entry.size_bytes += frame_size;
                 self.current_size.fetch_add(frame_size, Ordering::Relaxed);
             }
+            // Update access order for LRU tracking
+            let access_seq = self.access_sequence.fetch_add(1, Ordering::Relaxed);
+            entry.last_access.store(access_seq, Ordering::Relaxed);
         } else {
             // Create new GOP with this frame
             let mut frames = HashMap::new();

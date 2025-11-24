@@ -11,3 +11,4 @@ env_logger = "0.11"
 rfd = "0.14"
 rastersong = { path = "../rastersong" }
 anyhow = "1.0"
+crossbeam = "0.8"

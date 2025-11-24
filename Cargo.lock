@@ -2972,6 +2972,7 @@ name = "rastersong-gui-egui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "crossbeam",
  "eframe",
  "egui",
  "egui_extras",
