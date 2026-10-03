@@ -1,0 +1,15 @@
+[package]
+name = "rastersong-graph"
+description = "Signal type, node contract, scheduler and built-in nodes for RasterSong"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

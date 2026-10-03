@@ -332,7 +332,7 @@ CI runs `fmt`, `clippy`, tests and `cargo-deny` on Windows, macOS and Linux.
 RasterSong is **source-available**, not open source. The code is public, so it can be read, studied, and built for
 personal use, and the project stays attributable to its author. Redistribution and commercial use are not permitted
 without permission. This keeps the option of selling prebuilt binaries later (similar to Aseprite's model).
-The exact license text is still to be written (see [Open Questions](#open-questions)).
+The terms are in [LICENSE](../LICENSE). It is a custom license and should be reviewed (see [Open Questions](#open-questions)).
 
 Because the code isn't open source, outside contributions will require a contributor license agreement (CLA).
 
@@ -359,9 +359,28 @@ All Rust dependencies must have permissive licenses (MIT, Apache-2.0, BSD, Zlib,
 
 ### Developer Setup
 
-- One pinned FFmpeg version, matching the major version of the `ffmpeg-next` bindings.
-- `cargo xtask fetch-ffmpeg` downloads a pinned LGPL shared build, verifies its checksum, unpacks it into `third_party/ffmpeg/`, and sets things up so `cargo build` works with no manual steps.
+- One pinned FFmpeg version (currently **9.0.2**), matching the major version of the `ffmpeg-next` bindings (9.x). The pins live in `xtask/src/ffmpeg.rs`.
+- `cargo xtask fetch-ffmpeg` installs it into `third_party/ffmpeg/`:
+  - **Windows, Linux:** downloads a pinned LGPL shared build from [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) and verifies its SHA-256. Only month-end autobuilds are pinned, because those are kept long-term.
+  - **macOS:** no trustworthy prebuilt LGPL shared build exists, so it downloads the official source release, verifies it and builds it (several minutes, once).
+- `.cargo/config.toml` points `FFMPEG_DIR` at `third_party/ffmpeg/`, and `rastersong-media`'s build script copies the shared libraries next to the binaries and tests Cargo builds, so `cargo run` and `cargo test` need no PATH changes.
 - Release builds use FFmpeg built from source in CI, with a minimal LGPL configure line (broad demuxers and decoders, only the encoders we ship).
+- The BtbN development builds are configured with `--enable-version3`, which makes them LGPL **v3**. Release builds should leave it off (LGPL v2.1 or later) unless a v3-only component is needed.
+- Tests in `rastersong-media` fail if the loaded FFmpeg reports any non-LGPL license, was configured with `--enable-gpl` or `--enable-nonfree`, or doesn't match the major version the bindings were built against.
+
+Getting started:
+
+```sh
+cargo xtask fetch-ffmpeg   # once, and again whenever the pin changes
+cargo xtask fixtures       # generate media test fixtures into fixtures/
+cargo test --workspace
+cargo run -p rastersong-gui
+```
+
+Prerequisites: the Rust toolchain (pinned by `rust-toolchain.toml`) and **libclang**, which the FFmpeg bindings
+use to generate their headers. On Windows, install LLVM (`winget install LLVM.LLVM`) or set `LIBCLANG_PATH`;
+Linux and macOS usually have it already (`apt install libclang-dev` otherwise). On macOS, building FFmpeg also needs
+the Xcode command line tools.
 
 ### Packaging
 
@@ -418,7 +437,7 @@ Each phase ends with its tests passing in CI.
 ## Open Questions
 
 - **Preview audio during variable-speed playback:** mute below full speed, or time-stretch?
-- **License text:** write the source-available license (personal use and building allowed, redistribution not).
+- **License review:** the custom LICENSE is a first draft. Have it reviewed, or switch to an established source-available license (e.g. PolyForm Strict), before any paid release.
 - **Node editor:** use an existing egui node-graph crate (e.g. `egui-snarl`) or build a custom one?
 - **Snapshots:** memory budget and spacing for state snapshots.
 - **Hardware encoder fallback:** what to offer for H.264 export on machines with no usable OS/hardware encoder.

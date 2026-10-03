@@ -1,0 +1,66 @@
+RasterSong Source-Available License
+Version 1.0
+
+Copyright (c) 2025-2026 Alexander Davis. All rights reserved.
+
+This license covers the source code, documentation and other materials in this
+repository (the "Software"), except for third-party components, which are covered
+by their own licenses.
+
+1. Permitted use
+
+   You may, free of charge:
+
+   a. view, read and study the Software;
+   b. build the Software from source and run it for your own personal,
+      non-commercial use;
+   c. modify your own copy of the Software for that personal, non-commercial use;
+   d. link to this repository, and quote short excerpts of the Software for the
+      purposes of commentary, review, teaching or discussion, with attribution.
+
+   Works you create with the Software (for example, rendered images, video or
+   audio) are yours. This license places no restrictions on them.
+
+2. Restrictions
+
+   Without prior written permission from the copyright holder, you may not:
+
+   a. distribute, publish, sublicense, sell, rent or lend the Software, any
+      modified version of it, or any compiled form of it (including binaries,
+      installers and packages), in whole or in part;
+   b. use the Software, or any part of it, in or as part of a commercial product
+      or service, or to provide the Software's functionality to others as a
+      service;
+   c. remove or alter any copyright, license or attribution notice in the
+      Software.
+
+   Forking this repository on the platform where it is hosted, solely in order to
+   propose changes back to it, is permitted.
+
+3. Contributions
+
+   Contributions are accepted only under a separate contributor license agreement
+   with the copyright holder.
+
+4. Third-party components
+
+   The Software uses third-party components, including FFmpeg, which is licensed
+   under the GNU Lesser General Public License. Those components remain under their
+   own licenses, and nothing in this license restricts any right you have under them.
+
+5. Termination
+
+   Any use of the Software that is not permitted by this license automatically
+   terminates your rights under it.
+
+6. No warranty
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+   FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+   COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
+   AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+For permission to use the Software in ways not covered by this license, contact the
+copyright holder through https://github.com/AlexDavis47/RasterSong.

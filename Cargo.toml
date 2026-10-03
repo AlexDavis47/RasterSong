@@ -1,13 +1,46 @@
 [workspace]
-resolver = "2"
-members = [
-    "crates/rastersong",
-    "crates/rastersong-gui-egui",
-]
+resolver = "3"
+members = ["crates/*", "xtask"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.98"
+authors = ["Alexander Davis"]
+license-file = "LICENSE"
+repository = "https://github.com/AlexDavis47/RasterSong"
+publish = false
+
+[workspace.dependencies]
+rastersong-media = { path = "crates/rastersong-media" }
+rastersong-graph = { path = "crates/rastersong-graph" }
+rastersong-engine = { path = "crates/rastersong-engine" }
+
+# FFmpeg bindings. The major version must match the pinned FFmpeg in `xtask/src/ffmpeg.rs`.
+ffmpeg-next = { version = "9.0", default-features = false, features = [
+    "codec",
+    "format",
+    "software-resampling",
+    "software-scaling",
+] }
+
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+eframe = "0.36"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
 
 [profile.release]
-debug = true
+debug = "line-tables-only"
+
+# Dependencies are optimized even in debug builds; decoding and processing are unusably slow otherwise.
+[profile.dev.package."*"]
+opt-level = 2

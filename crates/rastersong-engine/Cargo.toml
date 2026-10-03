@@ -1,0 +1,18 @@
+[package]
+name = "rastersong-engine"
+description = "RasterSong render service: sequential renderer, frame cache, playback clock"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+rastersong-graph.workspace = true
+rastersong-media.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

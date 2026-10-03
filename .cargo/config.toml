@@ -1,0 +1,11 @@
+[alias]
+xtask = "run --package xtask --"
+
+[env]
+# Written by `cargo xtask fetch-ffmpeg`. An FFMPEG_DIR already set in the environment takes precedence.
+FFMPEG_DIR = { value = "third_party/ffmpeg", relative = true }
+
+# Binaries and test executables find the FFmpeg shared libraries that rastersong-media's
+# build script copies next to them.
+[target.'cfg(target_os = "linux")']
+rustflags = ["-C", "link-arg=-Wl,-rpath,$ORIGIN"]
