@@ -21,7 +21,16 @@ const COMMON: &[&str] = &[
     "-fflags",
     "+bitexact",
 ];
-const BITEXACT_CODECS: &[&str] = &["-flags:v", "+bitexact", "-flags:a", "+bitexact"];
+/// Output options for reproducible bytes. Encoders split work by thread count (MPEG-4 uses one
+/// slice per thread), so a single thread keeps fixtures identical across machines and CI runners.
+const BITEXACT_CODECS: &[&str] = &[
+    "-flags:v",
+    "+bitexact",
+    "-flags:a",
+    "+bitexact",
+    "-threads",
+    "1",
+];
 
 /// Test pattern with motion, so inter-frame codecs produce real P/B-frames.
 const PATTERN: &str = "testsrc2=size=320x240:rate=30";

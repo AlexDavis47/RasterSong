@@ -143,17 +143,32 @@ fn constant_frame_rate() {
 #[test]
 fn truncated_file_decodes_what_is_there() {
     // truncated.mp4 is the first 60% of bframes.mp4's bytes, with the index up front, so the
-    // frames that survive must match the original exactly.
+    // frames that survive must match the original exactly. Frames are matched by presentation
+    // time, not index: B-frames near the cut can be missing while a later P-frame survives.
     let mut original = open("bframes.mp4");
     let mut truncated = open("truncated.mp4");
     let count = truncated.info().frame_count;
     assert!(count > 0 && count < 90, "{count} frames");
 
+    let original_times: Vec<f64> = (0..original.info().frame_count)
+        .map(|j| original.frame_time(j))
+        .collect();
+    let original_index = |time: f64| {
+        original_times
+            .iter()
+            .position(|&t| (t - time).abs() < 1e-6)
+            .unwrap_or_else(|| panic!("no original frame at {time}s"))
+    };
     let mut decoded = 0;
     for i in 0..count {
+        let j = original_index(truncated.frame_time(i));
         match truncated.frame(i) {
             Ok(frame) => {
-                assert_eq!(frame.data, original.frame(i).unwrap().data, "frame {i}");
+                assert_eq!(
+                    frame.data,
+                    original.frame(j).unwrap().data,
+                    "frame {i} (original {j})"
+                );
                 decoded += 1;
             }
             Err(MediaError::FrameUnavailable(_)) => {}
