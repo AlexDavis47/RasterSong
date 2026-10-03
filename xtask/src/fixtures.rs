@@ -76,8 +76,9 @@ const FIXTURES: &[Fixture] = &[
         name: "odd_size.mkv",
         purpose: "Odd dimensions (321x241) in a 4:4:4 lossless codec",
         args: &[
-            "-f", "lavfi", "-i", "testsrc2=size=321x241:rate=24:duration=2",
-            "-pix_fmt", "yuv444p", "-c:v", "ffv1",
+            // testsrc2 rounds odd sizes down, so scale to the odd size afterwards.
+            "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=24:duration=2",
+            "-vf", "scale=321:241", "-pix_fmt", "yuv444p", "-c:v", "ffv1",
         ],
     },
     Fixture {
