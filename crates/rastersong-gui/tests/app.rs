@@ -593,8 +593,36 @@ fn the_wheel_zooms_over_an_audio_block_too() {
     assert!(harness.state().timeline_view().px_per_sec > fitted * 1.2);
 }
 
+/// Drags with the Ctrl key held.
+fn ctrl_drag(harness: &mut Harness<'_, App>, from: Pos2, to: Pos2) {
+    harness.event(Event::ModifiersChanged(Modifiers::COMMAND));
+    harness.run_steps(1);
+    harness.event(Event::PointerMoved(from));
+    harness.run_steps(1);
+    harness.event(Event::PointerButton {
+        pos: from,
+        button: PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::COMMAND,
+    });
+    harness.run_steps(1);
+    for t in [0.25, 0.5, 0.75, 1.0] {
+        harness.event(Event::PointerMoved(from + (to - from) * t));
+        harness.run_steps(1);
+    }
+    harness.event(Event::PointerButton {
+        pos: to,
+        button: PointerButton::Primary,
+        pressed: false,
+        modifiers: Modifiers::COMMAND,
+    });
+    harness.run_steps(1);
+    harness.event(Event::ModifiersChanged(Modifiers::NONE));
+    harness.run_steps(1);
+}
+
 #[test]
-fn dragging_along_the_ruler_makes_a_loop_region() {
+fn dragging_along_the_ruler_scrubs_the_playhead_without_making_a_loop() {
     let mut harness = loaded();
     let ruler_y = harness.state().timeline_area().top() + 11.0;
     let mut from = timeline_point(&harness, 0.5, 0);
@@ -602,6 +630,25 @@ fn dragging_along_the_ruler_makes_a_loop_region() {
     from.y = ruler_y;
     to.y = ruler_y;
     drag(&mut harness, from, to);
+    assert_eq!(
+        harness.state().clock().frame(),
+        30,
+        "the playhead follows the drag"
+    );
+    assert!(harness.state().project().loop_region.is_none());
+}
+
+#[test]
+fn ctrl_dragging_along_the_ruler_makes_a_loop_region() {
+    let mut harness = loaded();
+    let ruler_y = harness.state().timeline_area().top() + 11.0;
+    let mut from = timeline_point(&harness, 0.5, 0);
+    let mut to = timeline_point(&harness, 1.0, 0);
+    from.y = ruler_y;
+    to.y = ruler_y;
+    let playhead = harness.state().clock().frame();
+    ctrl_drag(&mut harness, from, to);
+    assert_eq!(harness.state().clock().frame(), playhead, "it doesn't seek");
     let region = harness
         .state()
         .project()
@@ -619,6 +666,47 @@ fn dragging_along_the_ruler_makes_a_loop_region() {
         harness.state().project().loop_region.unwrap().enabled,
         "undoable"
     );
+}
+
+#[test]
+fn track_and_video_names_are_shared_with_the_graph() {
+    let mut harness = loaded();
+    let audio = key(&harness, "audio");
+    assert!(harness.state().editor().is_linked(audio));
+
+    assert!(harness.state_mut().rename_track("audio", "drums"));
+    harness.run_steps(2);
+    assert_eq!(harness.state().project().audio_tracks[0].name, "drums");
+    let node = harness.state().editor().node(audio).unwrap();
+    assert_eq!(
+        node.params.get("source"),
+        Some(&rastersong_engine::ParamValue::Text("drums".into()))
+    );
+    assert!(harness.state().editor().is_linked(audio), "still linked");
+
+    // A name another track has, or an empty one, is refused.
+    harness
+        .state_mut()
+        .add_audio_tracks([PathBuf::from("song")]);
+    assert!(!harness.state_mut().rename_track("song", "drums"));
+    assert!(!harness.state_mut().rename_track("song", "  "));
+
+    // The video's name is the project's too, and isn't its file's.
+    let file_name = harness.state().project().video_display_name();
+    harness.state_mut().rename_video("Intro shot");
+    assert_eq!(
+        harness.state().project().video_name.as_deref(),
+        Some("Intro shot")
+    );
+    harness
+        .state_mut()
+        .rename_video(&file_name.clone().unwrap());
+    assert_eq!(
+        harness.state().project().video_name,
+        None,
+        "back to the file's name"
+    );
+    assert_eq!(harness.state().project().video_display_name(), file_name);
 }
 
 #[test]

@@ -4,6 +4,7 @@
 //! - The scroll wheel zooms time around the pointer (over the headers it scrolls the tracks);
 //!   middle- or right-drag pans in both directions; F fits the whole video.
 //! - Click or drag on the ruler or empty lane space to seek; drag an audio block to move it.
+//! - Ctrl+drag on the ruler makes a loop region (or moves one of its edges).
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -15,14 +16,18 @@ use eframe::egui::{
 };
 use rastersong_engine::{LoopRegion, Waveform};
 
+use crate::name_edit::name_edit;
 use crate::theme::Theme;
 
 /// Width of the track header column.
 pub const HEADER_WIDTH: f32 = 220.0;
 /// Gap between the headers and the lanes.
 const GAP: f32 = 6.0;
+/// Width of the name fields in the track headers, leaving room for the buttons beside them.
+const NAME_WIDTH: f32 = HEADER_WIDTH - 112.0;
 const RULER_HEIGHT: f32 = 22.0;
-pub const LANE_HEIGHT: f32 = 48.0;
+/// Tall enough for a track header's two rows of widgets.
+pub const LANE_HEIGHT: f32 = 58.0;
 /// Width of the button that fits the whole video.
 const FIT_WIDTH: f32 = 44.0;
 /// Height of the row holding the "add track" button.
@@ -78,6 +83,7 @@ pub enum TrackAction {
     SetOffset(usize, f64),
     ToggleMute(usize),
     Rename(usize, String),
+    RenameVideo(String),
     Remove(usize),
     Add,
 }
@@ -95,7 +101,15 @@ pub struct TimelineResponse {
 /// How close (pixels) the pointer must be to a loop edge on the ruler to drag that edge.
 const LOOP_EDGE_GRAB: f32 = 6.0;
 
-/// What a drag on the ruler is doing to the loop region.
+/// What a drag on the ruler is doing: moving the playhead, or (with Ctrl held when it started)
+/// changing the loop region.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum RulerDrag {
+    Seek,
+    Loop(LoopDrag),
+}
+
+/// What a drag is doing to the loop region.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum LoopDrag {
     /// Making a new region from where the drag started (seconds).
@@ -268,12 +282,7 @@ impl Areas {
     }
 }
 
-pub fn timeline(
-    ui: &mut Ui,
-    model: &TimelineModel,
-    view: &mut TimelineView,
-    track_names: &mut [String],
-) -> TimelineResponse {
+pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> TimelineResponse {
     let mut response = TimelineResponse::default();
     let theme = Theme::of(ui.ctx());
     let area = ui.available_rect_before_wrap();
@@ -434,9 +443,15 @@ pub fn timeline(
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("▣ Video").strong());
-                if let Some(name) = &model.video_name {
-                    ui.add(egui::Label::new(egui::RichText::new(name).weak()).truncate());
+                ui.label("▣");
+                let current = model.video_name.as_deref().unwrap_or("Video");
+                let edit = name_edit(ui, ui.id().with("video-name"), current, |e| {
+                    e.desired_width(NAME_WIDTH)
+                });
+                edit.response
+                    .on_hover_text("Video name, shared with the video input node");
+                if let Some(name) = edit.committed {
+                    response.actions.push(TrackAction::RenameVideo(name));
                 }
             });
             if let Some(details) = &model.video_details {
@@ -453,7 +468,7 @@ pub fn timeline(
         };
         header_painter.rect_filled(rect, CornerRadius::same(3), fill);
         header(ui, rect, header_clip, |ui| {
-            audio_header(ui, track, i, &mut track_names[i], &mut response);
+            audio_header(ui, track, i, &mut response);
         });
     }
     let add_row = Rect::from_min_size(
@@ -491,8 +506,9 @@ pub fn timeline(
     response
 }
 
-/// The ruler's own clicks and drags: a click seeks, a drag makes a loop region (or moves one of
-/// its edges, when it starts on one), and right-click offers looping on and off and clearing.
+/// The ruler's own clicks and drags: a click or drag moves the playhead, Ctrl+drag makes a loop
+/// region (or moves one of its edges, when it starts on one), and right-click offers looping on
+/// and off and clearing.
 fn loop_ruler(
     ui: &mut Ui,
     areas: &Areas,
@@ -510,67 +526,82 @@ fn loop_ruler(
         let frames = (view.seconds(lanes_left, x) * model.frame_rate).round();
         frames.clamp(0.0, model.frame_count as f64) / model.frame_rate
     };
+    let seek = |x: f32, response: &mut TimelineResponse| {
+        let frame = (view.seconds(lanes_left, x) * model.frame_rate).floor();
+        response.seek = Some((frame.max(0.0) as usize).min(model.frame_count.saturating_sub(1)));
+    };
     let region = model.loop_region;
+    let ctrl = ui.input(|i| i.modifiers.command);
     let near = |x: f32, seconds: f64| (view.x(lanes_left, seconds) - x).abs() <= LOOP_EDGE_GRAB;
-    if let (Some(p), Some(r)) = (ruler.hover_pos(), region)
+    if ctrl
+        && let (Some(p), Some(r)) = (ruler.hover_pos(), region)
         && (near(p.x, r.start) || near(p.x, r.end))
     {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
     }
 
     if ruler.clicked()
+        && !ctrl
         && let Some(p) = ruler.interact_pointer_pos()
     {
-        let frame = (view.seconds(lanes_left, p.x) * model.frame_rate).floor();
-        response.seek = Some((frame.max(0.0) as usize).min(model.frame_count.saturating_sub(1)));
+        seek(p.x, response);
     }
 
-    let id = ui.id().with("loop-drag");
+    let id = ui.id().with("ruler-drag");
     if ruler.drag_started_by(PointerButton::Primary)
         && let Some(origin) = ui.input(|i| i.pointer.press_origin())
     {
-        let drag = match region {
-            Some(r) if near(origin.x, r.start) => LoopDrag::Start,
-            Some(r) if near(origin.x, r.end) => LoopDrag::End,
-            _ => LoopDrag::New {
-                anchor: snap(origin.x),
-            },
+        let drag = if !ctrl {
+            RulerDrag::Seek
+        } else {
+            RulerDrag::Loop(match region {
+                Some(r) if near(origin.x, r.start) => LoopDrag::Start,
+                Some(r) if near(origin.x, r.end) => LoopDrag::End,
+                _ => LoopDrag::New {
+                    anchor: snap(origin.x),
+                },
+            })
         };
         ui.data_mut(|d| d.insert_temp(id, drag));
     }
-    let drag: Option<LoopDrag> = ui.data(|d| d.get_temp(id));
+    let drag: Option<RulerDrag> = ui.data(|d| d.get_temp(id));
     if let (Some(drag), true, Some(p)) = (
         drag,
         ruler.dragged_by(PointerButton::Primary),
         ruler.interact_pointer_pos(),
     ) {
-        let at = snap(p.x);
-        let enabled = region.is_none_or(|r| r.enabled);
-        let (start, end) = match (drag, region) {
-            (LoopDrag::New { anchor }, _) => (anchor.min(at), anchor.max(at)),
-            (LoopDrag::Start, Some(r)) => (at.min(r.end), at.max(r.end)),
-            (LoopDrag::End, Some(r)) => (r.start.min(at), r.start.max(at)),
-            (_, None) => (at, at),
-        };
-        if end > start {
-            response.loop_region = Some(Some(LoopRegion {
-                start,
-                end,
-                enabled: enabled || matches!(drag, LoopDrag::New { .. }),
-            }));
+        match drag {
+            RulerDrag::Seek => seek(p.x, response),
+            RulerDrag::Loop(drag) => {
+                let at = snap(p.x);
+                let enabled = region.is_none_or(|r| r.enabled);
+                let (start, end) = match (drag, region) {
+                    (LoopDrag::New { anchor }, _) => (anchor.min(at), anchor.max(at)),
+                    (LoopDrag::Start, Some(r)) => (at.min(r.end), at.max(r.end)),
+                    (LoopDrag::End, Some(r)) => (r.start.min(at), r.start.max(at)),
+                    (_, None) => (at, at),
+                };
+                if end > start {
+                    response.loop_region = Some(Some(LoopRegion {
+                        start,
+                        end,
+                        enabled: enabled || matches!(drag, LoopDrag::New { .. }),
+                    }));
+                }
+            }
         }
     }
     if ruler.drag_stopped() {
-        ui.data_mut(|d| d.remove::<LoopDrag>(id));
+        ui.data_mut(|d| d.remove::<RulerDrag>(id));
     }
 
     let ruler = ruler.on_hover_text(
-        "Click to move the playhead; drag to make a loop region, or drag its edges. \
+        "Click or drag to move the playhead. Ctrl+drag makes a loop region, or moves its edges. \
          Right-click for looping options.",
     );
     ruler.context_menu(|ui| {
         let Some(mut r) = region else {
-            ui.weak("Drag along the ruler to make a loop region");
+            ui.weak("Ctrl+drag along the ruler to make a loop region");
             return;
         };
         if ui.checkbox(&mut r.enabled, "Loop playback (R)").changed() {
@@ -814,27 +845,22 @@ impl AudioLane<'_> {
 }
 
 /// The widgets of an audio track's header: name, mute and remove; then the offset.
-fn audio_header(
-    ui: &mut Ui,
-    track: &TrackView,
-    index: usize,
-    name: &mut String,
-    response: &mut TimelineResponse,
-) {
+fn audio_header(ui: &mut Ui, track: &TrackView, index: usize, response: &mut TimelineResponse) {
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
         ui.horizontal(|ui| {
             ui.label("♪");
-            let edit = ui
-                .add(egui::TextEdit::singleline(name).desired_width(HEADER_WIDTH - 96.0))
-                .on_hover_text("Track name, used by Audio Input nodes");
-            if edit.gained_focus() {
+            let edit = name_edit(ui, ui.id().with(("track-name", index)), &track.name, |e| {
+                e.desired_width(NAME_WIDTH)
+            });
+            let edit_response = edit
+                .response
+                .on_hover_text("Track name, shared with its Audio Input node");
+            if edit_response.gained_focus() {
                 response.actions.push(TrackAction::Select(index));
             }
-            if edit.lost_focus() && *name != track.name {
-                response
-                    .actions
-                    .push(TrackAction::Rename(index, name.trim().to_owned()));
+            if let Some(name) = edit.committed {
+                response.actions.push(TrackAction::Rename(index, name));
             }
             let mute = egui::Button::new(if track.muted { "🔇" } else { "🔊" }).frame(false);
             if ui

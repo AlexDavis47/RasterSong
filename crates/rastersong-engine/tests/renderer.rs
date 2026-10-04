@@ -68,6 +68,32 @@ fn cancelling_leaves_the_renderer_consistent() {
 }
 
 #[test]
+fn rendering_reports_the_warmup_it_does_after_a_seek() {
+    let mut r = renderer(FINITE);
+    let warmup = r.warmup_frames();
+    assert!(warmup >= 2);
+    let steps = std::cell::RefCell::new(Vec::new());
+    let record = |step| steps.borrow_mut().push(step);
+
+    // A fresh seek processes the history first, then the frame itself.
+    r.render_with(30, &|| false, &record).unwrap().unwrap();
+    {
+        let steps = steps.borrow();
+        assert_eq!(steps.len(), warmup + 1);
+        assert!(steps.iter().all(|s| s.restarted && s.total == warmup + 1));
+        assert_eq!(steps.first().unwrap().done, 0);
+        assert_eq!(steps.last().unwrap().done, warmup);
+    }
+
+    // The next frame carries on: one step, no warm-up.
+    steps.borrow_mut().clear();
+    r.render_with(31, &|| false, &record).unwrap().unwrap();
+    let steps = steps.borrow();
+    assert_eq!(steps.len(), 1);
+    assert!(!steps[0].restarted && steps[0].total == 1);
+}
+
+#[test]
 fn out_of_range_frames_are_an_error() {
     assert!(renderer(FINITE).render(FRAMES, &|| false).is_err());
 }

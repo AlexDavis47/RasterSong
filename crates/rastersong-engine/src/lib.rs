@@ -34,6 +34,7 @@ pub use renderer::{
 };
 pub use service::{
     AudioTrackSpec, Engine, EngineConfig, EngineStatus, Failure, LoadedTrack, PreviewScale,
+    RenderProgress,
 };
 pub use thumbnails::{THUMBNAIL_HEIGHT, Thumbnails};
 pub use waveform::Waveform;

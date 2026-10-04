@@ -45,16 +45,19 @@ pub enum WireStyle {
     Outline,
     /// The part it carries down the centre, fading to the signal's kind at the edges.
     Gradient,
+    /// The signal's kind as a crisp line, glowing in the part it carries.
+    Glow,
 }
 
 impl WireStyle {
-    pub const ALL: [WireStyle; 3] = [Self::Solid, Self::Outline, Self::Gradient];
+    pub const ALL: [WireStyle; 4] = [Self::Solid, Self::Outline, Self::Gradient, Self::Glow];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Solid => "Solid",
             Self::Outline => "Outlined",
             Self::Gradient => "Gradient",
+            Self::Glow => "Glow",
         }
     }
 }

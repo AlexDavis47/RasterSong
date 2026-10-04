@@ -16,7 +16,7 @@ use rastersong_engine::{
 };
 
 use crate::audio_out::AudioOut;
-use crate::editor::{CanvasContext, GraphEditor, InspectorContext, without_layout};
+use crate::editor::{CanvasContext, GraphEditor, InspectorContext, LinkedRename, without_layout};
 use crate::history::History;
 use crate::settings::Settings;
 use crate::theme::{Theme, ThemeChoice, WireStyle, apply_style};
@@ -77,8 +77,8 @@ pub struct App {
     /// The theme last handed to egui.
     applied_theme: Option<ThemeChoice>,
     selected_track: Option<usize>,
-    /// Edit buffers for the track names in the timeline.
-    track_names: Vec<String>,
+    /// When (egui time) the preview started waiting on a frame to render, if it is.
+    waiting_since: Option<f64>,
     preview: Option<(egui::TextureHandle, Arc<Frame>)>,
     error: Option<String>,
     show_about: bool,
@@ -124,11 +124,7 @@ impl App {
             allow_close: false,
             sent_graph: GraphDesc::from_json(r#"{ "version": 1, "nodes": [] }"#).unwrap(),
             sent_mix: None,
-            track_names: project
-                .audio_tracks
-                .iter()
-                .map(|t| t.name.clone())
-                .collect(),
+            waiting_since: None,
             selected_track: (!project.audio_tracks.is_empty()).then_some(0),
             project,
             project_path: None,
@@ -225,11 +221,6 @@ impl App {
         project.graph = self.editor.to_desc();
         self.saved = project.clone();
         self.history = History::new(project.clone());
-        self.track_names = project
-            .audio_tracks
-            .iter()
-            .map(|t| t.name.clone())
-            .collect();
         self.selected_track = (!project.audio_tracks.is_empty()).then_some(0);
         self.project = project;
         self.project_path = path;
@@ -251,6 +242,7 @@ impl App {
     pub fn open_video(&mut self, path: PathBuf) {
         let has_audio = self.backend.has_audio(&path);
         self.project.video = Some(path.clone());
+        self.project.video_name = None;
         self.engine.set_video(self.project.video.clone());
         self.clock.seek(0);
         self.link_project_inputs();
@@ -267,7 +259,6 @@ impl App {
             self.project
                 .audio_tracks
                 .push(ProjectTrack::new(name.clone(), path));
-            self.track_names.push(name.clone());
             self.selected_track = Some(self.project.audio_tracks.len() - 1);
             self.editor
                 .set_project_inputs(self.video_name(), self.track_name_list());
@@ -275,13 +266,10 @@ impl App {
         }
     }
 
-    /// The video's file name, as the linked video node shows it.
+    /// The video's name: the user's, or else its file's. The timeline and the linked video node
+    /// show the same name.
     fn video_name(&self) -> Option<String> {
-        self.project
-            .video
-            .as_ref()
-            .and_then(|p| p.file_name())
-            .map(|n| n.to_string_lossy().into_owned())
+        self.project.video_display_name()
     }
 
     fn track_name_list(&self) -> Vec<String> {
@@ -418,11 +406,6 @@ impl App {
             self.engine.set_video(project.video.clone());
         }
         self.editor.restore(&project.graph);
-        self.track_names = project
-            .audio_tracks
-            .iter()
-            .map(|t| t.name.clone())
-            .collect();
         self.selected_track = self
             .selected_track
             .filter(|&i| i < project.audio_tracks.len())
@@ -545,6 +528,15 @@ impl App {
 
     /// Sends edits to the engine and the audio output.
     fn sync(&mut self) {
+        // Names changed on a node in the graph are the project's names too.
+        for rename in self.editor.take_renames() {
+            match rename {
+                LinkedRename::Video(name) => self.rename_video(&name),
+                LinkedRename::Track { from, to } => {
+                    self.rename_track(&from, &to);
+                }
+            }
+        }
         self.editor
             .set_project_inputs(self.video_name(), self.track_name_list());
         let graph = self.editor.to_desc();
@@ -862,7 +854,7 @@ impl App {
     }
 
     fn preview_column(&mut self, ui: &mut Ui) {
-        let controls_height = 64.0;
+        let controls_height = 96.0;
         let size = egui::vec2(
             ui.available_width(),
             (ui.available_height() - controls_height).max(80.0),
@@ -930,6 +922,14 @@ impl App {
                 egui::Label::new(RichText::new(text).color(theme.text_dim).size(15.0)).wrap(),
             );
         };
+        let now = ui.input(|i| i.time);
+        let waiting = matches!(self.engine.status(), EngineStatus::Ready)
+            && self.engine.frame(self.clock.frame()).is_none();
+        self.waiting_since = if waiting {
+            Some(self.waiting_since.unwrap_or(now))
+        } else {
+            None
+        };
         let mut open_video = false;
         match self.engine.status() {
             EngineStatus::Idle => {
@@ -953,25 +953,29 @@ impl App {
                     },
                 );
             }
-            EngineStatus::Loading => {
-                ui.put(
-                    egui::Rect::from_center_size(rect.center(), egui::vec2(32.0, 32.0)),
-                    egui::Spinner::new(),
-                );
-            }
+            EngineStatus::Loading => busy_centered(ui, rect, None),
             // The graph panel explains failures; the picture just stays as it was.
             EngineStatus::Failed(_) if self.preview.is_none() => message(
                 ui,
                 "The graph can't render; see the bottom of the graph panel",
             ),
             EngineStatus::Ready if self.engine.frame(self.clock.frame()).is_none() => {
-                ui.put(
-                    egui::Rect::from_min_size(
-                        rect.min + egui::vec2(10.0, 10.0),
-                        egui::vec2(18.0, 18.0),
-                    ),
-                    egui::Spinner::new(),
-                );
+                let waited = self.waiting_since.map_or(0.0, |since| now - since);
+                let warming = self
+                    .engine
+                    .progress()
+                    .filter(|p| p.warming)
+                    .map(|p| format!("Warming up {}/{}", p.done, p.total));
+                if self.preview.is_none() {
+                    // Nothing to show yet: the spinner stays where "loading" put it.
+                    busy_centered(ui, rect, warming.as_deref());
+                } else if waited > BUSY_DELAY_SECS {
+                    // The last frame stays up; say what's happening, but only once it's a wait
+                    // rather than a flicker.
+                    busy_badge(ui, rect, warming.as_deref().unwrap_or("Rendering"), theme);
+                }
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(100));
             }
             _ => {}
         }
@@ -982,8 +986,13 @@ impl App {
     fn controls(&mut self, ui: &mut Ui) {
         let info = self.engine.info();
         ui.horizontal(|ui| {
-            let label = if self.clock.is_playing() { "⏸" } else { "▶" };
-            let play = egui::Button::new(RichText::new(label).size(16.0)).min_size(egui::vec2(34.0, 26.0));
+            let label = if self.clock.is_playing() {
+                "⏸"
+            } else {
+                "▶"
+            };
+            let play =
+                egui::Button::new(RichText::new(label).size(16.0)).min_size(egui::vec2(34.0, 26.0));
             if ui
                 .add_enabled(info.is_some(), play)
                 .on_hover_text("Play / pause (Space)")
@@ -992,11 +1001,12 @@ impl App {
                 self.clock.toggle();
             }
             let looping = self.project.loop_region.is_some_and(|l| l.enabled);
-            let loop_button = egui::Button::selectable(looping, "Loop").min_size(egui::vec2(0.0, 26.0));
+            let loop_button =
+                egui::Button::selectable(looping, "Loop").min_size(egui::vec2(0.0, 26.0));
             let hover = if self.project.loop_region.is_some() {
                 "Repeat the loop region (R)"
             } else {
-                "Drag along the timeline's ruler to make a loop region"
+                "Ctrl+drag along the timeline's ruler to make a loop region"
             };
             if ui
                 .add_enabled(self.project.loop_region.is_some(), loop_button)
@@ -1016,32 +1026,7 @@ impl App {
                 ));
                 ui.weak(format!("frame {frame}"));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let buffered_frames = self.buffered_ahead();
-                    let buffered = buffered_frames as f64 / fps;
-                    let speed = self.clock.speed();
-                    let to_end = frame + buffered_frames >= info.frames;
-                    let round_loop = self
-                        .clock
-                        .active_loop()
-                        .is_some_and(|lp| buffered_frames >= lp.end - frame.min(lp.start));
-                    let ahead = if round_loop {
-                        "loop rendered".to_owned()
-                    } else if to_end {
-                        "rendered to the end".to_owned()
-                    } else {
-                        format!("{buffered:.1} s ahead")
-                    };
-                    let (text, color) = if !self.clock.is_playing() || speed >= 1.0 {
-                        (ahead, ui.visuals().weak_text_color())
-                    } else {
-                        (
-                            format!("{speed:.2}× · {ahead}"),
-                            Theme::of(ui.ctx()).warning,
-                        )
-                    };
-                    ui.colored_label(color, text).on_hover_text(
-                        "Rendered ahead of the playhead. Playback slows to what rendering can keep up with.",
-                    );
+                    self.cache_status(ui, info.frames, fps);
                 });
             }
         });
@@ -1049,11 +1034,11 @@ impl App {
             ui.label("Preview");
             let mut scale = self.settings.preview_scale();
             egui::ComboBox::from_id_salt("preview-scale")
-                .selected_text(scale_label(scale))
-                .width(60.0)
+                .selected_text(scale.label())
+                .width(84.0)
                 .show_ui(ui, |ui| {
                     for option in PreviewScale::ALL {
-                        ui.selectable_value(&mut scale, option, scale_label(option));
+                        ui.selectable_value(&mut scale, option, option.label());
                     }
                 })
                 .response
@@ -1062,14 +1047,66 @@ impl App {
                 self.settings.set_preview_scale(scale);
                 self.engine.set_preview_scale(scale);
             }
-
-            ui.separator();
+            if let (Some(project), Some(preview)) = (self.thumbnails.info(), info) {
+                ui.weak(format!(
+                    "{}×{} of {}×{}",
+                    preview.width, preview.height, project.width, project.height
+                ))
+                .on_hover_text(
+                    "Preview resolution, out of the project's resolution (the video's, which \
+                     is what gets exported)",
+                );
+            }
+        });
+        ui.horizontal(|ui| {
             ui.label("🔊");
-            ui.spacing_mut().slider_width = 70.0;
+            ui.spacing_mut().slider_width = 110.0;
             let volume = self.settings.volume;
             ui.add(egui::Slider::new(&mut self.settings.volume, 0.0..=1.0).show_value(false))
                 .on_hover_text(format!("Playback volume {:.0}%", volume * 100.0));
         });
+    }
+
+    /// What the render cache is doing, at the right of the controls: warming up after a seek, or
+    /// how far ahead of the playhead frames are ready.
+    fn cache_status(&self, ui: &mut Ui, frames: usize, fps: f64) {
+        let theme = Theme::of(ui.ctx());
+        if let Some(progress) = self.engine.progress().filter(|p| p.warming) {
+            ui.colored_label(
+                theme.warning,
+                format!("Warming up {}/{}", progress.done, progress.total),
+            )
+            .on_hover_text(format!(
+                "Rebuilding the history that delays and filters in the graph need before \
+                 frame {} can be shown. Graphs with a lot of memory take longer after a seek.",
+                progress.frame
+            ));
+            return;
+        }
+        let frame = self.clock.frame();
+        let buffered_frames = self.buffered_ahead();
+        let buffered = buffered_frames as f64 / fps;
+        let speed = self.clock.speed();
+        let to_end = frame + buffered_frames >= frames;
+        let round_loop = self
+            .clock
+            .active_loop()
+            .is_some_and(|lp| buffered_frames >= lp.end - frame.min(lp.start));
+        let ahead = if round_loop {
+            "loop rendered".to_owned()
+        } else if to_end {
+            "rendered to the end".to_owned()
+        } else {
+            format!("{buffered:.1} s ahead")
+        };
+        let (text, color) = if !self.clock.is_playing() || speed >= 1.0 {
+            (ahead, ui.visuals().weak_text_color())
+        } else {
+            (format!("{speed:.2}× · {ahead}"), theme.warning)
+        };
+        ui.colored_label(color, text).on_hover_text(
+            "Rendered ahead of the playhead. Playback slows to what rendering can keep up with.",
+        );
     }
 
     fn timeline(&mut self, ui: &mut Ui) {
@@ -1117,22 +1154,15 @@ impl App {
             frame_rate: info.frame_rate.as_f64(),
             playhead: self.clock.frame(),
             cached: &cached,
-            video_name: self
-                .project
-                .video
-                .as_ref()
-                .and_then(|p| p.file_name())
-                .map(|n| n.to_string_lossy().into_owned()),
+            video_name: self.video_name(),
             video_details,
             tracks,
             selected_track: self.selected_track,
             thumbnails: &thumbnails,
             loop_region: self.project.loop_region,
         };
-        self.track_names
-            .resize(self.project.audio_tracks.len(), String::new());
         self.timeline_area = ui.available_rect_before_wrap();
-        let response = timeline(ui, &model, &mut self.timeline_view, &mut self.track_names);
+        let response = timeline(ui, &model, &mut self.timeline_view);
         self.thumbnails.request(&response.wanted_thumbnails);
         if let Some(region) = response.loop_region {
             self.project.loop_region = region;
@@ -1174,6 +1204,40 @@ impl App {
         }
     }
 
+    /// Renames the track `old` (and the audio inputs reading it). Returns false, changing
+    /// nothing, if there's no such track or the name is empty or another track's.
+    pub fn rename_track(&mut self, old: &str, new: &str) -> bool {
+        let new = new.trim();
+        let Some(i) = self.project.audio_tracks.iter().position(|t| t.name == old) else {
+            return false;
+        };
+        if new == old {
+            return true;
+        }
+        if new.is_empty() || self.project.audio_tracks.iter().any(|t| t.name == new) {
+            return false;
+        }
+        self.editor.rename_track(old, new);
+        self.project.audio_tracks[i].name = new.to_owned();
+        self.editor
+            .set_project_inputs(self.video_name(), self.track_name_list());
+        true
+    }
+
+    /// Names the video. A name equal to the file's is no rename at all.
+    pub fn rename_video(&mut self, name: &str) {
+        let name = name.trim();
+        if name.is_empty() {
+            return;
+        }
+        self.project.video_name = Some(name.to_owned());
+        if self.project.video_name == self.project.video_display_name_from_file() {
+            self.project.video_name = None;
+        }
+        self.editor
+            .set_project_inputs(self.video_name(), self.track_name_list());
+    }
+
     fn track_action(&mut self, action: TrackAction) {
         match action {
             TrackAction::Select(i) => self.selected_track = Some(i),
@@ -1188,19 +1252,13 @@ impl App {
                 }
             }
             TrackAction::Rename(i, name) => {
-                let old = self.project.audio_tracks[i].name.clone();
-                let taken = self.project.audio_tracks.iter().any(|t| t.name == name);
-                if name.is_empty() || taken {
-                    self.track_names[i] = old;
-                } else {
-                    self.editor.rename_track(&old, &name);
-                    self.project.audio_tracks[i].name = name.clone();
-                    self.track_names[i] = name;
+                if let Some(old) = self.project.audio_tracks.get(i).map(|t| t.name.clone()) {
+                    self.rename_track(&old, &name);
                 }
             }
+            TrackAction::RenameVideo(name) => self.rename_video(&name),
             TrackAction::Remove(i) => {
                 let removed = self.project.audio_tracks.remove(i);
-                self.track_names.remove(i);
                 self.editor
                     .set_project_inputs(self.video_name(), self.track_name_list());
                 self.editor.unlink_track(&removed.name);
@@ -1284,14 +1342,50 @@ impl App {
     }
 }
 
+/// How long the preview waits on a frame before saying so, when it has an older one to show.
+const BUSY_DELAY_SECS: f64 = 0.25;
+
+/// A spinner in the middle of the preview, with a line of text under it when there is one.
+fn busy_centered(ui: &mut Ui, rect: egui::Rect, text: Option<&str>) {
+    ui.put(
+        egui::Rect::from_center_size(rect.center(), egui::vec2(32.0, 32.0)),
+        egui::Spinner::new(),
+    );
+    if let Some(text) = text {
+        ui.put(
+            egui::Rect::from_center_size(
+                rect.center() + egui::vec2(0.0, 34.0),
+                egui::vec2(rect.width() - 20.0, 20.0),
+            ),
+            egui::Label::new(RichText::new(text).color(Theme::of(ui.ctx()).text_dim)),
+        );
+    }
+}
+
+/// A small spinner and text in the corner of the preview, over the frame being shown.
+fn busy_badge(ui: &mut Ui, rect: egui::Rect, text: &str, theme: &Theme) {
+    let mut badge = ui.new_child(
+        UiBuilder::new()
+            .max_rect(egui::Rect::from_min_size(
+                rect.min + egui::vec2(8.0, 8.0),
+                egui::vec2(rect.width() - 16.0, 28.0),
+            ))
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    egui::Frame::new()
+        .fill(theme.preview_bg.gamma_multiply(0.75))
+        .corner_radius(CornerRadius::same(4))
+        .inner_margin(Margin::symmetric(6, 3))
+        .show(&mut badge, |ui| {
+            ui.add(egui::Spinner::new().size(14.0));
+            ui.label(RichText::new(text).color(theme.text_dim).small());
+        });
+}
+
 /// An editor for the project's graph, with the nodes linked to its video and tracks in place.
 fn linked_editor(project: &Project) -> GraphEditor {
     let mut editor = GraphEditor::new(&project.graph);
-    let video = project
-        .video
-        .as_ref()
-        .and_then(|p| p.file_name())
-        .map(|n| n.to_string_lossy().into_owned());
+    let video = project.video_display_name();
     let tracks = project
         .audio_tracks
         .iter()
@@ -1300,14 +1394,4 @@ fn linked_editor(project: &Project) -> GraphEditor {
     editor.set_project_inputs(video, tracks);
     editor.ensure_linked_nodes();
     editor
-}
-
-fn scale_label(scale: PreviewScale) -> &'static str {
-    match scale {
-        PreviewScale::Full => "Full",
-        PreviewScale::Half => "½",
-        PreviewScale::Quarter => "¼",
-        PreviewScale::Eighth => "⅛",
-        PreviewScale::Sixteenth => "1/16",
-    }
 }

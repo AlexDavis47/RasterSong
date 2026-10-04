@@ -62,6 +62,17 @@ pub struct RenderInfo {
     pub frames: usize,
 }
 
+/// How far along rendering one frame is: reported before each source frame is processed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Step {
+    /// Source frames processed so far for this output frame.
+    pub done: usize,
+    /// Source frames it takes in all, including the warm-up before it.
+    pub total: usize,
+    /// Whether the graph was reset first, so this includes warming up its history.
+    pub restarted: bool,
+}
+
 /// Renders output frames of one video through one compiled graph.
 ///
 /// The graph is stateful, so frames are produced by processing source frames in order. Asking for
@@ -198,6 +209,16 @@ impl Renderer {
         index: usize,
         cancel: &dyn Fn() -> bool,
     ) -> Result<Option<&[u8]>, EngineError> {
+        self.render_with(index, cancel, &|_| {})
+    }
+
+    /// [`Self::render`], reporting progress before each source frame is processed.
+    pub fn render_with(
+        &mut self,
+        index: usize,
+        cancel: &dyn Fn() -> bool,
+        progress: &dyn Fn(Step),
+    ) -> Result<Option<&[u8]>, EngineError> {
         let count = self.info.frames;
         if index >= count {
             return Err(MediaError::FrameOutOfRange { index, count }.into());
@@ -213,10 +234,17 @@ impl Renderer {
         }
 
         let target_source = index + self.latency;
+        let first = self.next_source.unwrap_or(target_source);
+        let total = (target_source + 1).saturating_sub(first);
         while let Some(source) = self.next_source.filter(|&s| s <= target_source) {
             if cancel() {
                 return Ok(None);
             }
+            progress(Step {
+                done: source - first,
+                total,
+                restarted: !continue_forward,
+            });
             self.process(source)?;
             self.next_source = Some(source + 1);
         }

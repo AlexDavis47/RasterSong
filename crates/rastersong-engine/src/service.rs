@@ -12,6 +12,7 @@ use rastersong_graph::{GraphDesc, Registry};
 use rastersong_media::{AudioClip, AudioOptions, MediaBackend};
 
 use crate::cache::{CacheKey, Frame, FrameCache};
+use crate::renderer;
 use crate::sources::Modulator;
 use crate::waveform::Waveform;
 use crate::{AudioTrack, EngineError, OutputSize, RenderInfo, Renderer};
@@ -46,6 +47,17 @@ impl PreviewScale {
             Self::Quarter => 4,
             Self::Eighth => 8,
             Self::Sixteenth => 16,
+        }
+    }
+
+    /// The name shown for this scale: Full, Half, Quarter, Eighth or Sixteenth.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Full => "Full",
+            Self::Half => "Half",
+            Self::Quarter => "Quarter",
+            Self::Eighth => "Eighth",
+            Self::Sixteenth => "Sixteenth",
         }
     }
 
@@ -125,6 +137,19 @@ impl Failure {
     }
 }
 
+/// What the render thread is working on right now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RenderProgress {
+    /// The frame being rendered.
+    pub frame: usize,
+    /// Source frames processed so far for it, and how many it takes.
+    pub done: usize,
+    pub total: usize,
+    /// Whether this is a fresh start (after a seek or an edit) that has to process history first,
+    /// rather than the next frame in a run.
+    pub warming: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum EngineStatus {
     /// No video or graph yet.
@@ -164,6 +189,7 @@ struct Shared {
     edits: AtomicU64,
     playhead: AtomicUsize,
     on_update: Mutex<Option<Callback>>,
+    progress: Mutex<Option<RenderProgress>>,
 }
 
 struct State {
@@ -222,6 +248,7 @@ impl Engine {
             edits: AtomicU64::new(0),
             playhead: AtomicUsize::new(0),
             on_update: Mutex::new(None),
+            progress: Mutex::new(None),
         });
         let worker = std::thread::Builder::new()
             .name("rastersong-render".into())
@@ -304,6 +331,12 @@ impl Engine {
     /// The rendered frames, as ranges of frame indices.
     pub fn cached_ranges(&self) -> Vec<Range<usize>> {
         lock(&self.shared.cache).ranges()
+    }
+
+    /// The frame being rendered and how far along it is, if rendering is under way. Use it to
+    /// tell the user the engine is warming up after a seek.
+    pub fn progress(&self) -> Option<RenderProgress> {
+        *lock(&self.shared.progress)
     }
 
     pub fn status(&self) -> EngineStatus {
@@ -633,7 +666,24 @@ impl Worker {
         // no longer wanted.
         let cancel =
             || shared.edits.load(Ordering::SeqCst) != edits || !wanted(shared).contains(target);
-        match built.renderer.render(target, &cancel) {
+        let progress = |step: renderer::Step| {
+            *lock(&shared.progress) = Some(RenderProgress {
+                frame: target,
+                done: step.done,
+                total: step.total,
+                warming: step.restarted && step.total > 1,
+            });
+            // Warm-up can take seconds; let the UI show how far along it is.
+            if step.restarted && step.total > 1 {
+                let callback = lock(&shared.on_update).clone();
+                if let Some(callback) = callback {
+                    callback();
+                }
+            }
+        };
+        let rendered = built.renderer.render_with(target, &cancel, &progress);
+        *lock(&self.shared.progress) = None;
+        match rendered {
             Ok(Some(rgb)) => {
                 let frame = Frame {
                     index: target,
@@ -667,6 +717,14 @@ impl Worker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_scales_are_named_by_their_fraction() {
+        let labels: Vec<&str> = PreviewScale::ALL.iter().map(|s| s.label()).collect();
+        assert_eq!(labels, ["Full", "Half", "Quarter", "Eighth", "Sixteenth"]);
+        let divisors: Vec<u32> = PreviewScale::ALL.iter().map(|s| s.divisor()).collect();
+        assert_eq!(divisors, [1, 2, 4, 8, 16]);
+    }
 
     #[test]
     fn rendering_ahead_wraps_round_a_loop() {

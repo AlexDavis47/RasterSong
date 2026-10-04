@@ -110,7 +110,7 @@ fn capture(theme: ThemeChoice, theme_name: &str) {
     }
     harness.run_steps(3);
     save(&mut harness, &format!("{theme_name}-1-loaded"));
-    for style in [WireStyle::Outline, WireStyle::Gradient] {
+    for style in [WireStyle::Outline, WireStyle::Gradient, WireStyle::Glow] {
         let mut settings = harness.state().settings().clone();
         settings.wire_style = style;
         harness.state_mut().set_settings(settings);

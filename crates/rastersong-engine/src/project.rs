@@ -20,6 +20,10 @@ pub struct Project {
     /// be moved or shared; they are always absolute in memory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video: Option<PathBuf>,
+    /// The name the video goes by in the timeline and the graph, when the user changed it from
+    /// the file's name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video_name: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub audio_tracks: Vec<ProjectTrack>,
     pub graph: GraphDesc,
@@ -96,6 +100,7 @@ impl Project {
         Self {
             version: PROJECT_VERSION,
             video: None,
+            video_name: None,
             audio_tracks: Vec::new(),
             graph,
             loop_region: None,
@@ -148,6 +153,21 @@ impl Project {
             .unwrap()
     }
 
+    /// What the video is called: the user's name for it, or else its file's name.
+    pub fn video_display_name(&self) -> Option<String> {
+        self.video_name
+            .clone()
+            .or_else(|| self.video_display_name_from_file())
+    }
+
+    /// The video's file name, which it goes by until the user names it.
+    pub fn video_display_name_from_file(&self) -> Option<String> {
+        self.video
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+    }
+
     pub fn load(path: &Path) -> Result<Self, String> {
         let error = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
         let json = std::fs::read_to_string(path).map_err(|e| error(&e))?;
@@ -160,6 +180,7 @@ impl Project {
                 Self {
                     version: PROJECT_VERSION,
                     video: v1.video,
+                    video_name: None,
                     audio_tracks: v1
                         .audio
                         .map(|path| ProjectTrack {
@@ -227,6 +248,27 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("rastersong-{name}-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("media")).unwrap();
         dir
+    }
+
+    #[test]
+    fn the_video_goes_by_its_file_name_until_named() {
+        let mut project =
+            Project::new(GraphDesc::from_json(r#"{ "version": 1, "nodes": [] }"#).unwrap());
+        assert_eq!(project.video_display_name(), None);
+        project.video = Some(PathBuf::from("clips/take 3.mp4"));
+        assert_eq!(project.video_display_name().as_deref(), Some("take 3.mp4"));
+        project.video_name = Some("Intro".into());
+        assert_eq!(project.video_display_name().as_deref(), Some("Intro"));
+
+        // The name is saved with the project.
+        let dir = temp_dir("video-name");
+        let path = dir.join("named.rastersong");
+        project.save(&path).unwrap();
+        assert_eq!(
+            Project::load(&path).unwrap().video_name.as_deref(),
+            Some("Intro")
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

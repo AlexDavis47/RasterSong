@@ -6,9 +6,13 @@
 //! dragged, so it can't shift under the pointer.
 //!
 //! A modulated parameter also shows the span its signal covers (outlined over the track), a
-//! ghost handle at its live value, and a knob for the modulation amount.
+//! ghost handle at its live value, and a knob for the modulation amount. The knob sits in the
+//! gutter left of the track, under the parameter's expose toggle; unmodulated fields keep the
+//! gutter empty, so every track and value box lines up whatever is connected.
+//!
+//! Every control can be reset to its default with Alt+click or from its right-click menu.
 
-use eframe::egui::{self, Color32, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
+use eframe::egui::{self, Color32, CornerRadius, Rect, Response, Sense, Stroke, Ui, pos2, vec2};
 use rastersong_engine::{ModMode, ModScale, Modulation, ParamKind, ParamSpec};
 
 use crate::theme::Theme;
@@ -16,6 +20,8 @@ use crate::theme::Theme;
 /// A number parameter as the field shows it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NumberRange {
+    /// The value Alt+click and "Reset to default" restore.
+    pub default: f64,
     /// The usual range, which the track covers by default.
     pub soft: (f64, f64),
     /// The values the node accepts.
@@ -97,13 +103,38 @@ pub struct FieldResponse {
     pub disconnect: bool,
 }
 
-/// Width of the amount knob, and of the space kept for it beside unmodulated fields.
-pub const KNOB_WIDTH: f32 = 22.0;
+/// Width of the gutter left of the controls: the amount knob of a modulated parameter, or the
+/// space kept for one, and the parameter's expose toggle above it.
+pub const GUTTER_WIDTH: f32 = 22.0;
 
-/// Shows the field: a slider track, the amount knob of a modulated parameter (or the space for
-/// one, so tracks line up), and a value box. Every part has a fixed width, so the field is
-/// always `track_width + KNOB_WIDTH + value_width` plus spacing wide, whatever it shows; a field
-/// that grew with its text would widen the panel holding it, which widens the field again.
+/// Whether the user asked to reset a control: Alt+click on it.
+pub fn alt_clicked(ui: &Ui, response: &Response) -> bool {
+    response.clicked() && ui.input(|i| i.modifiers.alt)
+}
+
+/// Adds a right-click menu with "Reset to default" to `response` (greyed out when there's
+/// nothing to reset). Returns true the frame the user picks it.
+pub fn reset_menu(response: &Response, differs: bool) -> bool {
+    let mut chosen = false;
+    response.context_menu(|ui| {
+        let reset = egui::Button::new("Reset to default").shortcut_text("Alt+click");
+        if ui.add_enabled(differs, reset).clicked() {
+            chosen = true;
+            ui.close();
+        }
+    });
+    chosen
+}
+
+/// Both ways to reset a control: Alt+click, and its right-click menu.
+pub fn reset_gesture(ui: &Ui, response: &Response, differs: bool) -> bool {
+    alt_clicked(ui, response) | reset_menu(response, differs)
+}
+
+/// Shows the field: the gutter (holding the amount knob of a modulated parameter), a slider
+/// track and a value box. Every part has a fixed width, so the field is always
+/// `GUTTER_WIDTH + track_width + value_width` plus spacing wide, whatever it shows; a field that
+/// grew with its text would widen the panel holding it, which widens the field again.
 pub fn param_field(
     ui: &mut Ui,
     id_salt: &str,
@@ -118,15 +149,31 @@ pub fn param_field(
     let before = (*value, modulated.as_ref().map(|m| *m.modulation));
     let mut response = FieldResponse::default();
 
+    match modulated.as_mut() {
+        Some(m) => {
+            let knob = amount_knob(ui, m, *value);
+            response.disconnect = knob.disconnect;
+        }
+        None => {
+            // Allocated, not just added as space, so it's followed by the same item spacing.
+            ui.allocate_space(vec2(GUTTER_WIDTH, ui.spacing().interact_size.y));
+        }
+    }
+
     let height = ui.spacing().interact_size.y;
     let (rect, track) = ui.allocate_exact_size(vec2(track_width, height), Sense::click_and_drag());
+    let track = track
+        .on_hover_text("Click or drag to set. Alt+click or right-click to reset to the default.");
     // Freeze the range for the length of a drag.
     let frozen: Option<(f64, f64)> = ui.data(|d| d.get_temp(id));
     let shown = frozen.unwrap_or_else(|| range.visible(*value));
     if track.drag_started() {
         ui.data_mut(|d| d.insert_temp(id, shown));
     }
-    if (track.clicked() || track.dragged())
+    if reset_gesture(ui, &track, *value != range.default) {
+        *value = range.default;
+    } else if (track.clicked() || track.dragged())
+        && !ui.input(|i| i.modifiers.alt)
         && let Some(p) = track.interact_pointer_pos()
     {
         let t = f64::from((p.x - rect.left()) / rect.width());
@@ -149,17 +196,20 @@ pub fn param_field(
         .as_ref()
         .and_then(|m| m.live.map(|v| (v, m.color)))
     {
+        // Fading copies behind it, filled in between frames so a jump reads as a smear.
+        // Positions are tracked as fractions of the rail, so the smear is even on screen.
+        let gap = f64::from(SMEAR_PX / rail.width().max(1.0));
+        let at = fraction(live.0);
+        for (f, visibility) in crate::effects::trail(ui, id.with("ghost"), f64::from(at), gap) {
+            let gx = rail.left() + rail.width() * f as f32;
+            paint_ghost(
+                ui,
+                pos2(gx, rect.center().y),
+                rect.height(),
+                live.1.gamma_multiply(visibility * 0.1),
+            );
+        }
         paint_ghost(ui, pos2(x(live.0), rect.center().y), rect.height(), live.1);
-    }
-
-    match modulated.as_mut() {
-        Some(m) => {
-            let knob = amount_knob(ui, m, *value);
-            response.disconnect = knob.disconnect;
-        }
-        None => {
-            ui.add_space(KNOB_WIDTH);
-        }
     }
 
     let speed = if logarithmic {
@@ -167,14 +217,22 @@ pub fn param_field(
     } else {
         (shown.1 - shown.0) / 300.0
     };
-    ui.add_sized(
-        vec2(value_width, height),
-        egui::DragValue::new(value)
-            .range(range.limits.0..=range.limits.1)
-            .speed(speed)
-            .max_decimals(3),
-    )
-    .on_hover_text("Drag, or double-click to type. Values beyond the slider are allowed.");
+    let value_box = ui
+        .add_sized(
+            vec2(value_width, height),
+            egui::DragValue::new(value)
+                .range(range.limits.0..=range.limits.1)
+                .speed(speed)
+                .max_decimals(3),
+        )
+        .on_hover_text(
+            "Drag, or double-click to type. Values beyond the slider are allowed. \
+             Alt+click or right-click to reset.",
+        );
+    if reset_gesture(ui, &value_box, *value != range.default) {
+        *value = range.default;
+        value_box.surrender_focus();
+    }
     response.changed = before != (*value, modulated.as_ref().map(|m| *m.modulation));
     response
 }
@@ -221,7 +279,7 @@ struct KnobResponse {
 /// double-click to reset it, right-click for the modulator's settings.
 fn amount_knob(ui: &mut Ui, m: &mut Modulated, base: f64) -> KnobResponse {
     let mut result = KnobResponse::default();
-    let size = vec2(KNOB_WIDTH, ui.spacing().interact_size.y);
+    let size = vec2(GUTTER_WIDTH, ui.spacing().interact_size.y);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
     let span = knob_span(m.spec);
     let modulation = &mut *m.modulation;
@@ -238,8 +296,9 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated, base: f64) -> KnobResponse {
             modulation.amount = modulation.amount.max(0.0);
         }
     }
-    if response.double_clicked() {
-        modulation.amount = m.spec.default_modulation_amount(base);
+    let default_amount = m.spec.default_modulation_amount(base);
+    if response.double_clicked() || alt_clicked(ui, &response) {
+        modulation.amount = default_amount;
     }
     if response.hovered() || response.dragged() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
@@ -282,7 +341,7 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated, base: f64) -> KnobResponse {
     );
 
     let response = response.on_hover_text(format!(
-        "Modulation {}. Drag to change, double-click to reset, right-click for options.",
+        "Modulation {}. Drag to change, double-click or Alt+click to reset, right-click for options.",
         amount_text(m.spec, *modulation)
     ));
     // Clicks inside don't close it, so its fields can be typed into.
@@ -329,6 +388,16 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated, base: f64) -> KnobResponse {
                     .max_decimals(3),
             );
         });
+        if ui
+            .add_enabled(
+                modulation.amount != default_amount,
+                egui::Button::new("Reset amount").shortcut_text("Alt+click"),
+            )
+            .clicked()
+        {
+            modulation.amount = default_amount;
+            ui.close();
+        }
         ui.separator();
         if ui.button("Disconnect signal").clicked() {
             result.disconnect = true;
@@ -337,6 +406,9 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated, base: f64) -> KnobResponse {
     });
     result
 }
+
+/// Screen distance between the interpolated copies of a ghost handle.
+const SMEAR_PX: f32 = 2.0;
 
 /// How far the knob's arc turns at full amount, either side of the top (radians).
 const KNOB_SWEEP: f32 = 2.4;
@@ -401,10 +473,12 @@ mod tests {
     use super::*;
 
     const CUTOFF: NumberRange = NumberRange {
+        default: 40.0,
         soft: (0.01, 100_000.0),
         limits: (1e-6, 1e9),
     };
     const DEPTH: NumberRange = NumberRange {
+        default: 0.0,
         soft: (-10.0, 10.0),
         limits: (f64::NEG_INFINITY, f64::INFINITY),
     };

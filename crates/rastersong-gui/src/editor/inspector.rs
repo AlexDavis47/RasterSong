@@ -7,8 +7,9 @@ use rastersong_engine::{
     Channels, Interpolation, ModMode, Modulation, ParamKind, ParamLevel, ParamSpec, ParamValue,
 };
 
-use super::param_field::{Modulated, NumberRange, param_field};
+use super::param_field::{GUTTER_WIDTH, Modulated, NumberRange, param_field, reset_gesture};
 use super::{GraphEditor, param_port};
+use crate::name_edit::name_edit;
 use crate::theme::Theme;
 
 /// What the inspector needs from outside the editor.
@@ -34,6 +35,9 @@ impl GraphEditor {
             .and_then(|n| self.registry.get(&n.kind))
             .cloned();
         let linked = self.is_linked(key);
+        // The name a linked node shows is the project's, so renaming it renames that.
+        let linked_name = self.node(key).and_then(|n| self.linked_name(n));
+        let mut renamed: Option<String> = None;
         // Per parameter: whether its pin shows, and the colour of the wire modulating it, if any.
         let theme = Theme::of(ui.ctx());
         let pins: Vec<(bool, Option<egui::Color32>)> = {
@@ -59,18 +63,30 @@ impl GraphEditor {
         };
 
         // Name: shown on the node instead of the type.
-        let mut name = node.label.clone().unwrap_or_default();
-        let edit = egui::TextEdit::singleline(&mut name)
-            .hint_text(kind.spec.label)
-            .font(egui::TextStyle::Heading)
-            .desired_width(f32::INFINITY);
-        if ui
-            .add(edit)
-            .on_hover_text("Name shown on the node")
-            .changed()
-        {
-            let name = name.trim();
-            node.label = (!name.is_empty()).then(|| name.to_owned());
+        if let Some(current) = &linked_name {
+            let edit = name_edit(ui, egui::Id::new(("linked-name", key)), current, |e| {
+                e.font(egui::TextStyle::Heading)
+                    .desired_width(f32::INFINITY)
+            });
+            edit.response.on_hover_text(
+                "Name shown on the node. It's the project's name for this input, so the \
+                 timeline shows it too.",
+            );
+            renamed = edit.committed;
+        } else {
+            let mut name = node.label.clone().unwrap_or_default();
+            let edit = egui::TextEdit::singleline(&mut name)
+                .hint_text(kind.spec.label)
+                .font(egui::TextStyle::Heading)
+                .desired_width(f32::INFINITY);
+            if ui
+                .add(edit)
+                .on_hover_text("Name shown on the node")
+                .changed()
+            {
+                let name = name.trim();
+                node.label = (!name.is_empty()).then(|| name.to_owned());
+            }
         }
         ui.horizontal(|ui| {
             ui.weak(kind.spec.label);
@@ -91,7 +107,7 @@ impl GraphEditor {
                         ui.label("Resampling").on_hover_text(
                             "How the other inputs are stretched or shrunk to the length of the main input",
                         );
-                        choice(ui, "resampling", &mut node.interpolation, &[
+                        choice(ui, "resampling", &mut node.interpolation, Interpolation::default(), &[
                             (Interpolation::Hold, "Hold", "Repeat samples; a pixel's R, G and B move together"),
                             (Interpolation::Linear, "Linear", "Ramp smoothly between samples"),
                         ]);
@@ -101,7 +117,7 @@ impl GraphEditor {
                         ui.label("Channels").on_hover_text(
                             "How this node treats the red, green and blue of each pixel.",
                         );
-                        choice(ui, "channels", &mut node.channels, &[
+                        choice(ui, "channels", &mut node.channels, Channels::default(), &[
                             (
                                 Channels::Together,
                                 "Together",
@@ -131,7 +147,7 @@ impl GraphEditor {
                     // A linked input's source is the project's: shown, not edited.
                     if linked && spec.name == "source" {
                         ui.horizontal(|ui| {
-                            ui.add_space(EXPOSE_WIDTH + ui.spacing().item_spacing.x);
+                            ui.add_space(GUTTER_WIDTH + ui.spacing().item_spacing.x);
                             ui.label(spec.label).on_hover_text(spec.help);
                         });
                         let source = super::linked::track_of(node).to_owned();
@@ -141,7 +157,7 @@ impl GraphEditor {
                             format!("Track \"{source}\"")
                         };
                         ui.horizontal(|ui| {
-                            ui.add_space(EXPOSE_WIDTH + ui.spacing().item_spacing.x);
+                            ui.add_space(GUTTER_WIDTH + ui.spacing().item_spacing.x);
                             ui.weak(shown).on_hover_text(
                                 "Linked to the project: rename or remove it in the timeline",
                             );
@@ -201,6 +217,11 @@ impl GraphEditor {
         if let Some(index) = disconnect {
             self.disconnect_input((key, param_port(index)));
         }
+        if let Some(name) = renamed
+            && let Some(request) = self.node(key).and_then(|n| self.rename_request(n, name))
+        {
+            self.renames.push(request);
+        }
     }
 }
 
@@ -220,9 +241,9 @@ struct ParamRow<'a, 'u> {
     live: Option<f64>,
 }
 
-/// Width a parameter's control line needs besides the slider: the indent under the expose toggle,
-/// the amount knob, the value box and the spacing between them.
-const CONTROL_ROOM: f32 = EXPOSE_WIDTH + super::param_field::KNOB_WIDTH + VALUE_WIDTH + 36.0;
+/// Width a parameter's control line needs besides the slider: the gutter (under the expose
+/// toggle, holding the amount knob), the value box and the spacing between them.
+const CONTROL_ROOM: f32 = GUTTER_WIDTH + VALUE_WIDTH + 24.0;
 /// The narrowest a slider gets in a narrow inspector.
 const MIN_TRACK: f32 = 60.0;
 /// Minimum width of a slider's value box, so it doesn't resize as the digits change.
@@ -236,9 +257,16 @@ fn section(ui: &mut Ui, title: &str) {
     ui.separator();
 }
 
-fn choice<T: PartialEq + Copy>(ui: &mut Ui, id: &str, value: &mut T, options: &[(T, &str, &str)]) {
+/// A drop-down of `options` (value, label, help). Alt+click or right-click resets it to `default`.
+fn choice<T: PartialEq + Copy>(
+    ui: &mut Ui,
+    id: &str,
+    value: &mut T,
+    default: T,
+    options: &[(T, &str, &str)],
+) {
     let current = options.iter().find(|o| o.0 == *value).map_or("", |o| o.1);
-    egui::ComboBox::from_id_salt(id)
+    let combo = egui::ComboBox::from_id_salt(id)
         .selected_text(current)
         .width(150.0)
         .show_ui(ui, |ui| {
@@ -246,7 +274,12 @@ fn choice<T: PartialEq + Copy>(ui: &mut Ui, id: &str, value: &mut T, options: &[
                 ui.selectable_value(value, option, label)
                     .on_hover_text(help);
             }
-        });
+        })
+        .response;
+    if reset_gesture(ui, &combo, *value != default) {
+        *value = default;
+        egui::Popup::close_all(ui.ctx());
+    }
 }
 
 /// One parameter, on two lines: the expose toggle, label and reset button; then its editor (with
@@ -270,6 +303,7 @@ fn param_row(row: ParamRow) -> bool {
         .cloned()
         .unwrap_or_else(|| default.clone());
     let mut reset = false;
+    let value_differs = value != default;
     ui.horizontal(|ui| {
         match expose {
             Some(exposed) => {
@@ -292,7 +326,7 @@ fn param_row(row: ParamRow) -> bool {
                 }
             }
             None => {
-                ui.add_space(EXPOSE_WIDTH);
+                ui.allocate_space(egui::vec2(GUTTER_WIDTH, 14.0));
             }
         }
         ui.label(spec.label).on_hover_text(spec.help);
@@ -309,7 +343,8 @@ fn param_row(row: ParamRow) -> bool {
                 .clicked();
         });
     });
-    let indent = EXPOSE_WIDTH + ui.spacing().item_spacing.x;
+    // Controls other than numbers start where a number's track does, past the gutter.
+    let indent = GUTTER_WIDTH + ui.spacing().item_spacing.x;
     match (spec.kind, &mut value) {
         (
             ParamKind::Number {
@@ -322,11 +357,14 @@ fn param_row(row: ParamRow) -> bool {
             ParamValue::Number(n),
         ) => {
             let range = NumberRange {
+                default: match &default {
+                    ParamValue::Number(d) => *d,
+                    _ => min,
+                },
                 soft: (min, max),
                 limits: (limit_min, limit_max),
             };
             ui.horizontal(|ui| {
-                ui.add_space(indent);
                 let modulated = modulation.as_mut().map(|(m, color)| Modulated {
                     spec,
                     modulation: m,
@@ -341,14 +379,19 @@ fn param_row(row: ParamRow) -> bool {
         (ParamKind::Choice { options, .. }, ParamValue::Text(s)) => {
             ui.horizontal(|ui| {
                 ui.add_space(indent);
-                egui::ComboBox::from_id_salt(spec.name)
+                let combo = egui::ComboBox::from_id_salt(spec.name)
                     .selected_text(s.as_str())
                     .width(150.0)
                     .show_ui(ui, |ui| {
                         for &option in options {
                             ui.selectable_value(s, option.to_owned(), option);
                         }
-                    });
+                    })
+                    .response;
+                if reset_gesture(ui, &combo, value_differs) {
+                    reset = true;
+                    egui::Popup::close_all(ui.ctx());
+                }
             });
         }
         (ParamKind::Text { .. }, ParamValue::Text(s)) => match tracks {
@@ -360,7 +403,7 @@ fn param_row(row: ParamRow) -> bool {
                 } else {
                     s.clone()
                 };
-                egui::ComboBox::from_id_salt(spec.name)
+                let combo = egui::ComboBox::from_id_salt(spec.name)
                     .selected_text(RichText::new(shown).color(if missing {
                         Theme::of(ui.ctx()).error
                     } else {
@@ -374,10 +417,18 @@ fn param_row(row: ParamRow) -> bool {
                         for track in tracks {
                             ui.selectable_value(s, track.clone(), track);
                         }
-                    });
+                    })
+                    .response;
+                if reset_gesture(ui, &combo, value_differs) {
+                    reset = true;
+                    egui::Popup::close_all(ui.ctx());
+                }
             }
             None => {
-                ui.add(egui::TextEdit::singleline(s).desired_width(150.0));
+                let field = ui.add(egui::TextEdit::singleline(s).desired_width(150.0));
+                if reset_gesture(ui, &field, value_differs) {
+                    reset = true;
+                }
             }
         },
         // A value of the wrong type (from a hand-edited file): offer to reset it.
@@ -396,13 +447,11 @@ fn param_row(row: ParamRow) -> bool {
     disconnect
 }
 
-/// Room for the expose toggle before a parameter's label.
-const EXPOSE_WIDTH: f32 = 14.0;
-
-/// The expose toggle: a diamond like the parameter pins, filled when the pin is shown.
+/// The expose toggle: a diamond like the parameter pins, filled when the pin is shown. It
+/// takes the width of the gutter, so the label after it lines up with the controls below.
 fn diamond_toggle(ui: &mut Ui, on: bool, color: egui::Color32) -> egui::Response {
     let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(EXPOSE_WIDTH, 14.0), egui::Sense::click());
+        ui.allocate_exact_size(egui::vec2(GUTTER_WIDTH, 14.0), egui::Sense::click());
     let c = rect.center();
     let r = if response.hovered() { 5.5 } else { 4.5 };
     let points = vec![

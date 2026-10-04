@@ -19,6 +19,7 @@ use rastersong_engine::{Category, Failure, OutputLevel};
 
 use super::search::{NodeMenu, SearchMenu};
 use super::{GraphEditor, NodeKey};
+use crate::effects::Glow;
 use crate::theme::{Theme, WireStyle};
 
 const HEADER: f32 = 24.0;
@@ -126,9 +127,12 @@ impl GraphEditor {
             .map(|i| {
                 let node = &self.nodes[i];
                 let kind = self.registry.get(&node.kind);
-                let title = node
-                    .label
-                    .clone()
+                // A linked node is named by the project, whatever label it may have been given.
+                let title = self
+                    .node_is_linked(node)
+                    .then(|| self.linked_title(node))
+                    .flatten()
+                    .or_else(|| node.label.clone())
                     .or_else(|| self.linked_title(node))
                     .unwrap_or_else(|| {
                         kind.map_or_else(
@@ -883,7 +887,10 @@ impl WireColor {
 }
 
 /// Rings of the gradient style, from the edge (base colour) to the centre (part colour).
-const GRADIENT_STEPS: usize = 5;
+const GRADIENT_STEPS: usize = 6;
+/// The thinnest the crisp middle of a wire gets in the styles that draw one, so a quiet wire still
+/// shows its own colour.
+const MIN_CORE: f32 = 2.0;
 
 fn draw_wire(
     painter: &egui::Painter,
@@ -905,21 +912,50 @@ fn draw_wire(
     };
     match (style, color.part) {
         (WireStyle::Outline, Some(part)) => {
-            stroke(width + 3.0, part);
-            stroke(width, color.base);
+            let (core, border) = outline_widths(width);
+            stroke(core + 2.0 * border, part);
+            stroke(core, color.base);
         }
         (WireStyle::Gradient, Some(part)) => {
             // Concentric strokes, widest first: base at the edge blending to the part at the centre.
-            let outer = width + 2.0;
+            let (outer, inner) = gradient_widths(width);
             for step in 0..GRADIENT_STEPS {
                 let t = step as f32 / (GRADIENT_STEPS - 1) as f32;
-                let w = outer * (1.0 - 0.8 * t);
-                stroke(w, color.base.lerp_to_gamma(part, t));
+                stroke(
+                    outer + (inner - outer) * t,
+                    color.base.lerp_to_gamma(part, t),
+                );
             }
+        }
+        (WireStyle::Glow, _) => {
+            let core = width.max(MIN_CORE);
+            let glow = Glow::new(color.part.unwrap_or(color.base), glow_radius(core), 0.55);
+            glow.stroke(core, &stroke);
+            stroke(core, color.base);
         }
         // Solid, or a whole signal with no part to show.
         _ => stroke(width, color.solid().gamma_multiply(0.9)),
     }
+}
+
+/// The widths of the outline style: the crisp middle, and the border on each side of it. The
+/// border grows with the wire, so thin and thick wires keep the same proportions; it never goes
+/// under a pixel, so the outline always shows, and the middle never under [`MIN_CORE`], so the
+/// base colour does too.
+fn outline_widths(width: f32) -> (f32, f32) {
+    let core = width.max(MIN_CORE);
+    (core, (core * 0.4).max(1.0))
+}
+
+/// The widths of the gradient style: the outermost ring, and the innermost.
+fn gradient_widths(width: f32) -> (f32, f32) {
+    let outer = width.max(MIN_CORE) * 1.5 + 1.5;
+    (outer, (outer * 0.25).max(1.0))
+}
+
+/// How far the glow of a wire with a middle `core` wide reaches past it.
+fn glow_radius(core: f32) -> f32 {
+    3.0 + core * 0.6
 }
 
 /// Graph space to screen space.
@@ -939,6 +975,24 @@ mod tests {
         assert_eq!(wire_width(Some(0.0)), 1.0);
         assert!(wire_width(Some(0.1)) < wire_width(Some(0.5)));
         assert_eq!(wire_width(Some(4.0)), 7.0, "capped");
+    }
+
+    #[test]
+    fn wire_styles_keep_both_colours_visible_at_any_thickness() {
+        for width in [1.0, 1.5, 3.0, 7.0] {
+            let (core, border) = outline_widths(width);
+            assert!(core >= MIN_CORE && core >= width, "the base colour shows");
+            assert!(border >= 1.0, "the outline shows");
+            assert!(
+                border <= core * 0.5,
+                "and doesn't overpower the base: {width}"
+            );
+
+            let (outer, inner) = gradient_widths(width);
+            assert!(outer > inner && inner >= 1.0, "{width}");
+        }
+        // Thicker wires get thicker outlines.
+        assert!(outline_widths(7.0).1 > outline_widths(1.0).1);
     }
 
     #[test]

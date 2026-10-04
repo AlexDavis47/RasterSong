@@ -21,6 +21,14 @@ const INPUT_SPACING: f32 = 80.0;
 /// How far right of the rightmost node a new output goes.
 const OUTPUT_GAP: f32 = 190.0;
 
+/// A name the user changed on a node linked to the project. The name belongs to the project (the
+/// timeline shows it too), so the editor passes the rename on instead of keeping it on the node.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LinkedRename {
+    Video(String),
+    Track { from: String, to: String },
+}
+
 /// The track an audio input reads.
 pub(super) fn track_of(node: &EditorNode) -> &str {
     match node.params.get("source") {
@@ -42,11 +50,38 @@ impl GraphEditor {
         self.node(key).is_some_and(|n| self.node_is_linked(n))
     }
 
-    fn node_is_linked(&self, node: &EditorNode) -> bool {
+    pub(super) fn node_is_linked(&self, node: &EditorNode) -> bool {
         match node.kind.as_str() {
             VIDEO_INPUT | OUTPUT => true,
             AUDIO_INPUT => self.project_tracks.iter().any(|t| t == track_of(node)),
             _ => false,
+        }
+    }
+
+    /// Renames the user made on linked nodes since the last call.
+    pub fn take_renames(&mut self) -> Vec<LinkedRename> {
+        std::mem::take(&mut self.renames)
+    }
+
+    /// The project name a linked node shows and renames, if it has one: the video's, or its
+    /// track's. `None` for other nodes, which keep their names to themselves.
+    pub(super) fn linked_name(&self, node: &EditorNode) -> Option<String> {
+        match node.kind.as_str() {
+            VIDEO_INPUT => Some(self.project_video.clone().unwrap_or_else(|| "Video".into())),
+            AUDIO_INPUT if self.node_is_linked(node) => Some(track_of(node).to_owned()),
+            _ => None,
+        }
+    }
+
+    /// What renaming a linked node to `name` asks of the project.
+    pub(super) fn rename_request(&self, node: &EditorNode, name: String) -> Option<LinkedRename> {
+        match node.kind.as_str() {
+            VIDEO_INPUT => Some(LinkedRename::Video(name)),
+            AUDIO_INPUT if self.node_is_linked(node) => Some(LinkedRename::Track {
+                from: track_of(node).to_owned(),
+                to: name,
+            }),
+            _ => None,
         }
     }
 

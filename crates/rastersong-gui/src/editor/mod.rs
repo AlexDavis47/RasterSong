@@ -18,6 +18,7 @@ use rastersong_engine::{
 
 pub use canvas::CanvasContext;
 pub use inspector::InspectorContext;
+pub use linked::LinkedRename;
 pub use modulation::{PARAM_PORT, as_param, param_port};
 
 /// Identifies a node in the editor, stable across renames.
@@ -91,6 +92,8 @@ pub struct GraphEditor {
     /// The project's video file name and audio track names, for the nodes linked to them.
     project_video: Option<String>,
     project_tracks: Vec<String>,
+    /// Renames the user made on linked nodes, for the app to apply to the project.
+    renames: Vec<LinkedRename>,
     /// Problems found when loading a graph (e.g. connections to ports that don't exist).
     pub warnings: Vec<String>,
 }
@@ -127,6 +130,7 @@ impl GraphEditor {
             clipboard: None,
             project_video: None,
             project_tracks: Vec::new(),
+            renames: Vec::new(),
             warnings: Vec::new(),
         };
         editor.load(graph);
