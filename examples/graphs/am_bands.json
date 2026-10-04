@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "nodes": [
+    { "id": "video", "type": "video_input" },
+    { "id": "audio", "type": "audio_input" },
+    { "id": "split", "type": "split" },
+    { "id": "bands", "type": "three_band", "params": { "low_hz": 200, "high_hz": 3000 } },
+    { "id": "am_red", "type": "am", "params": { "depth": 2.5 } },
+    { "id": "am_green", "type": "am", "params": { "depth": 2.5 } },
+    { "id": "am_blue", "type": "am", "params": { "depth": 2.5 } },
+    { "id": "combine", "type": "combine" },
+    { "id": "out", "type": "output" }
+  ],
+  "connections": [
+    { "from": "video", "to": "split" },
+    { "from": "audio", "to": "bands" },
+    { "from": "split.r", "to": "am_red.carrier" },
+    { "from": "bands.low", "to": "am_red.modulator" },
+    { "from": "split.g", "to": "am_green.carrier" },
+    { "from": "bands.mid", "to": "am_green.modulator" },
+    { "from": "split.b", "to": "am_blue.carrier" },
+    { "from": "bands.high", "to": "am_blue.modulator" },
+    { "from": "am_red", "to": "combine.r" },
+    { "from": "am_green", "to": "combine.g" },
+    { "from": "am_blue", "to": "combine.b" },
+    { "from": "combine", "to": "out" }
+  ]
+}

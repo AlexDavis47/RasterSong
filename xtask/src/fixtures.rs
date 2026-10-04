@@ -108,6 +108,23 @@ const FIXTURES: &[Fixture] = &[
         purpose: "No video stream; compressed AAC mono at 48 kHz (encoder delay and priming samples)",
         args: &["-f", "lavfi", "-i", TONE, "-t", "2", "-c:a", "aac", "-b:a", "96k"],
     },
+    Fixture {
+        name: "rgb_pattern.mkv",
+        purpose: "Moving test pattern in lossless 8-bit RGB FFV1, for golden renders (decodes identically everywhere)",
+        args: &[
+            "-f", "lavfi", "-i", "testsrc2=size=160x120:rate=30:duration=2",
+            "-pix_fmt", "bgr0", "-c:v", "ffv1",
+        ],
+    },
+    Fixture {
+        name: "music.wav",
+        purpose: "Modulator with separate bands: pulsing 60 Hz bass, 1 kHz mid (first second), 6 kHz treble (second second)",
+        args: &[
+            "-f", "lavfi", "-i",
+            "aevalsrc=0.4*sin(2*PI*60*t)*(0.5+0.5*sin(2*PI*2*t))+0.3*sin(2*PI*1000*t)*lt(t\\,1)+0.2*sin(2*PI*6000*t)*gte(t\\,1):s=44100:d=2",
+            "-c:a", "pcm_s16le",
+        ],
+    },
 ];
 
 pub fn generate() -> Result<()> {

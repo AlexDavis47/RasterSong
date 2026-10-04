@@ -4,11 +4,14 @@ mod audio;
 mod index;
 mod scale;
 mod video;
+mod writer;
 
 use std::path::Path;
 use std::sync::OnceLock;
 
 use ffmpeg_next as ffmpeg;
+
+pub use writer::LosslessWriter;
 
 use crate::{AudioClip, AudioOptions, MediaBackend, MediaError, VideoSource};
 

@@ -3,7 +3,18 @@
 //!
 //! The CLI and GUI talk only to this crate; they never decode or schedule anything themselves.
 
-pub use rastersong_media::{BackendInfo, LibraryInfo, MediaError, Version};
+mod offline;
+pub mod sources;
+
+pub use offline::{
+    AUDIO_SOURCE, EngineError, FrameSink, RenderInfo, RenderSettings, RenderedFrame, VIDEO_SOURCE,
+    render,
+};
+pub use rastersong_graph::{GraphDesc, GraphError};
+pub use rastersong_media::{
+    AudioClip, AudioOptions, BackendInfo, FfmpegBackend, LibraryInfo, LosslessWriter, MediaBackend,
+    MediaError, Rational, Version,
+};
 
 /// Initializes the engine and its media backend, and reports what was loaded.
 pub fn init() -> Result<BackendInfo, MediaError> {

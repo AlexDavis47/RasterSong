@@ -1,0 +1,494 @@
+//! Compiling a [`GraphDesc`] into a sequential schedule, and running it one frame at a time.
+
+use std::collections::HashMap;
+
+use crate::desc::{GraphDesc, Interpolation, Params};
+use crate::dsp::{DelayLine, resample};
+use crate::nodes::{OUTPUT, Registry};
+use crate::{
+    GraphError, Layout, LayoutContext, Node, PrepareContext, ProcessContext, Signal, Sources,
+};
+
+/// Most inputs a node can have.
+pub const MAX_INPUTS: usize = 8;
+
+static EMPTY_SIGNAL: Signal = Signal::EMPTY;
+
+/// What the host tells the compiler about the render.
+#[derive(Debug, Clone)]
+pub struct CompileOptions {
+    pub frame_rate: f64,
+    /// Layouts of the signals the host will supply each frame, by source name.
+    pub sources: HashMap<String, Layout>,
+    /// The layout the output node must produce (the project's RGB frame).
+    pub output: Layout,
+}
+
+/// A compiled graph, ready to process frames in order.
+pub struct Graph {
+    steps: Vec<Step>,
+    output_step: usize,
+    frame_rate: f64,
+    sources: Vec<(String, Layout)>,
+    latency_frames: u32,
+    warmup_frames: u32,
+}
+
+impl std::fmt::Debug for Graph {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Graph")
+            .field(
+                "steps",
+                &self.steps.iter().map(|s| &s.id).collect::<Vec<_>>(),
+            )
+            .field("latency_frames", &self.latency_frames)
+            .field("warmup_frames", &self.warmup_frames)
+            .finish_non_exhaustive()
+    }
+}
+
+struct Step {
+    id: String,
+    node: Box<dyn Node>,
+    interpolation: Interpolation,
+    inputs: Vec<InputBinding>,
+    outputs: Vec<Signal>,
+}
+
+/// How one input of a step gets its signal each frame.
+struct InputBinding {
+    /// Producing step and output port; `None` for an unconnected optional input.
+    source: Option<(usize, usize)>,
+    /// Latency compensation in the source's samples, and the delayed copy it produces.
+    compensation: Option<(DelayLine, usize, Signal)>,
+    /// When the source's length differs from the main input's (or the input is unconnected),
+    /// the signal at the main input's length.
+    resampled: Option<Signal>,
+    /// Keep runs of this many output samples together when resampling (a pixel's R, G, B).
+    group: usize,
+}
+
+impl InputBinding {
+    /// Brings this input's scratch buffers up to date for the current frame.
+    fn update(&mut self, done: &[Step], interpolation: Interpolation) {
+        let Some((step, port)) = self.source else {
+            return;
+        };
+        let mut signal = &done[step].outputs[port];
+        if let Some((line, delay, delayed)) = &mut self.compensation {
+            for (out, &x) in delayed.data.iter_mut().zip(&signal.data) {
+                line.push(x);
+                *out = line.read(*delay as f64);
+            }
+            signal = delayed;
+        }
+        if let Some(resampled) = &mut self.resampled {
+            resample(&signal.data, &mut resampled.data, self.group, interpolation);
+        }
+    }
+
+    fn get<'a>(&'a self, done: &'a [Step]) -> &'a Signal {
+        if let Some(resampled) = &self.resampled {
+            resampled
+        } else if let Some((_, _, delayed)) = &self.compensation {
+            delayed
+        } else {
+            let (step, port) = self
+                .source
+                .expect("unconnected inputs are resampled silence");
+            &done[step].outputs[port]
+        }
+    }
+
+    fn reset(&mut self) {
+        if let Some((line, _, delayed)) = &mut self.compensation {
+            line.reset();
+            delayed.data.fill(0.0);
+        }
+    }
+}
+
+/// A node during compilation.
+struct Pending {
+    id: String,
+    kind: String,
+    node: Box<dyn Node>,
+    interpolation: Interpolation,
+    /// For each input port, the connected (node, output port).
+    wires: Vec<Option<(usize, usize)>>,
+}
+
+impl Graph {
+    pub fn compile(
+        desc: &GraphDesc,
+        registry: &Registry,
+        options: &CompileOptions,
+    ) -> Result<Self, GraphError> {
+        let mut pending = create_nodes(desc, registry)?;
+        connect(desc, &mut pending)?;
+
+        let outputs: Vec<usize> = (0..pending.len())
+            .filter(|&i| pending[i].kind == OUTPUT)
+            .collect();
+        let &[output] = outputs.as_slice() else {
+            return Err(GraphError::OutputCount(outputs.len()));
+        };
+        let order = schedule(&pending, output)?;
+
+        let mut layouts: Vec<Vec<Layout>> = vec![Vec::new(); pending.len()];
+        // Latency of each node's outputs relative to the sources, in frames.
+        let mut latency = vec![0.0f64; pending.len()];
+        let mut step_of = vec![usize::MAX; pending.len()];
+        let mut steps = Vec::with_capacity(order.len());
+        let mut sources = Vec::new();
+        let mut warmup_frames = 0;
+        let mut latency_frames = 0;
+
+        for &n in &order {
+            let p = &pending[n];
+            let node_error = |message: String| GraphError::Node {
+                node: p.id.clone(),
+                message,
+            };
+            let main = p.wires.first().map(|w| {
+                let (src, port) = w.expect("main inputs are required");
+                layouts[src][port]
+            });
+            let input_layouts: Vec<Layout> = p
+                .wires
+                .iter()
+                .map(|w| w.map_or(main.unwrap(), |(src, port)| layouts[src][port]))
+                .collect();
+
+            let output_layouts = p
+                .node
+                .output_layouts(&LayoutContext {
+                    inputs: &input_layouts,
+                    sources: &options.sources,
+                    output: options.output,
+                })
+                .map_err(node_error)?;
+            assert_eq!(
+                output_layouts.len(),
+                p.node.outputs().len(),
+                "node `{}` returned the wrong number of layouts",
+                p.id
+            );
+
+            // Every input reaches the node at the main input's layout.
+            let matched = vec![main.unwrap_or_default(); p.wires.len()];
+            let connected: Vec<bool> = p.wires.iter().map(Option::is_some).collect();
+            let ctx = PrepareContext {
+                frame_rate: options.frame_rate,
+                inputs: &matched,
+                outputs: &output_layouts,
+                connected: &connected,
+            };
+
+            let mut node = std::mem::replace(&mut pending[n].node, Box::new(Placeholder));
+            node.prepare(&ctx);
+            warmup_frames = warmup_frames.max(node.warmup_frames(&ctx));
+            let own_latency = node.latency(&ctx) as f64 / ctx.samples_per_frame().max(1) as f64;
+            if let Some(name) = node.source() {
+                sources.push((name.to_owned(), output_layouts[0]));
+            }
+
+            // Inputs that arrive with less latency than the latest one are delayed to line up.
+            let p = &pending[n];
+            let mut aligned = p
+                .wires
+                .iter()
+                .flatten()
+                .map(|&(src, _)| latency[src])
+                .fold(0.0, f64::max);
+            if n == output {
+                // The output's total latency is rounded up to whole frames so the host can skip
+                // exactly that many frames.
+                aligned = (aligned - 1e-9).ceil().max(0.0);
+                latency_frames = aligned as u32;
+            }
+            latency[n] = aligned + own_latency;
+
+            let main_len = main.map_or(0, |l| l.len());
+            let inputs = p
+                .wires
+                .iter()
+                .enumerate()
+                .map(|(k, w)| {
+                    let src_layout = input_layouts[k];
+                    let compensation = w.and_then(|(src, _)| {
+                        let delay =
+                            ((aligned - latency[src]) * src_layout.len() as f64).round() as usize;
+                        (delay > 0)
+                            .then(|| (DelayLine::new(delay), delay, Signal::zeros(src_layout)))
+                    });
+                    let needs_resampling = k > 0 && (w.is_none() || src_layout.len() != main_len);
+                    let main = main.unwrap();
+                    let group = if src_layout.samples_per_pixel == 1 && main.samples_per_pixel > 1 {
+                        main.samples_per_pixel as usize
+                    } else {
+                        1
+                    };
+                    InputBinding {
+                        source: w.map(|(src, port)| (step_of[src], port)),
+                        compensation,
+                        resampled: needs_resampling.then(|| Signal::zeros(main)),
+                        group,
+                    }
+                })
+                .collect();
+
+            step_of[n] = steps.len();
+            steps.push(Step {
+                id: p.id.clone(),
+                node,
+                interpolation: p.interpolation,
+                inputs,
+                outputs: output_layouts.iter().map(|&l| Signal::zeros(l)).collect(),
+            });
+            layouts[n] = output_layouts;
+        }
+
+        Ok(Self {
+            output_step: step_of[output],
+            steps,
+            frame_rate: options.frame_rate,
+            sources,
+            latency_frames,
+            warmup_frames,
+        })
+    }
+
+    /// Frames between a source frame going in and its result coming out of [`Self::process`].
+    /// The host renders this many extra frames and drops the first ones.
+    pub fn latency_frames(&self) -> u32 {
+        self.latency_frames
+    }
+
+    /// Frames to render and discard after [`Self::reset`] before output is valid, when starting
+    /// anywhere other than the first frame.
+    pub fn warmup_frames(&self) -> u32 {
+        self.warmup_frames
+    }
+
+    pub fn output_layout(&self) -> Layout {
+        self.steps[self.output_step].outputs[0].layout
+    }
+
+    /// Clears all state, as if no frame had been processed.
+    pub fn reset(&mut self) {
+        for step in &mut self.steps {
+            step.node.reset();
+            step.inputs.iter_mut().for_each(InputBinding::reset);
+        }
+    }
+
+    /// Processes one frame and returns the output.
+    pub fn process(&mut self, frame: u64, sources: &dyn Sources) -> Result<&Signal, GraphError> {
+        for (name, layout) in &self.sources {
+            match sources.get(name) {
+                Some(s) if s.layout == *layout && s.data.len() == layout.len() => {}
+                Some(s) => {
+                    return Err(GraphError::Source {
+                        name: name.clone(),
+                        message: format!("expected {layout}, got {}", s.layout),
+                    });
+                }
+                None => {
+                    return Err(GraphError::Source {
+                        name: name.clone(),
+                        message: "not supplied".into(),
+                    });
+                }
+            }
+        }
+
+        let ctx = ProcessContext {
+            frame,
+            frame_rate: self.frame_rate,
+            sources,
+        };
+        for i in 0..self.steps.len() {
+            let (done, rest) = self.steps.split_at_mut(i);
+            let Step {
+                node,
+                interpolation,
+                inputs,
+                outputs,
+                ..
+            } = &mut rest[0];
+            for input in inputs.iter_mut() {
+                input.update(done, *interpolation);
+            }
+            let mut refs = [&EMPTY_SIGNAL; MAX_INPUTS];
+            for (slot, input) in refs.iter_mut().zip(inputs.iter()) {
+                *slot = input.get(done);
+            }
+            node.process(&ctx, &refs[..inputs.len()], outputs);
+        }
+        Ok(&self.steps[self.output_step].outputs[0])
+    }
+}
+
+/// Stands in for a node while it is being prepared.
+struct Placeholder;
+
+impl Node for Placeholder {
+    fn process(&mut self, _: &ProcessContext, _: &[&Signal], _: &mut [Signal]) {}
+}
+
+fn create_nodes(desc: &GraphDesc, registry: &Registry) -> Result<Vec<Pending>, GraphError> {
+    let mut pending: Vec<Pending> = Vec::with_capacity(desc.nodes.len());
+    for d in &desc.nodes {
+        let node_error = |message: String| GraphError::Node {
+            node: d.id.clone(),
+            message,
+        };
+        if d.id.is_empty() || d.id.contains('.') {
+            return Err(node_error(
+                "node ids must be non-empty and contain no `.`".into(),
+            ));
+        }
+        if pending.iter().any(|p| p.id == d.id) {
+            return Err(GraphError::DuplicateId(d.id.clone()));
+        }
+        let mut params = Params::new(&d.params);
+        let node = registry
+            .create(&d.kind, &mut params)
+            .ok_or_else(|| GraphError::UnknownNodeType {
+                id: d.id.clone(),
+                kind: d.kind.clone(),
+            })?
+            .map_err(node_error)?;
+        params.finish().map_err(node_error)?;
+        if node.inputs().len() > MAX_INPUTS {
+            return Err(node_error(format!("has more than {MAX_INPUTS} inputs")));
+        }
+        pending.push(Pending {
+            id: d.id.clone(),
+            kind: d.kind.clone(),
+            wires: vec![None; node.inputs().len()],
+            node,
+            interpolation: d.interpolation,
+        });
+    }
+    Ok(pending)
+}
+
+fn connect(desc: &GraphDesc, pending: &mut [Pending]) -> Result<(), GraphError> {
+    for c in &desc.connections {
+        let connection_error = |message: String| GraphError::Connection {
+            connection: format!("{} -> {}", c.from, c.to),
+            message,
+        };
+        let find = |id: &str| {
+            pending
+                .iter()
+                .position(|p| p.id == id)
+                .ok_or_else(|| connection_error(format!("no node named `{id}`")))
+        };
+        let (from_id, from_port) = split_endpoint(&c.from);
+        let (to_id, to_port) = split_endpoint(&c.to);
+        let (from, to) = (find(from_id)?, find(to_id)?);
+
+        let outputs = pending[from].node.outputs();
+        let out = match from_port {
+            Some(name) => outputs.iter().position(|&o| o == name),
+            None => (!outputs.is_empty()).then_some(0),
+        }
+        .ok_or_else(|| {
+            connection_error(format!(
+                "`{}` has no output {from_port:?}; outputs are {outputs:?}",
+                pending[from].id
+            ))
+        })?;
+
+        let inputs = pending[to].node.inputs();
+        let input = match to_port {
+            Some(name) => inputs.iter().position(|i| i.name == name),
+            None => (!inputs.is_empty()).then_some(0),
+        }
+        .ok_or_else(|| {
+            let names: Vec<_> = inputs.iter().map(|i| i.name).collect();
+            connection_error(format!(
+                "`{}` has no input {to_port:?}; inputs are {names:?}",
+                pending[to].id
+            ))
+        })?;
+
+        if pending[to].wires[input].is_some() {
+            return Err(connection_error(format!(
+                "input `{}` is already connected",
+                inputs[input].name
+            )));
+        }
+        pending[to].wires[input] = Some((from, out));
+    }
+
+    for p in pending.iter() {
+        // The main input defines the node's length and layout, so it is always required.
+        for (k, (spec, wire)) in p.node.inputs().iter().zip(&p.wires).enumerate() {
+            if (spec.required || k == 0) && wire.is_none() {
+                return Err(GraphError::MissingInput {
+                    node: p.id.clone(),
+                    input: spec.name.to_owned(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Splits `"node.port"` into its parts; the port is optional.
+fn split_endpoint(endpoint: &str) -> (&str, Option<&str>) {
+    match endpoint.split_once('.') {
+        Some((id, port)) => (id, Some(port)),
+        None => (endpoint, None),
+    }
+}
+
+/// Orders the nodes that feed `output` so every node comes after its inputs. Nodes that don't
+/// contribute to the output are dropped.
+fn schedule(pending: &[Pending], output: usize) -> Result<Vec<usize>, GraphError> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Mark {
+        New,
+        Visiting,
+        Done,
+    }
+    fn visit(
+        n: usize,
+        pending: &[Pending],
+        marks: &mut [Mark],
+        order: &mut Vec<usize>,
+        path: &mut Vec<usize>,
+    ) -> Result<(), GraphError> {
+        match marks[n] {
+            Mark::Done => return Ok(()),
+            Mark::Visiting => {
+                let start = path.iter().position(|&p| p == n).unwrap();
+                return Err(GraphError::Cycle(
+                    path[start..]
+                        .iter()
+                        .map(|&p| pending[p].id.clone())
+                        .collect(),
+                ));
+            }
+            Mark::New => {}
+        }
+        marks[n] = Mark::Visiting;
+        path.push(n);
+        for &(src, _) in pending[n].wires.iter().flatten() {
+            visit(src, pending, marks, order, path)?;
+        }
+        path.pop();
+        marks[n] = Mark::Done;
+        order.push(n);
+        Ok(())
+    }
+
+    let mut marks = vec![Mark::New; pending.len()];
+    let mut order = Vec::new();
+    visit(output, pending, &mut marks, &mut order, &mut Vec::new())?;
+    Ok(order)
+}

@@ -12,7 +12,9 @@ mod types;
 
 pub use error::MediaError;
 pub use fake::{FakeBackend, FakeVideo};
-pub use ffmpeg::{BackendInfo, FfmpegBackend, LibraryInfo, Version, backend_info, init};
+pub use ffmpeg::{
+    BackendInfo, FfmpegBackend, LibraryInfo, LosslessWriter, Version, backend_info, init,
+};
 pub use types::{
     AudioClip, AudioOptions, MediaBackend, Rational, Rotation, VideoFrame, VideoInfo, VideoSource,
 };

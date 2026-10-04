@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "nodes": [
+    { "id": "video", "type": "video_input" },
+    { "id": "audio", "type": "audio_input" },
+    { "id": "packed", "type": "interleave" },
+    {
+      "id": "crush", "type": "bitcrush",
+      "params": { "bits": 3, "depth": 4 },
+      "interpolation": "linear"
+    },
+    { "id": "echo", "type": "delay", "params": { "time": 0.5, "feedback": 0.5, "mix": 0.4 } },
+    { "id": "unpacked", "type": "pack" },
+    { "id": "out", "type": "output" }
+  ],
+  "connections": [
+    { "from": "video", "to": "packed" },
+    { "from": "packed", "to": "crush" },
+    { "from": "audio", "to": "crush.modulation" },
+    { "from": "crush", "to": "echo" },
+    { "from": "echo", "to": "unpacked" },
+    { "from": "unpacked", "to": "out" }
+  ]
+}

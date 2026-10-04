@@ -12,6 +12,7 @@ publish.workspace = true
 [dependencies]
 rastersong-graph.workspace = true
 rastersong-media.workspace = true
+thiserror.workspace = true
 tracing.workspace = true
 
 [lints]

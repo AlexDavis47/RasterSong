@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc bcce7e4cf0370614da9820ac205e52a993fbf315dc2aace3724b361a1f479e7a # shrinks to (blocks, signal, modulation) = ([1, 1], [0.0, 0.0, 0.0, 0.0, 0.0, 0.9039356, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])

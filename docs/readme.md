@@ -145,6 +145,7 @@ samples per frame and a modulator with 1,470) can never drift out of sync.
 | Rows | One row of the signal (`width × samples_per_pixel`) | Delay by 1 row for wave effects |
 | Fraction of a row | Horizontal offsets | Shift by 0.1 row |
 | Cycles per row | Frequency of filters and oscillators | Low pass cutoff |
+| Hz | Frequencies of audio-domain nodes, relative to the input signal's own sample rate | Three-band crossovers |
 
 All of these can be fractional. Because none of them are in samples, a half-resolution preview looks like a
 scaled-down version of the full render rather than a different effect.
@@ -166,7 +167,13 @@ struct Layout {
 }
 ```
 
-Audio modulators are also `Signal`s (one frame's worth of audio samples).
+Video signals are nominally in `0.0..=1.0` (black to full intensity) and audio signals in `-1.0..=1.0`.
+Nothing clamps values between nodes; only the output clamps to `0..=1` when converting back to 8-bit.
+
+Audio modulators are also `Signal`s: one frame's worth of mono audio. Each frame's block always has the same
+length, `round(sample_rate / frame_rate)` samples, resampled from exactly that frame's span of time. So even when
+the frame rate doesn't divide the sample rate (48 kHz at 29.97 fps is 1,601.6 samples per frame), or the video has
+a variable frame rate, the modulator stays locked to the picture.
 
 **Effect nodes don't care about layout.** An effect sees a flat `&[f32]` and passes the layout through unchanged.
 Whether it receives one color channel or a whole interleaved RGB stream, it processes it the same way. Layout
@@ -187,8 +194,11 @@ node runs, one frame block at a time.
 Every node has an **interpolation** setting for this resampling, available on all nodes:
 
 - **Hold** (default): each source sample is repeated. A mono modulator stretched across interleaved RGB affects R, G and B of one pixel equally.
-- **Linear**: smooth ramps between source samples.
+- **Linear**: smooth ramps between source samples. Ramps stop at the block edge rather than reading into the next frame.
 - More modes (e.g. smoothed) can be added later.
+
+Sample positions are centre-aligned, so a block covers exactly the same span at any length. Unconnected optional
+inputs receive silence (zeros).
 
 **Different-resolution video inputs** are scaled in 2D to the project resolution by the input node.
 1-D resampling is never used to reconcile two images, since it would skew rows.
@@ -197,15 +207,25 @@ Every node has an **interpolation** setting for this resampling, available on al
 
 ```rust
 pub trait Node: Send {
-    /// Called when the graph is (re)compiled. Layouts, frame rate and resolution are known;
-    /// allocate buffers here, never in `process`.
-    fn prepare(&mut self, ctx: &PrepareContext);
+    /// Input ports; the first is the main input. Source nodes have none.
+    fn inputs(&self) -> &'static [InputSpec] { &[] }
+    fn outputs(&self) -> &'static [&'static str] { &["out"] }
 
-    /// Process exactly one frame. Inputs are already rate-matched to the main input.
+    /// For source nodes, the name of the host-supplied signal they read ("video", "audio").
+    fn source(&self) -> Option<&str> { None }
+
+    /// Output layouts for the given input layouts, or an error if the inputs don't fit.
+    /// Defaults to passing the main input's layout through.
+    fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String>;
+
+    /// Called once the graph is compiled and layouts are known. Allocate buffers here.
+    fn prepare(&mut self, ctx: &PrepareContext) {}
+
+    /// Process exactly one frame. Inputs are already rate-matched; outputs are pre-sized.
     fn process(&mut self, ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]);
 
     /// Clear all internal state, as if no frame had ever been processed.
-    fn reset(&mut self);
+    fn reset(&mut self) {}
 
     /// Samples of delay this node adds (non-zero for nodes that need lookahead).
     fn latency(&self, ctx: &PrepareContext) -> usize { 0 }
@@ -221,6 +241,62 @@ Rules every node must satisfy (enforced by tests, see [Testing Strategy](#testin
 - **Block-size independent:** a stateful node keeps its own history (e.g. a ring buffer). It never re-reads
   past samples from upstream, and never processes the same sample twice.
 - **No allocation in `process`.**
+
+The graph compiler validates the graph (unknown nodes, ports or parameters, missing inputs, cycles, exactly one
+output, layout mismatches), drops nodes that don't feed the output, orders the rest, and computes latency
+compensation. Each frame, it runs the nodes in that order with no allocation.
+
+### Graph Files
+
+Graphs are JSON. Connections are written `"node.port"`; the port can be left out to mean a node's first output
+or its main input. Unknown parameters are rejected, which catches typos.
+
+```json
+{
+  "version": 1,
+  "nodes": [
+    { "id": "video", "type": "video_input" },
+    { "id": "audio", "type": "audio_input" },
+    { "id": "wave", "type": "delay", "params": { "time": 1, "depth": 1.5 }, "interpolation": "linear" },
+    { "id": "out", "type": "output" }
+  ],
+  "connections": [
+    { "from": "video", "to": "wave" },
+    { "from": "audio", "to": "wave.modulation" },
+    { "from": "wave", "to": "out" }
+  ]
+}
+```
+
+Working examples live in [`examples/graphs/`](../examples/graphs): `am_bands` (the [Basic Workflow](#basic-workflow)),
+`bass_wave` and `packed_crush`.
+
+### Built-in Nodes
+
+| Type | Inputs → Outputs | Parameters (default) |
+|---|---|---|
+| `video_input` | → `out` (RGB, `0..1`) | `source` (`"video"`) |
+| `audio_input` | → `out` (mono audio block) | `source` (`"audio"`) |
+| `output` | `in` (RGB or mono at project size) → | |
+| `split` | `in` (RGB) → `r`, `g`, `b` | |
+| `combine` | `r`, `g`, `b` (mono, same size) → `out` (RGB) | |
+| `interleave` | `in` (RGB) → `out` (mono, 3× wide) | |
+| `pack` | `in` (mono, width divisible by 3) → `out` (RGB) | |
+| `three_band` | `in` → `low`, `mid`, `high` | `low_hz` (250), `high_hz` (4000) |
+| `am` | `carrier`, `modulator` → `out` | `depth` (1): `carrier × (1 + depth × modulator)` |
+| `delay` | `in`, `modulation`? → `out` | `time` (1), `depth` (0), `unit` (`rows` or `frames`), `feedback` (0), `mix` (1) |
+| `bitcrush` | `in`, `modulation`? → `out` | `bits` (4), `depth` (0, bits per unit of modulation) |
+| `lowpass` | `in`, `modulation`? → `out` | `cutoff` (40 cycles per row), `depth` (0, octaves per unit of modulation) |
+
+`?` marks optional inputs. Every node also takes `interpolation` (`hold` or `linear`).
+
+**Channels and interleaving.** An RGB signal *is* the interleaved stream R, G, B, R, G, B, …, and effects process
+it sample by sample. That is [Approach 1](#core-concept): a low pass on RGB bleeds each channel into the next, and a
+*modulated* delay on RGB resamples the stream, scrambling channels into rainbow noise. For clean spatial effects
+such as bass-driven waves, `split` first and process each channel ([Approach 2](#core-concept)). `interleave` and
+`pack` don't change any samples; they relabel RGB as one 3×-wide mono carrier and back. The difference shows
+in rate matching: a mono modulator moves a pixel's R, G and B together on an RGB signal, but varies across them on
+the packed carrier.
 
 ### Render Engine
 
@@ -330,7 +406,7 @@ Testing is a first-class part of the project. Every phase has tests that must pa
 | Engine | Seek with warmup matches a render from frame 0 (exact for finite-memory nodes, within tolerance otherwise); graph edits and cancellation never serve a stale frame; output is deterministic; latency compensation aligns branches | fake media backend, no FFmpeg |
 | Media correctness | Random-access decode of frame *i* is byte-identical to sequential decode of frame *i*, for every fixture. This works for any codec without hand-made expected outputs | generated fixtures |
 | Fixtures | Small generated clips: B-frames, open GOP, variable frame rate, odd dimensions, rotation metadata, frame index encoded into lossless frames, audio-only, video-only, truncated files | `cargo xtask fixtures` (uses the `ffmpeg` CLI) |
-| End to end | CLI renders a set of graphs; output compared to golden frames with tolerances | snapshot tests |
+| End to end | CLI renders the example graphs; selected frames compared to golden images in `crates/rastersong-cli/tests/golden/` with tolerances for cross-platform floating-point differences. After an intended change, inspect the new frames and update them with `RASTERSONG_BLESS=1 cargo test -p rastersong-cli --test golden` | snapshot tests |
 | Performance | Samples/sec per node, decode fps, full-graph fps; CI fails on regressions beyond a threshold | `criterion` |
 | GUI | The GUI holds no logic worth unit testing; a few interaction tests only | `egui_kittest` |
 | Robustness (later) | Malformed media never crashes the app | `cargo-fuzz` |
@@ -390,6 +466,11 @@ cargo xtask fetch-ffmpeg   # once, and again whenever the pin changes
 cargo xtask fixtures       # generate media test fixtures into fixtures/
 cargo test --workspace
 cargo run -p rastersong-gui
+
+# Render a video through a graph, modulated by an audio file, to a lossless .mkv (with the
+# audio as its soundtrack) or to a directory of PNG frames
+cargo run --release -p rastersong-cli -- render video.mp4 song.wav examples/graphs/am_bands.json out.mkv
+cargo run --release -p rastersong-cli -- render video.mp4 song.wav graph.json frames/ --size 320x180 --frames 60
 ```
 
 Prerequisites: the Rust toolchain (pinned by `rust-toolchain.toml`) and **libclang**, which the FFmpeg bindings
@@ -416,7 +497,7 @@ Each phase ends with its tests passing in CI.
 - `tracing` for logging
 - Add the LICENSE file
 
-**Phase 1: Media**
+**Phase 1: Media** (done)
 - Backend trait and fake backend
 - FFmpeg backend: packet index, frame-index API, sequential fast path, seeking, EOF flush, scaler reuse
 - Full audio decode to `f32`
