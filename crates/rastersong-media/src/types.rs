@@ -11,6 +11,10 @@ pub trait MediaBackend: Send + Sync + Debug {
 
     /// Decodes an entire audio stream to interleaved `f32`.
     fn load_audio(&self, path: &Path, options: AudioOptions) -> Result<AudioClip, MediaError>;
+
+    /// Whether the file has an audio stream, from its header alone (no decoding). False if the
+    /// file can't be opened.
+    fn has_audio(&self, path: &Path) -> bool;
 }
 
 /// Random access to the frames of one video stream, by frame index.

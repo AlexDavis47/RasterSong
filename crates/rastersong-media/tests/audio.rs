@@ -116,6 +116,15 @@ fn decodes_audio_from_video_files() {
 }
 
 #[test]
+fn audio_streams_are_found_from_the_header() {
+    assert!(backend().has_audio(&fixture("bframes.mp4")));
+    assert!(backend().has_audio(&fixture("audio_only.wav")));
+    assert!(!backend().has_audio(&fixture("video_only.mp4")));
+    let missing = fixture("audio_only.wav").with_file_name("does_not_exist.mp4");
+    assert!(!backend().has_audio(&missing));
+}
+
+#[test]
 fn video_only_files_have_no_audio() {
     assert!(matches!(
         backend().load_audio(&fixture("video_only.mp4"), AudioOptions::default()),

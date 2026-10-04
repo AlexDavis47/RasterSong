@@ -13,7 +13,7 @@ use eframe::egui::{
     self, Align2, CornerRadius, FontId, Key, PointerButton, Rect, Sense, Stroke, TextureId, Ui,
     UiBuilder, Vec2, pos2, vec2,
 };
-use rastersong_engine::Waveform;
+use rastersong_engine::{LoopRegion, Waveform};
 
 use crate::theme::Theme;
 
@@ -68,6 +68,7 @@ pub struct TimelineModel<'a> {
     pub selected_track: Option<usize>,
     /// Source thumbnails decoded so far, by frame.
     pub thumbnails: &'a BTreeMap<usize, Thumbnail>,
+    pub loop_region: Option<LoopRegion>,
 }
 
 /// Something the user did to a track.
@@ -87,6 +88,23 @@ pub struct TimelineResponse {
     pub actions: Vec<TrackAction>,
     /// Frames whose thumbnails would fill the visible part of the video track.
     pub wanted_thumbnails: Vec<usize>,
+    /// A new loop region (`Some(None)` to remove it).
+    pub loop_region: Option<Option<LoopRegion>>,
+}
+
+/// How close (pixels) the pointer must be to a loop edge on the ruler to drag that edge.
+const LOOP_EDGE_GRAB: f32 = 6.0;
+
+/// What a drag on the ruler is doing to the loop region.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum LoopDrag {
+    /// Making a new region from where the drag started (seconds).
+    New {
+        anchor: f64,
+    },
+    /// Moving the region's start or end.
+    Start,
+    End,
 }
 
 /// The zoom and scroll of the timeline. Kept by the app between frames.
@@ -281,8 +299,11 @@ pub fn timeline(
     // Zoom, pan and fit.
     let pointer = ui.input(|i| i.pointer.hover_pos());
     let over = |r: Rect| pointer.is_some_and(|p| r.contains(p));
+    // The wheel and panning work anywhere over the timeline, including over audio blocks and
+    // header widgets, which take the hover for themselves.
     let scroll = ui.input(|i| i.smooth_scroll_delta.y);
-    if scroll != 0.0 && background.hovered() {
+    let pointer_here = ui.rect_contains_pointer(area);
+    if scroll != 0.0 && pointer_here {
         if over(areas.lanes) {
             let anchor = pointer.map_or(0.0, |p| p.x - lanes_left);
             view.zoom_around(f64::from(scroll * 0.0015).exp(), anchor, limits);
@@ -290,10 +311,12 @@ pub fn timeline(
             view.scroll_y -= scroll;
         }
     }
-    if background.dragged_by(PointerButton::Middle)
-        || background.dragged_by(PointerButton::Secondary)
-    {
-        let delta = background.drag_delta();
+    let (panning, delta) = ui.input(|i| {
+        let held = i.pointer.middle_down() || i.pointer.secondary_down();
+        let started_here = i.pointer.press_origin().is_some_and(|p| area.contains(p));
+        (held && started_here, i.pointer.delta())
+    });
+    if panning {
         view.left -= f64::from(delta.x) / view.px_per_sec;
         view.scroll_y -= delta.y;
     }
@@ -341,11 +364,20 @@ pub fn timeline(
         }
     }
 
+    loop_ruler(ui, &areas, model, view, &mut response);
+
     // Ruler and tick lines.
     let (major, divisions) = tick_steps(view.px_per_sec, model.frame_rate);
     let minor = major / f64::from(divisions);
     let body_lanes = Rect::from_min_max(pos2(lanes_left, areas.body.top()), areas.body.max);
     let painter = ui.painter_at(areas.ruler.union(body_lanes));
+    let shown_loop = match response.loop_region {
+        Some(changed) => changed,
+        None => model.loop_region,
+    };
+    if let Some(region) = shown_loop {
+        paint_loop(&painter, region, x, areas.ruler, body_lanes, theme);
+    }
     let first = (view.left / minor).floor() as i64;
     let last = (view.seconds(lanes_left, areas.lanes.right()) / minor).ceil() as i64;
     for k in first..=last {
@@ -457,6 +489,134 @@ pub fn timeline(
         ));
     }
     response
+}
+
+/// The ruler's own clicks and drags: a click seeks, a drag makes a loop region (or moves one of
+/// its edges, when it starts on one), and right-click offers looping on and off and clearing.
+fn loop_ruler(
+    ui: &mut Ui,
+    areas: &Areas,
+    model: &TimelineModel,
+    view: &TimelineView,
+    response: &mut TimelineResponse,
+) {
+    let lanes_left = areas.lanes.left();
+    let ruler = ui.interact(
+        areas.ruler,
+        ui.id().with("timeline-ruler"),
+        Sense::click_and_drag(),
+    );
+    let snap = |x: f32| {
+        let frames = (view.seconds(lanes_left, x) * model.frame_rate).round();
+        frames.clamp(0.0, model.frame_count as f64) / model.frame_rate
+    };
+    let region = model.loop_region;
+    let near = |x: f32, seconds: f64| (view.x(lanes_left, seconds) - x).abs() <= LOOP_EDGE_GRAB;
+    if let (Some(p), Some(r)) = (ruler.hover_pos(), region)
+        && (near(p.x, r.start) || near(p.x, r.end))
+    {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+    }
+
+    if ruler.clicked()
+        && let Some(p) = ruler.interact_pointer_pos()
+    {
+        let frame = (view.seconds(lanes_left, p.x) * model.frame_rate).floor();
+        response.seek = Some((frame.max(0.0) as usize).min(model.frame_count.saturating_sub(1)));
+    }
+
+    let id = ui.id().with("loop-drag");
+    if ruler.drag_started_by(PointerButton::Primary)
+        && let Some(origin) = ui.input(|i| i.pointer.press_origin())
+    {
+        let drag = match region {
+            Some(r) if near(origin.x, r.start) => LoopDrag::Start,
+            Some(r) if near(origin.x, r.end) => LoopDrag::End,
+            _ => LoopDrag::New {
+                anchor: snap(origin.x),
+            },
+        };
+        ui.data_mut(|d| d.insert_temp(id, drag));
+    }
+    let drag: Option<LoopDrag> = ui.data(|d| d.get_temp(id));
+    if let (Some(drag), true, Some(p)) = (
+        drag,
+        ruler.dragged_by(PointerButton::Primary),
+        ruler.interact_pointer_pos(),
+    ) {
+        let at = snap(p.x);
+        let enabled = region.is_none_or(|r| r.enabled);
+        let (start, end) = match (drag, region) {
+            (LoopDrag::New { anchor }, _) => (anchor.min(at), anchor.max(at)),
+            (LoopDrag::Start, Some(r)) => (at.min(r.end), at.max(r.end)),
+            (LoopDrag::End, Some(r)) => (r.start.min(at), r.start.max(at)),
+            (_, None) => (at, at),
+        };
+        if end > start {
+            response.loop_region = Some(Some(LoopRegion {
+                start,
+                end,
+                enabled: enabled || matches!(drag, LoopDrag::New { .. }),
+            }));
+        }
+    }
+    if ruler.drag_stopped() {
+        ui.data_mut(|d| d.remove::<LoopDrag>(id));
+    }
+
+    let ruler = ruler.on_hover_text(
+        "Click to move the playhead; drag to make a loop region, or drag its edges. \
+         Right-click for looping options.",
+    );
+    ruler.context_menu(|ui| {
+        let Some(mut r) = region else {
+            ui.weak("Drag along the ruler to make a loop region");
+            return;
+        };
+        if ui.checkbox(&mut r.enabled, "Loop playback (R)").changed() {
+            response.loop_region = Some(Some(r));
+        }
+        if ui.button("Remove loop region").clicked() {
+            response.loop_region = Some(None);
+            ui.close();
+        }
+    });
+}
+
+/// The loop region: a band on the ruler with a handle at each edge, and faint shading over the
+/// lanes. Greyed out when looping is off.
+fn paint_loop(
+    painter: &egui::Painter,
+    region: LoopRegion,
+    x: impl Fn(f64) -> f32,
+    ruler: Rect,
+    lanes: Rect,
+    theme: &Theme,
+) {
+    let color = if region.enabled {
+        theme.accent
+    } else {
+        theme.tick
+    };
+    let (x0, x1) = (x(region.start), x(region.end));
+    let band = Rect::from_min_max(pos2(x0, ruler.top() + 2.0), pos2(x1, ruler.bottom()));
+    painter.rect_filled(band, CornerRadius::same(2), color.gamma_multiply(0.35));
+    painter.rect_filled(
+        Rect::from_min_max(pos2(x0, lanes.top()), pos2(x1, lanes.bottom())),
+        CornerRadius::ZERO,
+        color.gamma_multiply(0.07),
+    );
+    for edge in [x0, x1] {
+        painter.line_segment(
+            [pos2(edge, ruler.top() + 2.0), pos2(edge, lanes.bottom())],
+            Stroke::new(1.0, color.gamma_multiply(0.8)),
+        );
+        painter.rect_filled(
+            Rect::from_center_size(pos2(edge, ruler.top() + 6.0), vec2(5.0, 9.0)),
+            CornerRadius::same(1),
+            color,
+        );
+    }
 }
 
 fn video_lane(

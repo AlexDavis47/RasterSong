@@ -252,6 +252,11 @@ fn capture(theme: ThemeChoice, theme_name: &str) {
     .unwrap();
     let mut project = harness.state().project().clone();
     project.graph = graph;
+    project.loop_region = Some(rastersong_engine::LoopRegion {
+        start: 1.0,
+        end: 2.5,
+        enabled: true,
+    });
     let mut modulated = App::new(
         Arc::new(
             FakeBackend::new()

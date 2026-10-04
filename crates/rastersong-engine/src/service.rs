@@ -172,6 +172,8 @@ struct State {
     graph: Option<GraphDesc>,
     key: CacheKey,
     playhead: usize,
+    /// Frames playback repeats, so rendering ahead wraps round them too.
+    looping: Option<Range<usize>>,
     status: EngineStatus,
     info: Option<RenderInfo>,
     loaded: Vec<LoadedTrack>,
@@ -209,6 +211,7 @@ impl Engine {
                 graph: None,
                 key,
                 playhead: 0,
+                looping: None,
                 status: EngineStatus::Idle,
                 info: None,
                 loaded: Vec::new(),
@@ -264,6 +267,17 @@ impl Engine {
             return;
         }
         self.edit(|state| state.key.scale = scale);
+    }
+
+    /// The frames playback loops over, if any. Near the loop's end, rendering ahead continues
+    /// from its start instead of past its end. Not an edit: nothing rendered is invalidated.
+    pub fn set_loop(&self, frames: Option<Range<usize>>) {
+        let mut state = lock(&self.shared.state);
+        if state.looping != frames {
+            state.looping = frames;
+            state.changes += 1;
+            self.shared.changed.notify_all();
+        }
     }
 
     pub fn set_playhead(&self, frame: usize) {
@@ -334,6 +348,38 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// The frames worth rendering ahead: from the playhead for a window's worth, and when looping,
+/// round from the loop's end to its start.
+#[derive(Debug, Clone, PartialEq)]
+struct Wanted {
+    ahead: Range<usize>,
+    wrapped: Range<usize>,
+}
+
+impl Wanted {
+    fn new(playhead: usize, window: usize, looping: Option<Range<usize>>, frames: usize) -> Self {
+        let looping = looping.filter(|l| playhead < l.end);
+        let limit = looping.as_ref().map_or(frames, |l| l.end).min(frames);
+        let ahead = playhead..playhead.saturating_add(window).min(limit).max(playhead);
+        let wrapped = match looping {
+            Some(l) => {
+                let left = window.saturating_sub(ahead.len());
+                l.start..l.start.saturating_add(left).min(playhead).min(l.end)
+            }
+            None => 0..0,
+        };
+        Self { ahead, wrapped }
+    }
+
+    fn frames(&self) -> impl Iterator<Item = usize> {
+        self.ahead.clone().chain(self.wrapped.clone())
+    }
+
+    fn contains(&self, frame: usize) -> bool {
+        self.ahead.contains(&frame) || self.wrapped.contains(&frame)
+    }
 }
 
 /// Decoded audio by file, so editing the graph or an offset doesn't decode again.
@@ -566,11 +612,15 @@ impl Worker {
             return false;
         };
         let window = Self::window(&self.shared.config, &info);
-        let playhead = self.shared.playhead.load(Ordering::SeqCst);
-        let end = playhead.saturating_add(window).min(info.frames);
+        let wanted = |shared: &Shared| {
+            let playhead = shared.playhead.load(Ordering::SeqCst);
+            let looping = lock(&shared.state).looping.clone();
+            Wanted::new(playhead, window, looping, info.frames)
+        };
         let target = {
+            let wanted = wanted(&self.shared);
             let cache = lock(&self.shared.cache);
-            (playhead..end).find(|&i| !cache.contains(i))
+            wanted.frames().find(|&i| !cache.contains(i))
         };
         let Some(target) = target else {
             return false;
@@ -581,12 +631,8 @@ impl Worker {
         let shared = &self.shared;
         // Stop between frames if the project changes or the playhead moves so that this frame is
         // no longer wanted.
-        let cancel = || {
-            let playhead = shared.playhead.load(Ordering::SeqCst);
-            shared.edits.load(Ordering::SeqCst) != edits
-                || target < playhead
-                || target >= playhead.saturating_add(window)
-        };
+        let cancel =
+            || shared.edits.load(Ordering::SeqCst) != edits || !wanted(shared).contains(target);
         match built.renderer.render(target, &cancel) {
             Ok(Some(rgb)) => {
                 let frame = Frame {
@@ -615,5 +661,30 @@ impl Worker {
             }
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rendering_ahead_wraps_round_a_loop() {
+        // Playing frames 20..40 with the playhead at 35 and room for 10 frames: the last 5 of
+        // the loop, then the first 5 from its start.
+        let wanted = Wanted::new(35, 10, Some(20..40), 100);
+        assert_eq!(
+            wanted.frames().collect::<Vec<_>>(),
+            [35, 36, 37, 38, 39, 20, 21, 22, 23, 24]
+        );
+        assert!(!wanted.contains(40), "nothing past the loop");
+        // Without a loop, or past its end, it renders straight ahead.
+        assert_eq!(Wanted::new(35, 10, None, 100).frames().last(), Some(44));
+        assert_eq!(
+            Wanted::new(50, 10, Some(20..40), 100).frames().next(),
+            Some(50)
+        );
+        // Never past the video's end.
+        assert_eq!(Wanted::new(95, 10, None, 100).frames().count(), 5);
     }
 }

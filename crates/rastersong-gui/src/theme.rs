@@ -253,12 +253,17 @@ impl Theme {
     }
 }
 
+/// Seconds the pointer rests on a widget before its tooltip shows.
+const TOOLTIP_DELAY: f32 = 0.1;
+
 /// Spacing and widget visuals shared by the whole app, for both themes.
 pub fn apply_style(ctx: &egui::Context) {
     ctx.all_styles_mut(|style| {
         style.spacing.item_spacing = egui::vec2(8.0, 6.0);
         style.spacing.button_padding = egui::vec2(8.0, 3.0);
         style.spacing.interact_size.y = 22.0;
+        // Tooltips appear almost at once: they carry most of the help text.
+        style.interaction.tooltip_delay = TOOLTIP_DELAY;
         style.spacing.combo_width = 120.0;
         for widgets in [
             &mut style.visuals.widgets.noninteractive,

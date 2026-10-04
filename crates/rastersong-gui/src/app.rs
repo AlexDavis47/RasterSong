@@ -44,13 +44,16 @@ enum Pending {
 
 pub struct App {
     engine: Engine,
+    /// For quick checks on media files (e.g. whether a video has sound).
+    backend: Arc<dyn MediaBackend>,
     thumbnails: Thumbnails,
     /// Textures of the decoded thumbnails, and the video they're of.
     thumbnail_textures: BTreeMap<usize, (egui::TextureHandle, Thumbnail)>,
     thumbnail_video: Option<PathBuf>,
     timeline_view: TimelineView,
-    /// Where the timeline was last drawn, for tests.
+    /// Where the timeline and the inspector were last drawn, for tests.
     timeline_area: egui::Rect,
+    inspector_rect: egui::Rect,
     audio: AudioOut,
     backend_info: Option<BackendInfo>,
     project: Project,
@@ -99,18 +102,20 @@ impl App {
         audio: AudioOut,
     ) -> Self {
         let thumbnails = Thumbnails::new(backend.clone());
-        let engine = Engine::new(backend, EngineConfig::default());
+        let engine = Engine::new(backend.clone(), EngineConfig::default());
         let editor = linked_editor(&project);
         // The editor fills in positions, full port names and missing linked nodes; that isn't an
         // unsaved change.
         project.graph = editor.to_desc();
         let mut app = Self {
             engine,
+            backend,
             thumbnails,
             thumbnail_textures: BTreeMap::new(),
             thumbnail_video: None,
             timeline_view: TimelineView::default(),
             timeline_area: egui::Rect::NOTHING,
+            inspector_rect: egui::Rect::NOTHING,
             audio,
             backend_info,
             saved: project.clone(),
@@ -176,6 +181,11 @@ impl App {
         self.timeline_area
     }
 
+    /// Where the inspector panel was last drawn.
+    pub fn inspector_rect(&self) -> egui::Rect {
+        self.inspector_rect
+    }
+
     /// How many video thumbnails are ready to draw.
     pub fn thumbnail_count(&self) -> usize {
         self.thumbnail_textures.len()
@@ -236,11 +246,18 @@ impl App {
         }
     }
 
+    /// Opens a video. If it has a sound track of its own, that's added as an audio track too
+    /// (unless the project already has a track of that file).
     pub fn open_video(&mut self, path: PathBuf) {
-        self.project.video = Some(path);
+        let has_audio = self.backend.has_audio(&path);
+        self.project.video = Some(path.clone());
         self.engine.set_video(self.project.video.clone());
         self.clock.seek(0);
         self.link_project_inputs();
+        let known = self.project.audio_tracks.iter().any(|t| t.path == path);
+        if has_audio && !known {
+            self.add_audio_tracks([path]);
+        }
     }
 
     /// Adds an audio track for each file, named after it, each with its own audio input node.
@@ -471,7 +488,7 @@ impl App {
             .min_size(280.0)
             .frame(panel(8))
             .show(ui, |ui| self.preview_column(ui));
-        egui::Panel::right("inspector")
+        self.inspector_rect = egui::Panel::right("inspector")
             .resizable(true)
             .default_size(340.0)
             .min_size(300.0)
@@ -494,7 +511,9 @@ impl App {
                         },
                     );
                 });
-            });
+            })
+            .response
+            .rect;
         egui::CentralPanel::default()
             .frame(egui::Frame::new().inner_margin(Margin::ZERO))
             .show(ui, |ui| self.graph(ui));
@@ -582,11 +601,18 @@ impl App {
                 self.clock_shape = Some(shape);
             }
         }
+        let fps = self.clock_shape.map_or(30.0, |s| s.1);
+        let looping = self
+            .project
+            .loop_region
+            .filter(|l| l.enabled)
+            .and_then(|l| l.frames(fps));
+        self.clock.set_loop(looping.clone());
+        self.engine.set_loop(looping);
         let dt = f64::from(ui.input(|i| i.stable_dt)).min(0.1);
-        let buffered = self.engine.buffered_from(self.clock.frame());
+        let buffered = self.buffered_ahead();
         self.clock.advance(dt, buffered);
         self.engine.set_playhead(self.clock.frame());
-        let fps = self.clock_shape.map_or(30.0, |s| s.1);
         self.audio.update(
             self.clock.position() / fps,
             self.clock.speed(),
@@ -595,6 +621,27 @@ impl App {
         );
         if self.clock.is_playing() {
             ui.ctx().request_repaint();
+        }
+    }
+
+    /// Frames rendered from the playhead on, in playback order: when looping, on past the loop's
+    /// end from its start.
+    fn buffered_ahead(&self) -> usize {
+        let frame = self.clock.frame();
+        let buffered = self.engine.buffered_from(frame);
+        match self.clock.active_loop() {
+            Some(lp) if frame + buffered >= lp.end => {
+                let wrapped = self.engine.buffered_from(lp.start).min(lp.len());
+                lp.end.saturating_sub(frame) + wrapped
+            }
+            _ => buffered,
+        }
+    }
+
+    /// Turns looping on or off, if there's a loop region.
+    fn toggle_loop(&mut self) {
+        if let Some(region) = &mut self.project.loop_region {
+            region.enabled = !region.enabled;
         }
     }
 
@@ -618,15 +665,19 @@ impl App {
         if redo {
             self.redo();
         }
-        let (space, left, right, home, save) = ui.input(|i| {
+        let (space, left, right, home, save, repeat) = ui.input(|i| {
             (
                 i.key_pressed(egui::Key::Space),
                 i.key_pressed(egui::Key::ArrowLeft),
                 i.key_pressed(egui::Key::ArrowRight),
                 i.key_pressed(egui::Key::Home),
                 i.modifiers.command && i.key_pressed(egui::Key::S),
+                i.modifiers.is_none() && i.key_pressed(egui::Key::R),
             )
         });
+        if repeat {
+            self.toggle_loop();
+        }
         if space {
             self.clock.toggle();
         }
@@ -940,6 +991,21 @@ impl App {
             {
                 self.clock.toggle();
             }
+            let looping = self.project.loop_region.is_some_and(|l| l.enabled);
+            let loop_button = egui::Button::selectable(looping, "Loop").min_size(egui::vec2(0.0, 26.0));
+            let hover = if self.project.loop_region.is_some() {
+                "Repeat the loop region (R)"
+            } else {
+                "Drag along the timeline's ruler to make a loop region"
+            };
+            if ui
+                .add_enabled(self.project.loop_region.is_some(), loop_button)
+                .on_hover_text(hover)
+                .on_disabled_hover_text(hover)
+                .clicked()
+            {
+                self.toggle_loop();
+            }
             if let Some(info) = info {
                 let fps = info.frame_rate.as_f64();
                 let frame = self.clock.frame();
@@ -950,11 +1016,17 @@ impl App {
                 ));
                 ui.weak(format!("frame {frame}"));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let buffered_frames = self.engine.buffered_from(frame);
+                    let buffered_frames = self.buffered_ahead();
                     let buffered = buffered_frames as f64 / fps;
                     let speed = self.clock.speed();
                     let to_end = frame + buffered_frames >= info.frames;
-                    let ahead = if to_end {
+                    let round_loop = self
+                        .clock
+                        .active_loop()
+                        .is_some_and(|lp| buffered_frames >= lp.end - frame.min(lp.start));
+                    let ahead = if round_loop {
+                        "loop rendered".to_owned()
+                    } else if to_end {
                         "rendered to the end".to_owned()
                     } else {
                         format!("{buffered:.1} s ahead")
@@ -1055,12 +1127,16 @@ impl App {
             tracks,
             selected_track: self.selected_track,
             thumbnails: &thumbnails,
+            loop_region: self.project.loop_region,
         };
         self.track_names
             .resize(self.project.audio_tracks.len(), String::new());
         self.timeline_area = ui.available_rect_before_wrap();
         let response = timeline(ui, &model, &mut self.timeline_view, &mut self.track_names);
         self.thumbnails.request(&response.wanted_thumbnails);
+        if let Some(region) = response.loop_region {
+            self.project.loop_region = region;
+        }
         if let Some(frame) = response.seek {
             self.clock.seek(frame);
         }

@@ -35,6 +35,11 @@ impl MediaBackend for FfmpegBackend {
     fn load_audio(&self, path: &Path, options: AudioOptions) -> Result<AudioClip, MediaError> {
         audio::load_audio(path, options)
     }
+
+    fn has_audio(&self, path: &Path) -> bool {
+        open_input(path)
+            .is_ok_and(|input| input.streams().best(ffmpeg::media::Type::Audio).is_some())
+    }
 }
 
 /// Initializes FFmpeg. Safe to call more than once; only the first call does any work.

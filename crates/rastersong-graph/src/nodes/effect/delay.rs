@@ -34,10 +34,10 @@ impl Delay {
         ParamSpec::number(
             "time",
             "Time",
-            1.0,
-            0.0,
+            0.05,
+            0.001,
             100.0,
-            "Delay length, in rows or frames",
+            "Delay length, in rows or frames. Small fractions of a row give the finest waves",
         )
         .exposed()
         .limits(0.0, 1000.0),

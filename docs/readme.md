@@ -319,7 +319,7 @@ Working examples live in [`examples/graphs/`](../examples/graphs): `am_bands` (t
 | `to_video` | `in` (`-1..1`) → `out` (`0..1`) | `mapping` (`accurate` or `bugged`) |
 | `three_band` | `in` → `low`, `mid`, `high` | `low_hz` (250), `high_hz` (4000) |
 | `am` | `carrier`, `modulator` → `out` | `depth` (1): `carrier × (1 + depth × modulator)` |
-| `delay` | `in` → `out` | `time` (1), `unit` (`rows` or `frames`), `feedback` (0), `mix` (1) |
+| `delay` | `in` → `out` | `time` (0.05; logarithmic slider from 0.001 to 100), `unit` (`rows` or `frames`), `feedback` (0), `mix` (1) |
 | `bitcrush` | `in` → `out` | `bits` (4) |
 | `lowpass` | `in` → `out` | `cutoff` (40 cycles per row; modulates in octaves) |
 | `compressor` | `in`, `sidechain`? → `out` | `threshold` (-18 dB), `ratio` (4), `attack` (10 ms), `release` (100 ms), `knee` (6 dB), `makeup` (0 dB) |
@@ -504,7 +504,8 @@ rendered and cached by the engine on its render thread.
 - **Timeline:** a ruler, the video track and any number of **audio tracks**, with Reaper-style track headers on
   the left. The video header shows the file, size and frame rate; each audio header has the track's name (which
   audio inputs select it by; renaming a track updates them), mute, remove and its **offset**. **+ Audio track**
-  (or File → Add Audio Tracks…) adds several files at once, each named after its file. The video track
+  (or File → Add Audio Tracks…) adds several files at once, each named after its file. Opening a video that
+  has sound adds that sound as an audio track too. The video track
   shows thumbnails of the source video, decoded by a separate small decoder so they never slow rendering and
   survive graph edits, with rendered frames marked in green along its bottom. Audio tracks show their waveform.
   - The scroll wheel zooms time around the pointer, from half the whole video down to a few frames (over the
@@ -512,17 +513,22 @@ rendered and cached by the engine on its render thread.
     the whole video.
   - Tick lines run behind the lanes, labelled on the ruler, down to single frames when zoomed in.
   - Click or drag on the ruler or empty lane space to seek; drag a track's block to move it against the video.
+  - **Loop region** (as in Reaper): drag along the ruler to make one, snapped to whole frames; drag its edges to
+    change it. R or the Loop button by the play button turns looping on and off; right-click the ruler to do
+    the same or remove the region. Playing into the region repeats it; playing from after it plays on. While
+    looping, rendering ahead wraps from the region's end to its start, so the loop plays without waiting. The
+    region is saved with the project.
 - **Preview audio** mixes the unmuted tracks and follows the playhead. When playback slows because rendering can't
   keep up, the audio is time-stretched (WSOLA: slowed without lowering the pitch) to stay with the picture, and
   fades out when playback all but stops. Volume and mute only affect playback, never rendering.
-- **Keys:** Space plays/pauses, ←/→ step one frame, Home jumps to the start, Ctrl+S saves, Ctrl+Z undoes,
-  Ctrl+Shift+Z (or Ctrl+Y) redoes. In the graph, Ctrl+C, Ctrl+X and Ctrl+V copy, cut and paste nodes with the
+- **Keys:** Space plays/pauses, ←/→ step one frame, Home jumps to the start, R turns looping on and off,
+  Ctrl+S saves, Ctrl+Z undoes, Ctrl+Shift+Z (or Ctrl+Y) redoes. In the graph, Ctrl+C, Ctrl+X and Ctrl+V copy, cut and paste nodes with the
   connections between them; pasted nodes land at the pointer. The **Edit** menu has the same commands.
 - **Undo** covers every change to the project: graph edits, node moves, parameters and the timeline. A drag, a
   slider move or a typed name is one step. Closing the window, opening a project or starting a new one asks to
   save unsaved changes first.
 - **Projects** are JSON files with the `.rastersong` extension holding the video, the audio tracks (file, name,
-  offset, volume, mute) and the graph. Media paths inside the project's folder are saved relative to it, so a
+  offset, volume, mute), the graph and the loop region. Media paths inside the project's folder are saved relative to it, so a
   project folder can be moved or shared. Version 1 projects (one audio file) are upgraded on load. Graphs can also
   be imported and exported on their own.
 - **Theme:** View → Theme picks Dark (the default), Light or Follow system. Every colour the app paints itself

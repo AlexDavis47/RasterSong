@@ -296,6 +296,9 @@ fn param_row(row: ParamRow) -> bool {
             }
         }
         ui.label(spec.label).on_hover_text(spec.help);
+        if !spec.unit.is_empty() {
+            ui.weak(spec.unit);
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             reset = ui
                 .add_enabled(
@@ -307,11 +310,6 @@ fn param_row(row: ParamRow) -> bool {
         });
     });
     let indent = EXPOSE_WIDTH + ui.spacing().item_spacing.x;
-    let suffix = if spec.unit.is_empty() {
-        String::new()
-    } else {
-        format!(" {}", spec.unit)
-    };
     match (spec.kind, &mut value) {
         (
             ParamKind::Number {
@@ -329,7 +327,6 @@ fn param_row(row: ParamRow) -> bool {
             };
             ui.horizontal(|ui| {
                 ui.add_space(indent);
-                ui.spacing_mut().interact_size.x = VALUE_WIDTH;
                 let modulated = modulation.as_mut().map(|(m, color)| Modulated {
                     spec,
                     modulation: m,
@@ -337,7 +334,7 @@ fn param_row(row: ParamRow) -> bool {
                     live,
                 });
                 let response =
-                    param_field(ui, spec.name, n, range, &suffix, track_width, modulated);
+                    param_field(ui, spec.name, n, range, track_width, VALUE_WIDTH, modulated);
                 disconnect = response.disconnect;
             });
         }

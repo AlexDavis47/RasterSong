@@ -101,14 +101,16 @@ pub struct FieldResponse {
 pub const KNOB_WIDTH: f32 = 22.0;
 
 /// Shows the field: a slider track, the amount knob of a modulated parameter (or the space for
-/// one, so tracks line up), and a value box.
+/// one, so tracks line up), and a value box. Every part has a fixed width, so the field is
+/// always `track_width + KNOB_WIDTH + value_width` plus spacing wide, whatever it shows; a field
+/// that grew with its text would widen the panel holding it, which widens the field again.
 pub fn param_field(
     ui: &mut Ui,
     id_salt: &str,
     value: &mut f64,
     range: NumberRange,
-    suffix: &str,
     track_width: f32,
+    value_width: f32,
     mut modulated: Option<Modulated>,
 ) -> FieldResponse {
     let id = ui.make_persistent_id(id_salt);
@@ -165,11 +167,11 @@ pub fn param_field(
     } else {
         (shown.1 - shown.0) / 300.0
     };
-    ui.add(
+    ui.add_sized(
+        vec2(value_width, height),
         egui::DragValue::new(value)
             .range(range.limits.0..=range.limits.1)
             .speed(speed)
-            .suffix(suffix)
             .max_decimals(3),
     )
     .on_hover_text("Drag, or double-click to type. Values beyond the slider are allowed.");
@@ -283,7 +285,10 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated, base: f64) -> KnobResponse {
         "Modulation {}. Drag to change, double-click to reset, right-click for options.",
         amount_text(m.spec, *modulation)
     ));
-    response.context_menu(|ui| {
+    // Clicks inside don't close it, so its fields can be typed into.
+    let menu = egui::Popup::context_menu(&response)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+    menu.show(|ui| {
         ui.set_min_width(190.0);
         ui.label(egui::RichText::new("Modulation").strong());
         ui.separator();

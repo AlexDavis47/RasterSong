@@ -23,6 +23,28 @@ pub struct Project {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub audio_tracks: Vec<ProjectTrack>,
     pub graph: GraphDesc,
+    /// The loop region on the timeline, if one has been made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loop_region: Option<LoopRegion>,
+}
+
+/// A stretch of the timeline that playback repeats, in seconds.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LoopRegion {
+    pub start: f64,
+    pub end: f64,
+    /// Whether playback loops. The region stays when looping is off.
+    pub enabled: bool,
+}
+
+impl LoopRegion {
+    /// The region in whole frames, `start..end`, if it covers at least one frame.
+    pub fn frames(&self, frame_rate: f64) -> Option<std::ops::Range<usize>> {
+        let start = (self.start * frame_rate).round().max(0.0) as usize;
+        let end = (self.end * frame_rate).round().max(0.0) as usize;
+        (end > start).then_some(start..end)
+    }
 }
 
 /// An audio track on the timeline.
@@ -76,6 +98,7 @@ impl Project {
             video: None,
             audio_tracks: Vec::new(),
             graph,
+            loop_region: None,
         }
     }
 
@@ -146,6 +169,7 @@ impl Project {
                         .into_iter()
                         .collect(),
                     graph: v1.graph,
+                    loop_region: None,
                 }
             }
             Some(v) if v == u64::from(PROJECT_VERSION) => {

@@ -12,6 +12,8 @@ pub struct PlaybackClock {
     speed: f64,
     frame_rate: f64,
     frame_count: usize,
+    /// Frames playback repeats, `start..end`, when looping.
+    looping: Option<std::ops::Range<usize>>,
 }
 
 impl PlaybackClock {
@@ -22,7 +24,22 @@ impl PlaybackClock {
             speed: 0.0,
             frame_rate,
             frame_count,
+            looping: None,
         }
+    }
+
+    /// Frames for playback to repeat, or `None` to play through. Playback wraps from the end of
+    /// the loop to its start whenever it reaches the end from before it.
+    pub fn set_loop(&mut self, frames: Option<std::ops::Range<usize>>) {
+        self.looping = frames
+            .map(|r| r.start.min(self.frame_count)..r.end.min(self.frame_count))
+            .filter(|r| !r.is_empty());
+    }
+
+    /// The loop playback is following from the current position: the loop, unless the playhead
+    /// is already past its end.
+    pub fn active_loop(&self) -> Option<std::ops::Range<usize>> {
+        self.looping.clone().filter(|r| self.frame() < r.end)
     }
 
     /// The frame to display.
@@ -74,22 +91,39 @@ impl PlaybackClock {
         if self.frame() + buffered_frames >= self.frame_count {
             return 1.0;
         }
+        // A buffer that runs round the whole loop never runs out either.
+        if let Some(lp) = self.active_loop()
+            && buffered_frames >= lp.end - self.frame().min(lp.start)
+        {
+            return 1.0;
+        }
         (buffered_frames as f64 / self.frame_rate).min(1.0)
     }
 
     /// Advances by `dt` seconds of wall time, given how many consecutive frames starting at the
-    /// current one are rendered. Stops at the last frame.
+    /// current one are rendered (counting on round the loop when looping). Stops at the last
+    /// frame, or wraps to the loop's start at its end.
     pub fn advance(&mut self, dt: f64, buffered_frames: usize) {
         self.speed = self.sustainable_speed(buffered_frames);
         if !self.playing {
             return;
         }
         let start = self.frame();
-        let last = self.frame_count.saturating_sub(1) as f64;
         // Never pass the end of what's rendered, so the displayed frame is always available.
         let furthest = (start + buffered_frames) as f64 - 1e-9;
         let target = self.position + dt * self.frame_rate * self.speed;
-        self.position = target.min(furthest.max(self.position)).min(last);
+        let position = target.min(furthest.max(self.position));
+        if let Some(lp) = self.active_loop() {
+            let (lo, hi) = (lp.start as f64, lp.end as f64);
+            self.position = if position >= hi {
+                lo + (position - hi) % (hi - lo)
+            } else {
+                position
+            };
+            return;
+        }
+        let last = self.frame_count.saturating_sub(1) as f64;
+        self.position = position.min(last);
         if self.position >= last {
             self.playing = false;
         }
@@ -157,6 +191,31 @@ mod tests {
         clock.advance(0.1, 10);
         assert_eq!(clock.speed(), 1.0);
         assert_eq!(clock.frame(), 293);
+    }
+
+    #[test]
+    fn loops_wrap_from_the_end_to_the_start() {
+        let mut clock = PlaybackClock::new(30.0, 300);
+        clock.set_loop(Some(30..60));
+        clock.seek(55);
+        clock.play();
+        // 10 frames later: 5 to the loop's end, then 5 more from its start.
+        clock.advance(10.0 / 30.0, 100);
+        assert_eq!(clock.frame(), 35);
+        assert!(clock.is_playing());
+        // A buffer that covers the whole loop is as good as a full one.
+        assert_eq!(clock.sustainable_speed(30), 1.0);
+        assert!(clock.sustainable_speed(10) < 1.0);
+    }
+
+    #[test]
+    fn playback_past_the_loop_plays_on() {
+        let mut clock = PlaybackClock::new(30.0, 300);
+        clock.set_loop(Some(30..60));
+        clock.seek(100);
+        clock.play();
+        clock.advance(1.0, 100);
+        assert_eq!(clock.frame(), 130);
     }
 
     #[test]

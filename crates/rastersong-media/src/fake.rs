@@ -70,6 +70,10 @@ impl MediaBackend for FakeBackend {
         }))
     }
 
+    fn has_audio(&self, path: &Path) -> bool {
+        self.audio.contains_key(path)
+    }
+
     fn load_audio(&self, path: &Path, options: AudioOptions) -> Result<AudioClip, MediaError> {
         assert_eq!(
             options,

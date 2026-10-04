@@ -19,7 +19,7 @@ pub use cache::{CacheKey, Frame, FrameCache};
 pub use clock::PlaybackClock;
 pub use error::EngineError;
 pub use offline::{FrameSink, RenderSettings, RenderedFrame, render};
-pub use project::{PROJECT_EXTENSION, PROJECT_VERSION, Project, ProjectTrack};
+pub use project::{LoopRegion, PROJECT_EXTENSION, PROJECT_VERSION, Project, ProjectTrack};
 pub use rastersong_graph::{
     Category, Channels, Connection, FORMAT_VERSION, GraphDesc, GraphError, Interpolation, ModMode,
     ModScale, Modulation, NodeDesc, NodeType, OutputLevel, ParamKind, ParamLevel, ParamSpec,

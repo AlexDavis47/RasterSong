@@ -531,3 +531,131 @@ fn dragging_a_wire_onto_a_parameter_pin_modulates_it() {
         graph.connections
     );
 }
+
+/// Adds a node of `kind` through the right-click search, near the bottom of the canvas.
+fn add_node(harness: &mut Harness<'_, App>, search: &str) {
+    let canvas = harness.state().editor().canvas_rect();
+    click(
+        harness,
+        pos2(canvas.center().x, canvas.bottom() - 120.0),
+        PointerButton::Secondary,
+    );
+    harness.event(Event::Text(search.into()));
+    harness.run_steps(2);
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(3);
+}
+
+#[test]
+fn the_inspector_keeps_its_width() {
+    // Long units and modulated values used to widen the inspector a little every frame.
+    let mut harness = loaded();
+    add_node(&mut harness, "low pass");
+    let lowpass = key(&harness, "lowpass");
+    let audio = key(&harness, "audio");
+    let from = harness
+        .state()
+        .editor()
+        .pin_screen_pos(audio, false, 0)
+        .unwrap();
+    let to = harness
+        .state()
+        .editor()
+        .pin_screen_pos(lowpass, true, rastersong_gui::editor::param_port(0))
+        .unwrap();
+    drag(&mut harness, from, to);
+    let before = harness.state().inspector_rect().width();
+    assert!(
+        before < 400.0,
+        "the inspector is {before} wide; it starts at 340"
+    );
+    select(&mut harness, "lowpass");
+    for _ in 0..6 {
+        harness.run_steps(10);
+        let width = harness.state().inspector_rect().width();
+        assert!(width <= before + 1.0, "grew from {before} to {width}");
+    }
+}
+
+#[test]
+fn the_wheel_zooms_over_an_audio_block_too() {
+    let mut harness = loaded();
+    let fitted = harness.state().timeline_view().px_per_sec;
+    // The audio track's block (row 1) covers this point.
+    harness.event(Event::PointerMoved(timeline_point(&harness, 0.5, 1)));
+    harness.event(Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: vec2(0.0, 200.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: Modifiers::NONE,
+    });
+    harness.run_steps(20);
+    assert!(harness.state().timeline_view().px_per_sec > fitted * 1.2);
+}
+
+#[test]
+fn dragging_along_the_ruler_makes_a_loop_region() {
+    let mut harness = loaded();
+    let ruler_y = harness.state().timeline_area().top() + 11.0;
+    let mut from = timeline_point(&harness, 0.5, 0);
+    let mut to = timeline_point(&harness, 1.0, 0);
+    from.y = ruler_y;
+    to.y = ruler_y;
+    drag(&mut harness, from, to);
+    let region = harness
+        .state()
+        .project()
+        .loop_region
+        .expect("a loop region");
+    assert!((region.start - 0.5).abs() < 0.05 && (region.end - 1.0).abs() < 0.05);
+    assert!(region.enabled);
+    // Whole frames.
+    assert!((region.start * 30.0 - (region.start * 30.0).round()).abs() < 1e-9);
+
+    shortcut(&mut harness, Modifiers::NONE, egui::Key::R);
+    assert!(!harness.state().project().loop_region.unwrap().enabled);
+    shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
+    assert!(
+        harness.state().project().loop_region.unwrap().enabled,
+        "undoable"
+    );
+}
+
+#[test]
+fn opening_a_video_with_sound_adds_its_audio_track() {
+    let backend = FakeBackend::new()
+        .with_video(
+            "movie.mp4",
+            FakeVideo {
+                width: 64,
+                height: 36,
+                frame_count: 30,
+                frame_rate: Rational::new(30, 1),
+            },
+        )
+        .with_audio(
+            "movie.mp4",
+            AudioClip {
+                sample_rate: 8000,
+                channels: 1,
+                samples: vec![0.0; 8000],
+            },
+        );
+    let mut app = App::new(
+        Arc::new(backend),
+        Project::new(GraphDesc::from_json(STARTER_GRAPH).unwrap()),
+        None,
+        AudioOut::silent(None),
+    );
+    app.open_video(PathBuf::from("movie.mp4"));
+    let tracks: Vec<(String, PathBuf)> = app
+        .project()
+        .audio_tracks
+        .iter()
+        .map(|t| (t.name.clone(), t.path.clone()))
+        .collect();
+    assert_eq!(tracks, [("movie".to_owned(), PathBuf::from("movie.mp4"))]);
+    // Opening it again doesn't add the track twice.
+    app.open_video(PathBuf::from("movie.mp4"));
+    assert_eq!(app.project().audio_tracks.len(), 1);
+}
