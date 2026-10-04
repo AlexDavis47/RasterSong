@@ -1,11 +1,13 @@
 //! Built-in nodes and the registry that creates nodes from graph files.
 
+mod convert;
 mod effects;
 mod io;
 mod structural;
 
 use std::collections::BTreeMap;
 
+pub use convert::{Mapping, ToAudio, ToVideo};
 pub use effects::{Am, Bitcrush, Delay, LengthUnit, Lowpass, ThreeBand};
 pub use io::{Output, SourceNode};
 pub use structural::{Combine, Interleave, Pack, Split};
@@ -20,6 +22,7 @@ pub const OUTPUT: &str = "output";
 pub enum Category {
     Input,
     Structure,
+    Convert,
     Effect,
     Output,
 }
@@ -29,6 +32,7 @@ impl Category {
         match self {
             Self::Input => "Inputs",
             Self::Structure => "Channels",
+            Self::Convert => "Conversion",
             Self::Effect => "Effects",
             Self::Output => "Output",
         }
@@ -167,7 +171,7 @@ static EMPTY: BTreeMap<String, ParamValue> = BTreeMap::new();
 impl Default for Registry {
     /// All built-in nodes.
     fn default() -> Self {
-        use Category::{Effect, Input, Output as Out, Structure};
+        use Category::{Convert, Effect, Input, Output as Out, Structure};
 
         let mut registry = Self::empty();
         registry
@@ -210,6 +214,20 @@ impl Default for Registry {
                 "pack",
                 NodeSpec::new("Pack", Structure).describe("A packed mono carrier back into RGB"),
                 |_| Ok(Pack),
+            )
+            .register(
+                "to_audio",
+                NodeSpec::new("Video to Audio", Convert)
+                    .describe("Video's 0 to 1 as audio's -1 to 1, as written to an 8-bit file")
+                    .params(ToAudio::PARAMS),
+                ToAudio::new,
+            )
+            .register(
+                "to_video",
+                NodeSpec::new("Audio to Video", Convert)
+                    .describe("Audio's -1 to 1 back to video's 0 to 1, as read from an 8-bit file")
+                    .params(ToVideo::PARAMS),
+                ToVideo::new,
             )
             .register(
                 "three_band",

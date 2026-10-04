@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "nodes": [
+    { "id": "video", "type": "video_input" },
+    { "id": "audio", "type": "audio_input" },
+    { "id": "packed", "type": "interleave" },
+    { "id": "encode", "type": "to_audio", "params": { "mapping": "bugged" } },
+    { "id": "pump", "type": "am", "params": { "depth": 1.5 } },
+    { "id": "smear", "type": "lowpass", "params": { "cutoff": 60, "depth": 2 } },
+    { "id": "decode", "type": "to_video", "params": { "mapping": "bugged" } },
+    { "id": "unpacked", "type": "pack" },
+    { "id": "out", "type": "output" }
+  ],
+  "connections": [
+    { "from": "video", "to": "packed" },
+    { "from": "packed", "to": "encode" },
+    { "from": "encode", "to": "pump" },
+    { "from": "audio", "to": "pump.modulator" },
+    { "from": "pump", "to": "smear" },
+    { "from": "audio", "to": "smear.modulation" },
+    { "from": "smear", "to": "decode" },
+    { "from": "decode", "to": "unpacked" },
+    { "from": "unpacked", "to": "out" }
+  ]
+}

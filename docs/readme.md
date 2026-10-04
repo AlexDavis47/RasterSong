@@ -277,7 +277,7 @@ Nodes may also carry `"position": [x, y]` (their place in the editor) and `"labe
 the node type's). Neither affects rendering.
 
 Working examples live in [`examples/graphs/`](../examples/graphs): `am_bands` (the [Basic Workflow](#basic-workflow)),
-`bass_wave` and `packed_crush`.
+`bass_wave`, `bugged_mosh` and `packed_crush`.
 
 ### Built-in Nodes
 
@@ -290,11 +290,22 @@ Working examples live in [`examples/graphs/`](../examples/graphs): `am_bands` (t
 | `combine` | `r`, `g`, `b` (mono, same size) → `out` (RGB) | |
 | `interleave` | `in` (RGB) → `out` (mono, 3× wide) | |
 | `pack` | `in` (mono, width divisible by 3) → `out` (RGB) | |
+| `to_audio` | `in` (`0..1`) → `out` (`-1..1`) | `mapping` (`accurate` or `bugged`) |
+| `to_video` | `in` (`-1..1`) → `out` (`0..1`) | `mapping` (`accurate` or `bugged`) |
 | `three_band` | `in` → `low`, `mid`, `high` | `low_hz` (250), `high_hz` (4000) |
 | `am` | `carrier`, `modulator` → `out` | `depth` (1): `carrier × (1 + depth × modulator)` |
 | `delay` | `in`, `modulation`? → `out` | `time` (1), `depth` (0), `unit` (`rows` or `frames`), `feedback` (0), `mix` (1) |
 | `bitcrush` | `in`, `modulation`? → `out` | `bits` (4), `depth` (0, bits per unit of modulation) |
 | `lowpass` | `in`, `modulation`? → `out` | `cutoff` (40 cycles per row), `depth` (0, octaves per unit of modulation) |
+
+**Range conversion and the bugged mapping.** `to_audio` and `to_video` model writing to and reading from an 8-bit
+file, so both clip to the range. `accurate` maps black to -1 and white to 1. `bugged` reproduces the original
+prototype's glitch: pixels written as signed 8-bit samples (`pixel - 127`) and read back by audio software as
+unsigned. That flips the sign bit, so the range wraps at mid-gray (between 8-bit values 126 and 127): black and
+white sit just either side of silence, and the dark and bright halves of the image sit at opposite extremes.
+Effects between the two nodes push samples across that seam, and they come back as tears where dark turns bright
+and the reverse. Clipped samples come back mid-gray. `bugged_mosh` is the prototype workflow: interleave, encode,
+process, decode, pack.
 
 `?` marks optional inputs. Audio inputs read the project's audio track named by `source`; a track that doesn't
 exist reads as silence.

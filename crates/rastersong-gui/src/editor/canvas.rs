@@ -91,6 +91,7 @@ pub fn category_color(category: Option<Category>) -> Color32 {
     match category {
         Some(Category::Input) => Color32::from_rgb(0x4a, 0x90, 0xd9),
         Some(Category::Structure) => Color32::from_rgb(0xa6, 0x7c, 0xd6),
+        Some(Category::Convert) => Color32::from_rgb(0xd6, 0x5c, 0x8a),
         Some(Category::Effect) => Color32::from_rgb(0xe0, 0x9a, 0x3c),
         Some(Category::Output) => Color32::from_rgb(0x5c, 0xb8, 0x5c),
         None => Color32::from_gray(120),

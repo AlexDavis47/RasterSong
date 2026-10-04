@@ -24,6 +24,8 @@ const CONFIGS: &[(&str, &str)] = &[
     ("lowpass", r#"{ "cutoff": 0.7 }"#),
     ("lowpass", r#"{ "cutoff": 1.5, "depth": 2 }"#),
     ("three_band", r#"{ "low_hz": 300, "high_hz": 3000 }"#),
+    ("to_audio", r#"{ "mapping": "bugged" }"#),
+    ("to_video", r#"{ "mapping": "bugged" }"#),
 ];
 
 struct Harness {

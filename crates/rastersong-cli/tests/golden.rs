@@ -9,7 +9,7 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const GRAPHS: &[&str] = &["am_bands", "bass_wave", "packed_crush"];
+const GRAPHS: &[&str] = &["am_bands", "bass_wave", "bugged_mosh", "packed_crush"];
 const FRAMES: &[usize] = &[0, 10, 45];
 
 /// Share of samples allowed to differ by more than `LARGE_DIFF` (e.g. a pixel crossing a
