@@ -56,7 +56,7 @@ pub fn render(
         video_path,
         &[track],
         graph,
-        &Registry::default(),
+        Registry::shared(),
         settings
             .size
             .map_or(OutputSize::Native, |(w, h)| OutputSize::Exact(w, h)),

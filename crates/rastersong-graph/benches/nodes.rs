@@ -16,22 +16,6 @@ const FPS: f64 = 30.0;
 /// 48 kHz audio at 30 fps.
 const AUDIO_BLOCK: u32 = 1600;
 
-const NODES: &[(&str, &str, &str)] = &[
-    ("am", "am", r#"{ "depth": 0.8 }"#),
-    ("delay", "delay", r#"{ "time": 1.5 }"#),
-    (
-        "delay (feedback)",
-        "delay",
-        r#"{ "time": 1.5, "feedback": 0.5, "mix": 0.5 }"#,
-    ),
-    ("bitcrush", "bitcrush", r#"{ "bits": 3 }"#),
-    ("lowpass", "lowpass", r#"{ "cutoff": 40 }"#),
-    ("three_band", "three_band", "{}"),
-    ("compressor", "compressor", "{}"),
-    ("gate", "gate", "{}"),
-    ("distortion", "distortion", "{}"),
-];
-
 struct NoSources;
 
 impl Sources for NoSources {
@@ -50,10 +34,14 @@ fn nodes(c: &mut Criterion) {
     let layout = Layout::mono(WIDTH, HEIGHT);
     let mut group = c.benchmark_group("node, one 1080p channel");
     group.throughput(Throughput::Elements(layout.len() as u64));
-    for &(name, kind, params) in NODES {
+    let registry = Registry::shared();
+    for t in registry.types() {
+        // Nodes declare their benchmark configuration (`NodeKind::BENCH`); others are skipped.
+        let Some(params) = t.bench else { continue };
+        let (name, kind) = (t.kind.as_str(), t.kind.as_str());
         let params: BTreeMap<String, ParamValue> = serde_json::from_str(params).unwrap();
-        let mut node = Registry::default().create(kind, &params).unwrap().unwrap();
-        let (inputs, outputs) = (node.inputs().len(), node.outputs().len());
+        let mut node = registry.create(kind, &params).unwrap().unwrap();
+        let (inputs, outputs) = (t.spec.inputs.len(), t.spec.outputs.len());
         node.prepare(&PrepareContext {
             frame_rate: FPS,
             inputs: &vec![layout; inputs],
@@ -104,7 +92,7 @@ fn graphs(c: &mut Criterion) {
         let desc = GraphDesc::from_json(&std::fs::read_to_string(path).unwrap()).unwrap();
         let mut graph = Graph::compile(
             &desc,
-            &Registry::default(),
+            Registry::shared(),
             &CompileOptions {
                 frame_rate: FPS,
                 sources: HashMap::from([("video".to_owned(), video), ("audio".to_owned(), audio)]),

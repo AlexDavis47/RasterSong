@@ -6,9 +6,6 @@ use std::cell::Cell;
 
 use common::{FINITE, FRAMES, INFINITE, renderer, renderer_with, sequential};
 use rastersong_engine::{OutputSize, Registry};
-use rastersong_graph::{
-    Category, InputSpec, Node, NodeSpec, PrepareContext, ProcessContext, Signal,
-};
 
 /// Deterministic jumps around the video: backwards, far forwards, small hops.
 fn jumpy_order() -> Vec<usize> {
@@ -98,59 +95,6 @@ fn out_of_range_frames_are_an_error() {
     assert!(renderer(FINITE).render(FRAMES, &|| false).is_err());
 }
 
-/// Delays its input by half a frame and reports it as latency, like a node that looks ahead.
-struct Lookahead {
-    history: Vec<f32>,
-    samples: usize,
-}
-
-impl Node for Lookahead {
-    fn inputs(&self) -> &'static [InputSpec] {
-        const INPUTS: &[InputSpec] = &[InputSpec::required("in")];
-        INPUTS
-    }
-    fn prepare(&mut self, ctx: &PrepareContext) {
-        self.samples = ctx.samples_per_frame() / 2;
-    }
-    fn process(&mut self, _: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
-        for (out, &x) in outputs[0].data.iter_mut().zip(&inputs[0].data) {
-            self.history.push(x);
-            let n = self.history.len();
-            *out = if n > self.samples {
-                self.history[n - 1 - self.samples]
-            } else {
-                0.0
-            };
-        }
-    }
-    fn reset(&mut self) {
-        self.history.clear();
-    }
-    fn latency(&self, ctx: &PrepareContext) -> usize {
-        ctx.samples_per_frame() / 2
-    }
-}
-
-/// Adds its inputs.
-struct Sum;
-
-impl Node for Sum {
-    fn inputs(&self) -> &'static [InputSpec] {
-        const INPUTS: &[InputSpec] = &[InputSpec::required("a"), InputSpec::required("b")];
-        INPUTS
-    }
-    fn process(&mut self, _: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
-        for ((out, &a), &b) in outputs[0]
-            .data
-            .iter_mut()
-            .zip(&inputs[0].data)
-            .zip(&inputs[1].data)
-        {
-            *out = a + b;
-        }
-    }
-}
-
 const LATENCY_GRAPH: &str = r#"{ "version": 1,
   "nodes": [
     { "id": "video", "type": "video_input" }, { "id": "look", "type": "lookahead" },
@@ -165,17 +109,7 @@ const LATENCY_GRAPH: &str = r#"{ "version": 1,
 #[test]
 fn latency_is_compensated_across_seeks() {
     let mut registry = Registry::default();
-    registry.register(
-        "lookahead",
-        NodeSpec::new("Lookahead", Category::Effect),
-        |_| {
-            Ok(Lookahead {
-                history: Vec::new(),
-                samples: 0,
-            })
-        },
-    );
-    registry.register("sum", NodeSpec::new("Sum", Category::Effect), |_| Ok(Sum));
+    rastersong_graph::testing::register_fakes(&mut registry);
 
     // Both branches of `sum` carry the same frame once compensated, and the output is shifted back
     // by the graph's latency, so output frame i is source frame i doubled. (The `am` node's

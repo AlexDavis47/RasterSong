@@ -62,7 +62,7 @@ pub(super) fn matches<'a>(
 ) -> Vec<&'a NodeType> {
     let query = query.trim().to_lowercase();
     let fits = |t: &NodeType| match wire {
-        Some(Pin::Out(..)) => !t.inputs.is_empty(),
+        Some(Pin::Out(..)) => !t.spec.inputs.is_empty(),
         Some(Pin::In(_, port)) if super::as_param(port).is_some() => {
             !super::editor_outputs(t).is_empty()
         }
@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn ranks_prefix_matches_first() {
-        let registry = Registry::default();
+        let registry = Registry::shared();
         let types = registry.types();
         let labels = |q: &str| {
             matches(&types, q, None)
@@ -278,10 +278,10 @@ mod tests {
 
     #[test]
     fn dragged_wires_only_offer_nodes_that_can_take_them() {
-        let registry = Registry::default();
+        let registry = Registry::shared();
         let types = registry.types();
         let from_output = matches(&types, "", Some(Pin::Out(1, 0)));
-        assert!(from_output.iter().all(|t| !t.inputs.is_empty()));
+        assert!(from_output.iter().all(|t| !t.spec.inputs.is_empty()));
         assert!(!from_output.iter().any(|t| t.kind == "video_input"));
         let from_input = matches(&types, "", Some(Pin::In(1, 0)));
         assert!(!from_input.iter().any(|t| t.kind == "output"));

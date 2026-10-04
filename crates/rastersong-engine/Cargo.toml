@@ -17,5 +17,8 @@ serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
+[dev-dependencies]
+rastersong-graph = { workspace = true, features = ["testing"] }
+
 [lints]
 workspace = true

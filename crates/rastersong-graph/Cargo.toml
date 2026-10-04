@@ -14,7 +14,13 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
+[features]
+# Test helpers for other crates: `rastersong_graph::testing`.
+testing = []
+
 [dev-dependencies]
+# The crate's own test helpers, for the integration tests.
+rastersong-graph = { path = ".", features = ["testing"] }
 criterion.workspace = true
 proptest.workspace = true
 

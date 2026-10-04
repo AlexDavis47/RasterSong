@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::nodes::Choice;
 use crate::{ModMode, Modulation, ParamValue};
 
 /// One parameter of a node type.
@@ -256,22 +257,39 @@ impl<'a> Params<'a> {
         Ok(Self { specs, values })
     }
 
-    fn spec(&self, name: &str) -> &'static ParamSpec {
+    fn index_of(&self, name: &str) -> usize {
         self.specs
             .iter()
-            .find(|s| s.name == name)
+            .position(|s| s.name == name)
             .unwrap_or_else(|| {
                 panic!("node reads parameter `{name}`, which its specs don't declare")
             })
     }
 
+    /// A number, by name. Nodes read by index (`number_at`) so a name can't drift from `PARAMS`.
     pub fn number(&self, name: &str) -> Result<f64, String> {
+        self.number_at(self.index_of(name))
+    }
+
+    /// The choice named `name`, as one of its option strings.
+    pub fn choice(&self, name: &str) -> Result<&'static str, String> {
+        self.choice_at(self.index_of(name))
+    }
+
+    pub fn text(&self, name: &str) -> Result<String, String> {
+        self.text_at(self.index_of(name))
+    }
+
+    /// The number at `index` in the node's specs (the constants `params!` declares).
+    pub fn number_at(&self, index: usize) -> Result<f64, String> {
+        let spec = &self.specs[index];
+        let name = spec.name;
         let ParamKind::Number {
             default,
             limit_min,
             limit_max,
             ..
-        } = self.spec(name).kind
+        } = spec.kind
         else {
             panic!("parameter `{name}` is not declared as a number");
         };
@@ -290,8 +308,15 @@ impl<'a> Params<'a> {
         }
     }
 
-    pub fn choice(&self, name: &str) -> Result<&'static str, String> {
-        let ParamKind::Choice { options, default } = self.spec(name).kind else {
+    /// The number at `index` as `f32`, which is what nodes compute with.
+    pub fn float_at(&self, index: usize) -> Result<f32, String> {
+        self.number_at(index).map(|n| n as f32)
+    }
+
+    pub fn choice_at(&self, index: usize) -> Result<&'static str, String> {
+        let spec = &self.specs[index];
+        let name = spec.name;
+        let ParamKind::Choice { options, default } = spec.kind else {
             panic!("parameter `{name}` is not declared as a choice");
         };
         match self.values.get(name) {
@@ -307,8 +332,22 @@ impl<'a> Params<'a> {
         }
     }
 
-    pub fn text(&self, name: &str) -> Result<String, String> {
-        let ParamKind::Text { default } = self.spec(name).kind else {
+    /// The choice at `index` as the enum made with `choice!`. There is no fallback: an option the
+    /// enum doesn't know is an error, which means the spec and the enum disagree.
+    pub fn choice_as<E: Choice>(&self, index: usize) -> Result<E, String> {
+        let option = self.choice_at(index)?;
+        E::from_option(option).ok_or_else(|| {
+            format!(
+                "`{}` option `{option}` has no matching variant",
+                self.specs[index].name
+            )
+        })
+    }
+
+    pub fn text_at(&self, index: usize) -> Result<String, String> {
+        let spec = &self.specs[index];
+        let name = spec.name;
+        let ParamKind::Text { default } = spec.kind else {
             panic!("parameter `{name}` is not declared as text");
         };
         match self.values.get(name) {

@@ -53,6 +53,7 @@ jobs:
 
       - run: cargo xtask fetch-ffmpeg
       - run: cargo xtask fixtures
+      - run: cargo xtask docs --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
 

@@ -95,8 +95,9 @@ pub struct Theme {
     pub pin_required: Color32,
     pub pin_optional: Color32,
     pub pin_outline: Color32,
-    /// Node categories: Input, Structure, Convert, Effect, Output.
-    pub categories: [Color32; 5],
+    /// One colour per node category, in `Category::ALL` order, so a new category is a compile
+    /// error here until it gets a colour.
+    pub categories: [Color32; Category::ALL.len()],
     pub unknown_category: Color32,
     pub error_bar: Color32,
     pub error_bar_hover: Color32,
@@ -245,14 +246,7 @@ impl Theme {
     }
 
     pub fn category(&self, category: Option<Category>) -> Color32 {
-        match category {
-            Some(Category::Input) => self.categories[0],
-            Some(Category::Structure) => self.categories[1],
-            Some(Category::Convert) => self.categories[2],
-            Some(Category::Effect) => self.categories[3],
-            Some(Category::Output) => self.categories[4],
-            None => self.unknown_category,
-        }
+        category.map_or(self.unknown_category, |c| self.categories[c.index()])
     }
 }
 

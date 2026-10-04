@@ -3381,6 +3381,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "proptest",
+ "rastersong-graph",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -5286,6 +5287,7 @@ dependencies = [
  "anyhow",
  "clap",
  "lzma-rs",
+ "rastersong-graph",
  "sha2",
  "tar",
  "zip",

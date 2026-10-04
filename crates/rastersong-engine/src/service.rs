@@ -539,7 +539,7 @@ impl Worker {
                 &project.video,
                 &tracks,
                 &project.graph,
-                &Registry::default(),
+                Registry::shared(),
                 key.scale.output_size(),
             )
             .map_err(|e| Failure::from_error(&e))

@@ -143,7 +143,8 @@ impl GraphEditor {
                 // (name, required, port, parameter): inputs, then exposed parameters.
                 let mut inputs: Vec<(&'static str, bool, usize, bool)> = kind
                     .map(|k| {
-                        k.inputs
+                        k.spec
+                            .inputs
                             .iter()
                             .enumerate()
                             .map(|(i, s)| (s.name, s.required || i == 0, i, false))
@@ -157,7 +158,7 @@ impl GraphEditor {
                     }
                 }
                 let outputs: Vec<&'static str> = kind
-                    .map(|k| super::editor_outputs(k).to_vec())
+                    .map(|k| super::editor_outputs(k).iter().map(|o| o.name).collect())
                     .unwrap_or_default();
                 let labelled_outputs = outputs.len() > 1;
 
@@ -244,7 +245,7 @@ impl GraphEditor {
     fn output_colors(&self, theme: &Theme) -> HashMap<(NodeKey, usize), WireColor> {
         let mut colors = HashMap::new();
         for node in &self.nodes {
-            let outputs = self.kind_of(node.key).map_or(0, |k| k.outputs.len());
+            let outputs = self.kind_of(node.key).map_or(0, |k| k.spec.outputs.len());
             for port in 0..outputs {
                 colors.insert((node.key, port), self.output_color(node.key, port, theme));
             }

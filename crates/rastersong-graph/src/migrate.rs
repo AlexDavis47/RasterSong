@@ -3,21 +3,93 @@
 use crate::ParamValue;
 use crate::desc::{GraphDesc, ModMode, Modulation};
 
-/// Nodes that used to have a `modulation` input and a `depth` parameter, and the parameter that
-/// input moved. Parameter modulation does the same job now: a signal connected to `node.@param`
-/// with the old depth as its amount.
-const MODULATION_INPUTS: &[(&str, &str)] = &[
-    ("delay", "time"),
-    ("bitcrush", "bits"),
-    ("lowpass", "cutoff"),
+// Migrations are idempotent rewrites that recognise old graphs by their shape, so a graph that
+// is already up to date passes through unchanged and `FORMAT_VERSION` stays 1. Bump the version
+// only for a change to the file format itself (not to nodes), and keep the old shape readable.
+//
+// To rename or move something, add a row to one of the tables below and a test; never edit or
+// remove an existing row, since files written long ago may still use it.
+
+/// A node that used to have a `modulation` input and a `depth` parameter. Parameter modulation
+/// does the same job now: a signal connected to `node.@param` with the old depth as its amount.
+struct ModulationInput {
+    kind: &'static str,
+    /// The parameter the old input moved.
+    param: &'static str,
+}
+
+const MODULATION_INPUTS: &[ModulationInput] = &[
+    ModulationInput {
+        kind: "delay",
+        param: "time",
+    },
+    ModulationInput {
+        kind: "bitcrush",
+        param: "bits",
+    },
+    ModulationInput {
+        kind: "lowpass",
+        param: "cutoff",
+    },
 ];
+
+/// A node type that changed its name.
+struct RenamedKind {
+    old: &'static str,
+    new: &'static str,
+}
+
+const RENAMED_KINDS: &[RenamedKind] = &[];
+
+/// A parameter that changed its name, on a node type that keeps its name.
+struct RenamedParam {
+    kind: &'static str,
+    old: &'static str,
+    new: &'static str,
+}
+
+const RENAMED_PARAMS: &[RenamedParam] = &[];
 
 impl GraphDesc {
     /// Rewrites anything written for older node versions. Graphs already up to date are left
     /// as they are. [`GraphDesc::from_json`] calls it; call it on graphs deserialized any other
     /// way (e.g. inside a project file).
     pub fn upgrade(&mut self) {
-        for &(kind, param) in MODULATION_INPUTS {
+        self.rename_kinds(RENAMED_KINDS);
+        self.rename_params(RENAMED_PARAMS);
+        self.convert_modulation_inputs(MODULATION_INPUTS);
+    }
+
+    fn rename_kinds(&mut self, renames: &[RenamedKind]) {
+        for node in &mut self.nodes {
+            if let Some(r) = renames.iter().find(|r| r.old == node.kind) {
+                node.kind = r.new.to_owned();
+            }
+        }
+    }
+
+    fn rename_params(&mut self, renames: &[RenamedParam]) {
+        for r in renames {
+            for node in self.nodes.iter_mut().filter(|n| n.kind == r.kind) {
+                if let Some(value) = node.params.remove(r.old) {
+                    node.params.entry(r.new.to_owned()).or_insert(value);
+                }
+                if let Some(modulation) = node.modulation.remove(r.old) {
+                    node.modulation
+                        .entry(r.new.to_owned())
+                        .or_insert(modulation);
+                }
+                for c in &mut self.connections {
+                    if c.to == format!("{}.@{}", node.id, r.old) {
+                        c.to = format!("{}.@{}", node.id, r.new);
+                    }
+                }
+            }
+        }
+    }
+
+    fn convert_modulation_inputs(&mut self, inputs: &[ModulationInput]) {
+        for &ModulationInput { kind, param } in inputs {
             for node in self.nodes.iter_mut().filter(|n| n.kind == kind) {
                 let depth = match node.params.remove("depth") {
                     Some(ParamValue::Number(depth)) => depth,
@@ -74,5 +146,38 @@ mod tests {
         let mut again = graph.clone();
         again.upgrade();
         assert_eq!(again, graph);
+    }
+
+    #[test]
+    fn renames_apply_to_kinds_parameters_and_their_modulation() {
+        let mut graph = GraphDesc::from_json(
+            r#"{ "version": 1,
+                "nodes": [
+                    { "id": "a", "type": "audio_input" },
+                    { "id": "x", "type": "old_kind", "params": { "old_param": 2 },
+                      "modulation": { "old_param": { "amount": 1 } } }
+                ],
+                "connections": [ { "from": "a", "to": "x.@old_param" } ] }"#,
+        )
+        .unwrap();
+        graph.rename_kinds(&[RenamedKind {
+            old: "old_kind",
+            new: "new_kind",
+        }]);
+        let rename = [RenamedParam {
+            kind: "new_kind",
+            old: "old_param",
+            new: "new_param",
+        }];
+        graph.rename_params(&rename);
+        let node = &graph.nodes[1];
+        assert_eq!(node.kind, "new_kind");
+        assert_eq!(node.params["new_param"], ParamValue::Number(2.0));
+        assert!(node.modulation.contains_key("new_param") && node.params.len() == 1);
+        assert_eq!(graph.connections[0].to, "x.@new_param");
+        // Running it again changes nothing.
+        let once = graph.clone();
+        graph.rename_params(&rename);
+        assert_eq!(graph, once);
     }
 }

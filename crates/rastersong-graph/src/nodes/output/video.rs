@@ -1,22 +1,27 @@
-use crate::nodes::{Category, NodeSpec};
-use crate::{InputSpec, Layout, LayoutContext, Node, ProcessContext, Signal};
+use crate::nodes::{Category, NodeKind, NodeSpec, OUTPUT};
+use crate::{InputSpec, Layout, LayoutContext, Node, Params, ProcessContext, Signal};
 
 /// The graph's result. Accepts an RGB signal of the output size, or a mono one, which is shown
 /// as grayscale.
 #[derive(Debug)]
 pub struct Output;
 
-impl Output {
-    pub const SPEC: NodeSpec = NodeSpec::new("Output", Category::Output)
-        .describe("The rendered result: RGB, or mono shown as grayscale");
+impl NodeKind for Output {
+    const KIND: &'static str = OUTPUT;
+    const SPEC: NodeSpec = NodeSpec::new("Output", Category::Output)
+        .describe("The rendered result: RGB, or mono shown as grayscale")
+        .inputs(&[InputSpec::required(
+            "in",
+            "The picture to render: RGB, or mono for grayscale",
+        )])
+        .outputs(&[crate::OutputSpec::new("out", "The rendered picture")]);
+
+    fn new(_: &Params) -> Result<Self, String> {
+        Ok(Self)
+    }
 }
 
 impl Node for Output {
-    fn inputs(&self) -> &'static [InputSpec] {
-        const INPUTS: &[InputSpec] = &[InputSpec::required("in")];
-        INPUTS
-    }
-
     fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
         let input = ctx.inputs[0];
         let size_matches = (input.width, input.height) == (ctx.output.width, ctx.output.height);
@@ -39,5 +44,54 @@ impl Node for Output {
                 pixel.fill(value);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use crate::{Layout, LayoutContext, Node, ProcessContext, Registry, Signal};
+
+    fn output() -> Box<dyn Node> {
+        Registry::shared()
+            .create("output", &Default::default())
+            .unwrap()
+            .unwrap()
+    }
+
+    #[test]
+    fn mono_is_shown_as_gray() {
+        let mut node = output();
+        let input = Signal::from_data(Layout::mono(2, 1), vec![0.25, 0.75]);
+        let mut out = vec![Signal::zeros(Layout::rgb(2, 1))];
+        let sources = HashMap::<String, Signal>::new();
+        let ctx = ProcessContext {
+            frame: 0,
+            frame_rate: 1.0,
+            sources: &sources,
+            params: &[],
+        };
+        node.process(&ctx, &[&input], &mut out);
+        assert_eq!(out[0].data, [0.25, 0.25, 0.25, 0.75, 0.75, 0.75]);
+    }
+
+    #[test]
+    fn rejects_the_wrong_size() {
+        let node = output();
+        let sources = HashMap::new();
+        let layouts = |input: Layout| {
+            let inputs = [input];
+            node.output_layouts(&LayoutContext {
+                inputs: &inputs,
+                sources: &sources,
+                output: Layout::rgb(4, 2),
+                output_count: 1,
+            })
+        };
+        assert!(layouts(Layout::rgb(4, 2)).is_ok());
+        assert!(layouts(Layout::mono(4, 2)).is_ok());
+        assert!(layouts(Layout::rgb(3, 2)).is_err());
+        assert!(layouts(Layout::audio(100)).is_err());
     }
 }

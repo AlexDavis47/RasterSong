@@ -1,18 +1,19 @@
-use crate::dsp::db_to_gain;
-use crate::nodes::{Category, NodeSpec};
-use crate::{InputSpec, Node, ParamSpec, Params, ProcessContext, Signal};
+use crate::dsp::{db_to_gain, mix};
+use crate::nodes::{Category, NodeKind, NodeSpec};
+use crate::{Node, ParamSpec, Params, ProcessContext, Signal};
 
-/// How the driven signal is bent back into `-1..=1`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Shape {
-    /// `tanh`: rounds off smoothly.
-    Soft,
-    /// Clips flat at ±1.
-    Hard,
-    /// Reflects back from ±1, folding loud parts over.
-    Fold,
-    /// Wraps around from +1 to -1, like integer overflow.
-    Wrap,
+choice! {
+    /// How the driven signal is bent back into `-1..=1`.
+    pub enum Shape {
+        /// `tanh`: rounds off smoothly.
+        Soft = "soft",
+        /// Clips flat at ±1.
+        Hard = "hard",
+        /// Reflects back from ±1, folding loud parts over.
+        Fold = "fold",
+        /// Wraps around from +1 to -1, like integer overflow.
+        Wrap = "wrap",
+    }
 }
 
 impl Shape {
@@ -32,84 +33,83 @@ impl Shape {
 #[derive(Debug)]
 pub struct Distortion {
     shape: Shape,
+    /// Drive as a gain, converted from dB.
     drive: f32,
     bias: f32,
     mix: f32,
 }
 
-impl Distortion {
-    pub const PARAMS: &[ParamSpec] = &[
-        ParamSpec::choice(
-            "shape",
-            "Shape",
-            &["soft", "hard", "fold", "wrap"],
-            "soft",
-            "soft rounds off, hard clips flat, fold reflects loud parts back, wrap jumps from top to bottom",
-        ),
-        ParamSpec::number(
-            "drive",
-            "Drive",
-            12.0,
-            0.0,
-            48.0,
-            "Gain before shaping; more drive, more distortion",
-        )
-        .unit("dB")
-        .exposed()
-        .limits(-96.0, 96.0),
-        ParamSpec::number(
-            "bias",
-            "Bias",
-            0.0,
-            -1.0,
-            1.0,
-            "Offset added before shaping, for uneven distortion",
-        )
-        .limits(-100.0, 100.0),
-        ParamSpec::number(
-            "mix",
-            "Mix",
-            1.0,
-            0.0,
-            1.0,
-            "0 is the dry input, 1 is only the distorted signal",
-        ),
-    ];
+params! { Distortion {
+    SHAPE: ParamSpec::choice(
+        "shape",
+        "Shape",
+        Shape::OPTIONS,
+        "soft",
+        "soft rounds off, hard clips flat, fold reflects loud parts back, wrap jumps from top to bottom",
+    ),
+    DRIVE: ParamSpec::number(
+        "drive",
+        "Drive",
+        12.0,
+        0.0,
+        48.0,
+        "Gain before shaping; more drive, more distortion",
+    )
+    .unit("dB")
+    .exposed()
+    .limits(-96.0, 96.0),
+    BIAS: ParamSpec::number(
+        "bias",
+        "Bias",
+        0.0,
+        -1.0,
+        1.0,
+        "Offset added before shaping, for uneven distortion",
+    )
+    .limits(-100.0, 100.0),
+    MIX: ParamSpec::number(
+        "mix",
+        "Mix",
+        1.0,
+        0.0,
+        1.0,
+        "0 is the dry input, 1 is only the distorted signal",
+    ),
+} }
 
-    pub const SPEC: NodeSpec = NodeSpec::new("Distortion", Category::Effect)
+impl NodeKind for Distortion {
+    const KIND: &'static str = "distortion";
+    const SPEC: NodeSpec = NodeSpec::new("Distortion", Category::Effect)
         .describe("Drives the signal into a waveshaper: soft, hard, folding or wrapping")
         .params(Self::PARAMS)
         .per_channel();
+    const TEST_CONFIGS: &'static [&'static str] = &[
+        r#"{ "shape": "soft", "drive": 18 }"#,
+        r#"{ "shape": "hard", "drive": 30, "bias": -0.2 }"#,
+        r#"{ "shape": "fold", "drive": 24, "bias": 0.3, "mix": 0.6 }"#,
+        r#"{ "shape": "wrap", "drive": 12 }"#,
+    ];
+    const BENCH: Option<&'static str> = Some("{}");
 
-    pub fn new(params: &Params) -> Result<Self, String> {
+    fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
-            shape: match params.choice("shape")? {
-                "hard" => Shape::Hard,
-                "fold" => Shape::Fold,
-                "wrap" => Shape::Wrap,
-                _ => Shape::Soft,
-            },
-            drive: db_to_gain(params.number("drive")?) as f32,
-            bias: params.number("bias")? as f32,
-            mix: params.number("mix")? as f32,
+            shape: params.choice_as(Self::SHAPE)?,
+            drive: db_to_gain(params.number_at(Self::DRIVE)?) as f32,
+            bias: params.float_at(Self::BIAS)?,
+            mix: params.float_at(Self::MIX)?,
         })
     }
 }
 
 impl Node for Distortion {
-    fn inputs(&self) -> &'static [InputSpec] {
-        const INPUTS: &[InputSpec] = &[InputSpec::required("in")];
-        INPUTS
-    }
-
     fn process(&mut self, ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
-        let (drive, bias, mix) = (ctx.param(1), ctx.param(2), ctx.param(3));
+        let drive = ctx.value(Self::DRIVE, f64::from(self.drive));
+        let bias = ctx.value(Self::BIAS, f64::from(self.bias));
+        let amount = ctx.value(Self::MIX, f64::from(self.mix));
         for (i, (out, &x)) in outputs[0].data.iter_mut().zip(&inputs[0].data).enumerate() {
-            let drive = drive.map_or(self.drive, |d| db_to_gain(f64::from(d[i])) as f32);
-            let bias = bias.map_or(self.bias, |b| b[i]);
-            let mix = mix.map_or(self.mix, |m| m[i]);
-            let wet = self.shape.apply(drive * x + bias);
-            *out = x + (wet - x) * mix;
+            let drive = drive.at_with(i, |db| db_to_gain(f64::from(db)) as f32);
+            let wet = self.shape.apply(drive * x + bias.at(i));
+            *out = mix(x, wet, amount.at(i));
         }
     }
 }
@@ -141,10 +141,13 @@ mod tests {
 
     #[test]
     fn mix_blends_with_the_dry_signal() {
-        use super::super::test_util::{node, process};
+        use crate::testing::{node, process_one};
         let mut dry = node("distortion", r#"{ "mix": 0 }"#, 4, 4.0, &[true]);
         let input = vec![0.1, -0.2, 0.3, 0.9];
-        assert_eq!(process(dry.as_mut(), std::slice::from_ref(&input)), input);
+        assert_eq!(
+            process_one(dry.as_mut(), std::slice::from_ref(&input)),
+            input
+        );
         let mut hard = node(
             "distortion",
             r#"{ "shape": "hard", "drive": 20 }"#,
@@ -152,6 +155,6 @@ mod tests {
             4.0,
             &[true],
         );
-        assert_eq!(process(hard.as_mut(), &[input]), [1.0, -1.0, 1.0, 1.0]);
+        assert_eq!(process_one(hard.as_mut(), &[input]), [1.0, -1.0, 1.0, 1.0]);
     }
 }

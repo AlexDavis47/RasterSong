@@ -1,6 +1,6 @@
-use super::{ms_to_samples, settle_frames};
 use crate::dsp::{db_to_gain, smoothing_coefficient};
-use crate::nodes::{Category, NodeSpec};
+use crate::nodes::support::{ms_to_samples, settle_frames};
+use crate::nodes::{Category, NodeKind, NodeSpec};
 use crate::{InputSpec, Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Range at or below which a closed gate is fully silent.
@@ -31,87 +31,85 @@ pub struct Gate {
     hold_left: u64,
 }
 
-impl Gate {
-    const THRESHOLD: usize = 0;
-    const ATTACK: usize = 1;
-    const HOLD: usize = 2;
-    const RELEASE: usize = 3;
-    const RANGE: usize = 4;
+params! { Gate {
+    THRESHOLD: ParamSpec::number(
+        "threshold",
+        "Threshold",
+        -40.0,
+        -80.0,
+        0.0,
+        "Level the signal must reach to open the gate",
+    )
+    .unit("dB")
+    .exposed()
+    .limits(-200.0, 60.0),
+    ATTACK: ParamSpec::number(
+        "attack",
+        "Attack",
+        1.0,
+        0.01,
+        1000.0,
+        "How quickly the gate opens",
+    )
+    .unit("ms")
+    .limits(0.0, 1e6),
+    HOLD: ParamSpec::number(
+        "hold",
+        "Hold",
+        50.0,
+        0.0,
+        5000.0,
+        "How long the gate stays open after the signal drops below the threshold",
+    )
+    .unit("ms")
+    .limits(0.0, 1e6),
+    RELEASE: ParamSpec::number(
+        "release",
+        "Release",
+        100.0,
+        0.1,
+        5000.0,
+        "How quickly the gate closes",
+    )
+    .unit("ms")
+    .limits(0.0, 1e6),
+    RANGE: ParamSpec::number(
+        "range",
+        "Range",
+        -80.0,
+        SILENT_RANGE,
+        0.0,
+        "How far a closed gate turns the signal down; -80 dB is silence",
+    )
+    .unit("dB"),
+} }
 
-    /// The gain of a closed gate at `range` dB.
-    fn closed_gain(range: f64) -> f64 {
-        if range <= SILENT_RANGE {
-            0.0
-        } else {
-            db_to_gain(range)
-        }
-    }
-
-    pub const PARAMS: &[ParamSpec] = &[
-        ParamSpec::number(
-            "threshold",
-            "Threshold",
-            -40.0,
-            -80.0,
-            0.0,
-            "Level the signal must reach to open the gate",
-        )
-        .unit("dB")
-        .exposed()
-        .limits(-200.0, 60.0),
-        ParamSpec::number(
-            "attack",
-            "Attack",
-            1.0,
-            0.01,
-            1000.0,
-            "How quickly the gate opens",
-        )
-        .unit("ms")
-        .limits(0.0, 1e6),
-        ParamSpec::number(
-            "hold",
-            "Hold",
-            50.0,
-            0.0,
-            5000.0,
-            "How long the gate stays open after the signal drops below the threshold",
-        )
-        .unit("ms")
-        .limits(0.0, 1e6),
-        ParamSpec::number(
-            "release",
-            "Release",
-            100.0,
-            0.1,
-            5000.0,
-            "How quickly the gate closes",
-        )
-        .unit("ms")
-        .limits(0.0, 1e6),
-        ParamSpec::number(
-            "range",
-            "Range",
-            -80.0,
-            SILENT_RANGE,
-            0.0,
-            "How far a closed gate turns the signal down; -80 dB is silence",
-        )
-        .unit("dB"),
-    ];
-
-    pub const SPEC: NodeSpec = NodeSpec::new("Gate", Category::Effect)
+impl NodeKind for Gate {
+    const KIND: &'static str = "gate";
+    const SPEC: NodeSpec = NodeSpec::new("Gate", Category::Effect)
         .describe("Silences the signal while it, or a sidechain, is quiet")
         .params(Self::PARAMS)
+        .inputs(&[
+            InputSpec::required("in", "The signal to gate"),
+            InputSpec::optional(
+                "sidechain",
+                "A signal whose level opens the gate instead of the input's own",
+            ),
+        ])
         .per_channel();
+    const TEST_CONFIGS: &'static [&'static str] = &[
+        r#"{ "threshold": -12, "hold": 5, "release": 10 }"#,
+        r#"{ "threshold": -6, "range": -20, "attack": 3 }"#,
+    ];
+    const BENCH: Option<&'static str> = Some("{}");
 
-    pub fn new(params: &Params) -> Result<Self, String> {
+    fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
-            threshold: params.number("threshold")?,
-            attack_ms: params.number("attack")?,
-            hold_ms: params.number("hold")?,
-            release_ms: params.number("release")?,
-            range: params.number("range")?,
+            threshold: params.number_at(Self::THRESHOLD)?,
+            attack_ms: params.number_at(Self::ATTACK)?,
+            hold_ms: params.number_at(Self::HOLD)?,
+            release_ms: params.number_at(Self::RELEASE)?,
+            range: params.number_at(Self::RANGE)?,
             threshold_gain: 0.0,
             closed_gain: 0.0,
             attack: 0.0,
@@ -126,12 +124,18 @@ impl Gate {
     }
 }
 
-impl Node for Gate {
-    fn inputs(&self) -> &'static [InputSpec] {
-        const INPUTS: &[InputSpec] = &[InputSpec::required("in"), InputSpec::optional("sidechain")];
-        INPUTS
+impl Gate {
+    /// The gain of a closed gate at `range` dB.
+    fn closed_gain(range: f64) -> f64 {
+        if range <= SILENT_RANGE {
+            0.0
+        } else {
+            db_to_gain(range)
+        }
     }
+}
 
+impl Node for Gate {
     fn prepare(&mut self, ctx: &PrepareContext) {
         self.threshold_gain = db_to_gain(self.threshold) as f32;
         self.closed_gain = Self::closed_gain(self.range);
@@ -155,9 +159,10 @@ impl Node for Gate {
             input
         };
         let samples = |ms: f32| f64::from(ms) / 1000.0 * self.sample_rate;
-        let (threshold, attack) = (ctx.param(Self::THRESHOLD), ctx.param(Self::ATTACK));
-        let (hold, release) = (ctx.param(Self::HOLD), ctx.param(Self::RELEASE));
-        let range = ctx.param(Self::RANGE);
+        let threshold = ctx.value(Self::THRESHOLD, f64::from(self.threshold_gain));
+        let range = ctx.value(Self::RANGE, self.closed_gain);
+        let (attack, hold) = (ctx.param(Self::ATTACK), ctx.param(Self::HOLD));
+        let release = ctx.param(Self::RELEASE);
         for (i, ((out, &x), &d)) in outputs[0]
             .data
             .iter_mut()
@@ -165,8 +170,7 @@ impl Node for Gate {
             .zip(detector)
             .enumerate()
         {
-            let threshold =
-                threshold.map_or(self.threshold_gain, |t| db_to_gain(f64::from(t[i])) as f32);
+            let threshold = threshold.at_with(i, |t| db_to_gain(f64::from(t)) as f32);
             let open = if d.abs() >= threshold {
                 self.hold_left = hold.map_or(self.hold_samples, |h| samples(h[i]).round() as u64);
                 true
@@ -176,7 +180,10 @@ impl Node for Gate {
             } else {
                 false
             };
-            let closed = range.map_or(self.closed_gain, |r| Self::closed_gain(f64::from(r[i])));
+            let closed = match range {
+                crate::Value::Const(gain) => gain,
+                crate::Value::Stream(r) => Self::closed_gain(f64::from(r[i])),
+            };
             let target = if open { 1.0 } else { closed };
             let c = if target > self.gain {
                 attack.map_or(self.attack, |a| smoothing_coefficient(samples(a[i])))
@@ -200,7 +207,7 @@ impl Node for Gate {
 
 #[cfg(test)]
 mod tests {
-    use super::super::test_util::{node, process};
+    use crate::testing::{node, process_one};
 
     #[test]
     fn opens_for_loud_signals_and_closes_after_the_hold() {
@@ -209,7 +216,7 @@ mod tests {
         let mut gate = node("gate", params, 100, 1000.0, &[true, false]);
         let mut input = vec![0.5; 20];
         input.extend(vec![0.01; 80]);
-        let out = process(gate.as_mut(), &[input.clone(), vec![0.0; 100]]);
+        let out = process_one(gate.as_mut(), &[input.clone(), vec![0.0; 100]]);
         assert!((out[10] - 0.5).abs() < 1e-3, "open while loud");
         assert!((out[25] - 0.01).abs() < 1e-3, "held open after it drops");
         assert!(out[60].abs() < 1e-6, "closed after the hold");
@@ -219,7 +226,19 @@ mod tests {
     fn a_closed_gate_keeps_the_range() {
         let params = r#"{ "threshold": -10, "range": -20, "release": 0.1 }"#;
         let mut gate = node("gate", params, 100, 1000.0, &[true, false]);
-        let out = process(gate.as_mut(), &[vec![0.1; 100], vec![0.0; 100]]);
+        let out = process_one(gate.as_mut(), &[vec![0.1; 100], vec![0.0; 100]]);
         assert!((out[99] - 0.01).abs() < 1e-4, "{}", out[99]);
+    }
+
+    #[test]
+    fn the_sidechain_opens_the_gate() {
+        let params = r#"{ "threshold": -20, "attack": 0.01, "hold": 0, "release": 0.1 }"#;
+        let mut gate = node("gate", params, 100, 1000.0, &[true, true]);
+        // A quiet input stays shut until a loud sidechain arrives at sample 50.
+        let mut sidechain = vec![0.0; 100];
+        sidechain[50..].fill(1.0);
+        let out = process_one(gate.as_mut(), &[vec![0.05; 100], sidechain]);
+        assert!(out[10].abs() < 1e-6);
+        assert!((out[90] - 0.05).abs() < 1e-3);
     }
 }

@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use eframe::egui::{self, RichText, Ui};
+use rastersong_engine::{AUDIO_INPUT, SOURCE_PARAM};
 use rastersong_engine::{
     Channels, Interpolation, ModMode, Modulation, ParamKind, ParamLevel, ParamSpec, ParamValue,
 };
@@ -96,14 +97,14 @@ impl GraphEditor {
         ui.add_space(2.0);
         ui.label(RichText::new(kind.spec.description).small());
 
-        let shared_settings = kind.inputs.len() > 1 || kind.spec.per_channel;
+        let shared_settings = kind.spec.inputs.len() > 1 || kind.spec.per_channel;
         if shared_settings {
             section(ui, "Node settings");
             egui::Grid::new("node-settings")
                 .num_columns(2)
                 .spacing([10.0, 8.0])
                 .show(ui, |ui| {
-                    if kind.inputs.len() > 1 {
+                    if kind.spec.inputs.len() > 1 {
                         ui.label("Resampling").on_hover_text(
                             "How the other inputs are stretched or shrunk to the length of the main input",
                         );
@@ -165,8 +166,8 @@ impl GraphEditor {
                         ui.add_space(PARAM_GAP);
                         continue;
                     }
-                    let tracks =
-                        (node.kind == "audio_input" && spec.name == "source").then_some(ctx.tracks);
+                    let tracks = (node.kind == AUDIO_INPUT && spec.name == SOURCE_PARAM)
+                        .then_some(ctx.tracks);
                     let (exposed, wire) = pins[index];
                     let mut modulation = wire.map(|color| {
                         let current = node.modulation.get(spec.name).copied();
@@ -183,16 +184,23 @@ impl GraphEditor {
                         .iter()
                         .find(|p| *p.node == node.id && p.index == index)
                         .map(|p| f64::from(p.value));
-                    let disconnected = param_row(ParamRow {
-                        ui,
-                        spec,
-                        params: &mut node.params,
-                        tracks,
-                        track_width,
-                        expose: expose.as_mut(),
-                        modulation: modulation.as_mut().map(|(m, _, c)| (m, *c)),
-                        live,
-                    });
+                    // Scoped to the node, so same-named parameters of different nodes (and their
+                    // stored slider ranges and open menus) never share ids.
+                    let node_id = node.id.clone();
+                    let disconnected = ui
+                        .push_id(node_id, |ui| {
+                            param_row(ParamRow {
+                                ui,
+                                spec,
+                                params: &mut node.params,
+                                tracks,
+                                track_width,
+                                expose: expose.as_mut(),
+                                modulation: modulation.as_mut().map(|(m, _, c)| (m, *c)),
+                                live,
+                            })
+                        })
+                        .inner;
                     ui.add_space(PARAM_GAP);
                     if disconnected {
                         disconnect = Some(index);

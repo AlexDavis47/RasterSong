@@ -15,35 +15,22 @@ use rastersong_graph::{
 const WIDTH: u32 = 6;
 const MAX_ROWS: usize = 24;
 
-const CONFIGS: &[(&str, &str)] = &[
-    ("am", r#"{ "depth": 0.8 }"#),
-    ("delay", r#"{ "time": 1.5 }"#),
-    ("delay", r#"{ "time": 0.5, "unit": "frames" }"#),
-    ("delay", r#"{ "time": 2.25, "feedback": 0.6, "mix": 0.7 }"#),
-    ("delay", r#"{ "time": 0.3, "feedback": 0.5 }"#),
-    ("bitcrush", r#"{ "bits": 3 }"#),
-    ("lowpass", r#"{ "cutoff": 0.7 }"#),
-    ("lowpass", r#"{ "cutoff": 1.5 }"#),
-    ("three_band", r#"{ "low_hz": 300, "high_hz": 3000 }"#),
-    (
-        "compressor",
-        r#"{ "threshold": -12, "ratio": 6, "attack": 2, "release": 20 }"#,
-    ),
-    (
-        "compressor",
-        r#"{ "threshold": -30, "knee": 0, "makeup": 6 }"#,
-    ),
-    ("gate", r#"{ "threshold": -12, "hold": 5, "release": 10 }"#),
-    ("gate", r#"{ "threshold": -6, "range": -20, "attack": 3 }"#),
-    ("distortion", r#"{ "shape": "soft", "drive": 18 }"#),
-    (
-        "distortion",
-        r#"{ "shape": "fold", "drive": 24, "bias": 0.3, "mix": 0.6 }"#,
-    ),
-    ("distortion", r#"{ "shape": "wrap", "drive": 12 }"#),
-    ("to_audio", r#"{ "mapping": "bugged" }"#),
-    ("to_video", r#"{ "mapping": "bugged" }"#),
-];
+/// Every node with a test configuration, run with its defaults and with each configuration. The
+/// lists come from the nodes themselves (`NodeKind::TEST_CONFIGS`), so a new node is covered by
+/// declaring them.
+fn configs() -> Vec<(String, String)> {
+    Registry::shared()
+        .types()
+        .into_iter()
+        .filter(|t| !t.test_configs.is_empty())
+        .flat_map(|t| {
+            std::iter::once("{}")
+                .chain(t.test_configs.iter().copied())
+                .map(|config| (t.kind.clone(), config.to_owned()))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
 
 struct Harness {
     node: Box<dyn Node>,
@@ -61,10 +48,11 @@ impl Harness {
     /// With parameter `param` (an index into the node's specs) swept over its usual range.
     fn modulating(kind: &str, params: &str, total_rows: usize, param: Option<usize>) -> Self {
         let params: BTreeMap<String, ParamValue> = serde_json::from_str(params).unwrap();
-        let registry = Registry::default();
-        let specs = registry.get(kind).unwrap().spec.params;
+        let registry = Registry::shared();
+        let spec = registry.get(kind).unwrap().spec;
+        let specs = spec.params;
         let mut node = registry.create(kind, &params).unwrap().unwrap();
-        let (inputs, outputs) = (node.inputs().len(), node.outputs().len());
+        let (inputs, outputs) = (spec.inputs.len(), spec.outputs.len());
         let layout = Layout::mono(WIDTH, total_rows as u32);
         let param = param.map(|index| {
             let ParamKind::Number { min, max, .. } = specs[index].kind else {
@@ -165,8 +153,7 @@ fn case() -> impl Strategy<Value = (Vec<usize>, Vec<f32>, Vec<f32>)> {
 
 /// Every modulatable parameter of every effect, as (kind, parameter index).
 fn modulatable_params() -> Vec<(String, usize)> {
-    let registry = Registry::default();
-    registry
+    Registry::shared()
         .types()
         .into_iter()
         .filter(|t| t.spec.category == Category::Effect)
@@ -201,7 +188,7 @@ proptest! {
     #[test]
     fn block_size_independent((blocks, signal, modulation) in case()) {
         let rows: usize = blocks.iter().sum();
-        for (kind, params) in CONFIGS {
+        for (kind, params) in &configs() {
             let mut harness = Harness::new(kind, params, rows);
             let whole = harness.run(&[rows], &signal, &modulation);
             let split = harness.run(&blocks, &signal, &modulation);
@@ -212,7 +199,7 @@ proptest! {
     #[test]
     fn reset_is_deterministic_and_output_is_finite((blocks, signal, modulation) in case()) {
         let rows: usize = blocks.iter().sum();
-        for (kind, params) in CONFIGS {
+        for (kind, params) in &configs() {
             let mut harness = Harness::new(kind, params, rows);
             let first = harness.run(&blocks, &signal, &modulation);
             let second = harness.run(&blocks, &signal, &modulation);

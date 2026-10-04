@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use rastersong_graph::{
-    Category, CompileOptions, Graph, GraphDesc, GraphError, InputSpec, Layout, Node, NodeSpec,
-    PrepareContext, ProcessContext, Registry, Signal,
+    Category, CompileOptions, Graph, GraphDesc, GraphError, Layout, LayoutContext, Node, NodeSpec,
+    ParamSpec, Params, ProcessContext, Registry, Signal,
 };
 
 const W: u32 = 4;
@@ -191,74 +191,13 @@ fn missing_sources_are_an_error_at_process_time() {
     assert!(matches!(err, GraphError::Source { .. }));
 }
 
-/// Test node: delays its input by `samples` and reports that as latency, like a node that
-/// needs lookahead would.
-struct Lookahead {
-    samples: usize,
-    history: Vec<f32>,
-}
-
-impl Node for Lookahead {
-    fn inputs(&self) -> &'static [InputSpec] {
-        const INPUTS: &[InputSpec] = &[InputSpec::required("in")];
-        INPUTS
-    }
-    fn process(&mut self, _: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
-        for (out, &x) in outputs[0].data.iter_mut().zip(&inputs[0].data) {
-            self.history.push(x);
-            let n = self.history.len();
-            *out = if n > self.samples {
-                self.history[n - 1 - self.samples]
-            } else {
-                0.0
-            };
-        }
-    }
-    fn reset(&mut self) {
-        self.history.clear();
-    }
-    fn latency(&self, _: &PrepareContext) -> usize {
-        self.samples
-    }
-}
-
-/// Test node: adds its two inputs.
-struct Sum;
-
-impl Node for Sum {
-    fn inputs(&self) -> &'static [InputSpec] {
-        const INPUTS: &[InputSpec] = &[InputSpec::required("a"), InputSpec::required("b")];
-        INPUTS
-    }
-    fn process(&mut self, _: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
-        for ((out, &a), &b) in outputs[0]
-            .data
-            .iter_mut()
-            .zip(&inputs[0].data)
-            .zip(&inputs[1].data)
-        {
-            *out = a + b;
-        }
-    }
-}
-
 #[test]
 fn latency_is_compensated_across_branches() {
     // Half a frame of lookahead on one branch only. Without compensation, `sum` would add two
     // signals half a frame apart. The output is rounded up to a whole frame of latency.
     let frame = Layout::rgb(W, H).len();
     let mut registry = Registry::default();
-    registry.register(
-        "lookahead",
-        NodeSpec::new("Lookahead", Category::Effect),
-        move |_| {
-            Ok(Lookahead {
-                samples: frame / 2,
-                history: Vec::new(),
-            })
-        },
-    );
-    registry.register("sum", NodeSpec::new("Sum", Category::Effect), |_| Ok(Sum));
+    rastersong_graph::testing::register_fakes(&mut registry);
     let json = graph_json(
         r#"{ "id": "video", "type": "video_input" }, { "id": "look", "type": "lookahead" },
            { "id": "sum", "type": "sum" }, { "id": "out", "type": "output" }"#,
@@ -480,4 +419,77 @@ fn parameter_connections_are_checked() {
     assert!(error(graph("bands.@low_hz", "{}")).contains("no parameter `low_hz`"));
     assert!(error(graph("am.@depth", r#"{ "nope": { "amount": 1 } }"#)).contains("`nope`"));
     assert!(compile(&graph("am.@depth", "{}")).is_ok());
+}
+
+/// Test node: an input-less generator. It takes its layout from the host's video (without being
+/// a source node itself) and outputs its `level` parameter in every sample.
+struct Level {
+    level: f32,
+}
+
+impl Node for Level {
+    fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
+        ctx.sources
+            .get("video")
+            .map(|&layout| vec![layout])
+            .ok_or_else(|| "needs the video's layout".to_owned())
+    }
+
+    fn process(&mut self, ctx: &ProcessContext, _: &[&Signal], outputs: &mut [Signal]) {
+        let level = ctx.value(0, f64::from(self.level));
+        for (i, out) in outputs[0].data.iter_mut().enumerate() {
+            *out = level.at(i);
+        }
+    }
+}
+
+const LEVEL_PARAMS: &[ParamSpec] = &[ParamSpec::number(
+    "level",
+    "Level",
+    0.25,
+    0.0,
+    1.0,
+    "The value to output",
+)];
+
+const LEVEL_SPEC: NodeSpec = NodeSpec::new("Level", Category::Input)
+    .describe("Test generator")
+    .params(LEVEL_PARAMS)
+    .inputs(&[]);
+
+fn level_registry() -> Registry {
+    let mut registry = Registry::default();
+    registry.register_custom("level", LEVEL_SPEC, |params: &Params| {
+        Ok(Level {
+            level: params.number("level")? as f32,
+        })
+    });
+    registry
+}
+
+#[test]
+fn nodes_without_inputs_get_their_layout_from_the_host_and_can_be_modulated() {
+    let registry = level_registry();
+    let plain = graph_json(
+        r#"{ "id": "gen", "type": "level" }, { "id": "out", "type": "output" }"#,
+        r#"{ "from": "gen", "to": "out" }"#,
+    );
+    let mut graph = compile_with(&plain, &registry).unwrap();
+    let out = graph.process(0, &sources(|_| 0.0, |_| 0.0)).unwrap();
+    assert_eq!(out.layout, Layout::rgb(W, H));
+    assert!(out.data.iter().all(|&x| x == 0.25));
+
+    // A signal connected to the parameter reaches a node that has no main input to measure it by.
+    let modulated = graph_json(
+        r#"{ "id": "gen", "type": "level", "modulation": { "level": { "amount": 1 } } },
+           { "id": "audio", "type": "audio_input" }, { "id": "out", "type": "output" }"#,
+        r#"{ "from": "audio", "to": "gen.@level" }, { "from": "gen", "to": "out" }"#,
+    );
+    let mut graph = compile_with(&modulated, &registry).unwrap();
+    let out = graph.process(0, &sources(|_| 0.0, |_| 0.5)).unwrap();
+    assert!(
+        out.data.iter().all(|&x| (x - 0.75).abs() < 1e-6),
+        "{:?}",
+        &out.data[..4]
+    );
 }

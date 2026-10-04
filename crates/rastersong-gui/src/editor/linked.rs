@@ -12,9 +12,7 @@ use rastersong_engine::{Category, DEFAULT_AUDIO_TRACK, ParamValue};
 
 use super::{EditorNode, GraphEditor, NodeKey};
 
-pub(super) const VIDEO_INPUT: &str = "video_input";
-pub(super) const AUDIO_INPUT: &str = "audio_input";
-pub(super) const OUTPUT: &str = "output";
+pub(super) use rastersong_engine::{AUDIO_INPUT, OUTPUT, VIDEO_INPUT};
 
 /// Vertical distance between input nodes added for the project.
 const INPUT_SPACING: f32 = 80.0;
@@ -190,7 +188,7 @@ impl GraphEditor {
 
     /// Whether the user can add a node type themselves: not the project's inputs and output.
     pub(super) fn user_addable(category: Category) -> bool {
-        !matches!(category, Category::Input | Category::Output)
+        category.user_addable()
     }
 }
 

@@ -4,9 +4,9 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use rastersong_graph::nodes::SourceNode;
+use rastersong_graph::nodes::{AUDIO_INPUT, DEFAULT_AUDIO, DEFAULT_VIDEO, SOURCE_PARAM};
 use rastersong_graph::{
-    CompileOptions, Graph, GraphDesc, Layout, OutputLevel, ParamKind, ParamValue, Registry, Signal,
+    CompileOptions, Graph, GraphDesc, Layout, OutputLevel, ParamValue, Registry, Signal,
 };
 use rastersong_media::{MediaBackend, MediaError, Rational, VideoSource};
 
@@ -14,10 +14,9 @@ use crate::EngineError;
 use crate::sources::{Modulator, fill_video, to_rgb8};
 
 /// The source name of the video.
-pub const VIDEO_SOURCE: &str = "video";
+pub const VIDEO_SOURCE: &str = DEFAULT_VIDEO;
 /// The node type that reads audio tracks, and the track it reads by default.
-const AUDIO_INPUT: &str = "audio_input";
-pub const DEFAULT_AUDIO_TRACK: &str = "audio";
+pub const DEFAULT_AUDIO_TRACK: &str = DEFAULT_AUDIO;
 
 /// An audio track the graph's audio inputs can read, by name.
 #[derive(Debug, Clone)]
@@ -306,17 +305,13 @@ impl Renderer {
 
 /// Track names read by the graph's audio inputs.
 fn audio_inputs(graph: &GraphDesc) -> Vec<String> {
-    let default = match SourceNode::AUDIO_PARAMS[0].kind {
-        ParamKind::Text { default } => default,
-        _ => DEFAULT_AUDIO_TRACK,
-    };
     graph
         .nodes
         .iter()
         .filter(|n| n.kind == AUDIO_INPUT)
-        .map(|n| match n.params.get("source") {
+        .map(|n| match n.params.get(SOURCE_PARAM) {
             Some(ParamValue::Text(name)) => name.clone(),
-            _ => default.to_owned(),
+            _ => DEFAULT_AUDIO_TRACK.to_owned(),
         })
         .collect()
 }

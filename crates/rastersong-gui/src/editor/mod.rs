@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use eframe::egui::{Pos2, Rect, Vec2, pos2, vec2};
 use rastersong_engine::{
     Channels, Connection, FORMAT_VERSION, GraphDesc, Interpolation, Modulation, NodeDesc, NodeType,
-    OutputLevel, ParamValue, Registry,
+    OutputLevel, OutputSpec, ParamValue, Registry,
 };
 
 pub use canvas::CanvasContext;
@@ -67,7 +67,7 @@ impl Default for View {
 }
 
 pub struct GraphEditor {
-    registry: Registry,
+    registry: &'static Registry,
     nodes: Vec<EditorNode>,
     wires: Vec<Wire>,
     next_key: NodeKey,
@@ -113,7 +113,7 @@ impl std::fmt::Debug for GraphEditor {
 impl GraphEditor {
     pub fn new(graph: &GraphDesc) -> Self {
         let mut editor = Self {
-            registry: Registry::default(),
+            registry: Registry::shared(),
             nodes: Vec::new(),
             wires: Vec::new(),
             next_key: 1,
@@ -244,11 +244,11 @@ impl GraphEditor {
         }
         let index = match (port, input) {
             (None, _) => 0,
-            (Some(port), true) => kind.inputs.iter().position(|i| i.name == port)?,
-            (Some(port), false) => editor_outputs(kind).iter().position(|&o| o == port)?,
+            (Some(port), true) => kind.spec.inputs.iter().position(|i| i.name == port)?,
+            (Some(port), false) => editor_outputs(kind).iter().position(|o| o.name == port)?,
         };
         let count = if input {
-            kind.inputs.len()
+            kind.spec.inputs.len()
         } else {
             editor_outputs(kind).len()
         };
@@ -263,8 +263,8 @@ impl GraphEditor {
                 .kind_of(key)
                 .map(|k| match modulation::as_param(index) {
                     Some(param) if input => format!("@{}", k.spec.params[param].name),
-                    _ if input => k.inputs[index].name.to_owned(),
-                    _ => k.outputs[index].to_owned(),
+                    _ if input => k.spec.inputs[index].name.to_owned(),
+                    _ => k.spec.outputs[index].name.to_owned(),
                 });
             format!("{}.{}", node.id, name.as_deref().unwrap_or("?"))
         };
@@ -574,7 +574,11 @@ impl GraphEditor {
 
     /// Points audio inputs that read track `old` at `new` (after a track is renamed).
     pub fn rename_track(&mut self, old: &str, new: &str) {
-        for node in self.nodes.iter_mut().filter(|n| n.kind == "audio_input") {
+        for node in self
+            .nodes
+            .iter_mut()
+            .filter(|n| n.kind == linked::AUDIO_INPUT)
+        {
             let reads_old = match node.params.get("source") {
                 Some(ParamValue::Text(name)) => name == old,
                 _ => old == rastersong_engine::DEFAULT_AUDIO_TRACK,
@@ -597,11 +601,11 @@ impl GraphEditor {
 
 /// Output ports the editor shows. The output node's own port is how the graph returns its
 /// result; nothing connects to it.
-pub(crate) fn editor_outputs(kind: &NodeType) -> &'static [&'static str] {
-    if kind.kind == "output" {
+pub(crate) fn editor_outputs(kind: &NodeType) -> &'static [OutputSpec] {
+    if kind.kind == linked::OUTPUT {
         &[]
     } else {
-        kind.outputs
+        kind.spec.outputs
     }
 }
 
@@ -662,7 +666,7 @@ mod tests {
 
     /// Connections with every port written out, sorted, for comparing graphs.
     fn canonical(g: &GraphDesc) -> Vec<(String, String)> {
-        let registry = Registry::default();
+        let registry = Registry::shared();
         let full = |e: &str, input: bool| {
             if e.contains('.') {
                 return e.to_owned();
@@ -672,9 +676,9 @@ mod tests {
             format!(
                 "{e}.{}",
                 if input {
-                    kind.inputs[0].name
+                    kind.spec.inputs[0].name
                 } else {
-                    kind.outputs[0]
+                    kind.spec.outputs[0].name
                 }
             )
         };

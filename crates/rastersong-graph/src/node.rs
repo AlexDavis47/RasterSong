@@ -7,23 +7,53 @@ use crate::{Layout, Signal};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InputSpec {
     pub name: &'static str,
+    /// One sentence for tooltips and the generated reference.
+    pub help: &'static str,
     /// Optional inputs that aren't connected receive silence (all zeros) at the main input's length.
     pub required: bool,
 }
 
 impl InputSpec {
-    pub const fn required(name: &'static str) -> Self {
+    pub const fn required(name: &'static str, help: &'static str) -> Self {
         Self {
             name,
+            help,
             required: true,
         }
     }
 
-    pub const fn optional(name: &'static str) -> Self {
+    pub const fn optional(name: &'static str, help: &'static str) -> Self {
         Self {
             name,
+            help,
             required: false,
         }
+    }
+}
+
+/// An output port: its name in graph files, what it carries, and what it's for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OutputSpec {
+    pub name: &'static str,
+    /// One sentence for tooltips and the generated reference.
+    pub help: &'static str,
+    /// What the output carries, so editors can colour its wire.
+    pub hint: PortHint,
+}
+
+impl OutputSpec {
+    /// An output that carries whatever the node's main input carries.
+    pub const fn new(name: &'static str, help: &'static str) -> Self {
+        Self {
+            name,
+            help,
+            hint: PortHint::Inherit,
+        }
+    }
+
+    pub const fn hint(mut self, hint: PortHint) -> Self {
+        self.hint = hint;
+        self
     }
 }
 
@@ -74,6 +104,8 @@ pub struct LayoutContext<'a> {
     pub sources: &'a HashMap<String, Layout>,
     /// The layout the graph's output must have.
     pub output: Layout,
+    /// How many outputs the node has.
+    pub output_count: usize,
 }
 
 /// Context for [`Node::prepare`], [`Node::latency`] and [`Node::warmup_frames`].
@@ -146,6 +178,52 @@ impl ProcessContext<'_> {
     pub fn param(&self, index: usize) -> Option<&[f32]> {
         self.params.get(index).copied().flatten()
     }
+
+    /// Parameter `index` as a value read sample by sample: `constant` (the node's own copy) when
+    /// nothing modulates it, the modulating signal's values when something does.
+    pub fn value(&self, index: usize, constant: f64) -> Value<'_> {
+        match self.param(index) {
+            Some(stream) => Value::Stream(stream),
+            None => Value::Const(constant),
+        }
+    }
+}
+
+/// A parameter's value for each sample of a block. See [`ProcessContext::value`].
+#[derive(Debug, Clone, Copy)]
+pub enum Value<'a> {
+    Const(f64),
+    Stream(&'a [f32]),
+}
+
+impl Value<'_> {
+    /// The value at sample `i`.
+    #[inline]
+    pub fn at(&self, i: usize) -> f32 {
+        match self {
+            Self::Const(v) => *v as f32,
+            Self::Stream(s) => s[i],
+        }
+    }
+
+    /// The value at sample `i`, for nodes that compute in `f64`.
+    #[inline]
+    pub fn at64(&self, i: usize) -> f64 {
+        match self {
+            Self::Const(v) => *v,
+            Self::Stream(s) => f64::from(s[i]),
+        }
+    }
+
+    /// Like [`Self::at`], but `convert` turns a modulating signal's value into what the node
+    /// computes with (the constant is already in that form), e.g. decibels to gain.
+    #[inline]
+    pub fn at_with(&self, i: usize, convert: impl Fn(f32) -> f32) -> f32 {
+        match self {
+            Self::Const(v) => *v as f32,
+            Self::Stream(s) => convert(s[i]),
+        }
+    }
 }
 
 impl std::fmt::Debug for ProcessContext<'_> {
@@ -165,22 +243,6 @@ impl std::fmt::Debug for ProcessContext<'_> {
 ///   same sample twice, so splitting a stream into blocks differently doesn't change the output.
 /// - **No allocation in `process`.** Allocate in [`Node::prepare`].
 pub trait Node: Send {
-    /// Input ports. The first is the main input. Source nodes have none.
-    fn inputs(&self) -> &'static [InputSpec] {
-        &[]
-    }
-
-    /// Output port names.
-    fn outputs(&self) -> &'static [&'static str] {
-        &["out"]
-    }
-
-    /// What each output carries, in the order of [`Node::outputs`]. Outputs left out are
-    /// [`PortHint::Inherit`].
-    fn output_hints(&self) -> &'static [PortHint] {
-        &[]
-    }
-
     /// For source nodes, the name of the host-supplied signal they read.
     fn source(&self) -> Option<&str> {
         None
@@ -189,7 +251,7 @@ pub trait Node: Send {
     /// Output layouts for the given inputs, or an error message if the inputs don't fit this node.
     /// The default passes the main input's layout through.
     fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
-        Ok(vec![ctx.inputs[0]; self.outputs().len()])
+        Ok(vec![ctx.inputs[0]; ctx.output_count])
     }
 
     /// Called once the graph is compiled and all layouts are known. Allocate buffers here.

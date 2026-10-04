@@ -205,16 +205,21 @@ inputs receive silence (zeros).
 
 ### Node Contract
 
+A node is one file under `crates/rastersong-graph/src/nodes/<category>/` that holds everything about it. It
+implements two traits: `NodeKind` (what the node *is*: the registry, menus, inspector, tests and docs read this)
+and `Node` (what it *does* each frame).
+
 ```rust
+pub trait NodeKind: Node + Sized + 'static {
+    const KIND: &'static str;                 // type name in graph files
+    const SPEC: NodeSpec;                     // label, category, description, ports, parameters
+    const TEST_CONFIGS: &'static [&'static str] = &[];  // parameter sets for the property tests
+    const BENCH: Option<&'static str> = None;           // parameter set for benchmarks
+    fn new(params: &Params) -> Result<Self, String>;    // must succeed with all defaults
+}
+
 pub trait Node: Send {
-    /// Input ports; the first is the main input. Source nodes have none.
-    fn inputs(&self) -> &'static [InputSpec] { &[] }
-    fn outputs(&self) -> &'static [&'static str] { &["out"] }
-
     /// For source nodes, the name of the host-supplied signal they read ("video", "audio").
-    /// What each output carries (RGB, red, audio, a frequency band, …), for wire colours only.
-    fn output_hints(&self) -> &'static [PortHint] { &[] }
-
     fn source(&self) -> Option<&str> { None }
 
     /// Output layouts for the given input layouts, or an error if the inputs don't fit.
@@ -237,6 +242,35 @@ pub trait Node: Send {
     fn warmup_frames(&self, ctx: &PrepareContext) -> u32 { 0 }
 }
 ```
+
+#### Adding a node
+
+1. Create `nodes/<category>/<name>.rs` (copy `effect/bitcrush.rs` for a stateless effect, `effect/delay.rs` for a
+   stateful one).
+2. Add one line to the `nodes!` list in `nodes/mod.rs`: `<name>: [<Type>]` under its category.
+
+That is all. The add-node menu, the inspector, the registry tests, the property tests (block-size independence,
+reset determinism, finite output, modulation sweeps), the benchmarks and `docs/nodes.md` are all driven by the
+registry. In the node's file:
+
+- **Parameters** are declared with `params!`, which gives `Type::PARAMS` and a named index per parameter
+  (`Type::DRIVE`). Constructors read with `params.number_at(Self::DRIVE)`, `params.choice_as::<Shape>(Self::SHAPE)`
+  and so on, and a compile-time assertion checks each constant is in the position of the parameter it names, so
+  no parameter is ever looked up by a string or a bare `0`. Choices are enums made with `choice!`, which has no
+  fallback arm. Every parameter, input and output has help text (a registry test fails without it).
+- **Per-sample values** come from `ctx.value(Self::DRIVE, self.drive)`, which is the node's own constant when
+  nothing modulates the parameter and the modulating signal's values when something does: `drive.at(i)`.
+- **Ports** are in `SPEC` (`.inputs(&[...])`, `.outputs(&[...])`, with help text and wire-colour hints). A node
+  defaults to one input `in` and one output `out`.
+- **Tests** go in the same file: numeric tests with `crate::testing::{node, process_one}`, plus `TEST_CONFIGS`
+  and `BENCH`. A registry test fails if an effect leaves them empty, so a new effect can't skip the property tests.
+- The checks the registry makes at registration time (a duplicate type, more than `MAX_INPUTS` inputs or
+  `MAX_PARAMS` parameters, a constructor that fails with the defaults) panic, and the registry tests run them for
+  every built-in node.
+
+Shared building blocks live in `dsp.rs` (resampling, delay line, `mix`, dB conversion, `Biquad` with RBJ
+low/high/band/all-pass, peak and shelf designs) and `nodes/support.rs` (`LengthUnit`, `ms_to_samples`,
+`settle_frames`, the conversion `Mapping`).
 
 Rules every node must satisfy (enforced by tests, see [Testing Strategy](#testing-strategy)):
 
@@ -306,25 +340,11 @@ Working examples live in [`examples/graphs/`](../examples/graphs): `am_bands` (t
 
 ### Built-in Nodes
 
-| Type | Inputs → Outputs | Parameters (default) |
-|---|---|---|
-| `video_input` | → `out` (RGB, `0..1`) | `source` (`"video"`) |
-| `audio_input` | → `out` (mono audio block) | `source` (`"audio"`) |
-| `output` | `in` (RGB or mono at project size) → | |
-| `split` | `in` (RGB) → `r`, `g`, `b` | |
-| `combine` | `r`, `g`, `b` (mono, same size) → `out` (RGB) | |
-| `interleave` | `in` (RGB) → `out` (mono, 3× wide) | |
-| `pack` | `in` (mono, width divisible by 3) → `out` (RGB) | |
-| `to_audio` | `in` (`0..1`) → `out` (`-1..1`) | `mapping` (`accurate` or `bugged`) |
-| `to_video` | `in` (`-1..1`) → `out` (`0..1`) | `mapping` (`accurate` or `bugged`) |
-| `three_band` | `in` → `low`, `mid`, `high` | `low_hz` (250), `high_hz` (4000) |
-| `am` | `carrier`, `modulator` → `out` | `depth` (1): `carrier × (1 + depth × modulator)` |
-| `delay` | `in` → `out` | `time` (0.05; logarithmic slider from 0.001 to 100), `unit` (`rows` or `frames`), `feedback` (0), `mix` (1) |
-| `bitcrush` | `in` → `out` | `bits` (4) |
-| `lowpass` | `in` → `out` | `cutoff` (40 cycles per row; modulates in octaves) |
-| `compressor` | `in`, `sidechain`? → `out` | `threshold` (-18 dB), `ratio` (4), `attack` (10 ms), `release` (100 ms), `knee` (6 dB), `makeup` (0 dB) |
-| `gate` | `in`, `sidechain`? → `out` | `threshold` (-40 dB), `attack` (1 ms), `hold` (50 ms), `release` (100 ms), `range` (-80 dB, silence) |
-| `distortion` | `in` → `out` | `shape` (`soft`, `hard`, `fold` or `wrap`), `drive` (12 dB), `bias` (0), `mix` (1) |
+The reference for every node (ports, parameters with defaults, ranges and units, modulation) is
+[`nodes.md`](nodes.md). It is generated from the node definitions by `cargo xtask docs`, and CI fails if it is out
+of date. Roughly: inputs (`video_input`, `audio_input`), the `output`, channel structure (`split`, `combine`,
+`interleave`, `pack`), range conversion (`to_audio`, `to_video`) and effects (`three_band`, `am`, `delay`,
+`bitcrush`, `lowpass`, `compressor`, `gate`, `distortion`).
 
 **Range conversion and the bugged mapping.** `to_audio` and `to_video` model writing to and reading from an 8-bit
 file, so both clip to the range. `accurate` maps black to -1 and white to 1. `bugged` reproduces the original
@@ -560,7 +580,8 @@ Testing is a first-class part of the project. Every phase has tests that must pa
 
 | Layer | What it proves | Tooling |
 |---|---|---|
-| Node property tests | Processing in blocks of any size gives the same output as one large block; `reset()` + re-render is identical; no NaN/inf for valid inputs | `proptest` |
+| Node unit tests | Each node's numbers: known inputs give known outputs (filter responses, shapes, ports and layouts), in the node's own file with `crate::testing` | `cargo test` |
+| Node property tests | Processing in blocks of any size gives the same output as one large block; `reset()` + re-render is identical; no NaN/inf for valid inputs; every modulatable parameter keeps all of that while swept. Run for every node on its defaults and on its `TEST_CONFIGS`, read from the registry | `proptest` |
 | Engine | Seek with warmup matches a render from frame 0 (exact for finite-memory nodes, within tolerance otherwise); graph edits and cancellation never serve a stale frame; output is deterministic; latency compensation aligns branches | fake media backend, no FFmpeg |
 | Media correctness | Random-access decode of frame *i* is byte-identical to sequential decode of frame *i*, for every fixture. This works for any codec without hand-made expected outputs | generated fixtures |
 | Fixtures | Small generated clips: B-frames, open GOP, variable frame rate, odd dimensions, rotation metadata, frame index encoded into lossless frames, audio-only, video-only, truncated files | `cargo xtask fixtures` (uses the `ffmpeg` CLI) |
@@ -569,7 +590,7 @@ Testing is a first-class part of the project. Every phase has tests that must pa
 | GUI | Graph ↔ editor conversion and timeline math are unit tested; a few headless interaction tests drive the real UI on the fake backend. `cargo test -p rastersong-gui --test screenshots -- --ignored` renders the UI offscreen (needs a GPU) to `target/tmp/screenshots/` for checking layout changes | `egui_kittest` |
 | Robustness (later) | Malformed media never crashes the app | `cargo-fuzz` |
 
-CI runs `fmt`, `clippy`, tests and `cargo-deny` on Windows, macOS and Linux.
+CI runs `fmt`, `clippy`, tests, the generated-docs check (`cargo xtask docs --check`) and `cargo-deny` on Windows, macOS and Linux.
 
 ## Dependencies, Licensing & Distribution
 

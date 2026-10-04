@@ -7,8 +7,8 @@ use crate::desc::{Channels, GraphDesc, Interpolation, Modulation};
 use crate::dsp::{DelayLine, resample};
 use crate::nodes::{OUTPUT, Registry};
 use crate::{
-    GraphError, Layout, LayoutContext, Node, ParamSpec, ParamValue, PrepareContext, ProcessContext,
-    Signal, Sources,
+    GraphError, InputSpec, Layout, LayoutContext, Node, OutputSpec, ParamSpec, ParamValue,
+    PrepareContext, ProcessContext, Signal, Sources,
 };
 
 /// Most inputs a node can have.
@@ -246,6 +246,8 @@ struct Pending {
     kind: String,
     params: BTreeMap<String, ParamValue>,
     specs: &'static [ParamSpec],
+    inputs: &'static [InputSpec],
+    outputs: &'static [OutputSpec],
     modulation: BTreeMap<String, Modulation>,
     node: Box<dyn Node>,
     interpolation: Interpolation,
@@ -294,214 +296,11 @@ impl Graph {
         };
         let order = schedule(&pending, output)?;
 
-        let mut layouts: Vec<Vec<Layout>> = vec![Vec::new(); pending.len()];
-        // Latency of each node's outputs relative to the sources, in frames.
-        let mut latency = vec![0.0f64; pending.len()];
-        let mut step_of = vec![usize::MAX; pending.len()];
-        let mut steps = Vec::with_capacity(order.len());
-        let mut sources = Vec::new();
-        let mut warmup_frames = 0;
-        let mut latency_frames = 0;
-
+        let mut compiler = Compiler::new(registry, options, pending, output);
         for &n in &order {
-            let p = &pending[n];
-            let node_error = |message: String| GraphError::Node {
-                node: p.id.clone(),
-                message,
-            };
-            let main = p.wires.first().map(|w| {
-                let (src, port) = w.expect("main inputs are required");
-                layouts[src][port]
-            });
-            let input_layouts: Vec<Layout> = p
-                .wires
-                .iter()
-                .map(|w| w.map_or(main.unwrap(), |(src, port)| layouts[src][port]))
-                .collect();
-
-            // Separate channels: one node per channel of the main input, each seeing a mono
-            // signal. Every input reaches each copy as that one channel.
-            let channels = match (p.channels, main) {
-                (Channels::Separate, Some(main)) if main.samples_per_pixel > 1 => {
-                    let per_channel = registry.get(&p.kind).is_some_and(|t| t.spec.per_channel);
-                    if !per_channel {
-                        return Err(node_error("can't process channels separately".into()));
-                    }
-                    main.samples_per_pixel as usize
-                }
-                _ => 1,
-            };
-            let channel_layout = main.map(|m| {
-                if channels > 1 {
-                    Layout::mono(m.width, m.height)
-                } else {
-                    m
-                }
-            });
-
-            let node_inputs = if channels > 1 {
-                vec![channel_layout.unwrap(); p.wires.len()]
-            } else {
-                input_layouts.clone()
-            };
-            let node_outputs = p
-                .node
-                .output_layouts(&LayoutContext {
-                    inputs: &node_inputs,
-                    sources: &options.sources,
-                    output: options.output,
-                })
-                .map_err(node_error)?;
-            assert_eq!(
-                node_outputs.len(),
-                p.node.outputs().len(),
-                "node `{}` returned the wrong number of layouts",
-                p.id
-            );
-            let output_layouts = if channels > 1 {
-                if node_outputs.iter().any(|&l| Some(l) != channel_layout) {
-                    return Err(node_error("can't process channels separately".into()));
-                }
-                vec![main.unwrap(); node_outputs.len()]
-            } else {
-                node_outputs.clone()
-            };
-
-            // Every input reaches the node at the main input's layout (per channel, if split).
-            let matched = vec![channel_layout.unwrap_or_default(); p.wires.len()];
-            let connected: Vec<bool> = p.wires.iter().map(Option::is_some).collect();
-            let modulated: Vec<Option<(f64, f64)>> = (0..p.specs.len())
-                .map(|i| {
-                    p.modulation_of(i)
-                        .map(|(base, m, _)| p.specs[i].modulated_range(base, m))
-                })
-                .collect();
-            let ctx = PrepareContext {
-                frame_rate: options.frame_rate,
-                inputs: &matched,
-                outputs: &node_outputs,
-                connected: &connected,
-                modulated: &modulated,
-            };
-
-            let mut nodes = vec![std::mem::replace(
-                &mut pending[n].node,
-                Box::new(Placeholder),
-            )];
-            for _ in 1..channels {
-                let copy = registry
-                    .create(&pending[n].kind, &pending[n].params)
-                    .expect("the node type exists")
-                    .map_err(|message| GraphError::Node {
-                        node: pending[n].id.clone(),
-                        message,
-                    })?;
-                nodes.push(copy);
-            }
-            for node in &mut nodes {
-                node.prepare(&ctx);
-            }
-            let node = &nodes[0];
-            warmup_frames = warmup_frames.max(node.warmup_frames(&ctx));
-            let own_latency = node.latency(&ctx) as f64 / ctx.samples_per_frame().max(1) as f64;
-            if let Some(name) = node.source() {
-                sources.push((name.to_owned(), output_layouts[0]));
-            }
-
-            // Inputs that arrive with less latency than the latest one are delayed to line up.
-            let p = &pending[n];
-            let mut aligned = p
-                .sources()
-                .map(|&(src, _)| latency[src])
-                .fold(0.0, f64::max);
-            if n == output {
-                // The output's total latency is rounded up to whole frames so the host can skip
-                // exactly that many frames.
-                aligned = (aligned - 1e-9).ceil().max(0.0);
-                latency_frames = aligned as u32;
-            }
-            latency[n] = aligned + own_latency;
-
-            let main_len = main.map_or(0, |l| l.len());
-            // How one input (or parameter) gets its signal: latency compensation, then
-            // resampling to the main input's length.
-            let binding = |w: Option<(usize, usize)>, src_layout: Layout, secondary: bool| {
-                let compensation = w.and_then(|(src, _)| {
-                    let delay =
-                        ((aligned - latency[src]) * src_layout.len() as f64).round() as usize;
-                    (delay > 0).then(|| (DelayLine::new(delay), delay, Signal::zeros(src_layout)))
-                });
-                let needs_resampling = secondary && (w.is_none() || src_layout.len() != main_len);
-                let main = main.unwrap();
-                let group = if src_layout.samples_per_pixel == 1 && main.samples_per_pixel > 1 {
-                    main.samples_per_pixel as usize
-                } else {
-                    1
-                };
-                InputBinding {
-                    source: w.map(|(src, port)| (step_of[src], port)),
-                    compensation,
-                    resampled: needs_resampling.then(|| Signal::zeros(main)),
-                    group,
-                }
-            };
-            let inputs = p
-                .wires
-                .iter()
-                .enumerate()
-                .map(|(k, &w)| binding(w, input_layouts[k], k > 0))
-                .collect();
-            let params: Vec<ParamBinding> = (0..p.specs.len())
-                .filter_map(|index| {
-                    let (base, modulation, limits) = p.modulation_of(index)?;
-                    let (src, port) = p.param_wires[index]?;
-                    let main = main?;
-                    Some(ParamBinding {
-                        index,
-                        spec: &p.specs[index],
-                        input: binding(Some((src, port)), layouts[src][port], true),
-                        base,
-                        modulation,
-                        limits,
-                        values: Signal::zeros(main),
-                    })
-                })
-                .collect();
-
-            let split = (channels > 1).then(|| {
-                let channel = Signal::zeros(channel_layout.unwrap());
-                ChannelSplit {
-                    inputs: vec![vec![channel.clone(); p.wires.len()]; channels],
-                    params: vec![vec![channel; params.len()]; channels],
-                    outputs: vec![
-                        node_outputs.iter().map(|&l| Signal::zeros(l)).collect();
-                        channels
-                    ],
-                }
-            });
-
-            step_of[n] = steps.len();
-            steps.push(Step {
-                id: p.id.as_str().into(),
-                nodes,
-                split,
-                interpolation: p.interpolation,
-                inputs,
-                params,
-                levels: vec![0.0; output_layouts.len()],
-                outputs: output_layouts.iter().map(|&l| Signal::zeros(l)).collect(),
-            });
-            layouts[n] = output_layouts;
+            compiler.add_step(n)?;
         }
-
-        Ok(Self {
-            output_step: step_of[output],
-            steps,
-            frame_rate: options.frame_rate,
-            sources,
-            latency_frames,
-            warmup_frames,
-        })
+        Ok(compiler.finish())
     }
 
     /// Frames between a source frame going in and its result coming out of [`Self::process`].
@@ -631,6 +430,337 @@ impl Graph {
     }
 }
 
+/// The layouts one node works with, worked out from what feeds it.
+struct NodeShape {
+    /// The layout every input and parameter signal is brought to: the main input's, or for nodes
+    /// without inputs the node's own first output.
+    reference: Layout,
+    /// Layouts of the inputs as they arrive from upstream, before rate matching.
+    input_layouts: Vec<Layout>,
+    /// How many copies of the node run: one per channel when channels are separate.
+    channels: usize,
+    /// What one node instance sees: the mono channel layout when split, else the main layout.
+    channel_layout: Option<Layout>,
+    /// Layouts of one instance's outputs.
+    node_outputs: Vec<Layout>,
+    /// Layouts of the step's outputs (interleaved again when channels are split).
+    output_layouts: Vec<Layout>,
+}
+
+/// Compiles pending nodes into steps one at a time, in schedule order. Each step passes through
+/// the same phases: work out its layouts, create and prepare its node instances, line up latency,
+/// bind inputs and parameters, and allocate its buffers.
+struct Compiler<'a> {
+    registry: &'a Registry,
+    options: &'a CompileOptions,
+    pending: Vec<Pending>,
+    output: usize,
+    /// Output layouts of each node compiled so far, by pending index.
+    layouts: Vec<Vec<Layout>>,
+    /// Latency of each node's outputs relative to the sources, in frames.
+    latency: Vec<f64>,
+    /// Each pending node's index in `steps`.
+    step_of: Vec<usize>,
+    steps: Vec<Step>,
+    sources: Vec<(String, Layout)>,
+    warmup_frames: u32,
+    latency_frames: u32,
+}
+
+impl<'a> Compiler<'a> {
+    fn new(
+        registry: &'a Registry,
+        options: &'a CompileOptions,
+        pending: Vec<Pending>,
+        output: usize,
+    ) -> Self {
+        let count = pending.len();
+        Self {
+            registry,
+            options,
+            pending,
+            output,
+            layouts: vec![Vec::new(); count],
+            latency: vec![0.0; count],
+            step_of: vec![usize::MAX; count],
+            steps: Vec::new(),
+            sources: Vec::new(),
+            warmup_frames: 0,
+            latency_frames: 0,
+        }
+    }
+
+    fn finish(self) -> Graph {
+        Graph {
+            output_step: self.step_of[self.output],
+            steps: self.steps,
+            frame_rate: self.options.frame_rate,
+            sources: self.sources,
+            latency_frames: self.latency_frames,
+            warmup_frames: self.warmup_frames,
+        }
+    }
+
+    fn node_error(&self, n: usize, message: String) -> GraphError {
+        GraphError::Node {
+            node: self.pending[n].id.clone(),
+            message,
+        }
+    }
+
+    fn add_step(&mut self, n: usize) -> Result<(), GraphError> {
+        let shape = self.shape(n)?;
+        let (nodes, own_latency) = self.instantiate(n, &shape)?;
+        let aligned = self.align_latency(n, own_latency);
+        let inputs = self.bind_inputs(n, &shape, aligned);
+        let params = self.bind_params(n, &shape, aligned);
+
+        let p = &self.pending[n];
+        let split = (shape.channels > 1).then(|| {
+            let channel = Signal::zeros(shape.channel_layout.unwrap());
+            ChannelSplit {
+                inputs: vec![vec![channel.clone(); p.wires.len()]; shape.channels],
+                params: vec![vec![channel; params.len()]; shape.channels],
+                outputs: vec![
+                    shape
+                        .node_outputs
+                        .iter()
+                        .map(|&l| Signal::zeros(l))
+                        .collect();
+                    shape.channels
+                ],
+            }
+        });
+        self.step_of[n] = self.steps.len();
+        self.steps.push(Step {
+            id: p.id.as_str().into(),
+            nodes,
+            split,
+            interpolation: p.interpolation,
+            inputs,
+            params,
+            levels: vec![0.0; shape.output_layouts.len()],
+            outputs: shape
+                .output_layouts
+                .iter()
+                .map(|&l| Signal::zeros(l))
+                .collect(),
+        });
+        self.layouts[n] = shape.output_layouts;
+        Ok(())
+    }
+
+    /// Phase 1: the layouts the node and its inputs have.
+    fn shape(&self, n: usize) -> Result<NodeShape, GraphError> {
+        let p = &self.pending[n];
+        let main = p.wires.first().map(|w| {
+            let (src, port) = w.expect("main inputs are required");
+            self.layouts[src][port]
+        });
+        let input_layouts: Vec<Layout> = p
+            .wires
+            .iter()
+            .map(|w| w.map_or(main.unwrap(), |(src, port)| self.layouts[src][port]))
+            .collect();
+
+        // Separate channels: one node per channel of the main input, each seeing a mono
+        // signal. Every input reaches each copy as that one channel.
+        let channels = match (p.channels, main) {
+            (Channels::Separate, Some(main)) if main.samples_per_pixel > 1 => {
+                let per_channel = self
+                    .registry
+                    .get(&p.kind)
+                    .is_some_and(|t| t.spec.per_channel);
+                if !per_channel {
+                    return Err(self.node_error(n, "can't process channels separately".into()));
+                }
+                main.samples_per_pixel as usize
+            }
+            _ => 1,
+        };
+        let channel_layout = main.map(|m| {
+            if channels > 1 {
+                Layout::mono(m.width, m.height)
+            } else {
+                m
+            }
+        });
+
+        let node_inputs = if channels > 1 {
+            vec![channel_layout.unwrap(); p.wires.len()]
+        } else {
+            input_layouts.clone()
+        };
+        let node_outputs = p
+            .node
+            .output_layouts(&LayoutContext {
+                inputs: &node_inputs,
+                sources: &self.options.sources,
+                output: self.options.output,
+                output_count: p.outputs.len(),
+            })
+            .map_err(|message| self.node_error(n, message))?;
+        assert_eq!(
+            node_outputs.len(),
+            p.outputs.len(),
+            "node `{}` returned the wrong number of layouts",
+            p.id
+        );
+        let output_layouts = if channels > 1 {
+            if node_outputs.iter().any(|&l| Some(l) != channel_layout) {
+                return Err(self.node_error(n, "can't process channels separately".into()));
+            }
+            vec![main.unwrap(); node_outputs.len()]
+        } else {
+            node_outputs.clone()
+        };
+        // A node without inputs measures its signals against its own output.
+        let reference = main.unwrap_or_else(|| output_layouts[0]);
+        Ok(NodeShape {
+            reference,
+            input_layouts,
+            channels,
+            channel_layout,
+            node_outputs,
+            output_layouts,
+        })
+    }
+
+    /// Phase 2: creates the node instances (one per channel when split) and prepares them.
+    /// Returns them with the node's own latency in frames. Also records the node's warmup and, for
+    /// source nodes, the signal it reads.
+    fn instantiate(
+        &mut self,
+        n: usize,
+        shape: &NodeShape,
+    ) -> Result<(Vec<Box<dyn Node>>, f64), GraphError> {
+        let p = &self.pending[n];
+        // Every input reaches the node at the main input's layout (per channel, if split).
+        let matched = vec![shape.channel_layout.unwrap_or_default(); p.wires.len()];
+        let connected: Vec<bool> = p.wires.iter().map(Option::is_some).collect();
+        let modulated: Vec<Option<(f64, f64)>> = (0..p.specs.len())
+            .map(|i| {
+                p.modulation_of(i)
+                    .map(|(base, m, _)| p.specs[i].modulated_range(base, m))
+            })
+            .collect();
+        let ctx = PrepareContext {
+            frame_rate: self.options.frame_rate,
+            inputs: &matched,
+            outputs: &shape.node_outputs,
+            connected: &connected,
+            modulated: &modulated,
+        };
+
+        let mut nodes = vec![std::mem::replace(
+            &mut self.pending[n].node,
+            Box::new(Placeholder),
+        )];
+        for _ in 1..shape.channels {
+            let copy = self
+                .registry
+                .create(&self.pending[n].kind, &self.pending[n].params)
+                .expect("the node type exists")
+                .map_err(|message| self.node_error(n, message))?;
+            nodes.push(copy);
+        }
+        for node in &mut nodes {
+            node.prepare(&ctx);
+        }
+        let node = &nodes[0];
+        self.warmup_frames = self.warmup_frames.max(node.warmup_frames(&ctx));
+        let own_latency = node.latency(&ctx) as f64 / ctx.samples_per_frame().max(1) as f64;
+        if let Some(name) = node.source() {
+            self.sources
+                .push((name.to_owned(), shape.output_layouts[0]));
+        }
+        Ok((nodes, own_latency))
+    }
+
+    /// Phase 3: inputs that arrive with less latency than the latest one are delayed to line up.
+    /// Returns the latency the node's inputs line up at, in frames, and records the node's own.
+    fn align_latency(&mut self, n: usize, own_latency: f64) -> f64 {
+        let mut aligned = self.pending[n]
+            .sources()
+            .map(|&(src, _)| self.latency[src])
+            .fold(0.0, f64::max);
+        if n == self.output {
+            // The output's total latency is rounded up to whole frames so the host can skip
+            // exactly that many frames.
+            aligned = (aligned - 1e-9).ceil().max(0.0);
+            self.latency_frames = aligned as u32;
+        }
+        self.latency[n] = aligned + own_latency;
+        aligned
+    }
+
+    /// How one input (or parameter) gets its signal: latency compensation, then resampling to the
+    /// reference length.
+    fn binding(
+        &self,
+        shape: &NodeShape,
+        aligned: f64,
+        wire: Option<(usize, usize)>,
+        src_layout: Layout,
+        secondary: bool,
+    ) -> InputBinding {
+        let compensation = wire.and_then(|(src, _)| {
+            let delay = ((aligned - self.latency[src]) * src_layout.len() as f64).round() as usize;
+            (delay > 0).then(|| (DelayLine::new(delay), delay, Signal::zeros(src_layout)))
+        });
+        let needs_resampling =
+            secondary && (wire.is_none() || src_layout.len() != shape.reference.len());
+        let group = if src_layout.samples_per_pixel == 1 && shape.reference.samples_per_pixel > 1 {
+            shape.reference.samples_per_pixel as usize
+        } else {
+            1
+        };
+        InputBinding {
+            source: wire.map(|(src, port)| (self.step_of[src], port)),
+            compensation,
+            resampled: needs_resampling.then(|| Signal::zeros(shape.reference)),
+            group,
+        }
+    }
+
+    /// Phase 4a: the node's inputs. Every one but the main input is resampled to its length.
+    fn bind_inputs(&self, n: usize, shape: &NodeShape, aligned: f64) -> Vec<InputBinding> {
+        self.pending[n]
+            .wires
+            .iter()
+            .enumerate()
+            .map(|(k, &w)| self.binding(shape, aligned, w, shape.input_layouts[k], k > 0))
+            .collect()
+    }
+
+    /// Phase 4b: the signals modulating the node's parameters, each with a buffer of its
+    /// per-sample values.
+    fn bind_params(&self, n: usize, shape: &NodeShape, aligned: f64) -> Vec<ParamBinding> {
+        let p = &self.pending[n];
+        (0..p.specs.len())
+            .filter_map(|index| {
+                let (base, modulation, limits) = p.modulation_of(index)?;
+                let (src, port) = p.param_wires[index]?;
+                Some(ParamBinding {
+                    index,
+                    spec: &p.specs[index],
+                    input: self.binding(
+                        shape,
+                        aligned,
+                        Some((src, port)),
+                        self.layouts[src][port],
+                        true,
+                    ),
+                    base,
+                    modulation,
+                    limits,
+                    values: Signal::zeros(shape.reference),
+                })
+            })
+            .collect()
+    }
+}
+
 /// RMS over an evenly spread subset of at most [`LEVEL_SAMPLES`] samples.
 fn rms(data: &[f32]) -> f32 {
     if data.is_empty() {
@@ -675,17 +805,12 @@ fn create_nodes(desc: &GraphDesc, registry: &Registry) -> Result<Vec<Pending>, G
                 kind: d.kind.clone(),
             })?
             .map_err(node_error)?;
-        if node.inputs().len() > MAX_INPUTS {
-            return Err(node_error(format!("has more than {MAX_INPUTS} inputs")));
-        }
-        let specs = registry
+        // The registry checked the port and parameter counts when the type was registered.
+        let spec = registry
             .get(&d.kind)
             .expect("created above, so the type exists")
-            .spec
-            .params;
-        if specs.len() > MAX_PARAMS {
-            return Err(node_error(format!("has more than {MAX_PARAMS} parameters")));
-        }
+            .spec;
+        let specs = spec.params;
         for name in d.modulation.keys() {
             if !specs.iter().any(|s| s.name == name && s.modulatable) {
                 return Err(node_error(format!(
@@ -698,8 +823,10 @@ fn create_nodes(desc: &GraphDesc, registry: &Registry) -> Result<Vec<Pending>, G
             kind: d.kind.clone(),
             params: d.params.clone(),
             specs,
+            inputs: spec.inputs,
+            outputs: spec.outputs,
             modulation: d.modulation.clone(),
-            wires: vec![None; node.inputs().len()],
+            wires: vec![None; spec.inputs.len()],
             param_wires: vec![None; specs.len()],
             node,
             interpolation: d.interpolation,
@@ -725,15 +852,16 @@ fn connect(desc: &GraphDesc, pending: &mut [Pending]) -> Result<(), GraphError> 
         let (to_id, to_port) = split_endpoint(&c.to);
         let (from, to) = (find(from_id)?, find(to_id)?);
 
-        let outputs = pending[from].node.outputs();
+        let outputs = pending[from].outputs;
         let out = match from_port {
-            Some(name) => outputs.iter().position(|&o| o == name),
+            Some(name) => outputs.iter().position(|o| o.name == name),
             None => (!outputs.is_empty()).then_some(0),
         }
         .ok_or_else(|| {
             connection_error(format!(
-                "`{}` has no output {from_port:?}; outputs are {outputs:?}",
-                pending[from].id
+                "`{}` has no output {from_port:?}; outputs are {:?}",
+                pending[from].id,
+                outputs.iter().map(|o| o.name).collect::<Vec<_>>()
             ))
         })?;
 
@@ -758,7 +886,7 @@ fn connect(desc: &GraphDesc, pending: &mut [Pending]) -> Result<(), GraphError> 
             continue;
         }
 
-        let inputs = pending[to].node.inputs();
+        let inputs = pending[to].inputs;
         let input = match to_port {
             Some(name) => inputs.iter().position(|i| i.name == name),
             None => (!inputs.is_empty()).then_some(0),
@@ -782,7 +910,7 @@ fn connect(desc: &GraphDesc, pending: &mut [Pending]) -> Result<(), GraphError> 
 
     for p in pending.iter() {
         // The main input defines the node's length and layout, so it is always required.
-        for (k, (spec, wire)) in p.node.inputs().iter().zip(&p.wires).enumerate() {
+        for (k, (spec, wire)) in p.inputs.iter().zip(&p.wires).enumerate() {
             if (spec.required || k == 0) && wire.is_none() {
                 return Err(GraphError::MissingInput {
                     node: p.id.clone(),

@@ -1,8 +1,8 @@
 use std::f64::consts::TAU;
 
-use super::MAX_WARMUP_FRAMES;
-use crate::nodes::{Category, NodeSpec};
-use crate::{InputSpec, Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
+use crate::nodes::support::MAX_WARMUP_FRAMES;
+use crate::nodes::{Category, NodeKind, NodeSpec};
+use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// One-pole low pass filter. The cutoff is in cycles per row, so the blur looks the same at any
 /// resolution; a signal modulating it moves it in octaves. The filter runs across rows and frames
@@ -23,13 +23,8 @@ pub struct Lowpass {
     state: f32,
 }
 
-impl Lowpass {
-    pub const SPEC: NodeSpec = NodeSpec::new("Low Pass", Category::Effect)
-        .describe("Smooths the signal along rows, a horizontal blur")
-        .params(Self::PARAMS)
-        .per_channel();
-
-    pub const PARAMS: &[ParamSpec] = &[ParamSpec::number(
+params! { Lowpass {
+    CUTOFF: ParamSpec::number(
         "cutoff",
         "Cutoff",
         40.0,
@@ -40,11 +35,21 @@ impl Lowpass {
     .exposed()
     .unit("cycles/row")
     .limits(1e-06, 1e9)
-    .octaves()];
+    .octaves(),
+} }
 
-    pub fn new(params: &Params) -> Result<Self, String> {
+impl NodeKind for Lowpass {
+    const KIND: &'static str = "lowpass";
+    const SPEC: NodeSpec = NodeSpec::new("Low Pass", Category::Effect)
+        .describe("Smooths the signal along rows, a horizontal blur")
+        .params(Self::PARAMS)
+        .per_channel();
+    const TEST_CONFIGS: &'static [&'static str] = &[r#"{ "cutoff": 0.7 }"#, r#"{ "cutoff": 1.5 }"#];
+    const BENCH: Option<&'static str> = Some(r#"{ "cutoff": 40 }"#);
+
+    fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
-            cutoff: params.number("cutoff")?,
+            cutoff: params.number_at(Self::CUTOFF)?,
             base: 0.0,
             row: 1.0,
             modulated: false,
@@ -53,7 +58,9 @@ impl Lowpass {
             state: 0.0,
         })
     }
+}
 
+impl Lowpass {
     /// Smoothing coefficient for a cutoff in cycles per sample.
     fn coefficient(cycles_per_sample: f64) -> f32 {
         (1.0 - (-TAU * cycles_per_sample.min(0.5)).exp()) as f32
@@ -61,23 +68,18 @@ impl Lowpass {
 }
 
 impl Node for Lowpass {
-    fn inputs(&self) -> &'static [InputSpec] {
-        const INPUTS: &[InputSpec] = &[InputSpec::required("in")];
-        INPUTS
-    }
-
     fn prepare(&mut self, ctx: &PrepareContext) {
         self.row = ctx.samples_per_row().max(1) as f64;
         self.base = self.cutoff / self.row;
-        self.modulated = ctx.modulation(0).is_some();
+        self.modulated = ctx.modulation(Self::CUTOFF).is_some();
         self.coefficient = Self::coefficient(self.base);
-        self.slowest = ctx.param_min(0, self.cutoff) / self.row;
+        self.slowest = ctx.param_min(Self::CUTOFF, self.cutoff) / self.row;
     }
 
     fn process(&mut self, ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
         let input = &inputs[0].data;
         let mut y = self.state;
-        match ctx.param(0).filter(|_| self.modulated) {
+        match ctx.param(Self::CUTOFF).filter(|_| self.modulated) {
             Some(cutoff) => {
                 for ((out, &x), &c) in outputs[0].data.iter_mut().zip(input).zip(cutoff) {
                     let a = Self::coefficient(f64::from(c) / self.row);
@@ -109,5 +111,52 @@ impl Node for Lowpass {
         let settle_samples = 7.0 / (TAU * slowest);
         ((settle_samples / ctx.samples_per_frame() as f64).ceil() as u32)
             .clamp(1, MAX_WARMUP_FRAMES)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::testing::{node, process_one};
+
+    /// A mono block of `len` samples that is one row, so cycles per row are cycles per block.
+    fn lowpass(cutoff: f64, input: &[f32]) -> Vec<f32> {
+        let mut node = node(
+            "lowpass",
+            &format!(r#"{{ "cutoff": {cutoff} }}"#),
+            input.len(),
+            input.len() as f64,
+            &[true],
+        );
+        process_one(node.as_mut(), &[input.to_vec()])
+    }
+
+    #[test]
+    fn a_step_rises_toward_one() {
+        let out = lowpass(4.0, &[1.0; 64]);
+        assert!(out[0] > 0.0 && out[0] < 1.0);
+        assert!(out.windows(2).all(|w| w[1] >= w[0]), "monotonic");
+        assert!((out[63] - 1.0).abs() < 1e-3, "settles at the input");
+    }
+
+    #[test]
+    fn dc_passes_unchanged_once_settled() {
+        let out = lowpass(10.0, &[0.25; 256]);
+        assert!((out[255] - 0.25).abs() < 1e-5);
+    }
+
+    #[test]
+    fn lower_cutoffs_rise_more_slowly() {
+        let slow = lowpass(1.0, &[1.0; 64]);
+        let fast = lowpass(8.0, &[1.0; 64]);
+        assert!(slow[8] < fast[8]);
+    }
+
+    #[test]
+    fn the_cutoff_matches_a_one_pole_filter() {
+        // One cycle per 32-sample row: coefficient 1 - exp(-2π/32).
+        let a = 1.0 - (-std::f32::consts::TAU / 32.0).exp();
+        let out = lowpass(1.0, &[1.0; 32]);
+        assert!((out[0] - a).abs() < 1e-6);
+        assert!((out[1] - (a + a * (1.0 - a))).abs() < 1e-6);
     }
 }
