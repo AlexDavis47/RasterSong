@@ -26,6 +26,7 @@ ffmpeg-next = { version = "9.0", default-features = false, features = [
 
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 eframe = "0.36"
 png = "0.18"
 proptest = "1"

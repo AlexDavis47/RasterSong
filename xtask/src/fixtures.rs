@@ -112,7 +112,9 @@ const FIXTURES: &[Fixture] = &[
         name: "rgb_pattern.mkv",
         purpose: "Moving test pattern in lossless 8-bit RGB FFV1, for golden renders (decodes identically everywhere)",
         args: &[
-            "-f", "lavfi", "-i", "testsrc2=size=160x120:rate=30:duration=2",
+            // Drawn natively in RGB. Converting from testsrc2's default YUV would go through
+            // swscale's SIMD paths, which round differently on x86 and ARM.
+            "-f", "lavfi", "-i", "testsrc2=size=160x120:rate=30:duration=2,format=bgr0",
             "-pix_fmt", "bgr0", "-c:v", "ffv1",
         ],
     },

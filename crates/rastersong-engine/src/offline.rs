@@ -1,28 +1,14 @@
 //! Offline rendering: every frame in order from the start, as fast as possible. Used by the CLI
 //! now, and by export later.
 
-use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 
-use rastersong_graph::{CompileOptions, Graph, GraphDesc, GraphError, Layout, Registry, Signal};
-use rastersong_media::{AudioClip, MediaBackend, MediaError, Rational};
+use rastersong_graph::{GraphDesc, Registry};
+use rastersong_media::{AudioClip, MediaBackend};
 
-use crate::sources::{Modulator, fill_video, to_rgb8};
-
-/// Source names the renderer supplies to the graph.
-pub const VIDEO_SOURCE: &str = "video";
-pub const AUDIO_SOURCE: &str = "audio";
-
-#[derive(Debug, thiserror::Error)]
-pub enum EngineError {
-    #[error(transparent)]
-    Media(#[from] MediaError),
-    #[error(transparent)]
-    Graph(#[from] GraphError),
-    /// Raised by the frame callback, e.g. when writing the output fails.
-    #[error("{0}")]
-    Output(String),
-}
+use crate::sources::Modulator;
+use crate::{EngineError, OutputSize, RenderInfo, Renderer};
 
 #[derive(Debug, Clone, Default)]
 pub struct RenderSettings {
@@ -30,15 +16,6 @@ pub struct RenderSettings {
     pub size: Option<(u32, u32)>,
     /// Render only the first `frames` frames.
     pub frames: Option<usize>,
-}
-
-/// What a render will produce, known before the first frame.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct RenderInfo {
-    pub width: u32,
-    pub height: u32,
-    pub frame_rate: Rational,
-    pub frames: usize,
 }
 
 /// One rendered frame, as packed RGB8.
@@ -57,7 +34,8 @@ pub trait FrameSink {
     fn frame(&mut self, frame: RenderedFrame) -> Result<(), EngineError>;
 }
 
-/// Renders `video` modulated by `audio` through `graph` into `sink`.
+/// Renders `video` modulated by `audio` through `graph` into `sink`, starting from frame 0 so
+/// the result is exact.
 pub fn render(
     backend: &dyn MediaBackend,
     video_path: &Path,
@@ -66,103 +44,33 @@ pub fn render(
     settings: &RenderSettings,
     sink: &mut dyn FrameSink,
 ) -> Result<RenderInfo, EngineError> {
-    let mut video = backend.open_video(video_path)?;
-    video.set_output_size(settings.size);
-    let source_info = video.info().clone();
-    let (width, height) = settings
-        .size
-        .unwrap_or((source_info.width, source_info.height));
-    let fps = source_info.frame_rate.as_f64();
-    let frames = settings
-        .frames
-        .map_or(source_info.frame_count, |n| n.min(source_info.frame_count));
-
-    let modulator = Modulator::new(audio);
-    let video_layout = Layout::rgb(width, height);
-    let audio_layout = Layout::audio(modulator.block_len(fps));
-    let mut graph = Graph::compile(
+    let mut renderer = Renderer::new(
+        backend,
+        video_path,
+        Arc::new(Modulator::new(audio)),
         graph,
         &Registry::default(),
-        &CompileOptions {
-            frame_rate: fps,
-            sources: HashMap::from([
-                (VIDEO_SOURCE.to_owned(), video_layout),
-                (AUDIO_SOURCE.to_owned(), audio_layout),
-            ]),
-            output: video_layout,
-        },
+        settings
+            .size
+            .map_or(OutputSize::Native, |(w, h)| OutputSize::Exact(w, h)),
     )?;
-
-    let info = RenderInfo {
-        width,
-        height,
-        frame_rate: source_info.frame_rate,
-        frames,
-    };
-    sink.start(&info)?;
-    if frames == 0 {
-        return Ok(info);
+    let mut info = *renderer.info();
+    if let Some(limit) = settings.frames {
+        info.frames = info.frames.min(limit);
     }
-
-    // Frame start times; past the end (latency pre-roll), frames continue at the nominal rate.
-    let last = frames - 1;
-    let time = |n: usize| {
-        if n <= last {
-            video.frame_time(n)
-        } else {
-            video.frame_time(last) + (n - last) as f64 / fps
-        }
-    };
-    let times: Vec<f64> = (0..=frames + graph.latency_frames() as usize)
-        .map(time)
-        .collect();
-
-    let latency = graph.latency_frames() as usize;
-    let mut sources = HashMap::from([
-        (VIDEO_SOURCE.to_owned(), Signal::zeros(video_layout)),
-        (AUDIO_SOURCE.to_owned(), Signal::zeros(audio_layout)),
-    ]);
-    let mut rgb = Vec::with_capacity(video_layout.len());
-    let mut have_video = false;
-
-    // Render `latency` extra frames (repeating the last source frame) so every output frame
-    // comes out; the first `latency` outputs are pre-roll.
-    for n in 0..frames + latency {
-        match video.frame(n.min(last)) {
-            Ok(frame) => {
-                fill_video(&frame, sources.get_mut(VIDEO_SOURCE).unwrap());
-                have_video = true;
-            }
-            // A damaged frame repeats the previous one rather than failing the whole render.
-            Err(MediaError::FrameUnavailable(i)) if have_video => {
-                tracing::warn!(
-                    frame = i,
-                    "frame could not be decoded; repeating the previous frame"
-                );
-            }
-            Err(e) => return Err(e.into()),
-        }
-        modulator.fill_block(
-            times[n],
-            times[n + 1],
-            &mut sources.get_mut(AUDIO_SOURCE).unwrap().data,
-        );
-
-        let output = graph.process(n as u64, &sources)?;
-        if n >= latency {
-            to_rgb8(output, &mut rgb);
-            sink.frame(RenderedFrame {
-                index: n - latency,
-                rgb: &rgb,
-            })?;
-        }
+    sink.start(&info)?;
+    for index in 0..info.frames {
+        let rgb = renderer
+            .render(index, &|| false)?
+            .expect("offline renders are never cancelled");
+        sink.frame(RenderedFrame { index, rgb })?;
     }
     Ok(info)
 }
 
 #[cfg(test)]
 mod tests {
-    use rastersong_media::{FakeBackend, FakeVideo};
+    use rastersong_media::{FakeBackend, FakeVideo, Rational};
 
     use super::*;
 

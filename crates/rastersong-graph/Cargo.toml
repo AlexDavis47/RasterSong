@@ -15,7 +15,12 @@ serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
 proptest.workspace = true
+
+[[bench]]
+name = "nodes"
+harness = false
 
 [lints]
 workspace = true
