@@ -6,7 +6,9 @@ use std::cell::Cell;
 
 use common::{FINITE, FRAMES, INFINITE, renderer, renderer_with, sequential};
 use rastersong_engine::{OutputSize, Registry};
-use rastersong_graph::{InputSpec, Node, PrepareContext, ProcessContext, Signal};
+use rastersong_graph::{
+    Category, InputSpec, Node, NodeSpec, PrepareContext, ProcessContext, Signal,
+};
 
 /// Deterministic jumps around the video: backwards, far forwards, small hops.
 fn jumpy_order() -> Vec<usize> {
@@ -137,13 +139,17 @@ const LATENCY_GRAPH: &str = r#"{ "version": 1,
 #[test]
 fn latency_is_compensated_across_seeks() {
     let mut registry = Registry::default();
-    registry.register("lookahead", |_| {
-        Ok(Lookahead {
-            history: Vec::new(),
-            samples: 0,
-        })
-    });
-    registry.register("sum", |_| Ok(Sum));
+    registry.register(
+        "lookahead",
+        NodeSpec::new("Lookahead", Category::Effect),
+        |_| {
+            Ok(Lookahead {
+                history: Vec::new(),
+                samples: 0,
+            })
+        },
+    );
+    registry.register("sum", NodeSpec::new("Sum", Category::Effect), |_| Ok(Sum));
 
     // Both branches of `sum` carry the same frame once compensated, and the output is shifted back
     // by the graph's latency, so output frame i is source frame i doubled. (The `am` node's

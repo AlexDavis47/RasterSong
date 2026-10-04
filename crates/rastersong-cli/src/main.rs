@@ -40,6 +40,9 @@ struct RenderArgs {
     /// Render only the first N frames.
     #[arg(long)]
     frames: Option<usize>,
+    /// Seconds the audio starts after the video (negative to start it earlier).
+    #[arg(long, default_value_t = 0.0, allow_negative_numbers = true)]
+    audio_offset: f64,
 }
 
 fn parse_size(s: &str) -> Result<(u32, u32), String> {
@@ -96,6 +99,7 @@ fn render(args: RenderArgs) -> Result<()> {
     let settings = RenderSettings {
         size: args.size,
         frames: args.frames,
+        audio_offset: args.audio_offset,
     };
     let started = std::time::Instant::now();
     let info =

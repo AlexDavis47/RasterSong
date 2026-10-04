@@ -7,7 +7,8 @@ use std::time::{Duration, Instant};
 
 use rastersong_engine::sources::Modulator;
 use rastersong_engine::{
-    AudioClip, FakeBackend, FakeVideo, GraphDesc, OutputSize, Rational, Registry, Renderer,
+    AudioClip, AudioTrack, FakeBackend, FakeVideo, GraphDesc, OutputSize, Rational, Registry,
+    Renderer,
 };
 
 pub const FRAMES: usize = 60;
@@ -54,6 +55,11 @@ pub const FINITE: &str = r#"{ "version": 1,
     { "from": "crush", "to": "out" }
   ] }"#;
 
+/// Video straight to the output.
+pub const FINITE_PASSTHROUGH: &str = r#"{ "version": 1,
+  "nodes": [ { "id": "video", "type": "video_input" }, { "id": "out", "type": "output" } ],
+  "connections": [ { "from": "video", "to": "out" } ] }"#;
+
 /// A graph with infinite memory (feedback and an IIR filter): seeking is approximate.
 pub const INFINITE: &str = r#"{ "version": 1,
   "nodes": [
@@ -80,7 +86,11 @@ pub fn renderer_with(graph: &str, registry: &Registry, size: OutputSize) -> Rend
     Renderer::new(
         &backend(),
         Path::new(VIDEO),
-        Arc::new(Modulator::new(&audio())),
+        &[AudioTrack {
+            name: "audio".into(),
+            modulator: Arc::new(Modulator::new(&audio())),
+            offset: 0.0,
+        }],
         &GraphDesc::from_json(graph).unwrap(),
         registry,
         size,

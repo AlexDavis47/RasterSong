@@ -6,8 +6,8 @@ use std::hint::black_box;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use rastersong_graph::{
-    CompileOptions, Graph, GraphDesc, Layout, ParamValue, Params, PrepareContext, ProcessContext,
-    Registry, Signal, Sources,
+    CompileOptions, Graph, GraphDesc, Layout, ParamValue, PrepareContext, ProcessContext, Registry,
+    Signal, Sources,
 };
 
 const WIDTH: u32 = 1920;
@@ -59,10 +59,7 @@ fn nodes(c: &mut Criterion) {
     group.throughput(Throughput::Elements(layout.len() as u64));
     for &(name, kind, params) in NODES {
         let params: BTreeMap<String, ParamValue> = serde_json::from_str(params).unwrap();
-        let mut node = Registry::default()
-            .create(kind, &mut Params::new(&params))
-            .unwrap()
-            .unwrap();
+        let mut node = Registry::default().create(kind, &params).unwrap().unwrap();
         let (inputs, outputs) = (node.inputs().len(), node.outputs().len());
         node.prepare(&PrepareContext {
             frame_rate: FPS,

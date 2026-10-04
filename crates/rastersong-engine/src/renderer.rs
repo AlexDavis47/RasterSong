@@ -4,15 +4,29 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use rastersong_graph::{CompileOptions, Graph, GraphDesc, Layout, Registry, Signal};
+use rastersong_graph::nodes::SourceNode;
+use rastersong_graph::{
+    CompileOptions, Graph, GraphDesc, Layout, OutputLevel, ParamKind, ParamValue, Registry, Signal,
+};
 use rastersong_media::{MediaBackend, MediaError, Rational, VideoSource};
 
 use crate::EngineError;
 use crate::sources::{Modulator, fill_video, to_rgb8};
 
-/// Source names the renderer supplies to the graph.
+/// The source name of the video.
 pub const VIDEO_SOURCE: &str = "video";
-pub const AUDIO_SOURCE: &str = "audio";
+/// The node type that reads audio tracks, and the track it reads by default.
+const AUDIO_INPUT: &str = "audio_input";
+pub const DEFAULT_AUDIO_TRACK: &str = "audio";
+
+/// An audio track the graph's audio inputs can read, by name.
+#[derive(Debug, Clone)]
+pub struct AudioTrack {
+    pub name: String,
+    pub modulator: Arc<Modulator>,
+    /// Seconds the track starts after the video (before it, if negative).
+    pub offset: f64,
+}
 
 /// The size to render at.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -56,7 +70,7 @@ pub struct RenderInfo {
 /// (feedback, IIR filters). Rendering from frame 0 is always exact.
 pub struct Renderer {
     video: Box<dyn VideoSource>,
-    modulator: Arc<Modulator>,
+    tracks: Vec<AudioTrack>,
     graph: Graph,
     info: RenderInfo,
     fps: f64,
@@ -81,11 +95,12 @@ impl std::fmt::Debug for Renderer {
 }
 
 impl Renderer {
-    /// Opens `video_path` at `size` and compiles `graph` for it.
+    /// Opens `video_path` at `size` and compiles `graph` for it, with `tracks` as the audio.
+    /// Audio inputs that name a track that isn't there get silence.
     pub fn new(
         backend: &dyn MediaBackend,
         video_path: &Path,
-        modulator: Arc<Modulator>,
+        tracks: &[AudioTrack],
         graph: &GraphDesc,
         registry: &Registry,
         size: OutputSize,
@@ -98,24 +113,39 @@ impl Renderer {
         }
         let fps = source.frame_rate.as_f64();
 
+        let mut tracks = tracks.to_vec();
+        for name in audio_inputs(graph) {
+            if !tracks.iter().any(|t| t.name == name) {
+                tracks.push(AudioTrack {
+                    name,
+                    modulator: Arc::new(Modulator::silent()),
+                    offset: 0.0,
+                });
+            }
+        }
+
         let video_layout = Layout::rgb(width, height);
-        let audio_layout = Layout::audio(modulator.block_len(fps));
-        let graph = Graph::compile(
+        let mut layouts = HashMap::from([(VIDEO_SOURCE.to_owned(), video_layout)]);
+        for track in &tracks {
+            layouts.insert(
+                track.name.clone(),
+                Layout::audio(track.modulator.block_len(fps)),
+            );
+        }
+        let compiled = Graph::compile(
             graph,
             registry,
             &CompileOptions {
                 frame_rate: fps,
-                sources: HashMap::from([
-                    (VIDEO_SOURCE.to_owned(), video_layout),
-                    (AUDIO_SOURCE.to_owned(), audio_layout),
-                ]),
+                sources: layouts.clone(),
                 output: video_layout,
             },
         )?;
+        let graph = compiled;
 
         Ok(Self {
             video,
-            modulator,
+            tracks,
             info: RenderInfo {
                 width,
                 height,
@@ -126,14 +156,19 @@ impl Renderer {
             latency: graph.latency_frames() as usize,
             warmup: graph.warmup_frames() as usize,
             graph,
-            sources: HashMap::from([
-                (VIDEO_SOURCE.to_owned(), Signal::zeros(video_layout)),
-                (AUDIO_SOURCE.to_owned(), Signal::zeros(audio_layout)),
-            ]),
+            sources: layouts
+                .into_iter()
+                .map(|(name, layout)| (name, Signal::zeros(layout)))
+                .collect(),
             have_video: false,
             next_source: None,
             rgb: Vec::with_capacity(video_layout.len()),
         })
+    }
+
+    /// The level of every node output in the last rendered frame.
+    pub fn levels(&self) -> Vec<OutputLevel> {
+        self.graph.levels()
     }
 
     pub fn info(&self) -> &RenderInfo {
@@ -204,11 +239,12 @@ impl Renderer {
             }
         }
         let (start, end) = (self.frame_time(m), self.frame_time(m + 1));
-        self.modulator.fill_block(
-            start,
-            end,
-            &mut self.sources.get_mut(AUDIO_SOURCE).unwrap().data,
-        );
+        for track in &self.tracks {
+            let block = &mut self.sources.get_mut(&track.name).unwrap().data;
+            track
+                .modulator
+                .fill_block(start - track.offset, end - track.offset, block);
+        }
 
         match self.graph.process(m as u64, &self.sources) {
             Ok(output) => {
@@ -232,6 +268,23 @@ impl Renderer {
             time(last) + (m - last) as f64 / self.fps
         }
     }
+}
+
+/// Track names read by the graph's audio inputs.
+fn audio_inputs(graph: &GraphDesc) -> Vec<String> {
+    let default = match SourceNode::AUDIO_PARAMS[0].kind {
+        ParamKind::Text { default } => default,
+        _ => DEFAULT_AUDIO_TRACK,
+    };
+    graph
+        .nodes
+        .iter()
+        .filter(|n| n.kind == AUDIO_INPUT)
+        .map(|n| match n.params.get("source") {
+            Some(ParamValue::Text(name)) => name.clone(),
+            _ => default.to_owned(),
+        })
+        .collect()
 }
 
 /// How far a timestamp may be from the nominal frame grid and still be treated as on it.

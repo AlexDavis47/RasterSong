@@ -1,7 +1,7 @@
 //! Source and output nodes: where signals enter and leave the graph.
 
-use crate::desc::Params;
 use crate::{InputSpec, Layout, LayoutContext, Node, ProcessContext, Signal};
+use crate::{ParamSpec, Params};
 
 /// Reads a host-supplied signal, e.g. `"video"` (RGB, `0..=1`) or `"audio"` (mono, `-1..=1`).
 #[derive(Debug)]
@@ -10,15 +10,22 @@ pub struct SourceNode {
 }
 
 impl SourceNode {
-    pub fn video(params: &mut Params) -> Result<Self, String> {
-        Ok(Self {
-            name: params.text("source", "video")?,
-        })
-    }
+    pub const VIDEO_PARAMS: &[ParamSpec] = &[ParamSpec::text(
+        "source",
+        "Source",
+        "video",
+        "Name of the host-supplied video signal",
+    )];
+    pub const AUDIO_PARAMS: &[ParamSpec] = &[ParamSpec::text(
+        "source",
+        "Source",
+        "audio",
+        "Name of the host-supplied audio signal",
+    )];
 
-    pub fn audio(params: &mut Params) -> Result<Self, String> {
+    pub fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
-            name: params.text("source", "audio")?,
+            name: params.text("source")?,
         })
     }
 }

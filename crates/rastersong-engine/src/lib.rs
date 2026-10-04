@@ -7,6 +7,8 @@ mod cache;
 mod clock;
 mod error;
 mod offline;
+pub mod playback;
+mod project;
 mod renderer;
 mod service;
 pub mod sources;
@@ -15,13 +17,21 @@ pub use cache::{CacheKey, Frame, FrameCache};
 pub use clock::PlaybackClock;
 pub use error::EngineError;
 pub use offline::{FrameSink, RenderSettings, RenderedFrame, render};
-pub use rastersong_graph::{GraphDesc, GraphError, Registry};
+pub use project::{PROJECT_EXTENSION, PROJECT_VERSION, Project, ProjectTrack};
+pub use rastersong_graph::{
+    Category, Channels, Connection, FORMAT_VERSION, GraphDesc, GraphError, Interpolation, NodeDesc,
+    NodeType, OutputLevel, ParamKind, ParamSpec, ParamValue, Registry,
+};
 pub use rastersong_media::{
     AudioClip, AudioOptions, BackendInfo, FakeBackend, FakeVideo, FfmpegBackend, LibraryInfo,
     LosslessWriter, MediaBackend, MediaError, Rational, Version,
 };
-pub use renderer::{AUDIO_SOURCE, OutputSize, RenderInfo, Renderer, VIDEO_SOURCE};
-pub use service::{Engine, EngineConfig, EngineStatus, PreviewScale};
+pub use renderer::{
+    AudioTrack, DEFAULT_AUDIO_TRACK, OutputSize, RenderInfo, Renderer, VIDEO_SOURCE,
+};
+pub use service::{
+    AudioTrackSpec, Engine, EngineConfig, EngineStatus, Failure, LoadedTrack, PreviewScale,
+};
 
 /// Initializes the engine and its media backend, and reports what was loaded.
 pub fn init() -> Result<BackendInfo, MediaError> {

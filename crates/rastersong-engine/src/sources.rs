@@ -43,6 +43,18 @@ impl Modulator {
         }
     }
 
+    /// No audio: the modulator is silence.
+    pub fn silent() -> Self {
+        Self {
+            samples: Vec::new(),
+            sample_rate: 48_000.0,
+        }
+    }
+
+    pub fn duration_secs(&self) -> f64 {
+        self.samples.len() as f64 / self.sample_rate
+    }
+
     /// Samples per video frame: the modulator block length at this frame rate.
     pub fn block_len(&self, frame_rate: f64) -> u32 {
         (self.sample_rate / frame_rate).round().max(1.0) as u32

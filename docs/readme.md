@@ -242,6 +242,11 @@ Rules every node must satisfy (enforced by tests, see [Testing Strategy](#testin
   past samples from upstream, and never processes the same sample twice.
 - **No allocation in `process`.**
 
+Each node type is registered with a `NodeSpec`: a label, a category, a one-line description and a list of
+`ParamSpec`s (name, label, help text, and a number range, choice list or text default). Constructors read their
+parameters through those specs, so defaults and ranges live in one place, and the editor builds its parameter
+panels from the same specs.
+
 The graph compiler validates the graph (unknown nodes, ports or parameters, missing inputs, cycles, exactly one
 output, layout mismatches), drops nodes that don't feed the output, orders the rest, and computes latency
 compensation. Each frame, it runs the nodes in that order with no allocation.
@@ -268,6 +273,9 @@ or its main input. Unknown parameters are rejected, which catches typos.
 }
 ```
 
+Nodes may also carry `"position": [x, y]` (their place in the editor) and `"label"` (a name shown instead of
+the node type's). Neither affects rendering.
+
 Working examples live in [`examples/graphs/`](../examples/graphs): `am_bands` (the [Basic Workflow](#basic-workflow)),
 `bass_wave` and `packed_crush`.
 
@@ -288,7 +296,16 @@ Working examples live in [`examples/graphs/`](../examples/graphs): `am_bands` (t
 | `bitcrush` | `in`, `modulation`? → `out` | `bits` (4), `depth` (0, bits per unit of modulation) |
 | `lowpass` | `in`, `modulation`? → `out` | `cutoff` (40 cycles per row), `depth` (0, octaves per unit of modulation) |
 
-`?` marks optional inputs. Every node also takes `interpolation` (`hold` or `linear`).
+`?` marks optional inputs. Audio inputs read the project's audio track named by `source`; a track that doesn't
+exist reads as silence.
+
+Every node also has two shared settings:
+
+- **`interpolation`** (shown as *Resampling*: `hold` or `linear`): how secondary inputs are stretched or shrunk
+  to the main input's length.
+- **`channels`** (`together` or `separate`, effects only): with `separate`, an RGB signal is split into R, G and
+  B, each processed by its own copy of the node (with its own state), and recombined. Exactly equivalent to
+  Split → three nodes → Combine, without the wiring. Modulation inputs are shared by all three channels.
 
 **Channels and interleaving.** An RGB signal *is* the interleaved stream R, G, B, R, G, B, …, and effects process
 it sample by sample. That is [Approach 1](#core-concept): a low pass on RGB bleeds each channel into the next, and a
@@ -392,6 +409,46 @@ synthetic frames.
 - **Latest-wins requests:** a video source is a synchronous object. Stale work is dropped by the engine's render
   thread (see [Cancellation](#render-engine)).
 
+### Desktop App
+
+Two rows: the **timeline** along the bottom; above it three columns: the **preview** with its playback controls
+underneath, the **node graph**, and the **inspector**. The app only holds UI state; everything is decoded,
+rendered and cached by the engine on its render thread.
+
+- **Preview controls:** play/pause, timecode and frame, how far ahead is rendered (and the playback speed when
+  rendering can't keep up), preview resolution (full, ½, ¼; ½ by default), the selected audio track's offset, and
+  playback volume.
+- **Node graph** (our own editor, drawn on a pannable, zoomable canvas):
+  - Scroll wheel zooms around the pointer; middle- or right-drag pans; F frames the whole graph.
+  - Left-drag on empty space box-selects (Shift adds). Click a node to select it and show it in the inspector;
+    drag to move the selection.
+  - Drag from a pin to connect. An input takes one connection; a new one replaces the old. Dragging a connected
+    input picks its wire up to move it. Dropping a wire on empty space opens the node search, connected.
+  - Right-click empty space to add a node there: the search box has focus immediately; type, use ↑/↓, and press
+    Enter (or click). Right-click a node to duplicate or delete it; Delete removes the selection, Ctrl+D
+    duplicates it.
+  - Wire thickness follows the RMS level of the signal at the playhead, so modulation is visible: a kick drum
+    through a band split shows as the bass wire pulsing.
+  - When the graph can't render, a bar along the bottom of the graph says why and outlines the node at fault in
+    red; clicking the bar shows the node.
+  - Moving or renaming nodes doesn't re-render; any other edit does.
+- **Inspector:** the node's name (shown on the node instead of its type), its shared settings (Resampling,
+  Channels) and its parameters, with units, sliders (logarithmic for wide ranges like cutoff) and
+  reset-to-default buttons. Audio inputs pick their track from a list. Values left at their default aren't
+  written to files.
+- **Timeline:** a ruler, the video track with rendered frames marked in green, and any number of **audio tracks**,
+  each with a name (which audio inputs select it by; renaming a track updates them), mute and remove. Click or drag
+  to seek; drag a track's block to move it against the video.
+- **Preview audio** mixes the unmuted tracks and follows the playhead. When playback slows because rendering can't
+  keep up, the audio is time-stretched (WSOLA: slowed without lowering the pitch) to stay with the picture, and
+  fades out when playback all but stops. Volume and mute only affect playback, never rendering.
+- **Keys:** Space plays/pauses, ←/→ step one frame, Home jumps to the start, Ctrl+S saves.
+- **Projects** are JSON files with the `.rastersong` extension holding the video, the audio tracks (file, name,
+  offset, volume, mute) and the graph. Media paths inside the project's folder are saved relative to it, so a
+  project folder can be moved or shared. Version 1 projects (one audio file) are upgraded on load. Graphs can also
+  be imported and exported on their own.
+- **About** credits FFmpeg and its LGPL license and lists the loaded FFmpeg libraries and build configuration.
+
 ### Export / Offline Rendering
 
 Export uses the same graph and engine as preview, rendering every frame in order from the start at full resolution
@@ -422,7 +479,7 @@ Testing is a first-class part of the project. Every phase has tests that must pa
 | Fixtures | Small generated clips: B-frames, open GOP, variable frame rate, odd dimensions, rotation metadata, frame index encoded into lossless frames, audio-only, video-only, truncated files | `cargo xtask fixtures` (uses the `ffmpeg` CLI) |
 | End to end | CLI renders the example graphs; selected frames compared to golden images in `crates/rastersong-cli/tests/golden/` with tolerances for cross-platform floating-point differences. After an intended change, inspect the new frames and update them with `RASTERSONG_BLESS=1 cargo test -p rastersong-cli --test golden` | snapshot tests |
 | Performance | Samples/sec per node, decode fps, full-graph fps, recorded in [benchmarks.md](benchmarks.md). Automated regression checks in CI are planned; shared CI runners are too noisy for tight thresholds | `criterion` |
-| GUI | The GUI holds no logic worth unit testing; a few interaction tests only | `egui_kittest` |
+| GUI | Graph ↔ editor conversion and timeline math are unit tested; a few headless interaction tests drive the real UI on the fake backend. `cargo test -p rastersong-gui --test screenshots -- --ignored` renders the UI offscreen (needs a GPU) to `target/tmp/screenshots/` for checking layout changes | `egui_kittest` |
 | Robustness (later) | Malformed media never crashes the app | `cargo-fuzz` |
 
 CI runs `fmt`, `clippy`, tests and `cargo-deny` on Windows, macOS and Linux.
@@ -485,6 +542,10 @@ cargo run -p rastersong-gui
 # audio as its soundtrack) or to a directory of PNG frames
 cargo run --release -p rastersong-cli -- render video.mp4 song.wav examples/graphs/am_bands.json out.mkv
 cargo run --release -p rastersong-cli -- render video.mp4 song.wav graph.json frames/ --size 320x180 --frames 60
+cargo run --release -p rastersong-cli -- render video.mp4 song.wav graph.json out.mkv --audio-offset -1.5
+
+# Open the app on a project or a video
+cargo run --release -p rastersong-gui -- my-project.rastersong
 ```
 
 Prerequisites: the Rust toolchain (pinned by `rust-toolchain.toml`) and **libclang**, which the FFmpeg bindings
@@ -517,13 +578,13 @@ Each phase ends with its tests passing in CI.
 - Full audio decode to `f32`
 - Exit: media correctness tests pass on all fixtures
 
-**Phase 2: Graph + CLI**
+**Phase 2: Graph + CLI** (done)
 - `Signal` and `Layout`, rate matching with interpolation modes, compiled sequential schedule, latency compensation
 - Nodes: video input, audio input, Split, Combine, Interleave, three-band splitter, AM, Delay, Bit crush, Low pass, Output
 - `rastersong-cli render <video> <audio> <graph> <out>`
 - Exit: node property tests and first golden end-to-end renders pass. **This is where the core idea is proven.**
 
-**Phase 3: Render Engine**
+**Phase 3: Render Engine** (done)
 - Background render-ahead thread, frame cache, warmup on seek, cancellation, playback clock with dynamic speed, preview scale
 - Exit: engine tests pass; benchmarks recorded
 
@@ -539,6 +600,12 @@ Each phase ends with its tests passing in CI.
 - SIMD and parallelism work guided by benchmarks
 - Packaging and installers
 
+**Decisions waiting on the GUI** (from Phase 2, to settle by trying them in the app)
+- ~~Effects on RGB signals scramble channels when modulated~~: effects now have the `channels` setting.
+- What `interleave` and `pack` should mean (currently a relabel between RGB and a 3×-wide mono carrier)
+- Value ranges (video `0..1`, audio `-1..1`) and mono-only modulators
+- Undo/redo in the editor; asking before closing with unsaved changes
+
 **Later**
 - Multi-clip timeline
 - More nodes and interpolation modes
@@ -546,8 +613,6 @@ Each phase ends with its tests passing in CI.
 
 ## Open Questions
 
-- **Preview audio during variable-speed playback:** mute below full speed, or time-stretch?
 - **License review:** the custom LICENSE is a first draft. Have it reviewed, or switch to an established source-available license (e.g. PolyForm Strict), before any paid release.
-- **Node editor:** use an existing egui node-graph crate (e.g. `egui-snarl`) or build a custom one?
 - **Snapshots:** memory budget and spacing for state snapshots.
 - **Hardware encoder fallback:** what to offer for H.264 export on machines with no usable OS/hardware encoder.

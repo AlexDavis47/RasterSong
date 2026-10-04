@@ -1,6 +1,6 @@
 //! The serialized graph: what the user edits and what is saved in project files.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +28,15 @@ pub struct NodeDesc {
     /// How secondary inputs are resampled to the main input's length.
     #[serde(default, skip_serializing_if = "is_default")]
     pub interpolation: Interpolation,
+    /// Whether an RGB signal is processed as one stream or as three separate channels.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub channels: Channels,
+    /// Name shown in the editor instead of the node type's. Has no effect on rendering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Where the node sits in the editor. Has no effect on rendering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<[f32; 2]>,
 }
 
 /// A connection from an output port to an input port, written `"node.port"`. The port can be left
@@ -56,6 +65,17 @@ pub enum Interpolation {
     Linear,
 }
 
+/// How a node processes a multi-channel (RGB) main input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Channels {
+    /// The interleaved stream R, G, B, R, G, B, … as one signal.
+    #[default]
+    Together,
+    /// R, G and B each through their own copy of the node, with its own state.
+    Separate,
+}
+
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {
     *value == T::default()
 }
@@ -75,82 +95,5 @@ impl GraphDesc {
 
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(self).expect("graph descriptions always serialize")
-    }
-}
-
-/// Reads a node's parameters, applying defaults and rejecting unknown or mistyped values.
-#[derive(Debug)]
-pub struct Params<'a> {
-    values: &'a BTreeMap<String, ParamValue>,
-    used: BTreeSet<&'a str>,
-}
-
-impl<'a> Params<'a> {
-    pub fn new(values: &'a BTreeMap<String, ParamValue>) -> Self {
-        Self {
-            values,
-            used: BTreeSet::new(),
-        }
-    }
-
-    fn take(&mut self, name: &str) -> Option<&'a ParamValue> {
-        let (key, value) = self.values.get_key_value(name)?;
-        self.used.insert(key);
-        Some(value)
-    }
-
-    pub fn number(&mut self, name: &str, default: f64) -> Result<f64, String> {
-        match self.take(name) {
-            None => Ok(default),
-            Some(ParamValue::Number(n)) if n.is_finite() => Ok(*n),
-            Some(other) => Err(format!("`{name}` must be a number, got {other:?}")),
-        }
-    }
-
-    /// A number constrained to `min..=max`.
-    pub fn number_in(
-        &mut self,
-        name: &str,
-        default: f64,
-        min: f64,
-        max: f64,
-    ) -> Result<f64, String> {
-        let n = self.number(name, default)?;
-        if (min..=max).contains(&n) {
-            Ok(n)
-        } else {
-            Err(format!("`{name}` must be between {min} and {max}, got {n}"))
-        }
-    }
-
-    pub fn text(&mut self, name: &str, default: &str) -> Result<String, String> {
-        match self.take(name) {
-            None => Ok(default.to_owned()),
-            Some(ParamValue::Text(s)) => Ok(s.clone()),
-            Some(other) => Err(format!("`{name}` must be text, got {other:?}")),
-        }
-    }
-
-    /// One of a fixed set of words.
-    pub fn choice(
-        &mut self,
-        name: &str,
-        options: &[&'static str],
-        default: &'static str,
-    ) -> Result<&'static str, String> {
-        let value = self.text(name, default)?;
-        options
-            .iter()
-            .find(|&&o| o == value)
-            .copied()
-            .ok_or_else(|| format!("`{name}` must be one of {options:?}, got {value:?}"))
-    }
-
-    /// Fails if any parameter was never read, which catches typos in parameter names.
-    pub fn finish(self) -> Result<(), String> {
-        match self.values.keys().find(|k| !self.used.contains(k.as_str())) {
-            Some(unknown) => Err(format!("unknown parameter `{unknown}`")),
-            None => Ok(()),
-        }
     }
 }

@@ -30,6 +30,11 @@ impl PlaybackClock {
         self.position as usize
     }
 
+    /// The exact position in frames, including the fraction of the current frame.
+    pub fn position(&self) -> f64 {
+        self.position
+    }
+
     pub fn is_playing(&self) -> bool {
         self.playing
     }

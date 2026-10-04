@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use proptest::prelude::*;
 use rastersong_graph::{
-    Layout, Node, ParamValue, Params, PrepareContext, ProcessContext, Registry, Signal,
+    Layout, Node, ParamValue, PrepareContext, ProcessContext, Registry, Signal,
 };
 
 /// Samples per row. Blocks are whole rows, so "rows" units mean the same thing in every block.
@@ -35,13 +35,7 @@ struct Harness {
 impl Harness {
     fn new(kind: &str, params: &str, total_rows: usize) -> Self {
         let params: BTreeMap<String, ParamValue> = serde_json::from_str(params).unwrap();
-        let mut reader = Params::new(&params);
-        let mut node = Registry::default()
-            .create(kind, &mut reader)
-            .unwrap()
-            .unwrap();
-        reader.finish().unwrap();
-
+        let mut node = Registry::default().create(kind, &params).unwrap().unwrap();
         let (inputs, outputs) = (node.inputs().len(), node.outputs().len());
         let layout = Layout::mono(WIDTH, total_rows as u32);
         node.prepare(&PrepareContext {

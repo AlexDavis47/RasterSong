@@ -3,6 +3,8 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use rastersong_graph::OutputLevel;
+
 use crate::PreviewScale;
 
 /// Identifies what a frame was rendered with. Any graph edit bumps `version`.
@@ -13,12 +15,14 @@ pub struct CacheKey {
 }
 
 /// A rendered frame as packed RGB8.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 pub struct Frame {
     pub index: usize,
     pub width: u32,
     pub height: u32,
     pub rgb: Vec<u8>,
+    /// The level of every node output while rendering this frame.
+    pub levels: Arc<[OutputLevel]>,
 }
 
 impl std::fmt::Debug for Frame {
@@ -84,6 +88,18 @@ impl FrameCache {
         self.bytes
     }
 
+    /// The cached frames as ranges of consecutive indices.
+    pub fn ranges(&self) -> Vec<std::ops::Range<usize>> {
+        let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
+        for &index in self.frames.keys() {
+            match ranges.last_mut() {
+                Some(last) if last.end == index => last.end += 1,
+                _ => ranges.push(index..index + 1),
+            }
+        }
+        ranges
+    }
+
     /// How many consecutive frames are cached starting at `index`.
     pub fn run_from(&self, index: usize) -> usize {
         self.frames
@@ -143,6 +159,7 @@ mod tests {
             width: 1,
             height: 1,
             rgb: vec![index as u8; 3],
+            levels: Arc::new([]),
         }
     }
 
@@ -163,6 +180,15 @@ mod tests {
         assert!(cache.is_empty());
         assert!(cache.insert(edited, frame(1), 0));
         assert_eq!(cache.get(1).unwrap().rgb, [1, 1, 1]);
+    }
+
+    #[test]
+    fn lists_cached_ranges() {
+        let mut cache = FrameCache::new(KEY, 1000);
+        for i in [0, 1, 2, 5, 7, 8] {
+            cache.insert(KEY, frame(i), 0);
+        }
+        assert_eq!(cache.ranges(), [0..3, 5..6, 7..9]);
     }
 
     #[test]

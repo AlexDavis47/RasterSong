@@ -9,13 +9,15 @@ mod error;
 mod graph;
 mod node;
 pub mod nodes;
+mod params;
 mod signal;
 
 pub use desc::{
-    Connection, FORMAT_VERSION, GraphDesc, Interpolation, NodeDesc, ParamValue, Params,
+    Channels, Connection, FORMAT_VERSION, GraphDesc, Interpolation, NodeDesc, ParamValue,
 };
 pub use error::GraphError;
-pub use graph::{CompileOptions, Graph, MAX_INPUTS};
+pub use graph::{CompileOptions, Graph, MAX_INPUTS, OutputLevel};
 pub use node::{InputSpec, LayoutContext, Node, PrepareContext, ProcessContext, Sources};
-pub use nodes::Registry;
+pub use nodes::{Category, NodeSpec, NodeType, Registry};
+pub use params::{ParamKind, ParamSpec, Params};
 pub use signal::{Layout, Signal};

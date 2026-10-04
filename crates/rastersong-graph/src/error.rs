@@ -27,3 +27,18 @@ pub enum GraphError {
     #[error("source `{name}`: {message}")]
     Source { name: String, message: String },
 }
+
+impl GraphError {
+    /// The node the error is about, if it's about one node.
+    pub fn node(&self) -> Option<&str> {
+        match self {
+            Self::UnknownNodeType { id, .. } | Self::DuplicateId(id) => Some(id),
+            Self::MissingInput { node, .. } | Self::Node { node, .. } => Some(node),
+            Self::Cycle(nodes) => nodes.first().map(String::as_str),
+            Self::Parse(_)
+            | Self::Connection { .. }
+            | Self::OutputCount(_)
+            | Self::Source { .. } => None,
+        }
+    }
+}

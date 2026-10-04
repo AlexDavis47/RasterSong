@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use rastersong_graph::{
-    CompileOptions, Graph, GraphDesc, GraphError, InputSpec, Layout, Node, PrepareContext,
-    ProcessContext, Registry, Signal,
+    Category, CompileOptions, Graph, GraphDesc, GraphError, InputSpec, Layout, Node, NodeSpec,
+    PrepareContext, ProcessContext, Registry, Signal,
 };
 
 const W: u32 = 4;
@@ -248,13 +248,17 @@ fn latency_is_compensated_across_branches() {
     // signals half a frame apart. The output is rounded up to a whole frame of latency.
     let frame = Layout::rgb(W, H).len();
     let mut registry = Registry::default();
-    registry.register("lookahead", move |_| {
-        Ok(Lookahead {
-            samples: frame / 2,
-            history: Vec::new(),
-        })
-    });
-    registry.register("sum", |_| Ok(Sum));
+    registry.register(
+        "lookahead",
+        NodeSpec::new("Lookahead", Category::Effect),
+        move |_| {
+            Ok(Lookahead {
+                samples: frame / 2,
+                history: Vec::new(),
+            })
+        },
+    );
+    registry.register("sum", NodeSpec::new("Sum", Category::Effect), |_| Ok(Sum));
     let json = graph_json(
         r#"{ "id": "video", "type": "video_input" }, { "id": "look", "type": "lookahead" },
            { "id": "sum", "type": "sum" }, { "id": "out", "type": "output" }"#,
@@ -314,4 +318,71 @@ fn graph_files_round_trip() {
         GraphDesc::from_json(r#"{ "version": 2, "nodes": [] }"#),
         Err(GraphError::Parse(_))
     ));
+}
+
+#[test]
+fn separate_channels_match_splitting_by_hand() {
+    // A low pass with "channels": "separate" must equal Split -> three low passes -> Combine,
+    // including the modulation input, which is shared by all three channels.
+    let separate = graph_json(
+        r#"{ "id": "video", "type": "video_input" }, { "id": "audio", "type": "audio_input" },
+           { "id": "lp", "type": "lowpass", "params": { "cutoff": 0.7, "depth": 1 }, "channels": "separate" },
+           { "id": "out", "type": "output" }"#,
+        r#"{ "from": "video", "to": "lp" }, { "from": "audio", "to": "lp.modulation" }, { "from": "lp", "to": "out" }"#,
+    );
+    let by_hand = graph_json(
+        r#"{ "id": "video", "type": "video_input" }, { "id": "audio", "type": "audio_input" },
+           { "id": "split", "type": "split" }, { "id": "combine", "type": "combine" },
+           { "id": "r", "type": "lowpass", "params": { "cutoff": 0.7, "depth": 1 } },
+           { "id": "g", "type": "lowpass", "params": { "cutoff": 0.7, "depth": 1 } },
+           { "id": "b", "type": "lowpass", "params": { "cutoff": 0.7, "depth": 1 } },
+           { "id": "out", "type": "output" }"#,
+        r#"{ "from": "video", "to": "split" },
+           { "from": "split.r", "to": "r" }, { "from": "split.g", "to": "g" }, { "from": "split.b", "to": "b" },
+           { "from": "audio", "to": "r.modulation" }, { "from": "audio", "to": "g.modulation" }, { "from": "audio", "to": "b.modulation" },
+           { "from": "r", "to": "combine.r" }, { "from": "g", "to": "combine.g" }, { "from": "b", "to": "combine.b" },
+           { "from": "combine", "to": "out" }"#,
+    );
+    let together = separate.replace(r#", "channels": "separate""#, "");
+
+    let (mut a, mut b, mut c) = (
+        compile(&separate).unwrap(),
+        compile(&by_hand).unwrap(),
+        compile(&together).unwrap(),
+    );
+    let mut differs_from_together = false;
+    for n in 0..4 {
+        let input = sources(
+            move |i| ((i * 7 + n * 5) % 13) as f32 / 12.0,
+            move |i| ((i + n) as f32 * 0.9).sin(),
+        );
+        let sep = a.process(n as u64, &input).unwrap().data.clone();
+        assert_eq!(sep, b.process(n as u64, &input).unwrap().data, "frame {n}");
+        differs_from_together |= sep != c.process(n as u64, &input).unwrap().data;
+    }
+    assert!(
+        differs_from_together,
+        "together and separate should differ for a filter"
+    );
+}
+
+#[test]
+fn separate_channels_need_a_per_channel_node() {
+    let json = graph_json(
+        r#"{ "id": "v", "type": "video_input" }, { "id": "s", "type": "interleave", "channels": "separate" },
+           { "id": "p", "type": "pack" }, { "id": "o", "type": "output" }"#,
+        r#"{ "from": "v", "to": "s" }, { "from": "s", "to": "p" }, { "from": "p", "to": "o" }"#,
+    );
+    assert!(matches!(compile(&json), Err(GraphError::Node { node, .. }) if node == "s"));
+}
+
+#[test]
+fn reports_output_levels() {
+    let mut graph = compile(PASSTHROUGH).unwrap();
+    let input = sources(|_| 0.5, |_| 0.0);
+    graph.process(0, &input).unwrap();
+    let levels = graph.levels();
+    let video = levels.iter().find(|l| &*l.node == "video").unwrap();
+    assert!((video.rms - 0.5).abs() < 1e-6);
+    assert_eq!(levels.len(), 2, "one output each for video and out");
 }

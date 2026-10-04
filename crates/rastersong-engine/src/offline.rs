@@ -8,7 +8,7 @@ use rastersong_graph::{GraphDesc, Registry};
 use rastersong_media::{AudioClip, MediaBackend};
 
 use crate::sources::Modulator;
-use crate::{EngineError, OutputSize, RenderInfo, Renderer};
+use crate::{AudioTrack, DEFAULT_AUDIO_TRACK, EngineError, OutputSize, RenderInfo, Renderer};
 
 #[derive(Debug, Clone, Default)]
 pub struct RenderSettings {
@@ -16,6 +16,8 @@ pub struct RenderSettings {
     pub size: Option<(u32, u32)>,
     /// Render only the first `frames` frames.
     pub frames: Option<usize>,
+    /// Seconds the audio starts after the video.
+    pub audio_offset: f64,
 }
 
 /// One rendered frame, as packed RGB8.
@@ -44,10 +46,15 @@ pub fn render(
     settings: &RenderSettings,
     sink: &mut dyn FrameSink,
 ) -> Result<RenderInfo, EngineError> {
+    let track = AudioTrack {
+        name: DEFAULT_AUDIO_TRACK.to_owned(),
+        modulator: Arc::new(Modulator::new(audio)),
+        offset: settings.audio_offset,
+    };
     let mut renderer = Renderer::new(
         backend,
         video_path,
-        Arc::new(Modulator::new(audio)),
+        &[track],
         graph,
         &Registry::default(),
         settings
@@ -150,6 +157,7 @@ mod tests {
         let settings = RenderSettings {
             size: Some((2, 2)),
             frames: Some(3),
+            ..Default::default()
         };
         let mut sink = Recorder::default();
         run(&settings, &mut sink).unwrap();

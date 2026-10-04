@@ -1,16 +1,21 @@
 //! Compiling a [`GraphDesc`] into a sequential schedule, and running it one frame at a time.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
-use crate::desc::{GraphDesc, Interpolation, Params};
+use crate::desc::{Channels, GraphDesc, Interpolation};
 use crate::dsp::{DelayLine, resample};
 use crate::nodes::{OUTPUT, Registry};
 use crate::{
-    GraphError, Layout, LayoutContext, Node, PrepareContext, ProcessContext, Signal, Sources,
+    GraphError, Layout, LayoutContext, Node, ParamValue, PrepareContext, ProcessContext, Signal,
+    Sources,
 };
 
 /// Most inputs a node can have.
 pub const MAX_INPUTS: usize = 8;
+
+/// Samples measured per output for [`OutputLevel`]; a spread-out subset is plenty for a level.
+const LEVEL_SAMPLES: usize = 4096;
 
 static EMPTY_SIGNAL: Signal = Signal::EMPTY;
 
@@ -22,6 +27,15 @@ pub struct CompileOptions {
     pub sources: HashMap<String, Layout>,
     /// The layout the output node must produce (the project's RGB frame).
     pub output: Layout,
+}
+
+/// The level of one node output in the last processed frame.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OutputLevel {
+    pub node: Arc<str>,
+    pub output: usize,
+    /// Root mean square of the output's samples.
+    pub rms: f32,
 }
 
 /// A compiled graph, ready to process frames in order.
@@ -48,11 +62,66 @@ impl std::fmt::Debug for Graph {
 }
 
 struct Step {
-    id: String,
-    node: Box<dyn Node>,
+    id: Arc<str>,
+    /// One node, or one per channel when channels are processed separately.
+    nodes: Vec<Box<dyn Node>>,
+    /// Per-channel buffers when `nodes` has one instance per channel.
+    split: Option<ChannelSplit>,
     interpolation: Interpolation,
     inputs: Vec<InputBinding>,
     outputs: Vec<Signal>,
+    levels: Vec<f32>,
+}
+
+/// Buffers for running one node instance per channel of an interleaved signal.
+struct ChannelSplit {
+    /// `inputs[channel][input]`: that input's samples for one channel.
+    inputs: Vec<Vec<Signal>>,
+    /// `outputs[channel][output]`.
+    outputs: Vec<Vec<Signal>>,
+}
+
+impl ChannelSplit {
+    fn process(
+        &mut self,
+        nodes: &mut [Box<dyn Node>],
+        ctx: &ProcessContext,
+        inputs: &[&Signal],
+        outputs: &mut [Signal],
+    ) {
+        let channels = nodes.len();
+        for (k, input) in inputs.iter().enumerate() {
+            for (c, channel) in self.inputs.iter_mut().enumerate() {
+                let out = &mut channel[k].data;
+                for (o, &x) in out
+                    .iter_mut()
+                    .zip(input.data.iter().skip(c).step_by(channels))
+                {
+                    *o = x;
+                }
+            }
+        }
+        for (c, node) in nodes.iter_mut().enumerate() {
+            let mut refs = [&EMPTY_SIGNAL; MAX_INPUTS];
+            for (slot, input) in refs.iter_mut().zip(&self.inputs[c]) {
+                *slot = input;
+            }
+            node.process(ctx, &refs[..inputs.len()], &mut self.outputs[c]);
+        }
+        for (o, output) in outputs.iter_mut().enumerate() {
+            for (c, channel) in self.outputs.iter().enumerate() {
+                for (x, &y) in output
+                    .data
+                    .iter_mut()
+                    .skip(c)
+                    .step_by(channels)
+                    .zip(&channel[o].data)
+                {
+                    *x = y;
+                }
+            }
+        }
+    }
 }
 
 /// How one input of a step gets its signal each frame.
@@ -112,8 +181,10 @@ impl InputBinding {
 struct Pending {
     id: String,
     kind: String,
+    params: BTreeMap<String, ParamValue>,
     node: Box<dyn Node>,
     interpolation: Interpolation,
+    channels: Channels,
     /// For each input port, the connected (node, output port).
     wires: Vec<Option<(usize, usize)>>,
 }
@@ -160,33 +231,82 @@ impl Graph {
                 .map(|w| w.map_or(main.unwrap(), |(src, port)| layouts[src][port]))
                 .collect();
 
-            let output_layouts = p
+            // Separate channels: one node per channel of the main input, each seeing a mono
+            // signal. Every input reaches each copy as that one channel.
+            let channels = match (p.channels, main) {
+                (Channels::Separate, Some(main)) if main.samples_per_pixel > 1 => {
+                    let per_channel = registry.get(&p.kind).is_some_and(|t| t.spec.per_channel);
+                    if !per_channel {
+                        return Err(node_error("can't process channels separately".into()));
+                    }
+                    main.samples_per_pixel as usize
+                }
+                _ => 1,
+            };
+            let channel_layout = main.map(|m| {
+                if channels > 1 {
+                    Layout::mono(m.width, m.height)
+                } else {
+                    m
+                }
+            });
+
+            let node_inputs = if channels > 1 {
+                vec![channel_layout.unwrap(); p.wires.len()]
+            } else {
+                input_layouts.clone()
+            };
+            let node_outputs = p
                 .node
                 .output_layouts(&LayoutContext {
-                    inputs: &input_layouts,
+                    inputs: &node_inputs,
                     sources: &options.sources,
                     output: options.output,
                 })
                 .map_err(node_error)?;
             assert_eq!(
-                output_layouts.len(),
+                node_outputs.len(),
                 p.node.outputs().len(),
                 "node `{}` returned the wrong number of layouts",
                 p.id
             );
+            let output_layouts = if channels > 1 {
+                if node_outputs.iter().any(|&l| Some(l) != channel_layout) {
+                    return Err(node_error("can't process channels separately".into()));
+                }
+                vec![main.unwrap(); node_outputs.len()]
+            } else {
+                node_outputs.clone()
+            };
 
-            // Every input reaches the node at the main input's layout.
-            let matched = vec![main.unwrap_or_default(); p.wires.len()];
+            // Every input reaches the node at the main input's layout (per channel, if split).
+            let matched = vec![channel_layout.unwrap_or_default(); p.wires.len()];
             let connected: Vec<bool> = p.wires.iter().map(Option::is_some).collect();
             let ctx = PrepareContext {
                 frame_rate: options.frame_rate,
                 inputs: &matched,
-                outputs: &output_layouts,
+                outputs: &node_outputs,
                 connected: &connected,
             };
 
-            let mut node = std::mem::replace(&mut pending[n].node, Box::new(Placeholder));
-            node.prepare(&ctx);
+            let mut nodes = vec![std::mem::replace(
+                &mut pending[n].node,
+                Box::new(Placeholder),
+            )];
+            for _ in 1..channels {
+                let copy = registry
+                    .create(&pending[n].kind, &pending[n].params)
+                    .expect("the node type exists")
+                    .map_err(|message| GraphError::Node {
+                        node: pending[n].id.clone(),
+                        message,
+                    })?;
+                nodes.push(copy);
+            }
+            for node in &mut nodes {
+                node.prepare(&ctx);
+            }
+            let node = &nodes[0];
             warmup_frames = warmup_frames.max(node.warmup_frames(&ctx));
             let own_latency = node.latency(&ctx) as f64 / ctx.samples_per_frame().max(1) as f64;
             if let Some(name) = node.source() {
@@ -238,12 +358,19 @@ impl Graph {
                 })
                 .collect();
 
+            let split = (channels > 1).then(|| ChannelSplit {
+                inputs: vec![vec![Signal::zeros(channel_layout.unwrap()); p.wires.len()]; channels],
+                outputs: vec![node_outputs.iter().map(|&l| Signal::zeros(l)).collect(); channels],
+            });
+
             step_of[n] = steps.len();
             steps.push(Step {
-                id: p.id.clone(),
-                node,
+                id: p.id.as_str().into(),
+                nodes,
+                split,
                 interpolation: p.interpolation,
                 inputs,
+                levels: vec![0.0; output_layouts.len()],
                 outputs: output_layouts.iter().map(|&l| Signal::zeros(l)).collect(),
             });
             layouts[n] = output_layouts;
@@ -278,9 +405,26 @@ impl Graph {
     /// Clears all state, as if no frame had been processed.
     pub fn reset(&mut self) {
         for step in &mut self.steps {
-            step.node.reset();
+            step.nodes.iter_mut().for_each(|n| n.reset());
             step.inputs.iter_mut().for_each(InputBinding::reset);
         }
+    }
+
+    /// The level of every node output in the last processed frame.
+    pub fn levels(&self) -> Vec<OutputLevel> {
+        self.steps
+            .iter()
+            .flat_map(|step| {
+                step.levels
+                    .iter()
+                    .enumerate()
+                    .map(|(output, &rms)| OutputLevel {
+                        node: step.id.clone(),
+                        output,
+                        rms,
+                    })
+            })
+            .collect()
     }
 
     /// Processes one frame and returns the output.
@@ -311,10 +455,12 @@ impl Graph {
         for i in 0..self.steps.len() {
             let (done, rest) = self.steps.split_at_mut(i);
             let Step {
-                node,
+                nodes,
+                split,
                 interpolation,
                 inputs,
                 outputs,
+                levels,
                 ..
             } = &mut rest[0];
             for input in inputs.iter_mut() {
@@ -324,10 +470,32 @@ impl Graph {
             for (slot, input) in refs.iter_mut().zip(inputs.iter()) {
                 *slot = input.get(done);
             }
-            node.process(&ctx, &refs[..inputs.len()], outputs);
+            let refs = &refs[..inputs.len()];
+            match split {
+                Some(split) => split.process(nodes, &ctx, refs, outputs),
+                None => nodes[0].process(&ctx, refs, outputs),
+            }
+            for (level, output) in levels.iter_mut().zip(outputs.iter()) {
+                *level = rms(&output.data);
+            }
         }
         Ok(&self.steps[self.output_step].outputs[0])
     }
+}
+
+/// RMS over an evenly spread subset of at most [`LEVEL_SAMPLES`] samples.
+fn rms(data: &[f32]) -> f32 {
+    if data.is_empty() {
+        return 0.0;
+    }
+    let stride = data.len().div_ceil(LEVEL_SAMPLES);
+    let (sum, count) = data
+        .iter()
+        .step_by(stride)
+        .fold((0.0f64, 0usize), |(s, c), &x| {
+            (s + f64::from(x) * f64::from(x), c + 1)
+        });
+    (sum / count as f64).sqrt() as f32
 }
 
 /// Stands in for a node while it is being prepared.
@@ -352,24 +520,24 @@ fn create_nodes(desc: &GraphDesc, registry: &Registry) -> Result<Vec<Pending>, G
         if pending.iter().any(|p| p.id == d.id) {
             return Err(GraphError::DuplicateId(d.id.clone()));
         }
-        let mut params = Params::new(&d.params);
         let node = registry
-            .create(&d.kind, &mut params)
+            .create(&d.kind, &d.params)
             .ok_or_else(|| GraphError::UnknownNodeType {
                 id: d.id.clone(),
                 kind: d.kind.clone(),
             })?
             .map_err(node_error)?;
-        params.finish().map_err(node_error)?;
         if node.inputs().len() > MAX_INPUTS {
             return Err(node_error(format!("has more than {MAX_INPUTS} inputs")));
         }
         pending.push(Pending {
             id: d.id.clone(),
             kind: d.kind.clone(),
+            params: d.params.clone(),
             wires: vec![None; node.inputs().len()],
             node,
             interpolation: d.interpolation,
+            channels: d.channels,
         });
     }
     Ok(pending)

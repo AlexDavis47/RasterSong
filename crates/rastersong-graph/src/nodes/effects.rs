@@ -3,9 +3,9 @@
 
 use std::f64::consts::TAU;
 
-use crate::desc::Params;
 use crate::dsp::DelayLine;
 use crate::{InputSpec, Node, PrepareContext, ProcessContext, Signal};
+use crate::{ParamSpec, Params};
 
 /// Maximum warmup a node with infinite memory reports, in frames.
 const MAX_WARMUP_FRAMES: u32 = 120;
@@ -18,8 +18,8 @@ pub enum LengthUnit {
 }
 
 impl LengthUnit {
-    fn read(params: &mut Params) -> Result<Self, String> {
-        Ok(match params.choice("unit", &["rows", "frames"], "rows")? {
+    fn read(params: &Params) -> Result<Self, String> {
+        Ok(match params.choice("unit")? {
             "rows" => Self::Rows,
             _ => Self::Frames,
         })
@@ -40,9 +40,18 @@ pub struct Am {
 }
 
 impl Am {
-    pub fn new(params: &mut Params) -> Result<Self, String> {
+    pub const PARAMS: &[ParamSpec] = &[ParamSpec::number(
+        "depth",
+        "Depth",
+        1.0,
+        -100.0,
+        100.0,
+        "How strongly the modulator scales the carrier: carrier × (1 + depth × modulator)",
+    )];
+
+    pub fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
-            depth: params.number("depth", 1.0)? as f32,
+            depth: params.number("depth")? as f32,
         })
     }
 }
@@ -79,13 +88,55 @@ pub struct Delay {
 }
 
 impl Delay {
-    pub fn new(params: &mut Params) -> Result<Self, String> {
+    pub const PARAMS: &[ParamSpec] = &[
+        ParamSpec::number(
+            "time",
+            "Time",
+            1.0,
+            0.0,
+            1000.0,
+            "Delay length, in rows or frames",
+        ),
+        ParamSpec::number(
+            "depth",
+            "Depth",
+            0.0,
+            -1000.0,
+            1000.0,
+            "How far the modulation input moves the delay time, in rows or frames per unit",
+        ),
+        ParamSpec::choice(
+            "unit",
+            "Unit",
+            &["rows", "frames"],
+            "rows",
+            "Unit for time and depth",
+        ),
+        ParamSpec::number(
+            "feedback",
+            "Feedback",
+            0.0,
+            0.0,
+            0.99,
+            "How much of the delayed signal is fed back in",
+        ),
+        ParamSpec::number(
+            "mix",
+            "Mix",
+            1.0,
+            0.0,
+            1.0,
+            "0 is the dry input, 1 is only the delayed signal",
+        ),
+    ];
+
+    pub fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
-            time: params.number_in("time", 1.0, 0.0, 10_000.0)?,
-            depth: params.number_in("depth", 0.0, -10_000.0, 10_000.0)?,
+            time: params.number("time")?,
+            depth: params.number("depth")?,
             unit: LengthUnit::read(params)?,
-            feedback: params.number_in("feedback", 0.0, 0.0, 0.99)? as f32,
-            mix: params.number_in("mix", 1.0, 0.0, 1.0)? as f32,
+            feedback: params.number("feedback")? as f32,
+            mix: params.number("mix")? as f32,
             unit_samples: 0.0,
             line: DelayLine::default(),
         })
@@ -153,10 +204,30 @@ pub struct Bitcrush {
 }
 
 impl Bitcrush {
-    pub fn new(params: &mut Params) -> Result<Self, String> {
+    pub const PARAMS: &[ParamSpec] = &[
+        ParamSpec::number(
+            "bits",
+            "Bits",
+            4.0,
+            1.0,
+            24.0,
+            "Bit depth; fewer bits means fewer levels",
+        )
+        .unit("bits"),
+        ParamSpec::number(
+            "depth",
+            "Depth",
+            0.0,
+            -24.0,
+            24.0,
+            "Bits added per unit of the modulation input",
+        ),
+    ];
+
+    pub fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
-            bits: params.number_in("bits", 4.0, 1.0, 24.0)? as f32,
-            depth: params.number_in("depth", 0.0, -24.0, 24.0)? as f32,
+            bits: params.number("bits")? as f32,
+            depth: params.number("depth")? as f32,
         })
     }
 }
@@ -194,10 +265,30 @@ pub struct Lowpass {
 }
 
 impl Lowpass {
-    pub fn new(params: &mut Params) -> Result<Self, String> {
+    pub const PARAMS: &[ParamSpec] = &[
+        ParamSpec::number(
+            "cutoff",
+            "Cutoff",
+            40.0,
+            0.01,
+            100_000.0,
+            "Cutoff in cycles per row; lower is smoother",
+        )
+        .unit("cycles/row"),
+        ParamSpec::number(
+            "depth",
+            "Depth",
+            0.0,
+            -16.0,
+            16.0,
+            "Octaves the cutoff moves per unit of the modulation input",
+        ),
+    ];
+
+    pub fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
-            cutoff: params.number_in("cutoff", 40.0, 0.0, 1e9)?,
-            depth: params.number_in("depth", 0.0, -16.0, 16.0)?,
+            cutoff: params.number("cutoff")?,
+            depth: params.number("depth")?,
             base: 0.0,
             modulated: false,
             coefficient: 1.0,
@@ -310,9 +401,30 @@ pub struct ThreeBand {
 }
 
 impl ThreeBand {
-    pub fn new(params: &mut Params) -> Result<Self, String> {
-        let low_hz = params.number_in("low_hz", 250.0, 1.0, 1e6)?;
-        let high_hz = params.number_in("high_hz", 4000.0, 1.0, 1e6)?;
+    pub const PARAMS: &[ParamSpec] = &[
+        ParamSpec::number(
+            "low_hz",
+            "Low / mid",
+            250.0,
+            1.0,
+            100_000.0,
+            "Crossover between the low and mid bands, in Hz",
+        )
+        .unit("Hz"),
+        ParamSpec::number(
+            "high_hz",
+            "Mid / high",
+            4000.0,
+            1.0,
+            100_000.0,
+            "Crossover between the mid and high bands, in Hz",
+        )
+        .unit("Hz"),
+    ];
+
+    pub fn new(params: &Params) -> Result<Self, String> {
+        let low_hz = params.number("low_hz")?;
+        let high_hz = params.number("high_hz")?;
         if low_hz >= high_hz {
             return Err(format!(
                 "`low_hz` ({low_hz}) must be below `high_hz` ({high_hz})"

@@ -1,17 +1,19 @@
 //! The preview render service: a background thread that keeps rendering ahead of the playhead
 //! into the frame cache, whether or not playback is running.
 
+use std::collections::HashMap;
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 
 use rastersong_graph::{GraphDesc, Registry};
-use rastersong_media::{AudioOptions, MediaBackend};
+use rastersong_media::{AudioClip, AudioOptions, MediaBackend};
 
 use crate::cache::{CacheKey, Frame, FrameCache};
 use crate::sources::Modulator;
-use crate::{OutputSize, RenderInfo, Renderer};
+use crate::{AudioTrack, EngineError, OutputSize, RenderInfo, Renderer};
 
 /// Preview resolution. Processing cost scales with pixel count, so a quarter-scale preview is
 /// about 16× cheaper. Because parameters are in normalized units, it looks like a scaled-down
@@ -51,15 +53,59 @@ impl Default for EngineConfig {
     }
 }
 
+/// An audio track as the project describes it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AudioTrackSpec {
+    /// The name audio input nodes select it by.
+    pub name: String,
+    pub path: PathBuf,
+    /// Seconds the track starts after the video (before it, if negative).
+    pub offset: f64,
+}
+
+/// A decoded audio track, for playback and display.
+#[derive(Debug, Clone)]
+pub struct LoadedTrack {
+    pub name: String,
+    pub clip: Arc<AudioClip>,
+}
+
+/// Why the project can't be rendered as it stands.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Failure {
+    pub message: String,
+    /// The node at fault, when the problem is with one node of the graph.
+    pub node: Option<String>,
+}
+
+impl Failure {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            node: None,
+        }
+    }
+
+    fn from_error(error: &EngineError) -> Self {
+        Self {
+            message: error.to_string(),
+            node: match error {
+                EngineError::Graph(e) => e.node().map(str::to_owned),
+                _ => None,
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum EngineStatus {
-    /// No media or graph yet.
+    /// No video or graph yet.
     Idle,
     /// Opening media and compiling the graph.
     Loading,
     Ready,
-    /// The project can't be rendered as it stands (bad file, invalid graph). Cleared by the next change.
-    Failed(String),
+    /// Cleared by the next change.
+    Failed(Failure),
 }
 
 type Callback = Arc<dyn Fn() + Send + Sync>;
@@ -94,15 +140,23 @@ struct Shared {
 
 struct State {
     video: Option<PathBuf>,
-    audio: Option<PathBuf>,
+    tracks: Vec<AudioTrackSpec>,
     graph: Option<GraphDesc>,
     key: CacheKey,
     playhead: usize,
     status: EngineStatus,
     info: Option<RenderInfo>,
+    loaded: Vec<LoadedTrack>,
     /// Bumped on every change, so the worker knows when to look again.
     changes: u64,
     shutdown: bool,
+}
+
+/// The parts of the project a renderer is built from.
+struct Snapshot {
+    video: PathBuf,
+    tracks: Vec<AudioTrackSpec>,
+    graph: GraphDesc,
 }
 
 /// A renderer built for one version of the project.
@@ -123,12 +177,13 @@ impl Engine {
             config,
             state: Mutex::new(State {
                 video: None,
-                audio: None,
+                tracks: Vec::new(),
                 graph: None,
                 key,
                 playhead: 0,
                 status: EngineStatus::Idle,
                 info: None,
+                loaded: Vec::new(),
                 changes: 0,
                 shutdown: false,
             }),
@@ -156,11 +211,16 @@ impl Engine {
         *lock(&self.shared.on_update) = Some(Arc::new(callback));
     }
 
-    pub fn set_media(&self, video: PathBuf, audio: PathBuf) {
-        self.edit(|state| {
-            state.video = Some(video);
-            state.audio = Some(audio);
-        });
+    pub fn set_video(&self, video: Option<PathBuf>) {
+        self.edit(|state| state.video = video);
+    }
+
+    /// The audio tracks. Audio inputs naming a track that isn't here read silence.
+    pub fn set_audio_tracks(&self, tracks: Vec<AudioTrackSpec>) {
+        if lock(&self.shared.state).tracks == tracks {
+            return;
+        }
+        self.edit(|state| state.tracks = tracks);
     }
 
     pub fn set_graph(&self, graph: GraphDesc) {
@@ -192,6 +252,11 @@ impl Engine {
         lock(&self.shared.cache).run_from(index)
     }
 
+    /// The rendered frames, as ranges of frame indices.
+    pub fn cached_ranges(&self) -> Vec<Range<usize>> {
+        lock(&self.shared.cache).ranges()
+    }
+
     pub fn status(&self) -> EngineStatus {
         lock(&self.shared.state).status.clone()
     }
@@ -199,6 +264,11 @@ impl Engine {
     /// Size, frame rate and length of the current preview, once loaded.
     pub fn info(&self) -> Option<RenderInfo> {
         lock(&self.shared.state).info
+    }
+
+    /// The decoded audio tracks, once loaded.
+    pub fn loaded_tracks(&self) -> Vec<LoadedTrack> {
+        lock(&self.shared.state).loaded.clone()
     }
 
     /// Records an edit: everything rendered so far is invalid, and in-flight work is cancelled.
@@ -231,10 +301,13 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// Decoded audio by file, so editing the graph or an offset doesn't decode again.
+type AudioCache = HashMap<PathBuf, (Arc<AudioClip>, Arc<Modulator>)>;
+
 struct Worker {
     shared: Arc<Shared>,
     built: Option<Built>,
-    modulator: Option<(PathBuf, Arc<Modulator>)>,
+    audio: AudioCache,
     /// The `changes` count when the project last failed; nothing is retried until it moves.
     failed_at: Option<u64>,
 }
@@ -244,9 +317,7 @@ enum Job {
     Build {
         key: CacheKey,
         edits: u64,
-        video: PathBuf,
-        audio: PathBuf,
-        graph: GraphDesc,
+        project: Snapshot,
     },
     /// Render ahead. `seen` is the change count when this was decided: if there turns out to be
     /// nothing to render, the worker sleeps until the count moves past it, so a change made in
@@ -259,7 +330,7 @@ impl Worker {
         Self {
             shared,
             built: None,
-            modulator: None,
+            audio: HashMap::new(),
             failed_at: None,
         }
     }
@@ -270,10 +341,8 @@ impl Worker {
                 Job::Build {
                     key,
                     edits,
-                    video,
-                    audio,
-                    graph,
-                } => self.build(key, edits, video, audio, graph),
+                    project,
+                } => self.build(key, edits, project),
                 Job::Render { seen } => {
                     if !self.render_next() {
                         self.wait_for_change(seen);
@@ -291,9 +360,7 @@ impl Worker {
                 return None;
             }
             let stuck = self.failed_at == Some(state.changes);
-            if let (Some(video), Some(audio), Some(graph), false) =
-                (&state.video, &state.audio, &state.graph, stuck)
-            {
+            if let (Some(video), Some(graph), false) = (&state.video, &state.graph, stuck) {
                 if self.built.as_ref().is_some_and(|b| b.key == state.key) {
                     return Some(Job::Render {
                         seen: state.changes,
@@ -302,12 +369,17 @@ impl Worker {
                 let job = Job::Build {
                     key: state.key,
                     edits: self.shared.edits.load(Ordering::SeqCst),
-                    video: video.clone(),
-                    audio: audio.clone(),
-                    graph: graph.clone(),
+                    project: Snapshot {
+                        video: video.clone(),
+                        tracks: state.tracks.clone(),
+                        graph: graph.clone(),
+                    },
                 };
                 state.status = EngineStatus::Loading;
                 return Some(job);
+            }
+            if state.video.is_none() || state.graph.is_none() {
+                state.status = EngineStatus::Idle;
             }
             let seen = state.changes;
             state = self
@@ -335,26 +407,43 @@ impl Worker {
         }
     }
 
-    fn build(
-        &mut self,
-        key: CacheKey,
-        edits: u64,
-        video: PathBuf,
-        audio: PathBuf,
-        graph: GraphDesc,
-    ) {
+    fn build(&mut self, key: CacheKey, edits: u64, project: Snapshot) {
         self.built = None;
-        let result = self.modulator(&audio).and_then(|modulator| {
+        let tracks = self.load_tracks(&project.tracks);
+        let result = tracks.and_then(|(tracks, loaded)| {
+            // Publish the audio even if the graph turns out not to compile: playback needs it.
+            lock(&self.shared.state).loaded = loaded;
             Renderer::new(
                 self.shared.backend.as_ref(),
-                &video,
-                modulator,
-                &graph,
+                &project.video,
+                &tracks,
+                &project.graph,
                 &Registry::default(),
                 key.scale.output_size(),
             )
-            .map_err(|e| e.to_string())
+            .map_err(|e| Failure::from_error(&e))
         });
+
+        // A graph that can't render shouldn't hide the video: the timeline and playhead still
+        // need its length and frame rate.
+        let video_info = match &result {
+            Err(_) => self
+                .shared
+                .backend
+                .open_video(&project.video)
+                .ok()
+                .map(|video| {
+                    let info = video.info();
+                    let (width, height) = key.scale.output_size().resolve(info.width, info.height);
+                    RenderInfo {
+                        width,
+                        height,
+                        frame_rate: info.frame_rate,
+                        frames: info.frame_count,
+                    }
+                }),
+            Ok(_) => None,
+        };
 
         let mut state = lock(&self.shared.state);
         if self.shared.edits.load(Ordering::SeqCst) != edits {
@@ -367,10 +456,10 @@ impl Worker {
                 self.built = Some(Built { key, renderer });
                 self.failed_at = None;
             }
-            Err(message) => {
-                tracing::warn!("project can't be rendered: {message}");
-                state.status = EngineStatus::Failed(message);
-                state.info = None;
+            Err(failure) => {
+                tracing::warn!("project can't be rendered: {}", failure.message);
+                state.status = EngineStatus::Failed(failure);
+                state.info = video_info;
                 self.failed_at = Some(state.changes);
             }
         }
@@ -378,21 +467,42 @@ impl Worker {
         self.notify();
     }
 
-    /// Decodes the modulator, reusing the last one if the file hasn't changed.
-    fn modulator(&mut self, path: &PathBuf) -> Result<Arc<Modulator>, String> {
-        if let Some((cached, modulator)) = &self.modulator
-            && cached == path
-        {
-            return Ok(modulator.clone());
+    /// Decodes each track (reusing earlier decodes of the same file).
+    fn load_tracks(
+        &mut self,
+        specs: &[AudioTrackSpec],
+    ) -> Result<(Vec<AudioTrack>, Vec<LoadedTrack>), Failure> {
+        // Forget files no track uses any more.
+        self.audio
+            .retain(|path, _| specs.iter().any(|s| &s.path == path));
+        let mut tracks = Vec::with_capacity(specs.len());
+        let mut loaded = Vec::with_capacity(specs.len());
+        for spec in specs {
+            let (clip, modulator) = match self.audio.get(&spec.path) {
+                Some(cached) => cached.clone(),
+                None => {
+                    let clip = self
+                        .shared
+                        .backend
+                        .load_audio(&spec.path, AudioOptions::default())
+                        .map_err(|e| Failure::new(format!("audio track `{}`: {e}", spec.name)))?;
+                    let modulator = Arc::new(Modulator::new(&clip));
+                    let entry = (Arc::new(clip), modulator);
+                    self.audio.insert(spec.path.clone(), entry.clone());
+                    entry
+                }
+            };
+            tracks.push(AudioTrack {
+                name: spec.name.clone(),
+                modulator,
+                offset: spec.offset,
+            });
+            loaded.push(LoadedTrack {
+                name: spec.name.clone(),
+                clip,
+            });
         }
-        let clip = self
-            .shared
-            .backend
-            .load_audio(path, AudioOptions::default())
-            .map_err(|e| e.to_string())?;
-        let modulator = Arc::new(Modulator::new(&clip));
-        self.modulator = Some((path.clone(), modulator.clone()));
-        Ok(modulator)
+        Ok((tracks, loaded))
     }
 
     /// Frames ahead of the playhead to keep rendered: the lookahead time, limited so that most of
@@ -438,6 +548,7 @@ impl Worker {
                     width: info.width,
                     height: info.height,
                     rgb: rgb.to_vec(),
+                    levels: built.renderer.levels().into(),
                 };
                 let playhead = self.shared.playhead.load(Ordering::SeqCst);
                 let inserted = lock(&self.shared.cache).insert(built.key, frame, playhead);
@@ -449,7 +560,7 @@ impl Worker {
             Err(e) => {
                 tracing::warn!(frame = target, "render failed: {e}");
                 let mut state = lock(&self.shared.state);
-                state.status = EngineStatus::Failed(e.to_string());
+                state.status = EngineStatus::Failed(Failure::from_error(&e));
                 self.failed_at = Some(state.changes);
                 self.built = None;
                 drop(state);
