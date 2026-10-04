@@ -271,7 +271,7 @@ mod tests {
     fn describes_ports() {
         let registry = Registry::default();
         let delay = registry.get("delay").unwrap();
-        assert_eq!(delay.inputs.len(), 2);
+        assert_eq!(registry.get("am").unwrap().inputs.len(), 2);
         assert_eq!(delay.outputs, ["out"]);
         assert_eq!(registry.get("split").unwrap().outputs, ["r", "g", "b"]);
         let split = registry.get("split").unwrap();

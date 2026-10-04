@@ -85,8 +85,19 @@ pub(super) struct Geometry {
     pub rect: Rect,
     pub title: String,
     pub category: Option<Category>,
-    pub inputs: Vec<(Pos2, &'static str, bool)>,
+    pub inputs: Vec<InputPin>,
     pub outputs: Vec<(Pos2, &'static str)>,
+}
+
+/// An input pin: one of the node's inputs, or an exposed parameter.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct InputPin {
+    pub pos: Pos2,
+    pub name: &'static str,
+    pub required: bool,
+    /// The input's index, or the parameter's [`super::param_port`].
+    pub port: usize,
+    pub param: bool,
 }
 
 /// Wire thickness for an output level: thin for silence, thick for a full-scale signal.
@@ -115,21 +126,32 @@ impl GraphEditor {
             .map(|i| {
                 let node = &self.nodes[i];
                 let kind = self.registry.get(&node.kind);
-                let title = node.label.clone().unwrap_or_else(|| {
-                    kind.map_or_else(
-                        || format!("{} (unknown)", node.kind),
-                        |k| k.spec.label.to_owned(),
-                    )
-                });
-                let inputs: Vec<(&'static str, bool)> = kind
+                let title = node
+                    .label
+                    .clone()
+                    .or_else(|| self.linked_title(node))
+                    .unwrap_or_else(|| {
+                        kind.map_or_else(
+                            || format!("{} (unknown)", node.kind),
+                            |k| k.spec.label.to_owned(),
+                        )
+                    });
+                // (name, required, port, parameter): inputs, then exposed parameters.
+                let mut inputs: Vec<(&'static str, bool, usize, bool)> = kind
                     .map(|k| {
                         k.inputs
                             .iter()
                             .enumerate()
-                            .map(|(i, s)| (s.name, s.required || i == 0))
+                            .map(|(i, s)| (s.name, s.required || i == 0, i, false))
                             .collect()
                     })
                     .unwrap_or_default();
+                if let Some(k) = kind {
+                    for index in self.exposed_params(node) {
+                        let name = k.spec.params[index].name;
+                        inputs.push((name, false, super::param_port(index), true));
+                    }
+                }
                 let outputs: Vec<&'static str> = kind
                     .map(|k| super::editor_outputs(k).to_vec())
                     .unwrap_or_default();
@@ -138,7 +160,7 @@ impl GraphEditor {
                 let widest = |names: &mut dyn Iterator<Item = &str>| {
                     names.map(|n| measure(n, LABEL_FONT)).fold(0.0, f32::max)
                 };
-                let in_width = widest(&mut inputs.iter().map(|(n, _)| *n));
+                let in_width = widest(&mut inputs.iter().map(|i| i.0));
                 let out_width = if labelled_outputs {
                     widest(&mut outputs.iter().copied())
                 } else {
@@ -159,7 +181,13 @@ impl GraphEditor {
                     inputs: inputs
                         .iter()
                         .enumerate()
-                        .map(|(i, &(name, required))| (pos2(rect.left(), row_y(i)), name, required))
+                        .map(|(i, &(name, required, port, param))| InputPin {
+                            pos: pos2(rect.left(), row_y(i)),
+                            name,
+                            required,
+                            port,
+                            param,
+                        })
                         .collect(),
                     outputs: outputs
                         .iter()
@@ -257,12 +285,13 @@ impl GraphEditor {
                     .outputs
                     .get(i)
                     .map(|p| p.0),
-                Pin::In(key, i) => geometry
+                Pin::In(key, port) => geometry
                     .iter()
                     .find(|g| g.key == key)?
                     .inputs
-                    .get(i)
-                    .map(|p| p.0),
+                    .iter()
+                    .find(|pin| pin.port == port)
+                    .map(|pin| pin.pos),
             }
         };
         for wire in &self.wires {
@@ -581,8 +610,7 @@ impl GraphEditor {
             let pins = g
                 .inputs
                 .iter()
-                .enumerate()
-                .map(|(i, &(q, ..))| (q, Pin::In(g.key, i)))
+                .map(|pin| (pin.pos, Pin::In(g.key, pin.port)))
                 .chain(
                     g.outputs
                         .iter()
@@ -704,17 +732,21 @@ impl GraphEditor {
             );
         }
         let labels = zoom > 0.45;
-        for (i, &(p, name, required)) in g.inputs.iter().enumerate() {
-            let p = to_screen(p);
-            let hovered = hovered_pin == Some(Pin::In(g.key, i));
-            let fill = if required {
-                theme.pin_required
+        for pin in &g.inputs {
+            let p = to_screen(pin.pos);
+            let hovered = hovered_pin == Some(Pin::In(g.key, pin.port));
+            if pin.param {
+                draw_param_pin(painter, theme, p, hovered, zoom);
             } else {
-                theme.pin_optional
-            };
-            draw_pin(painter, theme, p, fill, hovered, zoom);
+                let fill = if pin.required {
+                    theme.pin_required
+                } else {
+                    theme.pin_optional
+                };
+                draw_pin(painter, theme, p, fill, hovered, zoom);
+            }
             if labels {
-                let color = if required {
+                let color = if pin.required {
                     text
                 } else {
                     visuals.weak_text_color()
@@ -722,7 +754,7 @@ impl GraphEditor {
                 painter.text(
                     p + vec2(PAD * zoom, 0.0),
                     Align2::LEFT_CENTER,
-                    name,
+                    pin.name,
                     FontId::proportional(LABEL_FONT * zoom),
                     color,
                 );
@@ -808,6 +840,24 @@ fn draw_pin(
         painter.circle_stroke(p, radius + 3.0, Stroke::new(1.5, theme.accent));
     }
     painter.circle(p, radius, fill, Stroke::new(1.0, theme.pin_outline));
+}
+
+/// A parameter's pin: a diamond, so parameters read apart from inputs.
+fn draw_param_pin(painter: &egui::Painter, theme: &Theme, p: Pos2, hovered: bool, zoom: f32) {
+    let r = PIN_RADIUS * 1.25 * zoom.clamp(0.7, 1.6);
+    if hovered {
+        painter.circle_stroke(p, r + 3.0, Stroke::new(1.5, theme.accent));
+    }
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            p + vec2(0.0, -r),
+            p + vec2(r, 0.0),
+            p + vec2(0.0, r),
+            p + vec2(-r, 0.0),
+        ],
+        theme.accent,
+        Stroke::new(1.0, theme.pin_outline),
+    ));
 }
 
 /// A wire's colours: the kind of signal (video or audio), and the part of it the wire carries

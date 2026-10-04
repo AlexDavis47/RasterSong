@@ -3,6 +3,8 @@
 
 mod canvas;
 mod inspector;
+mod linked;
+mod modulation;
 mod param_field;
 mod search;
 
@@ -10,12 +12,13 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use eframe::egui::{Pos2, Rect, Vec2, pos2, vec2};
 use rastersong_engine::{
-    Channels, Connection, FORMAT_VERSION, GraphDesc, Interpolation, NodeDesc, NodeType,
+    Channels, Connection, FORMAT_VERSION, GraphDesc, Interpolation, Modulation, NodeDesc, NodeType,
     OutputLevel, ParamValue, Registry,
 };
 
 pub use canvas::CanvasContext;
 pub use inspector::InspectorContext;
+pub use modulation::{PARAM_PORT, as_param, param_port};
 
 /// Identifies a node in the editor, stable across renames.
 pub type NodeKey = u64;
@@ -33,6 +36,10 @@ pub struct EditorNode {
     pub channels: Channels,
     /// Top-left corner in graph space.
     pub pos: Pos2,
+    /// How connected signals move parameters, by parameter name.
+    pub modulation: BTreeMap<String, Modulation>,
+    /// The parameters showing pins, when the user changed them from the type's defaults.
+    pub exposed: Option<BTreeSet<String>>,
 }
 
 /// A connection from an output (node, port) to an input (node, port).
@@ -81,6 +88,9 @@ pub struct GraphEditor {
     last_geometry: Vec<canvas::Geometry>,
     /// Text last copied, for the Edit menu's Paste (keyboard paste reads the system clipboard).
     clipboard: Option<String>,
+    /// The project's video file name and audio track names, for the nodes linked to them.
+    project_video: Option<String>,
+    project_tracks: Vec<String>,
     /// Problems found when loading a graph (e.g. connections to ports that don't exist).
     pub warnings: Vec<String>,
 }
@@ -115,6 +125,8 @@ impl GraphEditor {
             last_canvas: Rect::NOTHING,
             last_geometry: Vec::new(),
             clipboard: None,
+            project_video: None,
+            project_tracks: Vec::new(),
             warnings: Vec::new(),
         };
         editor.load(graph);
@@ -169,6 +181,8 @@ impl GraphEditor {
                 interpolation: node.interpolation,
                 channels: node.channels,
                 pos: node.position.map_or(positions[i], |[x, y]| pos2(x, y)),
+                modulation: node.modulation.clone(),
+                exposed: node.exposed.as_ref().map(|e| e.iter().cloned().collect()),
             });
         }
         for c in &graph.connections {
@@ -215,6 +229,15 @@ impl GraphEditor {
         };
         let key = *keys.get(id)?;
         let kind = self.kind_of(key)?;
+        // A parameter: `node.@name`.
+        if let (true, Some(param)) = (input, port.and_then(|p| p.strip_prefix('@'))) {
+            let index = kind
+                .spec
+                .params
+                .iter()
+                .position(|s| s.name == param && s.modulatable)?;
+            return Some((key, modulation::param_port(index)));
+        }
         let index = match (port, input) {
             (None, _) => 0,
             (Some(port), true) => kind.inputs.iter().position(|i| i.name == port)?,
@@ -232,14 +255,14 @@ impl GraphEditor {
     pub fn to_desc(&self) -> GraphDesc {
         let port = |(key, index): (NodeKey, usize), input: bool| -> String {
             let node = self.node(key).expect("wires only join existing nodes");
-            let name = self.kind_of(key).map(|k| {
-                if input {
-                    k.inputs[index].name
-                } else {
-                    k.outputs[index]
-                }
-            });
-            format!("{}.{}", node.id, name.unwrap_or("?"))
+            let name = self
+                .kind_of(key)
+                .map(|k| match modulation::as_param(index) {
+                    Some(param) if input => format!("@{}", k.spec.params[param].name),
+                    _ if input => k.inputs[index].name.to_owned(),
+                    _ => k.outputs[index].to_owned(),
+                });
+            format!("{}.{}", node.id, name.as_deref().unwrap_or("?"))
         };
         let mut wires = self.wires.clone();
         wires.sort_by_key(|w| {
@@ -263,6 +286,8 @@ impl GraphEditor {
                     channels: n.channels,
                     label: n.label.clone(),
                     position: Some([n.pos.x.round(), n.pos.y.round()]),
+                    modulation: n.modulation.clone(),
+                    exposed: n.exposed.as_ref().map(|e| e.iter().cloned().collect()),
                 })
                 .collect(),
             connections: wires
@@ -345,13 +370,14 @@ impl GraphEditor {
         ))
     }
 
-    /// Where a pin was last drawn, in screen space.
-    pub fn pin_screen_pos(&self, key: NodeKey, input: bool, index: usize) -> Option<Pos2> {
+    /// Where a pin was last drawn, in screen space. For inputs, `port` is the input's index, or
+    /// a parameter's port ([`param_port`]).
+    pub fn pin_screen_pos(&self, key: NodeKey, input: bool, port: usize) -> Option<Pos2> {
         let g = self.last_geometry.iter().find(|g| g.key == key)?;
         let p = if input {
-            g.inputs.get(index)?.0
+            g.inputs.iter().find(|pin| pin.port == port)?.pos
         } else {
-            g.outputs.get(index)?.0
+            g.outputs.get(port)?.0
         };
         Some(canvas::graph_to_screen(self.view, self.last_canvas, p))
     }
@@ -379,6 +405,8 @@ impl GraphEditor {
             interpolation: Interpolation::Hold,
             channels: Channels::Together,
             pos,
+            modulation: BTreeMap::new(),
+            exposed: None,
         });
         Some(key)
     }
@@ -397,7 +425,17 @@ impl GraphEditor {
         Some(self.wires.remove(index))
     }
 
+    /// Removes nodes and their wires. Nodes linked to the project are kept.
     pub fn remove_nodes(&mut self, keys: &BTreeSet<NodeKey>) {
+        let keys: BTreeSet<NodeKey> = keys
+            .iter()
+            .copied()
+            .filter(|&k| !self.is_linked(k))
+            .collect();
+        self.remove_nodes_unchecked(&keys);
+    }
+
+    fn remove_nodes_unchecked(&mut self, keys: &BTreeSet<NodeKey>) {
         self.nodes.retain(|n| !keys.contains(&n.key));
         self.wires
             .retain(|w| !keys.contains(&w.from.0) && !keys.contains(&w.to.0));
@@ -420,6 +458,7 @@ impl GraphEditor {
         let mut graph = self.to_desc();
         let ids: BTreeSet<String> = keys
             .iter()
+            .filter(|&&k| !self.is_linked(k))
             .filter_map(|&k| self.node(k).map(|n| n.id.clone()))
             .collect();
         let node_of = |endpoint: &str| endpoint.split('.').next().unwrap_or("").to_owned();
@@ -437,6 +476,14 @@ impl GraphEditor {
         let positions = auto_layout(fragment);
         let mut keys = HashMap::new();
         for (i, desc) in fragment.nodes.iter().enumerate() {
+            // The project's inputs and output come from the project, not the clipboard.
+            let addable = self
+                .registry
+                .get(&desc.kind)
+                .is_some_and(|k| Self::user_addable(k.spec.category));
+            if !addable {
+                continue;
+            }
             let pos = desc.position.map_or(positions[i], |[x, y]| pos2(x, y)) + offset;
             let Some(key) = self.add_node(&desc.kind, pos) else {
                 continue;
@@ -446,6 +493,8 @@ impl GraphEditor {
             node.interpolation = desc.interpolation;
             node.channels = desc.channels;
             node.label = desc.label.clone();
+            node.modulation = desc.modulation.clone();
+            node.exposed = desc.exposed.as_ref().map(|e| e.iter().cloned().collect());
             keys.insert(desc.id.as_str(), key);
         }
         for c in &fragment.connections {
@@ -559,6 +608,7 @@ pub fn without_layout(graph: &GraphDesc) -> GraphDesc {
     for node in &mut graph.nodes {
         node.position = None;
         node.label = None;
+        node.exposed = None;
     }
     graph.nodes.sort_by(|a, b| a.id.cmp(&b.id));
     graph

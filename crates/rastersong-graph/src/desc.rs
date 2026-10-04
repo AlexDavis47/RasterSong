@@ -37,6 +37,45 @@ pub struct NodeDesc {
     /// Where the node sits in the editor. Has no effect on rendering.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position: Option<[f32; 2]>,
+    /// How signals connected to parameters (`"node.@param"`) move them, by parameter name.
+    /// A connected parameter with no entry uses its default amount, bipolar.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub modulation: BTreeMap<String, Modulation>,
+    /// Parameters whose modulation pins the editor shows, when they differ from the node type's
+    /// defaults. Has no effect on rendering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exposed: Option<Vec<String>>,
+}
+
+/// How a signal connected to a parameter moves it: `base + amount × signal` (bipolar) or
+/// `base + amount × |signal|` (unipolar), clamped to the parameter's limits.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Modulation {
+    pub amount: f64,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub mode: ModMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModMode {
+    /// The signal moves the value both ways around its base.
+    #[default]
+    Bipolar,
+    /// The signal's magnitude moves the value one way: up for a positive amount, down for a
+    /// negative one.
+    Unipolar,
+}
+
+impl ModMode {
+    /// What a signal sample contributes, before scaling by the amount.
+    pub fn shape(self, s: f32) -> f32 {
+        match self {
+            Self::Bipolar => s,
+            Self::Unipolar => s.abs(),
+        }
+    }
 }
 
 /// A connection from an output port to an input port, written `"node.port"`. The port can be left
@@ -90,6 +129,8 @@ impl GraphDesc {
                 desc.version
             )));
         }
+        let mut desc = desc;
+        desc.upgrade();
         Ok(desc)
     }
 

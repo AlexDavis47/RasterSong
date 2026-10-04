@@ -3,10 +3,12 @@
 use std::collections::BTreeMap;
 
 use eframe::egui::{self, RichText, Ui};
-use rastersong_engine::{Channels, Interpolation, ParamKind, ParamSpec, ParamValue};
+use rastersong_engine::{
+    Channels, Interpolation, ModMode, Modulation, ParamKind, ParamLevel, ParamSpec, ParamValue,
+};
 
-use super::GraphEditor;
-use super::param_field::{NumberRange, param_field};
+use super::param_field::{Modulated, NumberRange, param_field};
+use super::{GraphEditor, param_port};
 use crate::theme::Theme;
 
 /// What the inspector needs from outside the editor.
@@ -14,6 +16,8 @@ use crate::theme::Theme;
 pub struct InspectorContext<'a> {
     /// Names of the project's audio tracks, offered by audio inputs.
     pub tracks: &'a [String],
+    /// Modulated parameters' values at the playhead, for their ghost handles.
+    pub params: &'a [ParamLevel],
 }
 
 impl GraphEditor {
@@ -29,6 +33,22 @@ impl GraphEditor {
             .node(key)
             .and_then(|n| self.registry.get(&n.kind))
             .cloned();
+        let linked = self.is_linked(key);
+        // Per parameter: whether its pin shows, and the colour of the wire modulating it, if any.
+        let theme = Theme::of(ui.ctx());
+        let pins: Vec<(bool, Option<egui::Color32>)> = {
+            let node = self.node(key).unwrap();
+            let count = kind.as_ref().map_or(0, |k| k.spec.params.len());
+            (0..count)
+                .map(|i| {
+                    let wire = self.wires.iter().find(|w| w.to == (key, param_port(i)));
+                    let color = wire.map(|w| self.output_color(w.from.0, w.from.1, theme).solid());
+                    (self.param_exposed(node, i), color)
+                })
+                .collect()
+        };
+        let mut toggled: Option<(usize, bool)> = None;
+        let mut disconnect: Option<usize> = None;
         let node = self.nodes.iter_mut().find(|n| n.key == key).unwrap();
         let Some(kind) = kind else {
             ui.colored_label(
@@ -102,32 +122,113 @@ impl GraphEditor {
 
         if !kind.spec.params.is_empty() {
             section(ui, "Parameters");
-            // Sized from the panel once, before the grid: sizing from the grid's own cells feeds
-            // back through the column widths and makes sliders change size while dragged.
-            let track_width = (ui.available_width() - SLIDER_ROOM).clamp(60.0, 200.0);
-            egui::Grid::new("params")
-                .num_columns(3)
-                .spacing([10.0, 8.0])
-                .min_col_width(0.0)
-                .show(ui, |ui| {
-                    for spec in kind.spec.params {
-                        let tracks = (node.kind == "audio_input" && spec.name == "source")
-                            .then_some(ctx.tracks);
-                        param_row(ui, spec, &mut node.params, tracks, track_width);
-                        ui.end_row();
+            // Sized from the panel once: sizing from the row's own contents would feed back
+            // through the layout and make sliders change size while dragged.
+            let track_width = (ui.available_width() - CONTROL_ROOM).max(MIN_TRACK);
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
+                for (index, spec) in kind.spec.params.iter().enumerate() {
+                    // A linked input's source is the project's: shown, not edited.
+                    if linked && spec.name == "source" {
+                        ui.horizontal(|ui| {
+                            ui.add_space(EXPOSE_WIDTH + ui.spacing().item_spacing.x);
+                            ui.label(spec.label).on_hover_text(spec.help);
+                        });
+                        let source = super::linked::track_of(node).to_owned();
+                        let shown = if node.kind == super::linked::VIDEO_INPUT {
+                            "The project's video".to_owned()
+                        } else {
+                            format!("Track \"{source}\"")
+                        };
+                        ui.horizontal(|ui| {
+                            ui.add_space(EXPOSE_WIDTH + ui.spacing().item_spacing.x);
+                            ui.weak(shown).on_hover_text(
+                                "Linked to the project: rename or remove it in the timeline",
+                            );
+                        });
+                        ui.add_space(PARAM_GAP);
+                        continue;
                     }
-                });
+                    let tracks =
+                        (node.kind == "audio_input" && spec.name == "source").then_some(ctx.tracks);
+                    let (exposed, wire) = pins[index];
+                    let mut modulation = wire.map(|color| {
+                        let current = node.modulation.get(spec.name).copied();
+                        let base = spec.number_value(&node.params).unwrap_or(0.0);
+                        let value = current.unwrap_or(Modulation {
+                            amount: spec.default_modulation_amount(base),
+                            mode: ModMode::Bipolar,
+                        });
+                        (value, current, color)
+                    });
+                    let mut expose = spec.modulatable.then_some(exposed);
+                    let live = ctx
+                        .params
+                        .iter()
+                        .find(|p| *p.node == node.id && p.index == index)
+                        .map(|p| f64::from(p.value));
+                    let disconnected = param_row(ParamRow {
+                        ui,
+                        spec,
+                        params: &mut node.params,
+                        tracks,
+                        track_width,
+                        expose: expose.as_mut(),
+                        modulation: modulation.as_mut().map(|(m, _, c)| (m, *c)),
+                        live,
+                    });
+                    ui.add_space(PARAM_GAP);
+                    if disconnected {
+                        disconnect = Some(index);
+                    }
+                    if expose.is_some_and(|e| e != exposed) {
+                        toggled = Some((index, !exposed));
+                    }
+                    if let Some((value, current, _)) = modulation
+                        && Some(value) != current
+                    {
+                        node.modulation.insert(spec.name.to_owned(), value);
+                    }
+                }
+            });
         } else if !shared_settings {
             ui.add_space(8.0);
             ui.weak("No settings.");
         }
+        if let Some((index, exposed)) = toggled {
+            self.set_param_exposed(key, index, exposed);
+        }
+        if let Some(index) = disconnect {
+            self.disconnect_input((key, param_port(index)));
+        }
     }
 }
 
-/// Width the label, value box and reset button need beside a parameter slider.
-const SLIDER_ROOM: f32 = 170.0;
+/// What one parameter row shows and edits.
+struct ParamRow<'a, 'u> {
+    ui: &'u mut Ui,
+    spec: &'a ParamSpec,
+    params: &'a mut BTreeMap<String, ParamValue>,
+    /// For an audio input's track: the project's tracks.
+    tracks: Option<&'a [String]>,
+    track_width: f32,
+    /// Whether the parameter's pin shows on the node, for parameters that can be modulated.
+    expose: Option<&'a mut bool>,
+    /// The modulation of a connected parameter, and the wire's colour.
+    modulation: Option<(&'a mut Modulation, egui::Color32)>,
+    /// A modulated parameter's value at the playhead.
+    live: Option<f64>,
+}
+
+/// Width a parameter's control line needs besides the slider: the indent under the expose toggle,
+/// the amount knob, the value box and the spacing between them.
+const CONTROL_ROOM: f32 = EXPOSE_WIDTH + super::param_field::KNOB_WIDTH + VALUE_WIDTH + 36.0;
+/// The narrowest a slider gets in a narrow inspector.
+const MIN_TRACK: f32 = 60.0;
 /// Minimum width of a slider's value box, so it doesn't resize as the digits change.
-const VALUE_WIDTH: f32 = 64.0;
+const VALUE_WIDTH: f32 = 58.0;
+/// Space between parameters.
+const PARAM_GAP: f32 = 6.0;
 
 fn section(ui: &mut Ui, title: &str) {
     ui.add_space(12.0);
@@ -148,21 +249,64 @@ fn choice<T: PartialEq + Copy>(ui: &mut Ui, id: &str, value: &mut T, options: &[
         });
 }
 
-/// One parameter: label, editor, reset button. Values equal to the default are not stored, which
-/// keeps graph files short.
-fn param_row(
-    ui: &mut Ui,
-    spec: &ParamSpec,
-    params: &mut BTreeMap<String, ParamValue>,
-    tracks: Option<&[String]>,
-    track_width: f32,
-) {
-    ui.label(spec.label).on_hover_text(spec.help);
+/// One parameter, on two lines: the expose toggle, label and reset button; then its editor (with
+/// the modulation of a connected parameter). Values equal to the default are not stored, which
+/// keeps graph files short. Returns true if the user asked to disconnect the modulating signal.
+fn param_row(row: ParamRow) -> bool {
+    let ParamRow {
+        ui,
+        spec,
+        params,
+        tracks,
+        track_width,
+        expose,
+        mut modulation,
+        live,
+    } = row;
+    let mut disconnect = false;
     let default = spec.default_value();
     let mut value = params
         .get(spec.name)
         .cloned()
         .unwrap_or_else(|| default.clone());
+    let mut reset = false;
+    ui.horizontal(|ui| {
+        match expose {
+            Some(exposed) => {
+                let theme = Theme::of(ui.ctx());
+                let color = if *exposed {
+                    theme.accent
+                } else {
+                    ui.visuals().weak_text_color()
+                };
+                let hover = if *exposed {
+                    "Hide this parameter's modulation pin (disconnects it)"
+                } else {
+                    "Show a pin on the node to modulate this parameter with a signal"
+                };
+                if diamond_toggle(ui, *exposed, color)
+                    .on_hover_text(hover)
+                    .clicked()
+                {
+                    *exposed = !*exposed;
+                }
+            }
+            None => {
+                ui.add_space(EXPOSE_WIDTH);
+            }
+        }
+        ui.label(spec.label).on_hover_text(spec.help);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            reset = ui
+                .add_enabled(
+                    value != default,
+                    egui::Button::new("↺").small().frame(false),
+                )
+                .on_hover_text("Reset to default")
+                .clicked();
+        });
+    });
+    let indent = EXPOSE_WIDTH + ui.spacing().item_spacing.x;
     let suffix = if spec.unit.is_empty() {
         String::new()
     } else {
@@ -184,19 +328,31 @@ fn param_row(
                 limits: (limit_min, limit_max),
             };
             ui.horizontal(|ui| {
+                ui.add_space(indent);
                 ui.spacing_mut().interact_size.x = VALUE_WIDTH;
-                param_field(ui, spec.name, n, range, &suffix, track_width);
+                let modulated = modulation.as_mut().map(|(m, color)| Modulated {
+                    spec,
+                    modulation: m,
+                    color: *color,
+                    live,
+                });
+                let response =
+                    param_field(ui, spec.name, n, range, &suffix, track_width, modulated);
+                disconnect = response.disconnect;
             });
         }
         (ParamKind::Choice { options, .. }, ParamValue::Text(s)) => {
-            egui::ComboBox::from_id_salt(spec.name)
-                .selected_text(s.as_str())
-                .width(150.0)
-                .show_ui(ui, |ui| {
-                    for &option in options {
-                        ui.selectable_value(s, option.to_owned(), option);
-                    }
-                });
+            ui.horizontal(|ui| {
+                ui.add_space(indent);
+                egui::ComboBox::from_id_salt(spec.name)
+                    .selected_text(s.as_str())
+                    .width(150.0)
+                    .show_ui(ui, |ui| {
+                        for &option in options {
+                            ui.selectable_value(s, option.to_owned(), option);
+                        }
+                    });
+            });
         }
         (ParamKind::Text { .. }, ParamValue::Text(s)) => match tracks {
             // Audio inputs pick one of the project's tracks.
@@ -232,12 +388,7 @@ fn param_row(
             ui.colored_label(Theme::of(ui.ctx()).error, format!("{value:?}"));
         }
     }
-    let is_default = value == default;
-    if ui
-        .add_enabled(!is_default, egui::Button::new("↺").small().frame(false))
-        .on_hover_text("Reset to default")
-        .clicked()
-    {
+    if reset {
         value = default.clone();
     }
     if value == default {
@@ -245,4 +396,33 @@ fn param_row(
     } else {
         params.insert(spec.name.to_owned(), value);
     }
+    disconnect
+}
+
+/// Room for the expose toggle before a parameter's label.
+const EXPOSE_WIDTH: f32 = 14.0;
+
+/// The expose toggle: a diamond like the parameter pins, filled when the pin is shown.
+fn diamond_toggle(ui: &mut Ui, on: bool, color: egui::Color32) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(EXPOSE_WIDTH, 14.0), egui::Sense::click());
+    let c = rect.center();
+    let r = if response.hovered() { 5.5 } else { 4.5 };
+    let points = vec![
+        c + egui::vec2(0.0, -r),
+        c + egui::vec2(r, 0.0),
+        c + egui::vec2(0.0, r),
+        c + egui::vec2(-r, 0.0),
+    ];
+    let fill = if on {
+        color
+    } else {
+        egui::Color32::TRANSPARENT
+    };
+    ui.painter().add(egui::Shape::convex_polygon(
+        points,
+        fill,
+        egui::Stroke::new(1.2, color),
+    ));
+    response
 }

@@ -20,22 +20,12 @@ const NODES: &[(&str, &str, &str)] = &[
     ("am", "am", r#"{ "depth": 0.8 }"#),
     ("delay", "delay", r#"{ "time": 1.5 }"#),
     (
-        "delay (modulated)",
-        "delay",
-        r#"{ "time": 1.5, "depth": 0.5 }"#,
-    ),
-    (
         "delay (feedback)",
         "delay",
         r#"{ "time": 1.5, "feedback": 0.5, "mix": 0.5 }"#,
     ),
-    ("bitcrush", "bitcrush", r#"{ "bits": 3, "depth": 2 }"#),
+    ("bitcrush", "bitcrush", r#"{ "bits": 3 }"#),
     ("lowpass", "lowpass", r#"{ "cutoff": 40 }"#),
-    (
-        "lowpass (modulated)",
-        "lowpass",
-        r#"{ "cutoff": 40, "depth": 2 }"#,
-    ),
     ("three_band", "three_band", "{}"),
     ("compressor", "compressor", "{}"),
     ("gate", "gate", "{}"),
@@ -69,6 +59,7 @@ fn nodes(c: &mut Criterion) {
             inputs: &vec![layout; inputs],
             outputs: &vec![layout; outputs],
             connected: &vec![true; inputs],
+            modulated: &[],
         });
         let signals = [
             Signal::from_data(layout, ramp(layout.len(), 1.0)),
@@ -80,6 +71,7 @@ fn nodes(c: &mut Criterion) {
             frame: 0,
             frame_rate: FPS,
             sources: &NoSources,
+            params: &[],
         };
         group.bench_function(name, |b| {
             b.iter(|| node.process(&ctx, black_box(&refs), &mut out));

@@ -55,6 +55,7 @@ impl Distortion {
             "Gain before shaping; more drive, more distortion",
         )
         .unit("dB")
+        .exposed()
         .limits(-96.0, 96.0),
         ParamSpec::number(
             "bias",
@@ -101,10 +102,14 @@ impl Node for Distortion {
         INPUTS
     }
 
-    fn process(&mut self, _ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
-        for (out, &x) in outputs[0].data.iter_mut().zip(&inputs[0].data) {
-            let wet = self.shape.apply(self.drive * x + self.bias);
-            *out = x + (wet - x) * self.mix;
+    fn process(&mut self, ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
+        let (drive, bias, mix) = (ctx.param(1), ctx.param(2), ctx.param(3));
+        for (i, (out, &x)) in outputs[0].data.iter_mut().zip(&inputs[0].data).enumerate() {
+            let drive = drive.map_or(self.drive, |d| db_to_gain(f64::from(d[i])) as f32);
+            let bias = bias.map_or(self.bias, |b| b[i]);
+            let mix = mix.map_or(self.mix, |m| m[i]);
+            let wet = self.shape.apply(drive * x + bias);
+            *out = x + (wet - x) * mix;
         }
     }
 }

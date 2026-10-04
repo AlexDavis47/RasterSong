@@ -389,3 +389,145 @@ fn new_project_asks_before_dropping_changes() {
         "a new project starts a new history"
     );
 }
+
+use rastersong_gui::timeline::{HEADER_WIDTH, LANE_HEIGHT};
+
+/// Screen x of `seconds` in the timeline's lanes, and the vertical middle of lane `row` (0 is
+/// the video).
+fn timeline_point(harness: &Harness<'_, App>, seconds: f64, row: usize) -> Pos2 {
+    let area = harness.state().timeline_area();
+    let lanes_left = area.left() + HEADER_WIDTH + 6.0;
+    let x = harness.state().timeline_view().x(lanes_left, seconds);
+    pos2(x, area.top() + 22.0 + (row as f32 + 0.5) * LANE_HEIGHT)
+}
+
+#[test]
+fn the_wheel_zooms_the_timeline_and_f_fits_it_again() {
+    let mut harness = loaded();
+    let fitted = harness.state().timeline_view().px_per_sec;
+    assert!(fitted > 0.0);
+    let anchor = timeline_point(&harness, 1.0, 0);
+    harness.event(Event::PointerMoved(anchor));
+    harness.event(Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: vec2(0.0, 200.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: Modifiers::NONE,
+    });
+    harness.run_steps(20);
+    let view = harness.state().timeline_view();
+    assert!(view.px_per_sec > fitted * 1.2, "zoomed in");
+    let moved = timeline_point(&harness, 1.0, 0).x - anchor.x;
+    assert!(
+        moved.abs() < 1.5,
+        "1 s stays under the pointer (moved {moved})"
+    );
+
+    shortcut(&mut harness, Modifiers::NONE, egui::Key::F);
+    assert_eq!(harness.state().timeline_view().px_per_sec, fitted);
+}
+
+#[test]
+fn clicking_the_ruler_seeks() {
+    let mut harness = loaded();
+    let mut spot = timeline_point(&harness, 1.0, 0);
+    spot.y = harness.state().timeline_area().top() + 11.0;
+    click(&mut harness, spot, PointerButton::Primary);
+    assert_eq!(harness.state().clock().frame(), 30);
+}
+
+#[test]
+fn dragging_an_audio_block_moves_its_offset() {
+    let mut harness = loaded();
+    let from = timeline_point(&harness, 0.5, 1);
+    let to = timeline_point(&harness, 1.0, 1);
+    drag(&mut harness, from, to);
+    let offset = harness.state().project().audio_tracks[0].offset;
+    assert!((offset - 0.5).abs() < 0.02, "offset {offset}");
+    shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
+    assert_eq!(harness.state().project().audio_tracks[0].offset, 0.0);
+}
+
+#[test]
+fn thumbnails_of_the_source_video_arrive() {
+    let mut harness = loaded();
+    step_until(&mut harness, "thumbnails", |app| app.thumbnail_count() > 0);
+}
+
+#[test]
+fn adding_tracks_names_them_after_their_files_and_links_a_node_to_each() {
+    let mut harness = loaded();
+    let nodes = harness.state().editor().node_count();
+    harness
+        .state_mut()
+        .add_audio_tracks([PathBuf::from("song"), PathBuf::from("song")]);
+    harness.run_steps(2);
+    let names: Vec<String> = harness
+        .state()
+        .project()
+        .audio_tracks
+        .iter()
+        .map(|t| t.name.clone())
+        .collect();
+    assert_eq!(names, ["audio", "song", "song_2"]);
+    assert_eq!(harness.state().editor().node_count(), nodes + 2);
+
+    // The linked nodes can't be deleted from the graph...
+    let graph = harness.state().project().graph.clone();
+    let source = |n: &rastersong_engine::NodeDesc| {
+        n.params
+            .get("source")
+            .map(|v| format!("{v:?}"))
+            .unwrap_or_default()
+    };
+    let song = graph
+        .nodes
+        .iter()
+        .find(|n| source(n).contains("\"song\""))
+        .expect("a node reads track song");
+    select(&mut harness, &song.id.clone());
+    shortcut(&mut harness, Modifiers::NONE, egui::Key::Delete);
+    assert_eq!(harness.state().editor().node_count(), nodes + 2);
+    assert!(harness.state().editor().is_linked(key(&harness, &song.id)));
+}
+
+#[test]
+fn dragging_a_wire_onto_a_parameter_pin_modulates_it() {
+    let mut harness = loaded();
+    // Add a delay below the graph.
+    let canvas = harness.state().editor().canvas_rect();
+    click(
+        &mut harness,
+        pos2(canvas.center().x, canvas.bottom() - 120.0),
+        PointerButton::Secondary,
+    );
+    harness.event(Event::Text("delay".into()));
+    harness.run_steps(2);
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(3);
+    let delay = key(&harness, "delay");
+    let audio = key(&harness, "audio");
+
+    // Delay shows its time and feedback pins by default; wire the audio into time.
+    let from = harness
+        .state()
+        .editor()
+        .pin_screen_pos(audio, false, 0)
+        .unwrap();
+    let to = harness
+        .state()
+        .editor()
+        .pin_screen_pos(delay, true, rastersong_gui::editor::param_port(0))
+        .expect("the time pin is shown");
+    drag(&mut harness, from, to);
+    harness.run_steps(2);
+    let graph = &harness.state().project().graph;
+    assert!(
+        graph
+            .connections
+            .iter()
+            .any(|c| c.from == "audio.out" && c.to == "delay.@time"),
+        "{:?}",
+        graph.connections
+    );
+}

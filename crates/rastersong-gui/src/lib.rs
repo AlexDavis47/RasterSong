@@ -7,7 +7,7 @@ pub mod editor;
 pub mod history;
 pub mod settings;
 pub mod theme;
-mod timeline;
+pub mod timeline;
 
 pub use app::{App, STARTER_GRAPH};
 pub use audio_out::AudioOut;

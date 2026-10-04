@@ -22,6 +22,9 @@ pub struct Gate {
     attack: f64,
     release: f64,
     hold_samples: u64,
+    sample_rate: f64,
+    /// Hold plus the slowest attack or release modulation can reach, in ms, for warmup.
+    longest_ms: f64,
     sidechain: bool,
     /// Current gain, and samples left before the gate starts closing.
     gain: f64,
@@ -29,6 +32,21 @@ pub struct Gate {
 }
 
 impl Gate {
+    const THRESHOLD: usize = 0;
+    const ATTACK: usize = 1;
+    const HOLD: usize = 2;
+    const RELEASE: usize = 3;
+    const RANGE: usize = 4;
+
+    /// The gain of a closed gate at `range` dB.
+    fn closed_gain(range: f64) -> f64 {
+        if range <= SILENT_RANGE {
+            0.0
+        } else {
+            db_to_gain(range)
+        }
+    }
+
     pub const PARAMS: &[ParamSpec] = &[
         ParamSpec::number(
             "threshold",
@@ -39,6 +57,7 @@ impl Gate {
             "Level the signal must reach to open the gate",
         )
         .unit("dB")
+        .exposed()
         .limits(-200.0, 60.0),
         ParamSpec::number(
             "attack",
@@ -98,6 +117,8 @@ impl Gate {
             attack: 0.0,
             release: 0.0,
             hold_samples: 0,
+            sample_rate: 1.0,
+            longest_ms: 0.0,
             sidechain: false,
             gain: 0.0,
             hold_left: 0,
@@ -113,28 +134,41 @@ impl Node for Gate {
 
     fn prepare(&mut self, ctx: &PrepareContext) {
         self.threshold_gain = db_to_gain(self.threshold) as f32;
-        self.closed_gain = if self.range <= SILENT_RANGE {
-            0.0
-        } else {
-            db_to_gain(self.range)
-        };
+        self.closed_gain = Self::closed_gain(self.range);
+        self.sample_rate = ctx.sample_rate();
         self.attack = smoothing_coefficient(ms_to_samples(self.attack_ms, ctx));
         self.release = smoothing_coefficient(ms_to_samples(self.release_ms, ctx));
         self.hold_samples = ms_to_samples(self.hold_ms, ctx).round() as u64;
+        let slowest = ctx
+            .param_max(Self::ATTACK, self.attack_ms)
+            .max(ctx.param_max(Self::RELEASE, self.release_ms));
+        self.longest_ms = ctx.param_max(Self::HOLD, self.hold_ms) + 7.0 * slowest;
         self.sidechain = ctx.connected[1];
         self.reset();
     }
 
-    fn process(&mut self, _ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
+    fn process(&mut self, ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
         let input = &inputs[0].data;
         let detector = if self.sidechain {
             &inputs[1].data
         } else {
             input
         };
-        for ((out, &x), &d) in outputs[0].data.iter_mut().zip(input).zip(detector) {
-            let open = if d.abs() >= self.threshold_gain {
-                self.hold_left = self.hold_samples;
+        let samples = |ms: f32| f64::from(ms) / 1000.0 * self.sample_rate;
+        let (threshold, attack) = (ctx.param(Self::THRESHOLD), ctx.param(Self::ATTACK));
+        let (hold, release) = (ctx.param(Self::HOLD), ctx.param(Self::RELEASE));
+        let range = ctx.param(Self::RANGE);
+        for (i, ((out, &x), &d)) in outputs[0]
+            .data
+            .iter_mut()
+            .zip(input)
+            .zip(detector)
+            .enumerate()
+        {
+            let threshold =
+                threshold.map_or(self.threshold_gain, |t| db_to_gain(f64::from(t[i])) as f32);
+            let open = if d.abs() >= threshold {
+                self.hold_left = hold.map_or(self.hold_samples, |h| samples(h[i]).round() as u64);
                 true
             } else if self.hold_left > 0 {
                 self.hold_left -= 1;
@@ -142,11 +176,12 @@ impl Node for Gate {
             } else {
                 false
             };
-            let target = if open { 1.0 } else { self.closed_gain };
+            let closed = range.map_or(self.closed_gain, |r| Self::closed_gain(f64::from(r[i])));
+            let target = if open { 1.0 } else { closed };
             let c = if target > self.gain {
-                self.attack
+                attack.map_or(self.attack, |a| smoothing_coefficient(samples(a[i])))
             } else {
-                self.release
+                release.map_or(self.release, |r| smoothing_coefficient(samples(r[i])))
             };
             self.gain = target + c * (self.gain - target);
             *out = (f64::from(x) * self.gain) as f32;
@@ -159,8 +194,7 @@ impl Node for Gate {
     }
 
     fn warmup_frames(&self, ctx: &PrepareContext) -> u32 {
-        let slowest = self.attack_ms.max(self.release_ms);
-        settle_frames(ms_to_samples(self.hold_ms + 7.0 * slowest, ctx), ctx)
+        settle_frames(ms_to_samples(self.longest_ms, ctx), ctx)
     }
 }
 

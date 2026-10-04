@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use rastersong_graph::OutputLevel;
+use rastersong_graph::{OutputLevel, ParamLevel};
 
 use crate::PreviewScale;
 
@@ -23,6 +23,8 @@ pub struct Frame {
     pub rgb: Vec<u8>,
     /// The level of every node output while rendering this frame.
     pub levels: Arc<[OutputLevel]>,
+    /// The value of every modulated parameter while rendering this frame.
+    pub params: Arc<[ParamLevel]>,
 }
 
 impl std::fmt::Debug for Frame {
@@ -160,6 +162,7 @@ mod tests {
             height: 1,
             rgb: vec![index as u8; 3],
             levels: Arc::new([]),
+            params: Arc::new([]),
         }
     }
 

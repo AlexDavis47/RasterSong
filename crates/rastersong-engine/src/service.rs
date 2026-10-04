@@ -13,6 +13,7 @@ use rastersong_media::{AudioClip, AudioOptions, MediaBackend};
 
 use crate::cache::{CacheKey, Frame, FrameCache};
 use crate::sources::Modulator;
+use crate::waveform::Waveform;
 use crate::{AudioTrack, EngineError, OutputSize, RenderInfo, Renderer};
 
 /// Preview resolution. Processing cost scales with pixel count, so a quarter-scale preview is
@@ -93,6 +94,8 @@ pub struct AudioTrackSpec {
 pub struct LoadedTrack {
     pub name: String,
     pub clip: Arc<AudioClip>,
+    /// Peaks for drawing the track.
+    pub waveform: Arc<Waveform>,
 }
 
 /// Why the project can't be rendered as it stands.
@@ -334,7 +337,14 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// Decoded audio by file, so editing the graph or an offset doesn't decode again.
-type AudioCache = HashMap<PathBuf, (Arc<AudioClip>, Arc<Modulator>)>;
+type AudioCache = HashMap<PathBuf, DecodedAudio>;
+
+#[derive(Clone)]
+struct DecodedAudio {
+    clip: Arc<AudioClip>,
+    modulator: Arc<Modulator>,
+    waveform: Arc<Waveform>,
+}
 
 struct Worker {
     shared: Arc<Shared>,
@@ -510,7 +520,7 @@ impl Worker {
         let mut tracks = Vec::with_capacity(specs.len());
         let mut loaded = Vec::with_capacity(specs.len());
         for spec in specs {
-            let (clip, modulator) = match self.audio.get(&spec.path) {
+            let decoded = match self.audio.get(&spec.path) {
                 Some(cached) => cached.clone(),
                 None => {
                     let clip = self
@@ -518,20 +528,24 @@ impl Worker {
                         .backend
                         .load_audio(&spec.path, AudioOptions::default())
                         .map_err(|e| Failure::new(format!("audio track `{}`: {e}", spec.name)))?;
-                    let modulator = Arc::new(Modulator::new(&clip));
-                    let entry = (Arc::new(clip), modulator);
+                    let entry = DecodedAudio {
+                        modulator: Arc::new(Modulator::new(&clip)),
+                        waveform: Arc::new(Waveform::new(&clip)),
+                        clip: Arc::new(clip),
+                    };
                     self.audio.insert(spec.path.clone(), entry.clone());
                     entry
                 }
             };
             tracks.push(AudioTrack {
                 name: spec.name.clone(),
-                modulator,
+                modulator: decoded.modulator,
                 offset: spec.offset,
             });
             loaded.push(LoadedTrack {
                 name: spec.name.clone(),
-                clip,
+                clip: decoded.clip,
+                waveform: decoded.waveform,
             });
         }
         Ok((tracks, loaded))
@@ -581,6 +595,7 @@ impl Worker {
                     height: info.height,
                     rgb: rgb.to_vec(),
                     levels: built.renderer.levels().into(),
+                    params: built.renderer.param_levels().into(),
                 };
                 let playhead = self.shared.playhead.load(Ordering::SeqCst);
                 let inserted = lock(&self.shared.cache).insert(built.key, frame, playhead);

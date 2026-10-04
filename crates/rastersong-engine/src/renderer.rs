@@ -172,6 +172,11 @@ impl Renderer {
         self.graph.levels()
     }
 
+    /// The value of every modulated parameter in the last rendered frame.
+    pub fn param_levels(&self) -> Vec<rastersong_graph::ParamLevel> {
+        self.graph.param_levels()
+    }
+
     pub fn info(&self) -> &RenderInfo {
         &self.info
     }

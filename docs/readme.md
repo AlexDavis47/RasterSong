@@ -251,6 +251,22 @@ parameters through those specs, so defaults and ranges live in one place, and th
 panels from the same specs. A number has a usual range, which the slider shows, and hard limits, the values the
 node can actually work with; unless a spec widens them, the limits are the usual range.
 
+**Parameter modulation.** Any number parameter a spec doesn't mark `fixed` can be driven by a signal, connected
+like an input as `"node.@param"`. The parameter's value is the base, and the signal moves it per sample:
+`base + amount × signal` (bipolar) or `base + amount × |signal|` (unipolar, one way: a negative amount turns it
+down), clamped to the parameter's limits. Parameters on a logarithmic scale (frequencies such as Low Pass's
+cutoff) are marked `octaves` and modulate in octaves instead: `base × 2^(amount × signal)`, so a sweep moves
+evenly by ear and eye. The compiler resamples the signal to the main input's length (with
+the node's interpolation and latency compensation, like any secondary input) and hands the node the values
+through `ctx.param(i)`; unmodulated parameters stay constants the node reads from its own fields, so they cost
+nothing. `PrepareContext::modulation(i)` gives the range a modulated parameter can move over, for sizing
+buffers and warmup. Specs also say which parameters show a pin on new nodes (`exposed`).
+
+Nodes only have their own inputs for signals that are part of what they do: Amplitude Modulation's modulator
+and the compressor's and gate's sidechain. Delay, Bit Crush and Low Pass used to have a `modulation` input and a
+`depth` parameter; parameter modulation replaced them, and graphs that still use them are upgraded when loaded
+(`GraphDesc::upgrade`: the wire moves to `@time`, `@bits` or `@cutoff`, and the depth becomes its amount).
+
 The graph compiler validates the graph (unknown nodes, ports or parameters, missing inputs, cycles, exactly one
 output, layout mismatches), drops nodes that don't feed the output, orders the rest, and computes latency
 compensation. Each frame, it runs the nodes in that order with no allocation.
@@ -266,19 +282,24 @@ or its main input. Unknown parameters are rejected, which catches typos.
   "nodes": [
     { "id": "video", "type": "video_input" },
     { "id": "audio", "type": "audio_input" },
-    { "id": "wave", "type": "delay", "params": { "time": 1, "depth": 1.5 }, "interpolation": "linear" },
+    { "id": "wave", "type": "delay", "params": { "time": 1 }, "modulation": { "time": { "amount": 1.5 } },
+      "interpolation": "linear" },
     { "id": "out", "type": "output" }
   ],
   "connections": [
     { "from": "video", "to": "wave" },
-    { "from": "audio", "to": "wave.modulation" },
+    { "from": "audio", "to": "wave.@time" },
     { "from": "wave", "to": "out" }
   ]
 }
 ```
 
-Nodes may also carry `"position": [x, y]` (their place in the editor) and `"label"` (a name shown instead of
-the node type's). Neither affects rendering.
+Nodes may also carry `"position": [x, y]` (their place in the editor), `"label"` (a name shown instead of
+the node type's) and `"exposed"` (which parameter pins show, when that differs from the type's defaults).
+None of these affect rendering. A signal connected to a parameter (`{ "from": "audio", "to": "wave.@time" }`)
+modulates it, with `"modulation": { "time": { "amount": 0.5, "mode": "unipolar" } }` on the node saying how
+far; without an entry, the amount is half the base value (or a tenth of the usual range if the base is 0),
+bipolar.
 
 Working examples live in [`examples/graphs/`](../examples/graphs): `am_bands` (the [Basic Workflow](#basic-workflow)),
 `bass_wave`, `bugged_mosh` and `packed_crush`.
@@ -298,9 +319,9 @@ Working examples live in [`examples/graphs/`](../examples/graphs): `am_bands` (t
 | `to_video` | `in` (`-1..1`) → `out` (`0..1`) | `mapping` (`accurate` or `bugged`) |
 | `three_band` | `in` → `low`, `mid`, `high` | `low_hz` (250), `high_hz` (4000) |
 | `am` | `carrier`, `modulator` → `out` | `depth` (1): `carrier × (1 + depth × modulator)` |
-| `delay` | `in`, `modulation`? → `out` | `time` (1), `depth` (0), `unit` (`rows` or `frames`), `feedback` (0), `mix` (1) |
-| `bitcrush` | `in`, `modulation`? → `out` | `bits` (4), `depth` (0, bits per unit of modulation) |
-| `lowpass` | `in`, `modulation`? → `out` | `cutoff` (40 cycles per row), `depth` (0, octaves per unit of modulation) |
+| `delay` | `in` → `out` | `time` (1), `unit` (`rows` or `frames`), `feedback` (0), `mix` (1) |
+| `bitcrush` | `in` → `out` | `bits` (4) |
+| `lowpass` | `in` → `out` | `cutoff` (40 cycles per row; modulates in octaves) |
 | `compressor` | `in`, `sidechain`? → `out` | `threshold` (-18 dB), `ratio` (4), `attack` (10 ms), `release` (100 ms), `knee` (6 dB), `makeup` (0 dB) |
 | `gate` | `in`, `sidechain`? → `out` | `threshold` (-40 dB), `attack` (1 ms), `hold` (50 ms), `release` (100 ms), `range` (-80 dB, silence) |
 | `distortion` | `in` → `out` | `shape` (`soft`, `hard`, `fold` or `wrap`), `drive` (12 dB), `bias` (0), `mix` (1) |
@@ -446,6 +467,14 @@ rendered and cached by the engine on its render thread.
     drag to move the selection.
   - Drag from a pin to connect. An input takes one connection; a new one replaces the old. Dragging a connected
     input picks its wire up to move it. Dropping a wire on empty space opens the node search, connected.
+  - Exposed parameters show as diamond pins under a node's inputs; a wire into one modulates that parameter.
+    Each node type exposes its main parameters by default (e.g. Delay's time and feedback); the inspector's
+    diamond toggles show or hide the others. Hiding a connected parameter disconnects it.
+  - The project's inputs and output are **linked nodes**: opening a video adds its Video node, adding an audio
+    track adds an Audio node named after the track, and removing the track removes it. They're titled after
+    what they read (the video's file name, `♪ track`), can't be deleted, copied or added from the search,
+    and the graph always has its Output. An Audio node whose track doesn't exist (as in the starter graph
+    before any audio is added) is taken over by the first track added.
   - Right-click empty space to add a node there: the search box has focus immediately; type, use ↑/↓, and press
     Enter (or click). Right-click a node to duplicate or delete it; Delete removes the selection, Ctrl+D
     duplicates it.
@@ -463,11 +492,26 @@ rendered and cached by the engine on its render thread.
 - **Inspector:** the node's name (shown on the node instead of its type), its shared settings (Resampling,
   Channels) and its parameters, with units, sliders (logarithmic for wide ranges like cutoff) and
   reset-to-default buttons. Each slider covers the parameter's usual range; typing (or dragging the value box)
-  past it, up to the node's limits, widens the slider to match. Audio inputs pick their track from a list. Values left at their default aren't
-  written to files.
-- **Timeline:** a ruler, the video track with rendered frames marked in green, and any number of **audio tracks**,
-  each with a name (which audio inputs select it by; renaming a track updates them), offset, mute and remove. Click
-  or drag to seek; drag a track's block to move it against the video.
+  past it, up to the node's limits, widens the slider to match. Each parameter takes two lines: its pin toggle,
+  name and reset button, then the slider and value box. Values left at their default aren't written to files.
+  A connected (modulated) parameter shows, in the wire's colour:
+  - the range the signal moves it over, outlined on the slider with a tick at each end;
+  - a see-through ghost handle at its live value at the playhead (the middle of the frame, from the last
+    rendered frame), while the solid handle stays the base value and can still be dragged;
+  - a small knob between the slider and the value box for the amount: drag it (Shift for fine), double-click
+    to reset, right-click for the modulator's settings: both ways or one way, the amount as a number, and
+    disconnecting the signal.
+- **Timeline:** a ruler, the video track and any number of **audio tracks**, with Reaper-style track headers on
+  the left. The video header shows the file, size and frame rate; each audio header has the track's name (which
+  audio inputs select it by; renaming a track updates them), mute, remove and its **offset**. **+ Audio track**
+  (or File → Add Audio Tracks…) adds several files at once, each named after its file. The video track
+  shows thumbnails of the source video, decoded by a separate small decoder so they never slow rendering and
+  survive graph edits, with rendered frames marked in green along its bottom. Audio tracks show their waveform.
+  - The scroll wheel zooms time around the pointer, from half the whole video down to a few frames (over the
+    headers it scrolls the tracks); middle- or right-drag pans in both directions; F or the Fit button shows
+    the whole video.
+  - Tick lines run behind the lanes, labelled on the ruler, down to single frames when zoomed in.
+  - Click or drag on the ruler or empty lane space to seek; drag a track's block to move it against the video.
 - **Preview audio** mixes the unmuted tracks and follows the playhead. When playback slows because rendering can't
   keep up, the audio is time-stretched (WSOLA: slowed without lowering the pitch) to stay with the picture, and
   fades out when playback all but stops. Volume and mute only affect playback, never rendering.
@@ -649,6 +693,7 @@ Each phase ends with its tests passing in CI.
 - ~~Undo/redo in the editor; asking before closing with unsaved changes~~: done.
 
 **Later**
+- Modulator settings beyond direction and amount: custom response curves, and minimum and maximum values
 - Multi-clip timeline
 - More nodes and interpolation modes
 - Fuzzing
@@ -662,7 +707,7 @@ Collected from hands-on testing of the Phase 4 GUI (October 2026). Items already
 - [x] Undo/redo (graph edits, timeline edits, parameter changes)
 - [x] Copy and paste (nodes with their internal connections)
 - [x] New nodes: compressor, gate, distortion
-- [ ] Node parameter inputs (modulation, below)
+- [x] Node parameter inputs (modulation, below)
 - [ ] Automation clips (below)
 
 ### Bugs
@@ -689,16 +734,16 @@ Collected from hands-on testing of the Phase 4 GUI (October 2026). Items already
 
 ### Timeline
 
-- [ ] Reaper-style track headers on the left of each track, with the audio offset inside the audio track's header
-- [ ] Middle or right-drag grab-scrolls horizontally and vertically
-- [ ] Scroll wheel zooms, same controls as the graph
-- [ ] Ticks inlaid in the background so zooming reads naturally
-- [ ] Video tracks show thumbnails; audio tracks show waveforms
+- [x] Reaper-style track headers on the left of each track, with the audio offset inside the audio track's header
+- [x] Middle or right-drag grab-scrolls horizontally and vertically
+- [x] Scroll wheel zooms, same controls as the graph
+- [x] Ticks inlaid in the background so zooming reads naturally
+- [x] Video tracks show thumbnails; audio tracks show waveforms
 - [ ] Automation clips: signals drawn as tracks in the playlist to time effects to specific moments. The graph sees one more input signal, keeping the processing graph unified
 
 ### Parameters
 
-- [ ] **Modulation inputs on parameters** (major feature). The parameter value is the baseline and the connected signal modulates it on top, as in Serum 2. If connected, the field shows a blue automation control, a small line bar under the slider, in the color of the connected signal's link. Two modes: one-direction (the signal moves the value one way by its amplitude; dragging the control sets how far, increase or decrease) and bidirectional (the signal moves it both ways; dragging sets the range). This allows, for example, driving a delay's feedback or mix from an audio signal, beyond the single modulation input the node has now
+- [x] **Modulation inputs on parameters** (major feature). The parameter value is the baseline and the connected signal modulates it on top, as in Serum 2. If connected, the field shows a blue automation control, a small line bar under the slider, in the color of the connected signal's link. Two modes: one-direction (the signal moves the value one way by its amplitude; dragging the control sets how far, increase or decrease) and bidirectional (the signal moves it both ways; dragging sets the range). This allows, for example, driving a delay's feedback or mix from an audio signal, beyond the single modulation input the node has now
 - [x] Soft-bounded fields like Substance Designer: entering a value outside the bounds widens the slider's range so the user keeps full freedom
 
 ### Tools

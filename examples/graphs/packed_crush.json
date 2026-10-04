@@ -6,7 +6,8 @@
     { "id": "packed", "type": "interleave" },
     {
       "id": "crush", "type": "bitcrush",
-      "params": { "bits": 3, "depth": 4 },
+      "params": { "bits": 3 },
+      "modulation": { "bits": { "amount": 4 } },
       "interpolation": "linear"
     },
     { "id": "echo", "type": "delay", "params": { "time": 0.5, "feedback": 0.5, "mix": 0.4 } },
@@ -16,7 +17,7 @@
   "connections": [
     { "from": "video", "to": "packed" },
     { "from": "packed", "to": "crush" },
-    { "from": "audio", "to": "crush.modulation" },
+    { "from": "audio", "to": "crush.@bits" },
     { "from": "crush", "to": "echo" },
     { "from": "echo", "to": "unpacked" },
     { "from": "unpacked", "to": "out" }

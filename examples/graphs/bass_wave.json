@@ -5,11 +5,11 @@
     { "id": "audio", "type": "audio_input" },
     { "id": "bands", "type": "three_band", "params": { "low_hz": 200, "high_hz": 3000 } },
     { "id": "split", "type": "split" },
-    { "id": "wave_r", "type": "delay", "params": { "time": 1, "depth": 1.5 }, "interpolation": "linear" },
-    { "id": "wave_g", "type": "delay", "params": { "time": 1, "depth": 1.5 }, "interpolation": "linear" },
-    { "id": "wave_b", "type": "delay", "params": { "time": 1, "depth": 1.5 }, "interpolation": "linear" },
+    { "id": "wave_r", "type": "delay", "params": { "time": 1 }, "modulation": { "time": { "amount": 1.5 } }, "interpolation": "linear" },
+    { "id": "wave_g", "type": "delay", "params": { "time": 1 }, "modulation": { "time": { "amount": 1.5 } }, "interpolation": "linear" },
+    { "id": "wave_b", "type": "delay", "params": { "time": 1 }, "modulation": { "time": { "amount": 1.5 } }, "interpolation": "linear" },
     { "id": "combine", "type": "combine" },
-    { "id": "smear", "type": "lowpass", "params": { "cutoff": 60, "depth": -3 }, "interpolation": "linear" },
+    { "id": "smear", "type": "lowpass", "params": { "cutoff": 60 }, "modulation": { "cutoff": { "amount": -3 } }, "interpolation": "linear" },
     { "id": "out", "type": "output" }
   ],
   "connections": [
@@ -18,14 +18,14 @@
     { "from": "split.r", "to": "wave_r" },
     { "from": "split.g", "to": "wave_g" },
     { "from": "split.b", "to": "wave_b" },
-    { "from": "bands.low", "to": "wave_r.modulation" },
-    { "from": "bands.low", "to": "wave_g.modulation" },
-    { "from": "bands.low", "to": "wave_b.modulation" },
+    { "from": "bands.low", "to": "wave_r.@time" },
+    { "from": "bands.low", "to": "wave_g.@time" },
+    { "from": "bands.low", "to": "wave_b.@time" },
     { "from": "wave_r", "to": "combine.r" },
     { "from": "wave_g", "to": "combine.g" },
     { "from": "wave_b", "to": "combine.b" },
     { "from": "combine", "to": "smear" },
-    { "from": "bands.high", "to": "smear.modulation" },
+    { "from": "bands.high", "to": "smear.@cutoff" },
     { "from": "smear", "to": "out" }
   ]
 }

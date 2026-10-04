@@ -18,12 +18,22 @@ pub struct Compressor {
     /// Set in `prepare`.
     attack: f64,
     release: f64,
+    sample_rate: f64,
+    /// The slowest attack or release modulation can reach, in ms, for warmup.
+    slowest_ms: f64,
     sidechain: bool,
     /// Current gain reduction in dB (zero or negative).
     reduction: f64,
 }
 
 impl Compressor {
+    const THRESHOLD: usize = 0;
+    const RATIO: usize = 1;
+    const ATTACK: usize = 2;
+    const RELEASE: usize = 3;
+    const KNEE: usize = 4;
+    const MAKEUP: usize = 5;
+
     pub const PARAMS: &[ParamSpec] = &[
         ParamSpec::number(
             "threshold",
@@ -34,6 +44,7 @@ impl Compressor {
             "Level above which the signal is turned down",
         )
         .unit("dB")
+        .exposed()
         .limits(-200.0, 60.0),
         ParamSpec::number(
             "ratio",
@@ -101,6 +112,8 @@ impl Compressor {
             makeup: params.number("makeup")?,
             attack: 0.0,
             release: 0.0,
+            sample_rate: 1.0,
+            slowest_ms: 0.0,
             sidechain: false,
             reduction: 0.0,
         })
@@ -108,15 +121,25 @@ impl Compressor {
 
     /// Static gain reduction in dB for an input level in dB.
     pub fn curve(&self, level: f64) -> f64 {
-        let over = level - self.threshold;
-        let slope = 1.0 / self.ratio - 1.0;
-        if self.knee > 0.0 && 2.0 * over.abs() <= self.knee {
-            slope * (over + self.knee / 2.0).powi(2) / (2.0 * self.knee)
+        Self::reduction(level, self.threshold, self.ratio, self.knee)
+    }
+
+    /// Gain reduction in dB for an input level in dB, with a soft knee `knee` dB wide.
+    fn reduction(level: f64, threshold: f64, ratio: f64, knee: f64) -> f64 {
+        let over = level - threshold;
+        let slope = 1.0 / ratio.max(1.0) - 1.0;
+        if knee > 0.0 && 2.0 * over.abs() <= knee {
+            slope * (over + knee / 2.0).powi(2) / (2.0 * knee)
         } else if over > 0.0 {
             slope * over
         } else {
             0.0
         }
+    }
+
+    /// The smoothing coefficient for a time of `ms`.
+    fn coefficient(&self, ms: f64) -> f64 {
+        smoothing_coefficient(ms / 1000.0 * self.sample_rate)
     }
 }
 
@@ -127,29 +150,50 @@ impl Node for Compressor {
     }
 
     fn prepare(&mut self, ctx: &PrepareContext) {
-        self.attack = smoothing_coefficient(ms_to_samples(self.attack_ms, ctx));
-        self.release = smoothing_coefficient(ms_to_samples(self.release_ms, ctx));
+        self.sample_rate = ctx.sample_rate();
+        self.attack = self.coefficient(self.attack_ms);
+        self.release = self.coefficient(self.release_ms);
+        self.slowest_ms = ctx
+            .param_max(Self::ATTACK, self.attack_ms)
+            .max(ctx.param_max(Self::RELEASE, self.release_ms));
         self.sidechain = ctx.connected[1];
     }
 
-    fn process(&mut self, _ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
+    fn process(&mut self, ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
         let input = &inputs[0].data;
         let detector = if self.sidechain {
             &inputs[1].data
         } else {
             input
         };
+        let value = |index: usize, constant: f64, i: usize| {
+            ctx.param(index).map_or(constant, |p| f64::from(p[i]))
+        };
         let mut reduction = self.reduction;
-        for ((out, &x), &d) in outputs[0].data.iter_mut().zip(input).zip(detector) {
-            let target = self.curve(gain_to_db(f64::from(d.abs())));
+        for (i, ((out, &x), &d)) in outputs[0]
+            .data
+            .iter_mut()
+            .zip(input)
+            .zip(detector)
+            .enumerate()
+        {
+            let target = Self::reduction(
+                gain_to_db(f64::from(d.abs())),
+                value(Self::THRESHOLD, self.threshold, i),
+                value(Self::RATIO, self.ratio, i),
+                value(Self::KNEE, self.knee, i),
+            );
             // More reduction is the attack; less is the release.
             let c = if target < reduction {
-                self.attack
+                ctx.param(Self::ATTACK)
+                    .map_or(self.attack, |a| self.coefficient(f64::from(a[i])))
             } else {
-                self.release
+                ctx.param(Self::RELEASE)
+                    .map_or(self.release, |r| self.coefficient(f64::from(r[i])))
             };
             reduction = target + c * (reduction - target);
-            *out = (f64::from(x) * db_to_gain(reduction + self.makeup)) as f32;
+            let makeup = value(Self::MAKEUP, self.makeup, i);
+            *out = (f64::from(x) * db_to_gain(reduction + makeup)) as f32;
         }
         self.reduction = reduction;
     }
@@ -160,10 +204,7 @@ impl Node for Compressor {
 
     fn warmup_frames(&self, ctx: &PrepareContext) -> u32 {
         // About seven time constants of the slower side to settle within 0.1%.
-        settle_frames(
-            7.0 * ms_to_samples(self.attack_ms.max(self.release_ms), ctx),
-            ctx,
-        )
+        settle_frames(7.0 * ms_to_samples(self.slowest_ms, ctx), ctx)
     }
 }
 
@@ -195,6 +236,22 @@ mod tests {
         // A quiet input ducked by a loud sidechain.
         let out = process(compressor.as_mut(), &[vec![0.05; 4800], vec![1.0; 4800]]);
         assert!(out[4799] < 0.01, "{}", out[4799]);
+    }
+
+    #[test]
+    fn parameter_indices_match_the_specs() {
+        use super::Compressor as C;
+        let names = [
+            (C::THRESHOLD, "threshold"),
+            (C::RATIO, "ratio"),
+            (C::ATTACK, "attack"),
+            (C::RELEASE, "release"),
+            (C::KNEE, "knee"),
+            (C::MAKEUP, "makeup"),
+        ];
+        for (index, name) in names {
+            assert_eq!(C::PARAMS[index].name, name);
+        }
     }
 
     #[test]

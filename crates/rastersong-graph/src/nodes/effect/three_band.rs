@@ -30,6 +30,7 @@ impl ThreeBand {
             "Crossover between the low and mid bands, in Hz",
         )
         .unit("Hz")
+        .fixed()
         .limits(0.001, 1e9),
         ParamSpec::number(
             "high_hz",
@@ -40,6 +41,7 @@ impl ThreeBand {
             "Crossover between the mid and high bands, in Hz",
         )
         .unit("Hz")
+        .fixed()
         .limits(0.001, 1e9),
     ];
 

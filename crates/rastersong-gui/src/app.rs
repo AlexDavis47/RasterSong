@@ -3,6 +3,7 @@
 //! Layout: the timeline along the bottom; above it the preview (with its playback controls),
 //! the node graph and the inspector, side by side.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -11,6 +12,7 @@ use rastersong_engine::playback::{MixTrack, Mixer};
 use rastersong_engine::{
     AudioTrackSpec, BackendInfo, Engine, EngineConfig, EngineStatus, Frame, GraphDesc,
     MediaBackend, PROJECT_EXTENSION, PlaybackClock, PreviewScale, Project, ProjectTrack,
+    Thumbnails,
 };
 
 use crate::audio_out::AudioOut;
@@ -18,7 +20,9 @@ use crate::editor::{CanvasContext, GraphEditor, InspectorContext, without_layout
 use crate::history::History;
 use crate::settings::Settings;
 use crate::theme::{Theme, ThemeChoice, WireStyle, apply_style};
-use crate::timeline::{TimelineModel, TrackAction, TrackView, timecode, timeline};
+use crate::timeline::{
+    Thumbnail, TimelineModel, TimelineView, TrackAction, TrackView, timecode, timeline,
+};
 
 /// The graph a new project starts with: the basic workflow from the readme.
 pub const STARTER_GRAPH: &str = include_str!("../../../examples/graphs/am_bands.json");
@@ -40,6 +44,13 @@ enum Pending {
 
 pub struct App {
     engine: Engine,
+    thumbnails: Thumbnails,
+    /// Textures of the decoded thumbnails, and the video they're of.
+    thumbnail_textures: BTreeMap<usize, (egui::TextureHandle, Thumbnail)>,
+    thumbnail_video: Option<PathBuf>,
+    timeline_view: TimelineView,
+    /// Where the timeline was last drawn, for tests.
+    timeline_area: egui::Rect,
     audio: AudioOut,
     backend_info: Option<BackendInfo>,
     project: Project,
@@ -87,12 +98,19 @@ impl App {
         backend_info: Option<BackendInfo>,
         audio: AudioOut,
     ) -> Self {
+        let thumbnails = Thumbnails::new(backend.clone());
         let engine = Engine::new(backend, EngineConfig::default());
-        let editor = GraphEditor::new(&project.graph);
-        // The editor fills in positions and full port names; that isn't an unsaved change.
+        let editor = linked_editor(&project);
+        // The editor fills in positions, full port names and missing linked nodes; that isn't an
+        // unsaved change.
         project.graph = editor.to_desc();
         let mut app = Self {
             engine,
+            thumbnails,
+            thumbnail_textures: BTreeMap::new(),
+            thumbnail_video: None,
+            timeline_view: TimelineView::default(),
+            timeline_area: egui::Rect::NOTHING,
             audio,
             backend_info,
             saved: project.clone(),
@@ -149,6 +167,20 @@ impl App {
         &self.editor
     }
 
+    pub fn timeline_view(&self) -> TimelineView {
+        self.timeline_view
+    }
+
+    /// Where the timeline (ruler, headers and lanes) was last drawn.
+    pub fn timeline_area(&self) -> egui::Rect {
+        self.timeline_area
+    }
+
+    /// How many video thumbnails are ready to draw.
+    pub fn thumbnail_count(&self) -> usize {
+        self.thumbnail_textures.len()
+    }
+
     /// The user's settings, saved between sessions.
     pub fn settings(&self) -> &Settings {
         &self.settings
@@ -175,7 +207,7 @@ impl App {
     }
 
     fn load_project(&mut self, mut project: Project, path: Option<PathBuf>) {
-        self.editor = GraphEditor::new(&project.graph);
+        self.editor = linked_editor(&project);
         if !self.editor.warnings.is_empty() {
             self.error = Some(self.editor.warnings.join("\n"));
         }
@@ -208,15 +240,46 @@ impl App {
         self.project.video = Some(path);
         self.engine.set_video(self.project.video.clone());
         self.clock.seek(0);
+        self.link_project_inputs();
     }
 
-    pub fn add_audio_track(&mut self, path: PathBuf) {
-        let name = self.project.unused_track_name();
+    /// Adds an audio track for each file, named after it, each with its own audio input node.
+    pub fn add_audio_tracks(&mut self, paths: impl IntoIterator<Item = PathBuf>) {
+        for path in paths {
+            let name = self.project.track_name_for(&path);
+            self.project
+                .audio_tracks
+                .push(ProjectTrack::new(name.clone(), path));
+            self.track_names.push(name.clone());
+            self.selected_track = Some(self.project.audio_tracks.len() - 1);
+            self.editor
+                .set_project_inputs(self.video_name(), self.track_name_list());
+            self.editor.link_track(&name);
+        }
+    }
+
+    /// The video's file name, as the linked video node shows it.
+    fn video_name(&self) -> Option<String> {
+        self.project
+            .video
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+    }
+
+    fn track_name_list(&self) -> Vec<String> {
         self.project
             .audio_tracks
-            .push(ProjectTrack::new(name.clone(), path));
-        self.track_names.push(name);
-        self.selected_track = Some(self.project.audio_tracks.len() - 1);
+            .iter()
+            .map(|t| t.name.clone())
+            .collect()
+    }
+
+    /// Tells the editor about the project's inputs and adds any linked nodes that are missing.
+    fn link_project_inputs(&mut self) {
+        self.editor
+            .set_project_inputs(self.video_name(), self.track_name_list());
+        self.editor.ensure_linked_nodes();
     }
 
     fn save(&mut self, choose_path: bool) {
@@ -368,7 +431,11 @@ impl App {
     pub fn ui(&mut self, ui: &mut Ui) {
         if !self.initialized {
             let ctx = ui.ctx().clone();
-            self.engine.on_update(move || ctx.request_repaint());
+            self.engine.on_update({
+                let ctx = ctx.clone();
+                move || ctx.request_repaint()
+            });
+            self.thumbnails.on_update(move || ctx.request_repaint());
             apply_style(ui.ctx());
             self.initialized = true;
         }
@@ -394,8 +461,8 @@ impl App {
             .show(ui, |ui| self.menu_bar(ui));
         egui::Panel::bottom("timeline")
             .resizable(true)
-            .default_size(190.0)
-            .min_size(150.0)
+            .default_size(240.0)
+            .min_size(130.0)
             .frame(panel(8))
             .show(ui, |ui| self.timeline(ui));
         egui::Panel::left("preview")
@@ -406,8 +473,8 @@ impl App {
             .show(ui, |ui| self.preview_column(ui));
         egui::Panel::right("inspector")
             .resizable(true)
-            .default_size(300.0)
-            .min_size(220.0)
+            .default_size(340.0)
+            .min_size(300.0)
             .frame(panel(10))
             .show(ui, |ui| {
                 let tracks: Vec<String> = self
@@ -416,9 +483,16 @@ impl App {
                     .iter()
                     .map(|t| t.name.clone())
                     .collect();
+                let frame = self.engine.frame(self.clock.frame());
+                let params = frame.as_ref().map_or(&[][..], |f| &f.params[..]);
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    self.editor
-                        .show_inspector(ui, &InspectorContext { tracks: &tracks });
+                    self.editor.show_inspector(
+                        ui,
+                        &InspectorContext {
+                            tracks: &tracks,
+                            params,
+                        },
+                    );
                 });
             });
         egui::CentralPanel::default()
@@ -452,6 +526,8 @@ impl App {
 
     /// Sends edits to the engine and the audio output.
     fn sync(&mut self) {
+        self.editor
+            .set_project_inputs(self.video_name(), self.track_name_list());
         let graph = self.editor.to_desc();
         let semantic = without_layout(&graph);
         if semantic != self.sent_graph {
@@ -594,9 +670,9 @@ impl App {
                     ui.close();
                     self.pick_video();
                 }
-                if ui.button("Add Audio Track…").clicked() {
+                if ui.button("Add Audio Tracks…").clicked() {
                     ui.close();
-                    self.pick_audio_track();
+                    self.pick_audio_tracks();
                 }
                 ui.separator();
                 if ui.button("Import Graph…").clicked() {
@@ -691,12 +767,12 @@ impl App {
         }
     }
 
-    fn pick_audio_track(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
+    fn pick_audio_tracks(&mut self) {
+        if let Some(paths) = rfd::FileDialog::new()
             .add_filter("Audio", AUDIO_EXTENSIONS)
-            .pick_file()
+            .pick_files()
         {
-            self.add_audio_track(path);
+            self.add_audio_tracks(paths);
         }
     }
 
@@ -928,7 +1004,7 @@ impl App {
         let Some(info) = self.engine.info() else {
             ui.weak("The timeline appears once a video is loaded.");
             if ui.button("+ Audio track").clicked() {
-                self.pick_audio_track();
+                self.pick_audio_tracks();
             }
             return;
         };
@@ -937,16 +1013,32 @@ impl App {
             .project
             .audio_tracks
             .iter()
-            .map(|t| TrackView {
-                name: t.name.clone(),
-                duration: loaded
-                    .iter()
-                    .find(|l| l.name == t.name)
-                    .map(|l| l.clip.duration_secs()),
-                offset: t.offset,
-                muted: t.muted,
+            .map(|t| {
+                let loaded = loaded.iter().find(|l| l.name == t.name);
+                TrackView {
+                    name: t.name.clone(),
+                    duration: loaded.map(|l| l.clip.duration_secs()),
+                    offset: t.offset,
+                    muted: t.muted,
+                    waveform: loaded.map(|l| l.waveform.clone()),
+                }
             })
             .collect();
+        self.update_thumbnails(ui.ctx());
+        let thumbnails: BTreeMap<usize, Thumbnail> = self
+            .thumbnail_textures
+            .iter()
+            .map(|(&frame, (_, thumbnail))| (frame, *thumbnail))
+            .collect();
+        let video_details = self.thumbnails.info().map(|v| {
+            format!(
+                "{}×{} · {:.3} fps",
+                v.width,
+                v.height,
+                v.frame_rate.as_f64()
+            )
+            .replace(".000 fps", " fps")
+        });
         let cached = self.engine.cached_ranges();
         let model = TimelineModel {
             frame_count: info.frames,
@@ -959,20 +1051,50 @@ impl App {
                 .as_ref()
                 .and_then(|p| p.file_name())
                 .map(|n| n.to_string_lossy().into_owned()),
+            video_details,
             tracks,
             selected_track: self.selected_track,
+            thumbnails: &thumbnails,
         };
         self.track_names
             .resize(self.project.audio_tracks.len(), String::new());
-        let response = egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| timeline(ui, &model, &mut self.track_names))
-            .inner;
+        self.timeline_area = ui.available_rect_before_wrap();
+        let response = timeline(ui, &model, &mut self.timeline_view, &mut self.track_names);
+        self.thumbnails.request(&response.wanted_thumbnails);
         if let Some(frame) = response.seek {
             self.clock.seek(frame);
         }
         for action in response.actions {
             self.track_action(action);
+        }
+    }
+
+    /// Keeps the thumbnail service on the project's video, and a texture for each thumbnail it
+    /// has decoded.
+    fn update_thumbnails(&mut self, ctx: &egui::Context) {
+        if self.thumbnail_video != self.project.video {
+            self.thumbnail_video = self.project.video.clone();
+            self.thumbnails.set_video(self.project.video.clone());
+            self.thumbnail_textures.clear();
+            self.timeline_view = TimelineView::default();
+        }
+        let frames = self.thumbnails.frames();
+        self.thumbnail_textures
+            .retain(|frame, _| frames.contains_key(frame));
+        for (frame, image) in frames {
+            self.thumbnail_textures.entry(frame).or_insert_with(|| {
+                let size = [image.width as usize, image.height as usize];
+                let texture = ctx.load_texture(
+                    format!("thumbnail-{frame}"),
+                    egui::ColorImage::from_rgb(size, &image.data),
+                    egui::TextureOptions::LINEAR,
+                );
+                let thumbnail = Thumbnail {
+                    texture: texture.id(),
+                    size: egui::vec2(size[0] as f32, size[1] as f32),
+                };
+                (texture, thumbnail)
+            });
         }
     }
 
@@ -1001,15 +1123,18 @@ impl App {
                 }
             }
             TrackAction::Remove(i) => {
-                self.project.audio_tracks.remove(i);
+                let removed = self.project.audio_tracks.remove(i);
                 self.track_names.remove(i);
+                self.editor
+                    .set_project_inputs(self.video_name(), self.track_name_list());
+                self.editor.unlink_track(&removed.name);
                 self.selected_track = match self.selected_track {
                     _ if self.project.audio_tracks.is_empty() => None,
                     Some(s) if s >= i && s > 0 => Some(s - 1),
                     other => other,
                 };
             }
-            TrackAction::Add => self.pick_audio_track(),
+            TrackAction::Add => self.pick_audio_tracks(),
         }
     }
 
@@ -1081,6 +1206,24 @@ impl App {
             self.title = title;
         }
     }
+}
+
+/// An editor for the project's graph, with the nodes linked to its video and tracks in place.
+fn linked_editor(project: &Project) -> GraphEditor {
+    let mut editor = GraphEditor::new(&project.graph);
+    let video = project
+        .video
+        .as_ref()
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().into_owned());
+    let tracks = project
+        .audio_tracks
+        .iter()
+        .map(|t| t.name.clone())
+        .collect();
+    editor.set_project_inputs(video, tracks);
+    editor.ensure_linked_nodes();
+    editor
 }
 
 fn scale_label(scale: PreviewScale) -> &'static str {

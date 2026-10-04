@@ -4,8 +4,12 @@
 //! value outside the usual range (anything up to the node's hard limits) widens the track, so the
 //! user is never boxed in, Substance Designer style. The track's range is frozen while it's being
 //! dragged, so it can't shift under the pointer.
+//!
+//! A modulated parameter also shows the span its signal covers (outlined over the track), a
+//! ghost handle at its live value, and a knob for the modulation amount.
 
-use eframe::egui::{self, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
+use eframe::egui::{self, Color32, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
+use rastersong_engine::{ModMode, ModScale, Modulation, ParamKind, ParamSpec};
 
 use crate::theme::Theme;
 
@@ -73,7 +77,31 @@ fn round_to_power_of_ten(value: f64, exponent: i32) -> f64 {
     }
 }
 
-/// Shows the field. Returns true if the value changed.
+/// A signal modulating the parameter.
+#[derive(Debug)]
+pub struct Modulated<'a> {
+    pub spec: &'a ParamSpec,
+    pub modulation: &'a mut Modulation,
+    /// The connected wire's colour.
+    pub color: Color32,
+    /// The value at the playhead, from the last rendered frame.
+    pub live: Option<f64>,
+}
+
+/// What the user did with a field.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct FieldResponse {
+    /// The value or the modulation changed.
+    pub changed: bool,
+    /// The user asked to disconnect the modulating signal.
+    pub disconnect: bool,
+}
+
+/// Width of the amount knob, and of the space kept for it beside unmodulated fields.
+pub const KNOB_WIDTH: f32 = 22.0;
+
+/// Shows the field: a slider track, the amount knob of a modulated parameter (or the space for
+/// one, so tracks line up), and a value box.
 pub fn param_field(
     ui: &mut Ui,
     id_salt: &str,
@@ -81,10 +109,12 @@ pub fn param_field(
     range: NumberRange,
     suffix: &str,
     track_width: f32,
-) -> bool {
+    mut modulated: Option<Modulated>,
+) -> FieldResponse {
     let id = ui.make_persistent_id(id_salt);
     let logarithmic = range.logarithmic();
-    let before = *value;
+    let before = (*value, modulated.as_ref().map(|m| *m.modulation));
+    let mut response = FieldResponse::default();
 
     let height = ui.spacing().interact_size.y;
     let (rect, track) = ui.allocate_exact_size(vec2(track_width, height), Sense::click_and_drag());
@@ -103,12 +133,32 @@ pub fn param_field(
     if track.drag_stopped() {
         ui.data_mut(|d| d.remove::<(f64, f64)>(id));
     }
-    paint_track(
-        ui,
-        rect,
-        &track,
-        to_fraction(*value, shown, logarithmic) as f32,
-    );
+
+    let fraction = |v: f64| to_fraction(v, shown, logarithmic) as f32;
+    let rail = Rect::from_center_size(rect.center(), vec2(rect.width() - 8.0, 4.0));
+    let x = |v: f64| rail.left() + rail.width() * fraction(v);
+    paint_rail(ui, rail, x(*value));
+    if let Some(m) = &modulated {
+        let (lo, hi) = m.spec.modulated_range(*value, *m.modulation);
+        paint_range(ui, rail, x(lo), x(hi), m.color);
+    }
+    paint_handle(ui, &track, pos2(x(*value), rect.center().y), rect.height());
+    if let Some(live) = modulated
+        .as_ref()
+        .and_then(|m| m.live.map(|v| (v, m.color)))
+    {
+        paint_ghost(ui, pos2(x(live.0), rect.center().y), rect.height(), live.1);
+    }
+
+    match modulated.as_mut() {
+        Some(m) => {
+            let knob = amount_knob(ui, m, *value);
+            response.disconnect = knob.disconnect;
+        }
+        None => {
+            ui.add_space(KNOB_WIDTH);
+        }
+    }
 
     let speed = if logarithmic {
         value.abs().max(range.soft.0) * 0.01
@@ -123,31 +173,221 @@ pub fn param_field(
             .max_decimals(3),
     )
     .on_hover_text("Drag, or double-click to type. Values beyond the slider are allowed.");
-    *value != before
+    response.changed = before != (*value, modulated.as_ref().map(|m| *m.modulation));
+    response
 }
 
-fn paint_track(ui: &Ui, rect: Rect, response: &egui::Response, t: f32) {
+/// How far the knob turns for a full amount: the usual range for linear parameters, this many
+/// octaves for octave-scaled ones.
+const KNOB_OCTAVES: f64 = 4.0;
+
+/// The amount a full turn of the knob stands for.
+fn knob_span(spec: &ParamSpec) -> f64 {
+    match (spec.scale, spec.kind) {
+        (ModScale::Octaves, _) => KNOB_OCTAVES,
+        (_, ParamKind::Number { min, max, .. }) => (max - min).max(1e-9),
+        _ => 1.0,
+    }
+}
+
+/// The amount as text: `±0.5` both ways, `+0.5` or `-0.5` one way, in octaves where they apply.
+pub fn amount_text(spec: &ParamSpec, modulation: Modulation) -> String {
+    let unit = match spec.scale {
+        ModScale::Octaves => " oct",
+        ModScale::Linear if spec.unit.is_empty() => "",
+        ModScale::Linear => spec.unit,
+    };
+    let sign = match modulation.mode {
+        ModMode::Bipolar => "±",
+        ModMode::Unipolar if modulation.amount >= 0.0 => "+",
+        ModMode::Unipolar => "",
+    };
+    let space = if unit.is_empty() || unit == " oct" {
+        ""
+    } else {
+        " "
+    };
+    format!("{sign}{:.3}{space}{unit}", modulation.amount).replace(".000", "")
+}
+
+#[derive(Debug, Default)]
+struct KnobResponse {
+    disconnect: bool,
+}
+
+/// The amount knob: an arc showing the amount in the wire's colour. Drag to change it,
+/// double-click to reset it, right-click for the modulator's settings.
+fn amount_knob(ui: &mut Ui, m: &mut Modulated, base: f64) -> KnobResponse {
+    let mut result = KnobResponse::default();
+    let size = vec2(KNOB_WIDTH, ui.spacing().interact_size.y);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
+    let span = knob_span(m.spec);
+    let modulation = &mut *m.modulation;
+    if response.dragged_by(egui::PointerButton::Primary) {
+        // Right and up turn it up. Shift for fine control.
+        let delta = response.drag_delta();
+        let fine = if ui.input(|i| i.modifiers.shift) {
+            0.1
+        } else {
+            1.0
+        };
+        modulation.amount += f64::from(delta.x - delta.y) / 150.0 * span * fine;
+        if modulation.mode == ModMode::Bipolar {
+            modulation.amount = modulation.amount.max(0.0);
+        }
+    }
+    if response.double_clicked() {
+        modulation.amount = m.spec.default_modulation_amount(base);
+    }
+    if response.hovered() || response.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+    }
+
+    // The knob: a ring, and an arc from the top for the amount (both sides when bipolar).
+    let painter = ui.painter();
+    let center = rect.center();
+    let radius = (rect.height().min(rect.width()) / 2.0 - 2.0).max(4.0);
+    let visuals = ui.style().interact(&response);
+    painter.circle(
+        center,
+        radius,
+        ui.visuals().widgets.inactive.bg_fill,
+        Stroke::new(1.0, visuals.bg_stroke.color),
+    );
+    let turn = (modulation.amount / span).clamp(-1.0, 1.0) as f32 * KNOB_SWEEP;
+    let arc = |from: f32, to: f32| {
+        let steps = 16;
+        (0..=steps)
+            .map(|k| {
+                let a = from + (to - from) * k as f32 / steps as f32;
+                // Angle 0 is straight up, clockwise positive.
+                center + radius * vec2(a.sin(), -a.cos())
+            })
+            .collect::<Vec<_>>()
+    };
+    let stroke = Stroke::new(2.5, m.color);
+    let points = match modulation.mode {
+        ModMode::Bipolar => arc(-turn.abs(), turn.abs()),
+        ModMode::Unipolar => arc(0.0, turn),
+    };
+    painter.add(egui::Shape::line(points, stroke));
+    painter.line_segment(
+        [
+            center,
+            center + radius * 0.6 * vec2(turn.sin(), -turn.cos()),
+        ],
+        Stroke::new(1.5, visuals.fg_stroke.color),
+    );
+
+    let response = response.on_hover_text(format!(
+        "Modulation {}. Drag to change, double-click to reset, right-click for options.",
+        amount_text(m.spec, *modulation)
+    ));
+    response.context_menu(|ui| {
+        ui.set_min_width(190.0);
+        ui.label(egui::RichText::new("Modulation").strong());
+        ui.separator();
+        let both = modulation.mode == ModMode::Bipolar;
+        if ui
+            .radio(both, "Both ways")
+            .on_hover_text("The signal moves the value up and down around it")
+            .clicked()
+        {
+            modulation.mode = ModMode::Bipolar;
+            modulation.amount = modulation.amount.abs();
+        }
+        if ui
+            .radio(!both, "One way")
+            .on_hover_text(
+                "The signal's strength moves the value one way; a negative amount turns it down",
+            )
+            .clicked()
+        {
+            modulation.mode = ModMode::Unipolar;
+        }
+        ui.horizontal(|ui| {
+            ui.label("Amount");
+            let unit = match m.spec.scale {
+                ModScale::Octaves => " oct".to_owned(),
+                ModScale::Linear if m.spec.unit.is_empty() => String::new(),
+                ModScale::Linear => format!(" {}", m.spec.unit),
+            };
+            let range = match modulation.mode {
+                ModMode::Bipolar => 0.0..=f64::INFINITY,
+                ModMode::Unipolar => f64::NEG_INFINITY..=f64::INFINITY,
+            };
+            ui.add(
+                egui::DragValue::new(&mut modulation.amount)
+                    .range(range)
+                    .speed(span / 300.0)
+                    .suffix(unit)
+                    .max_decimals(3),
+            );
+        });
+        ui.separator();
+        if ui.button("Disconnect signal").clicked() {
+            result.disconnect = true;
+            ui.close();
+        }
+    });
+    result
+}
+
+/// How far the knob's arc turns at full amount, either side of the top (radians).
+const KNOB_SWEEP: f32 = 2.4;
+
+fn paint_rail(ui: &Ui, rail: Rect, value_x: f32) {
     let theme = Theme::of(ui.ctx());
-    let visuals = ui.style().interact(response);
-    let rail = Rect::from_center_size(rect.center(), vec2(rect.width() - 8.0, 4.0));
     let painter = ui.painter();
     painter.rect_filled(
         rail,
         CornerRadius::same(2),
         ui.visuals().widgets.inactive.bg_fill,
     );
-    let x = rail.left() + rail.width() * t;
     painter.rect_filled(
-        Rect::from_min_max(rail.min, pos2(x, rail.max.y)),
+        Rect::from_min_max(rail.min, pos2(value_x, rail.max.y)),
         CornerRadius::same(2),
         theme.accent.gamma_multiply(0.8),
     );
-    let radius = rect.height() * 0.32;
-    painter.circle(
-        pos2(x, rect.center().y),
-        radius,
+}
+
+/// The span a modulating signal covers: outlined over the rail in the wire's colour, with a tick
+/// at each end.
+fn paint_range(ui: &Ui, rail: Rect, lo: f32, hi: f32, color: Color32) {
+    let painter = ui.painter();
+    let band = Rect::from_min_max(pos2(lo, rail.top() - 3.0), pos2(hi, rail.bottom() + 3.0));
+    painter.rect_filled(band, CornerRadius::same(2), color.gamma_multiply(0.18));
+    painter.rect_stroke(
+        band,
+        CornerRadius::same(2),
+        Stroke::new(1.0, color),
+        egui::StrokeKind::Middle,
+    );
+    for x in [lo, hi] {
+        painter.line_segment(
+            [pos2(x, band.top() - 3.0), pos2(x, band.bottom() + 3.0)],
+            Stroke::new(1.5, color),
+        );
+    }
+}
+
+fn paint_handle(ui: &Ui, response: &egui::Response, at: egui::Pos2, height: f32) {
+    let visuals = ui.style().interact(response);
+    ui.painter().circle(
+        at,
+        height * 0.32,
         visuals.bg_fill,
         Stroke::new(1.0, visuals.fg_stroke.color),
+    );
+}
+
+/// The live value: a see-through handle in the wire's colour, over the real one.
+fn paint_ghost(ui: &Ui, at: egui::Pos2, height: f32, color: Color32) {
+    ui.painter().circle(
+        at,
+        height * 0.32,
+        color.gamma_multiply(0.45),
+        Stroke::new(1.5, color),
     );
 }
 
@@ -185,6 +425,19 @@ mod tests {
         let middle = from_fraction(0.5, range, true);
         assert!((middle - 31.6).abs() < 0.05, "{middle}");
         assert!((to_fraction(middle, range, true) - 0.5).abs() < 1e-3);
+    }
+
+    #[test]
+    fn amounts_read_with_their_direction_and_unit() {
+        use rastersong_engine::{ModMode, Modulation, ParamSpec};
+        let feedback = ParamSpec::number("feedback", "Feedback", 0.0, 0.0, 1.0, "");
+        let cutoff = ParamSpec::number("cutoff", "Cutoff", 40.0, 1.0, 1e5, "").octaves();
+        let bits = ParamSpec::number("bits", "Bits", 4.0, 1.0, 24.0, "").unit("bits");
+        let m = |amount, mode| Modulation { amount, mode };
+        assert_eq!(amount_text(&feedback, m(0.25, ModMode::Bipolar)), "±0.250");
+        assert_eq!(amount_text(&feedback, m(-0.5, ModMode::Unipolar)), "-0.500");
+        assert_eq!(amount_text(&cutoff, m(1.0, ModMode::Bipolar)), "±1 oct");
+        assert_eq!(amount_text(&bits, m(2.0, ModMode::Unipolar)), "+2 bits");
     }
 
     #[test]

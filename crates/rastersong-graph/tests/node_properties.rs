@@ -7,7 +7,8 @@ use std::collections::BTreeMap;
 
 use proptest::prelude::*;
 use rastersong_graph::{
-    Layout, Node, ParamValue, PrepareContext, ProcessContext, Registry, Signal,
+    Category, Layout, MAX_PARAMS, Node, ParamKind, ParamValue, PrepareContext, ProcessContext,
+    Registry, Signal,
 };
 
 /// Samples per row. Blocks are whole rows, so "rows" units mean the same thing in every block.
@@ -17,12 +18,12 @@ const MAX_ROWS: usize = 24;
 const CONFIGS: &[(&str, &str)] = &[
     ("am", r#"{ "depth": 0.8 }"#),
     ("delay", r#"{ "time": 1.5 }"#),
-    ("delay", r#"{ "time": 0.5, "depth": 0.4 }"#),
+    ("delay", r#"{ "time": 0.5, "unit": "frames" }"#),
     ("delay", r#"{ "time": 2.25, "feedback": 0.6, "mix": 0.7 }"#),
-    ("delay", r#"{ "time": 0.3, "depth": 0.2, "feedback": 0.5 }"#),
-    ("bitcrush", r#"{ "bits": 3, "depth": 2 }"#),
+    ("delay", r#"{ "time": 0.3, "feedback": 0.5 }"#),
+    ("bitcrush", r#"{ "bits": 3 }"#),
     ("lowpass", r#"{ "cutoff": 0.7 }"#),
-    ("lowpass", r#"{ "cutoff": 1.5, "depth": 2 }"#),
+    ("lowpass", r#"{ "cutoff": 1.5 }"#),
     ("three_band", r#"{ "low_hz": 300, "high_hz": 3000 }"#),
     (
         "compressor",
@@ -48,24 +49,45 @@ struct Harness {
     node: Box<dyn Node>,
     inputs: usize,
     outputs: usize,
+    /// A parameter modulated across its usual range by the modulation stream: its index and range.
+    param: Option<(usize, (f64, f64))>,
 }
 
 impl Harness {
     fn new(kind: &str, params: &str, total_rows: usize) -> Self {
+        Self::modulating(kind, params, total_rows, None)
+    }
+
+    /// With parameter `param` (an index into the node's specs) swept over its usual range.
+    fn modulating(kind: &str, params: &str, total_rows: usize, param: Option<usize>) -> Self {
         let params: BTreeMap<String, ParamValue> = serde_json::from_str(params).unwrap();
-        let mut node = Registry::default().create(kind, &params).unwrap().unwrap();
+        let registry = Registry::default();
+        let specs = registry.get(kind).unwrap().spec.params;
+        let mut node = registry.create(kind, &params).unwrap().unwrap();
         let (inputs, outputs) = (node.inputs().len(), node.outputs().len());
         let layout = Layout::mono(WIDTH, total_rows as u32);
+        let param = param.map(|index| {
+            let ParamKind::Number { min, max, .. } = specs[index].kind else {
+                panic!("only numbers are modulated");
+            };
+            (index, (min, max))
+        });
+        let mut modulated = vec![None; specs.len()];
+        if let Some((index, range)) = param {
+            modulated[index] = Some(range);
+        }
         node.prepare(&PrepareContext {
             frame_rate: 30.0,
             inputs: &vec![layout; inputs],
             outputs: &vec![layout; outputs],
             connected: &vec![true; inputs],
+            modulated: &modulated,
         });
         Self {
             node,
             inputs,
             outputs,
+            param,
         }
     }
 
@@ -92,10 +114,23 @@ impl Harness {
                 .collect();
             let refs: Vec<&Signal> = inputs.iter().collect();
             let mut outputs = vec![Signal::zeros(layout); self.outputs];
+            // The swept parameter follows the modulation stream across its range.
+            let values: Vec<f32> = match self.param {
+                Some((_, (lo, hi))) => modulation[range.clone()]
+                    .iter()
+                    .map(|&m| (lo + (hi - lo) * (f64::from(m) + 1.0) / 2.0) as f32)
+                    .collect(),
+                None => Vec::new(),
+            };
+            let mut params = vec![None; MAX_PARAMS];
+            if let Some((index, _)) = self.param {
+                params[index] = Some(values.as_slice());
+            }
             let ctx = ProcessContext {
                 frame: frame as u64,
                 frame_rate: 30.0,
                 sources: &NoSources,
+                params: &params,
             };
             self.node.process(&ctx, &refs, &mut outputs);
             for (stream, out) in result.iter_mut().zip(outputs) {
@@ -128,7 +163,41 @@ fn case() -> impl Strategy<Value = (Vec<usize>, Vec<f32>, Vec<f32>)> {
     })
 }
 
+/// Every modulatable parameter of every effect, as (kind, parameter index).
+fn modulatable_params() -> Vec<(String, usize)> {
+    let registry = Registry::default();
+    registry
+        .types()
+        .into_iter()
+        .filter(|t| t.spec.category == Category::Effect)
+        .flat_map(|t| {
+            t.spec
+                .params
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| p.modulatable)
+                .map(|(i, _)| (t.kind.clone(), i))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
 proptest! {
+    #[test]
+    fn modulated_parameters_keep_the_node_contract((blocks, signal, modulation) in case()) {
+        let rows: usize = blocks.iter().sum();
+        for (kind, param) in modulatable_params() {
+            let mut harness = Harness::modulating(&kind, "{}", rows, Some(param));
+            let whole = harness.run(&[rows], &signal, &modulation);
+            let split = harness.run(&blocks, &signal, &modulation);
+            prop_assert_eq!(&split, &whole, "{} param {} with blocks {:?}", kind, param, blocks);
+            prop_assert!(
+                whole.iter().flatten().all(|x| x.is_finite()),
+                "{} param {} produced NaN or infinity", kind, param
+            );
+        }
+    }
+
     #[test]
     fn block_size_independent((blocks, signal, modulation) in case()) {
         let rows: usize = blocks.iter().sum();

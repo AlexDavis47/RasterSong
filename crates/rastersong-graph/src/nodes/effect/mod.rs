@@ -84,6 +84,7 @@ mod test_util {
             inputs: &vec![layout; node.inputs().len()],
             outputs: &vec![layout; node.outputs().len()],
             connected,
+            modulated: &[],
         });
         node
     }
@@ -107,6 +108,7 @@ mod test_util {
                 frame: 0,
                 frame_rate: 1.0,
                 sources: &sources,
+                params: &[],
             },
             &refs,
             &mut outputs,

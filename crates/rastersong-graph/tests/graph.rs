@@ -386,3 +386,98 @@ fn reports_output_levels() {
     assert!((video.rms - 0.5).abs() < 1e-6);
     assert_eq!(levels.len(), 2, "one output each for video and out");
 }
+
+/// AM on a carrier and modulator of 1.0 gives `1 + depth`, so the output shows the per-sample
+/// depth. The audio (5 samples, `a[i] = i / 10`) modulates the depth.
+fn am_with_modulated_depth(modulation: &str, channels: &str) -> Vec<f32> {
+    let json = graph_json(
+        &format!(
+            r#"{{ "id": "video", "type": "video_input" }}, {{ "id": "audio", "type": "audio_input" }},
+               {{ "id": "am", "type": "am", "channels": "{channels}", "modulation": {{ "depth": {modulation} }} }},
+               {{ "id": "out", "type": "output" }}"#
+        ),
+        r#"{ "from": "video", "to": "am.carrier" }, { "from": "video", "to": "am.modulator" },
+           { "from": "audio", "to": "am.@depth" }, { "from": "am", "to": "out" }"#,
+    );
+    let mut graph = compile(&json).unwrap();
+    let input = sources(|_| 1.0, |i| i as f32 / 10.0);
+    graph.process(0, &input).unwrap().data.clone()
+}
+
+/// The audio sample each of the 8 pixels holds when 5 samples are stretched over them.
+fn held_audio(pixel: usize) -> f32 {
+    let i = ((pixel as f64 + 0.5) * f64::from(AUDIO) / f64::from(W * H)) as usize;
+    i as f32 / 10.0
+}
+
+#[test]
+fn a_signal_connected_to_a_parameter_modulates_it_per_sample() {
+    // Bipolar: depth = 1 + 0.5 × a.
+    let out = am_with_modulated_depth(r#"{ "amount": 0.5 }"#, "together");
+    for (pixel, rgb) in out.chunks(3).enumerate() {
+        let expected = 1.0 + (1.0 + 0.5 * held_audio(pixel));
+        assert!(
+            rgb.iter().all(|&x| (x - expected).abs() < 1e-6),
+            "pixel {pixel}: {rgb:?}"
+        );
+    }
+    // Unipolar with a negative amount turns it down by the magnitude: depth = 1 - 2 × |a|.
+    let out = am_with_modulated_depth(r#"{ "amount": -2, "mode": "unipolar" }"#, "together");
+    for (pixel, rgb) in out.chunks(3).enumerate() {
+        let expected = 1.0 + (1.0 - 2.0 * held_audio(pixel));
+        assert!((rgb[0] - expected).abs() < 1e-6, "pixel {pixel}: {rgb:?}");
+    }
+}
+
+#[test]
+fn modulated_parameters_work_with_separate_channels() {
+    // AM is per-sample, so processing channels separately must give the same result.
+    let together = am_with_modulated_depth(r#"{ "amount": 0.5 }"#, "together");
+    let separate = am_with_modulated_depth(r#"{ "amount": 0.5 }"#, "separate");
+    assert_eq!(together, separate);
+}
+
+#[test]
+fn modulated_values_stay_within_the_parameter_limits() {
+    // Bit crush depth is limited to ±1000; a huge amount is clamped rather than passed on.
+    let json = graph_json(
+        r#"{ "id": "video", "type": "video_input" }, { "id": "audio", "type": "audio_input" },
+           { "id": "crush", "type": "bitcrush", "modulation": { "bits": { "amount": 1000 } } },
+           { "id": "out", "type": "output" }"#,
+        r#"{ "from": "video", "to": "crush" }, { "from": "audio", "to": "crush.@bits" },
+           { "from": "crush", "to": "out" }"#,
+    );
+    let mut graph = compile(&json).unwrap();
+    // Bits are limited to 1..24 inside the node; the output is still finite and in range.
+    let out = graph
+        .process(0, &sources(|i| i as f32 / 30.0, |i| i as f32))
+        .unwrap();
+    assert!(
+        out.data
+            .iter()
+            .all(|x| x.is_finite() && (0.0..=1.0).contains(x))
+    );
+}
+
+#[test]
+fn parameter_connections_are_checked() {
+    let graph = |target: &str, modulation: &str| {
+        graph_json(
+            &format!(
+                r#"{{ "id": "video", "type": "video_input" }}, {{ "id": "audio", "type": "audio_input" }},
+                   {{ "id": "bands", "type": "three_band" }}, {{ "id": "am", "type": "am", "modulation": {modulation} }},
+                   {{ "id": "out", "type": "output" }}"#
+            ),
+            &format!(
+                r#"{{ "from": "video", "to": "am.carrier" }}, {{ "from": "audio", "to": "bands" }},
+                   {{ "from": "bands", "to": "am.modulator" }}, {{ "from": "audio", "to": "{target}" }},
+                   {{ "from": "am", "to": "out" }}"#
+            ),
+        )
+    };
+    let error = |json: String| compile(&json).unwrap_err().to_string();
+    assert!(error(graph("am.@nope", "{}")).contains("no parameter `nope`"));
+    assert!(error(graph("bands.@low_hz", "{}")).contains("no parameter `low_hz`"));
+    assert!(error(graph("am.@depth", r#"{ "nope": { "amount": 1 } }"#)).contains("`nope`"));
+    assert!(compile(&graph("am.@depth", "{}")).is_ok());
+}

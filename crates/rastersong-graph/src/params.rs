@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::ParamValue;
+use crate::{ModMode, Modulation, ParamValue};
 
 /// One parameter of a node type.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -16,6 +16,23 @@ pub struct ParamSpec {
     /// Unit shown after the value, e.g. "Hz". Empty for none.
     pub unit: &'static str,
     pub kind: ParamKind,
+    /// Whether a signal can be connected to modulate it (numbers only).
+    pub modulatable: bool,
+    /// Whether the editor shows its modulation pin on the node until the user hides it.
+    pub exposed: bool,
+    /// How a modulation amount applies to the value.
+    pub scale: ModScale,
+}
+
+/// How a modulation amount applies to a parameter's value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ModScale {
+    /// The amount is in the parameter's own unit: `base + amount × signal`.
+    #[default]
+    Linear,
+    /// The amount is in octaves: `base × 2^(amount × signal)`. For frequencies and other
+    /// parameters heard or seen on a logarithmic scale.
+    Octaves,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -60,6 +77,9 @@ impl ParamSpec {
                 limit_min: min,
                 limit_max: max,
             },
+            modulatable: true,
+            exposed: false,
+            scale: ModScale::Linear,
         }
     }
 
@@ -76,6 +96,9 @@ impl ParamSpec {
             help,
             unit: "",
             kind: ParamKind::Choice { options, default },
+            modulatable: false,
+            exposed: false,
+            scale: ModScale::Linear,
         }
     }
 
@@ -91,6 +114,89 @@ impl ParamSpec {
             help,
             unit: "",
             kind: ParamKind::Text { default },
+            modulatable: false,
+            exposed: false,
+            scale: ModScale::Linear,
+        }
+    }
+
+    /// Shows the parameter's modulation pin on new nodes.
+    pub const fn exposed(mut self) -> Self {
+        self.exposed = true;
+        self
+    }
+
+    /// Can't be modulated: for parameters that are too costly or meaningless to change while
+    /// rendering, such as filter crossovers.
+    pub const fn fixed(mut self) -> Self {
+        self.modulatable = false;
+        self.exposed = false;
+        self
+    }
+
+    /// Modulation amounts are in octaves.
+    pub const fn octaves(mut self) -> Self {
+        self.scale = ModScale::Octaves;
+        self
+    }
+
+    /// The modulation amount a newly connected signal starts with, around a base value of
+    /// `base`: one octave, or half the base, or a tenth of the usual range when the base is zero.
+    pub fn default_modulation_amount(&self, base: f64) -> f64 {
+        match self.kind {
+            ParamKind::Number { .. } if self.scale == ModScale::Octaves => 1.0,
+            ParamKind::Number { min, max, .. } if base == 0.0 => (max - min) / 10.0,
+            ParamKind::Number { .. } => base.abs() / 2.0,
+            _ => 0.0,
+        }
+    }
+
+    /// The modulation a newly connected signal gets: the default amount, both ways.
+    pub fn default_modulation(&self, base: f64) -> Modulation {
+        Modulation {
+            amount: self.default_modulation_amount(base),
+            mode: ModMode::Bipolar,
+        }
+    }
+
+    /// The value for one sample `signal` of a modulating signal, before clamping to the limits.
+    pub fn modulated(&self, base: f64, modulation: Modulation, signal: f64) -> f64 {
+        let offset = modulation.amount * f64::from(modulation.mode.shape(signal as f32));
+        match self.scale {
+            ModScale::Linear => base + offset,
+            ModScale::Octaves => base * offset.exp2(),
+        }
+    }
+
+    /// The range a modulated value moves over for a signal within `-1..=1`, within the limits.
+    pub fn modulated_range(&self, base: f64, modulation: Modulation) -> (f64, f64) {
+        let ends = match modulation.mode {
+            ModMode::Bipolar => [-1.0, 1.0],
+            ModMode::Unipolar => [0.0, 1.0],
+        };
+        let [a, b] = ends.map(|s| self.modulated(base, modulation, s));
+        let (lo, hi) = self.number_limits().unwrap_or((f64::MIN, f64::MAX));
+        (a.min(b).clamp(lo, hi), a.max(b).clamp(lo, hi))
+    }
+
+    /// The number's base value, from the node's values or the default.
+    pub fn number_value(&self, values: &BTreeMap<String, ParamValue>) -> Option<f64> {
+        match (self.kind, values.get(self.name)) {
+            (_, Some(ParamValue::Number(n))) => Some(*n),
+            (ParamKind::Number { default, .. }, None) => Some(default),
+            _ => None,
+        }
+    }
+
+    /// The hard limits of a number, or `None` for other kinds.
+    pub fn number_limits(&self) -> Option<(f64, f64)> {
+        match self.kind {
+            ParamKind::Number {
+                limit_min,
+                limit_max,
+                ..
+            } => Some((limit_min, limit_max)),
+            _ => None,
         }
     }
 
@@ -256,6 +362,36 @@ mod tests {
         let v = values(r#"{ "gain": 11 }"#);
         let p = Params::new(SPECS, &v).unwrap();
         assert!(p.number("gain").unwrap_err().contains("between -10 and 10"));
+    }
+
+    #[test]
+    fn modulation_moves_values_linearly_or_in_octaves() {
+        let linear = ParamSpec::number("time", "Time", 1.0, 0.0, 10.0, "");
+        let octaves = ParamSpec::number("cutoff", "Cutoff", 40.0, 1.0, 1000.0, "").octaves();
+        let both = |amount| Modulation {
+            amount,
+            mode: ModMode::Bipolar,
+        };
+        let one_way = |amount| Modulation {
+            amount,
+            mode: ModMode::Unipolar,
+        };
+        assert_eq!(linear.modulated(5.0, both(2.0), -0.5), 4.0);
+        assert_eq!(
+            linear.modulated(5.0, one_way(-2.0), -0.5),
+            4.0,
+            "one way uses |signal|"
+        );
+        assert_eq!(octaves.modulated(40.0, both(1.0), 1.0), 80.0);
+        assert_eq!(octaves.modulated(40.0, both(1.0), -1.0), 20.0);
+        // Ranges are clamped to the limits (here the usual range, 0..10).
+        assert_eq!(linear.modulated_range(5.0, both(2.0)), (3.0, 7.0));
+        assert_eq!(linear.modulated_range(9.0, both(2.0)), (7.0, 10.0));
+        assert_eq!(linear.modulated_range(5.0, one_way(-2.0)), (3.0, 5.0));
+        assert_eq!(octaves.modulated_range(40.0, both(2.0)), (10.0, 160.0));
+        assert_eq!(octaves.default_modulation_amount(40.0), 1.0);
+        assert_eq!(linear.default_modulation_amount(4.0), 2.0);
+        assert_eq!(linear.default_modulation_amount(0.0), 1.0);
     }
 
     #[test]

@@ -3,16 +3,21 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use crate::desc::{Channels, GraphDesc, Interpolation};
+use crate::desc::{Channels, GraphDesc, Interpolation, Modulation};
 use crate::dsp::{DelayLine, resample};
 use crate::nodes::{OUTPUT, Registry};
 use crate::{
-    GraphError, Layout, LayoutContext, Node, ParamValue, PrepareContext, ProcessContext, Signal,
-    Sources,
+    GraphError, Layout, LayoutContext, Node, ParamSpec, ParamValue, PrepareContext, ProcessContext,
+    Signal, Sources,
 };
 
 /// Most inputs a node can have.
 pub const MAX_INPUTS: usize = 8;
+/// Most parameters a node can have.
+pub const MAX_PARAMS: usize = 16;
+
+/// Marks a connection to a parameter rather than an input: `"node.@param"`.
+pub const PARAM_PREFIX: char = '@';
 
 /// Samples measured per output for [`OutputLevel`]; a spread-out subset is plenty for a level.
 const LEVEL_SAMPLES: usize = 4096;
@@ -36,6 +41,15 @@ pub struct OutputLevel {
     pub output: usize,
     /// Root mean square of the output's samples.
     pub rms: f32,
+}
+
+/// The value of a modulated parameter in the last processed frame, at its middle sample.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParamLevel {
+    pub node: Arc<str>,
+    /// The parameter's index in the node's specs.
+    pub index: usize,
+    pub value: f32,
 }
 
 /// A compiled graph, ready to process frames in order.
@@ -69,16 +83,57 @@ struct Step {
     split: Option<ChannelSplit>,
     interpolation: Interpolation,
     inputs: Vec<InputBinding>,
+    /// Signals modulating parameters.
+    params: Vec<ParamBinding>,
     outputs: Vec<Signal>,
     levels: Vec<f32>,
+}
+
+/// A signal modulating one parameter: its input, and the parameter's per-sample values.
+struct ParamBinding {
+    /// The parameter's index in the node's specs.
+    index: usize,
+    spec: &'static ParamSpec,
+    input: InputBinding,
+    base: f64,
+    modulation: Modulation,
+    limits: (f64, f64),
+    /// The modulated value of each sample, at the main input's length.
+    values: Signal,
+}
+
+impl ParamBinding {
+    fn update(&mut self, done: &[Step], interpolation: Interpolation) {
+        self.input.update(done, interpolation);
+        let signal = self.input.get(done);
+        let (lo, hi) = self.limits;
+        for (v, &s) in self.values.data.iter_mut().zip(&signal.data) {
+            let value = self
+                .spec
+                .modulated(self.base, self.modulation, f64::from(s));
+            *v = value.clamp(lo, hi) as f32;
+        }
+    }
 }
 
 /// Buffers for running one node instance per channel of an interleaved signal.
 struct ChannelSplit {
     /// `inputs[channel][input]`: that input's samples for one channel.
     inputs: Vec<Vec<Signal>>,
+    /// `params[channel][k]`: modulated parameter `k`'s values for one channel.
+    params: Vec<Vec<Signal>>,
     /// `outputs[channel][output]`.
     outputs: Vec<Vec<Signal>>,
+}
+
+/// Copies every `channels`-th sample of `interleaved`, starting at `channel`, into `out`.
+fn deinterleave(interleaved: &[f32], channel: usize, channels: usize, out: &mut [f32]) {
+    for (o, &x) in out
+        .iter_mut()
+        .zip(interleaved.iter().skip(channel).step_by(channels))
+    {
+        *o = x;
+    }
 }
 
 impl ChannelSplit {
@@ -87,18 +142,18 @@ impl ChannelSplit {
         nodes: &mut [Box<dyn Node>],
         ctx: &ProcessContext,
         inputs: &[&Signal],
+        params: &[ParamBinding],
         outputs: &mut [Signal],
     ) {
         let channels = nodes.len();
         for (k, input) in inputs.iter().enumerate() {
             for (c, channel) in self.inputs.iter_mut().enumerate() {
-                let out = &mut channel[k].data;
-                for (o, &x) in out
-                    .iter_mut()
-                    .zip(input.data.iter().skip(c).step_by(channels))
-                {
-                    *o = x;
-                }
+                deinterleave(&input.data, c, channels, &mut channel[k].data);
+            }
+        }
+        for (k, param) in params.iter().enumerate() {
+            for (c, channel) in self.params.iter_mut().enumerate() {
+                deinterleave(&param.values.data, c, channels, &mut channel[k].data);
             }
         }
         for (c, node) in nodes.iter_mut().enumerate() {
@@ -106,7 +161,15 @@ impl ChannelSplit {
             for (slot, input) in refs.iter_mut().zip(&self.inputs[c]) {
                 *slot = input;
             }
-            node.process(ctx, &refs[..inputs.len()], &mut self.outputs[c]);
+            let mut values = [None; MAX_PARAMS];
+            for (param, channel) in params.iter().zip(&self.params[c]) {
+                values[param.index] = Some(channel.data.as_slice());
+            }
+            let ctx = ProcessContext {
+                params: &values,
+                ..*ctx
+            };
+            node.process(&ctx, &refs[..inputs.len()], &mut self.outputs[c]);
         }
         for (o, output) in outputs.iter_mut().enumerate() {
             for (c, channel) in self.outputs.iter().enumerate() {
@@ -182,11 +245,36 @@ struct Pending {
     id: String,
     kind: String,
     params: BTreeMap<String, ParamValue>,
+    specs: &'static [ParamSpec],
+    modulation: BTreeMap<String, Modulation>,
     node: Box<dyn Node>,
     interpolation: Interpolation,
     channels: Channels,
     /// For each input port, the connected (node, output port).
     wires: Vec<Option<(usize, usize)>>,
+    /// For each parameter, the (node, output port) modulating it.
+    param_wires: Vec<Option<(usize, usize)>>,
+}
+
+impl Pending {
+    /// Every connected (node, output port): inputs, then parameters.
+    fn sources(&self) -> impl Iterator<Item = &(usize, usize)> {
+        self.wires.iter().chain(&self.param_wires).flatten()
+    }
+
+    /// How parameter `index` is modulated, if a signal is connected to it.
+    fn modulation_of(&self, index: usize) -> Option<(f64, Modulation, (f64, f64))> {
+        self.param_wires[index]?;
+        let spec = &self.specs[index];
+        let base = spec.number_value(&self.params)?;
+        let limits = spec.number_limits()?;
+        let modulation = self
+            .modulation
+            .get(spec.name)
+            .copied()
+            .unwrap_or_else(|| spec.default_modulation(base));
+        Some((base, modulation, limits))
+    }
 }
 
 impl Graph {
@@ -282,11 +370,18 @@ impl Graph {
             // Every input reaches the node at the main input's layout (per channel, if split).
             let matched = vec![channel_layout.unwrap_or_default(); p.wires.len()];
             let connected: Vec<bool> = p.wires.iter().map(Option::is_some).collect();
+            let modulated: Vec<Option<(f64, f64)>> = (0..p.specs.len())
+                .map(|i| {
+                    p.modulation_of(i)
+                        .map(|(base, m, _)| p.specs[i].modulated_range(base, m))
+                })
+                .collect();
             let ctx = PrepareContext {
                 frame_rate: options.frame_rate,
                 inputs: &matched,
                 outputs: &node_outputs,
                 connected: &connected,
+                modulated: &modulated,
             };
 
             let mut nodes = vec![std::mem::replace(
@@ -316,9 +411,7 @@ impl Graph {
             // Inputs that arrive with less latency than the latest one are delayed to line up.
             let p = &pending[n];
             let mut aligned = p
-                .wires
-                .iter()
-                .flatten()
+                .sources()
                 .map(|&(src, _)| latency[src])
                 .fold(0.0, f64::max);
             if n == output {
@@ -330,37 +423,61 @@ impl Graph {
             latency[n] = aligned + own_latency;
 
             let main_len = main.map_or(0, |l| l.len());
+            // How one input (or parameter) gets its signal: latency compensation, then
+            // resampling to the main input's length.
+            let binding = |w: Option<(usize, usize)>, src_layout: Layout, secondary: bool| {
+                let compensation = w.and_then(|(src, _)| {
+                    let delay =
+                        ((aligned - latency[src]) * src_layout.len() as f64).round() as usize;
+                    (delay > 0).then(|| (DelayLine::new(delay), delay, Signal::zeros(src_layout)))
+                });
+                let needs_resampling = secondary && (w.is_none() || src_layout.len() != main_len);
+                let main = main.unwrap();
+                let group = if src_layout.samples_per_pixel == 1 && main.samples_per_pixel > 1 {
+                    main.samples_per_pixel as usize
+                } else {
+                    1
+                };
+                InputBinding {
+                    source: w.map(|(src, port)| (step_of[src], port)),
+                    compensation,
+                    resampled: needs_resampling.then(|| Signal::zeros(main)),
+                    group,
+                }
+            };
             let inputs = p
                 .wires
                 .iter()
                 .enumerate()
-                .map(|(k, w)| {
-                    let src_layout = input_layouts[k];
-                    let compensation = w.and_then(|(src, _)| {
-                        let delay =
-                            ((aligned - latency[src]) * src_layout.len() as f64).round() as usize;
-                        (delay > 0)
-                            .then(|| (DelayLine::new(delay), delay, Signal::zeros(src_layout)))
-                    });
-                    let needs_resampling = k > 0 && (w.is_none() || src_layout.len() != main_len);
-                    let main = main.unwrap();
-                    let group = if src_layout.samples_per_pixel == 1 && main.samples_per_pixel > 1 {
-                        main.samples_per_pixel as usize
-                    } else {
-                        1
-                    };
-                    InputBinding {
-                        source: w.map(|(src, port)| (step_of[src], port)),
-                        compensation,
-                        resampled: needs_resampling.then(|| Signal::zeros(main)),
-                        group,
-                    }
+                .map(|(k, &w)| binding(w, input_layouts[k], k > 0))
+                .collect();
+            let params: Vec<ParamBinding> = (0..p.specs.len())
+                .filter_map(|index| {
+                    let (base, modulation, limits) = p.modulation_of(index)?;
+                    let (src, port) = p.param_wires[index]?;
+                    let main = main?;
+                    Some(ParamBinding {
+                        index,
+                        spec: &p.specs[index],
+                        input: binding(Some((src, port)), layouts[src][port], true),
+                        base,
+                        modulation,
+                        limits,
+                        values: Signal::zeros(main),
+                    })
                 })
                 .collect();
 
-            let split = (channels > 1).then(|| ChannelSplit {
-                inputs: vec![vec![Signal::zeros(channel_layout.unwrap()); p.wires.len()]; channels],
-                outputs: vec![node_outputs.iter().map(|&l| Signal::zeros(l)).collect(); channels],
+            let split = (channels > 1).then(|| {
+                let channel = Signal::zeros(channel_layout.unwrap());
+                ChannelSplit {
+                    inputs: vec![vec![channel.clone(); p.wires.len()]; channels],
+                    params: vec![vec![channel; params.len()]; channels],
+                    outputs: vec![
+                        node_outputs.iter().map(|&l| Signal::zeros(l)).collect();
+                        channels
+                    ],
+                }
             });
 
             step_of[n] = steps.len();
@@ -370,6 +487,7 @@ impl Graph {
                 split,
                 interpolation: p.interpolation,
                 inputs,
+                params,
                 levels: vec![0.0; output_layouts.len()],
                 outputs: output_layouts.iter().map(|&l| Signal::zeros(l)).collect(),
             });
@@ -407,6 +525,7 @@ impl Graph {
         for step in &mut self.steps {
             step.nodes.iter_mut().for_each(|n| n.reset());
             step.inputs.iter_mut().for_each(InputBinding::reset);
+            step.params.iter_mut().for_each(|p| p.input.reset());
         }
     }
 
@@ -423,6 +542,26 @@ impl Graph {
                         output,
                         rms,
                     })
+            })
+            .collect()
+    }
+
+    /// The value of every modulated parameter in the last processed frame. A parameter can change
+    /// on every sample; this is its value at the middle of the frame.
+    pub fn param_levels(&self) -> Vec<ParamLevel> {
+        self.steps
+            .iter()
+            .flat_map(|step| {
+                step.params.iter().map(|p| ParamLevel {
+                    node: step.id.clone(),
+                    index: p.index,
+                    value: p
+                        .values
+                        .data
+                        .get(p.values.data.len() / 2)
+                        .copied()
+                        .unwrap_or(0.0),
+                })
             })
             .collect()
     }
@@ -447,11 +586,6 @@ impl Graph {
             }
         }
 
-        let ctx = ProcessContext {
-            frame,
-            frame_rate: self.frame_rate,
-            sources,
-        };
         for i in 0..self.steps.len() {
             let (done, rest) = self.steps.split_at_mut(i);
             let Step {
@@ -459,6 +593,7 @@ impl Graph {
                 split,
                 interpolation,
                 inputs,
+                params,
                 outputs,
                 levels,
                 ..
@@ -466,13 +601,26 @@ impl Graph {
             for input in inputs.iter_mut() {
                 input.update(done, *interpolation);
             }
+            for param in params.iter_mut() {
+                param.update(done, *interpolation);
+            }
             let mut refs = [&EMPTY_SIGNAL; MAX_INPUTS];
             for (slot, input) in refs.iter_mut().zip(inputs.iter()) {
                 *slot = input.get(done);
             }
             let refs = &refs[..inputs.len()];
+            let mut values = [None; MAX_PARAMS];
+            for param in params.iter() {
+                values[param.index] = Some(param.values.data.as_slice());
+            }
+            let ctx = ProcessContext {
+                frame,
+                frame_rate: self.frame_rate,
+                sources,
+                params: &values,
+            };
             match split {
-                Some(split) => split.process(nodes, &ctx, refs, outputs),
+                Some(split) => split.process(nodes, &ctx, refs, params, outputs),
                 None => nodes[0].process(&ctx, refs, outputs),
             }
             for (level, output) in levels.iter_mut().zip(outputs.iter()) {
@@ -530,11 +678,29 @@ fn create_nodes(desc: &GraphDesc, registry: &Registry) -> Result<Vec<Pending>, G
         if node.inputs().len() > MAX_INPUTS {
             return Err(node_error(format!("has more than {MAX_INPUTS} inputs")));
         }
+        let specs = registry
+            .get(&d.kind)
+            .expect("created above, so the type exists")
+            .spec
+            .params;
+        if specs.len() > MAX_PARAMS {
+            return Err(node_error(format!("has more than {MAX_PARAMS} parameters")));
+        }
+        for name in d.modulation.keys() {
+            if !specs.iter().any(|s| s.name == name && s.modulatable) {
+                return Err(node_error(format!(
+                    "`{name}` isn't a parameter that can be modulated"
+                )));
+            }
+        }
         pending.push(Pending {
             id: d.id.clone(),
             kind: d.kind.clone(),
             params: d.params.clone(),
+            specs,
+            modulation: d.modulation.clone(),
             wires: vec![None; node.inputs().len()],
+            param_wires: vec![None; specs.len()],
             node,
             interpolation: d.interpolation,
             channels: d.channels,
@@ -570,6 +736,27 @@ fn connect(desc: &GraphDesc, pending: &mut [Pending]) -> Result<(), GraphError> 
                 pending[from].id
             ))
         })?;
+
+        // A parameter: `node.@name`.
+        if let Some(param) = to_port.and_then(|p| p.strip_prefix(PARAM_PREFIX)) {
+            let index = pending[to]
+                .specs
+                .iter()
+                .position(|s| s.name == param && s.modulatable)
+                .ok_or_else(|| {
+                    connection_error(format!(
+                        "`{}` has no parameter `{param}` that can be modulated",
+                        pending[to].id
+                    ))
+                })?;
+            if pending[to].param_wires[index].is_some() {
+                return Err(connection_error(format!(
+                    "parameter `{param}` is already connected"
+                )));
+            }
+            pending[to].param_wires[index] = Some((from, out));
+            continue;
+        }
 
         let inputs = pending[to].node.inputs();
         let input = match to_port {
@@ -646,7 +833,7 @@ fn schedule(pending: &[Pending], output: usize) -> Result<Vec<usize>, GraphError
         }
         marks[n] = Mark::Visiting;
         path.push(n);
-        for &(src, _) in pending[n].wires.iter().flatten() {
+        for &(src, _) in pending[n].sources() {
             visit(src, pending, marks, order, path)?;
         }
         path.pop();

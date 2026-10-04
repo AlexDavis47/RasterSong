@@ -63,11 +63,15 @@ pub(super) fn matches<'a>(
     let query = query.trim().to_lowercase();
     let fits = |t: &NodeType| match wire {
         Some(Pin::Out(..)) => !t.inputs.is_empty(),
+        Some(Pin::In(_, port)) if super::as_param(port).is_some() => {
+            !super::editor_outputs(t).is_empty()
+        }
         Some(Pin::In(..)) => !super::editor_outputs(t).is_empty(),
         None => true,
     };
     let mut found: Vec<(u8, &NodeType)> = types
         .iter()
+        .filter(|t| GraphEditor::user_addable(t.spec.category))
         .filter(|t| fits(t))
         .filter_map(|&t| {
             let label = t.spec.label.to_lowercase();
@@ -266,7 +270,10 @@ mod tests {
         // "split" matches Split by prefix and Three-Band Split by substring.
         assert_eq!(labels("split")[..2], ["Split", "Three-Band Split"]);
         assert!(labels("zzz").is_empty());
-        assert_eq!(labels("").len(), types.len());
+        // Everything but the project's inputs and output.
+        let all = labels("");
+        assert_eq!(all.len(), types.len() - 3);
+        assert!(!all.contains(&"Output") && !all.contains(&"Video"));
     }
 
     #[test]

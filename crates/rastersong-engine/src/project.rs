@@ -105,6 +105,26 @@ impl Project {
             .unwrap()
     }
 
+    /// A name for a track of the file at `path`: its file name without the extension, made
+    /// unique with `_2`, `_3`, … if another track already has it.
+    pub fn track_name_for(&self, path: &Path) -> String {
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().trim().to_owned())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| DEFAULT_AUDIO_TRACK.to_owned());
+        (1..)
+            .map(|n| {
+                if n == 1 {
+                    stem.clone()
+                } else {
+                    format!("{stem}_{n}")
+                }
+            })
+            .find(|name| !self.audio_tracks.iter().any(|t| &t.name == name))
+            .unwrap()
+    }
+
     pub fn load(path: &Path) -> Result<Self, String> {
         let error = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
         let json = std::fs::read_to_string(path).map_err(|e| error(&e))?;
@@ -137,6 +157,7 @@ impl Project {
                 )));
             }
         };
+        project.graph.upgrade();
         let dir = path.parent().unwrap_or(Path::new(""));
         let media = project
             .video
@@ -182,6 +203,22 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("rastersong-{name}-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("media")).unwrap();
         dir
+    }
+
+    #[test]
+    fn tracks_are_named_after_their_files() {
+        let mut project =
+            Project::new(GraphDesc::from_json(r#"{ "version": 1, "nodes": [] }"#).unwrap());
+        let name = project.track_name_for(Path::new("music/Drum Loop.wav"));
+        assert_eq!(name, "Drum Loop");
+        project.audio_tracks.push(ProjectTrack::new(
+            name,
+            PathBuf::from("music/Drum Loop.wav"),
+        ));
+        assert_eq!(
+            project.track_name_for(Path::new("other/Drum Loop.mp3")),
+            "Drum Loop_2"
+        );
     }
 
     #[test]

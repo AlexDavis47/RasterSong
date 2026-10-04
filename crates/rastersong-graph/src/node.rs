@@ -85,6 +85,9 @@ pub struct PrepareContext<'a> {
     pub outputs: &'a [Layout],
     /// Which inputs are connected. Unconnected optional inputs are all zeros.
     pub connected: &'a [bool],
+    /// For each parameter (in the order of the node's specs), the range its value can move over
+    /// when a signal modulates it, or `None` when it's constant. Empty means none are modulated.
+    pub modulated: &'a [Option<(f64, f64)>],
 }
 
 impl PrepareContext<'_> {
@@ -109,6 +112,21 @@ impl PrepareContext<'_> {
     pub fn sample_rate(&self) -> f64 {
         self.samples_per_frame() as f64 * self.frame_rate
     }
+
+    /// The range parameter `index` moves over when modulated, or `None` when it's constant.
+    pub fn modulation(&self, index: usize) -> Option<(f64, f64)> {
+        self.modulated.get(index).copied().flatten()
+    }
+
+    /// The highest value parameter `index` can take: `base`, or the top of its modulation range.
+    pub fn param_max(&self, index: usize, base: f64) -> f64 {
+        self.modulation(index).map_or(base, |(_, hi)| hi.max(base))
+    }
+
+    /// The lowest value parameter `index` can take.
+    pub fn param_min(&self, index: usize, base: f64) -> f64 {
+        self.modulation(index).map_or(base, |(lo, _)| lo.min(base))
+    }
 }
 
 /// Context for [`Node::process`].
@@ -117,6 +135,17 @@ pub struct ProcessContext<'a> {
     pub frame: u64,
     pub frame_rate: f64,
     pub sources: &'a dyn Sources,
+    /// Per-sample values of modulated parameters, by parameter index (the order of the node's
+    /// specs), at the main input's length; `None` (or out of range) for constant parameters,
+    /// which the node reads from its own fields.
+    pub params: &'a [Option<&'a [f32]>],
+}
+
+impl ProcessContext<'_> {
+    /// The per-sample values of parameter `index`, if a signal modulates it.
+    pub fn param(&self, index: usize) -> Option<&[f32]> {
+        self.params.get(index).copied().flatten()
+    }
 }
 
 impl std::fmt::Debug for ProcessContext<'_> {
