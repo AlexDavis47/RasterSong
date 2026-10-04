@@ -17,7 +17,7 @@ use crate::audio_out::AudioOut;
 use crate::editor::{CanvasContext, GraphEditor, InspectorContext, without_layout};
 use crate::history::History;
 use crate::settings::Settings;
-use crate::theme::{Theme, ThemeChoice, apply_style};
+use crate::theme::{Theme, ThemeChoice, WireStyle, apply_style};
 use crate::timeline::{TimelineModel, TrackAction, TrackView, timecode, timeline};
 
 /// The graph a new project starts with: the basic workflow from the readme.
@@ -445,6 +445,7 @@ impl App {
             &CanvasContext {
                 levels,
                 failure: failure.as_ref(),
+                wire_style: self.settings.wire_style,
             },
         );
     }
@@ -613,6 +614,16 @@ impl App {
                 for choice in ThemeChoice::ALL {
                     if ui
                         .radio_value(&mut self.settings.theme, choice, choice.label())
+                        .clicked()
+                    {
+                        ui.close();
+                    }
+                }
+                ui.separator();
+                ui.label(RichText::new("Wires").weak());
+                for style in WireStyle::ALL {
+                    if ui
+                        .radio_value(&mut self.settings.wire_style, style, style.label())
                         .clicked()
                     {
                         ui.close();

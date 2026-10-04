@@ -1,6 +1,6 @@
 use super::expect_rgb;
 use crate::nodes::{Category, NodeSpec};
-use crate::{InputSpec, Layout, LayoutContext, Node, ProcessContext, Signal};
+use crate::{InputSpec, Layout, LayoutContext, Node, PortHint, ProcessContext, Signal};
 
 /// RGB → separate R, G and B signals.
 #[derive(Debug)]
@@ -19,6 +19,10 @@ impl Node for Split {
 
     fn outputs(&self) -> &'static [&'static str] {
         &["r", "g", "b"]
+    }
+
+    fn output_hints(&self) -> &'static [PortHint] {
+        &[PortHint::Red, PortHint::Green, PortHint::Blue]
     }
 
     fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {

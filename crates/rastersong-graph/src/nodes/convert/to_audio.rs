@@ -1,6 +1,6 @@
 use super::{Mapping, SIGNED_MAX, flip_sign_bit};
 use crate::nodes::{Category, NodeSpec};
-use crate::{InputSpec, Node, ParamSpec, Params, ProcessContext, Signal};
+use crate::{InputSpec, Node, ParamSpec, Params, PortHint, ProcessContext, Signal};
 
 /// Video (`0..=1`) to audio (`-1..=1`).
 #[derive(Debug)]
@@ -35,6 +35,10 @@ impl Node for ToAudio {
     fn inputs(&self) -> &'static [InputSpec] {
         const INPUTS: &[InputSpec] = &[InputSpec::required("in")];
         INPUTS
+    }
+
+    fn output_hints(&self) -> &'static [PortHint] {
+        &[PortHint::AsAudio]
     }
 
     fn process(&mut self, _ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {

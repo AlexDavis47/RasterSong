@@ -6,6 +6,7 @@ use eframe::egui::{self, RichText, Ui};
 use rastersong_engine::{Channels, Interpolation, ParamKind, ParamSpec, ParamValue};
 
 use super::GraphEditor;
+use super::param_field::{NumberRange, param_field};
 use crate::theme::Theme;
 
 /// What the inspector needs from outside the editor.
@@ -103,7 +104,7 @@ impl GraphEditor {
             section(ui, "Parameters");
             // Sized from the panel once, before the grid: sizing from the grid's own cells feeds
             // back through the column widths and makes sliders change size while dragged.
-            let slider_width = (ui.available_width() - SLIDER_ROOM).clamp(80.0, 200.0);
+            let track_width = (ui.available_width() - SLIDER_ROOM).clamp(60.0, 200.0);
             egui::Grid::new("params")
                 .num_columns(3)
                 .spacing([10.0, 8.0])
@@ -112,7 +113,7 @@ impl GraphEditor {
                     for spec in kind.spec.params {
                         let tracks = (node.kind == "audio_input" && spec.name == "source")
                             .then_some(ctx.tracks);
-                        param_row(ui, spec, &mut node.params, tracks, slider_width);
+                        param_row(ui, spec, &mut node.params, tracks, track_width);
                         ui.end_row();
                     }
                 });
@@ -154,7 +155,7 @@ fn param_row(
     spec: &ParamSpec,
     params: &mut BTreeMap<String, ParamValue>,
     tracks: Option<&[String]>,
-    slider_width: f32,
+    track_width: f32,
 ) {
     ui.label(spec.label).on_hover_text(spec.help);
     let default = spec.default_value();
@@ -168,26 +169,24 @@ fn param_row(
         format!(" {}", spec.unit)
     };
     match (spec.kind, &mut value) {
-        (ParamKind::Number { min, max, .. }, ParamValue::Number(n)) => {
-            ui.spacing_mut().slider_width = slider_width;
-            ui.spacing_mut().interact_size.x = VALUE_WIDTH;
-            let logarithmic = min > 0.0 && max / min >= 1000.0;
-            if logarithmic || max - min <= 2000.0 {
-                ui.add(
-                    egui::Slider::new(n, min..=max)
-                        .logarithmic(logarithmic)
-                        .suffix(suffix)
-                        .max_decimals(3)
-                        .clamping(egui::SliderClamping::Always),
-                );
-            } else {
-                ui.add(
-                    egui::DragValue::new(n)
-                        .range(min..=max)
-                        .suffix(suffix)
-                        .max_decimals(3),
-                );
-            }
+        (
+            ParamKind::Number {
+                min,
+                max,
+                limit_min,
+                limit_max,
+                ..
+            },
+            ParamValue::Number(n),
+        ) => {
+            let range = NumberRange {
+                soft: (min, max),
+                limits: (limit_min, limit_max),
+            };
+            ui.horizontal(|ui| {
+                ui.spacing_mut().interact_size.x = VALUE_WIDTH;
+                param_field(ui, spec.name, n, range, &suffix, track_width);
+            });
         }
         (ParamKind::Choice { options, .. }, ParamValue::Text(s)) => {
             egui::ComboBox::from_id_salt(spec.name)

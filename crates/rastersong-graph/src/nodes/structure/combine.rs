@@ -1,5 +1,5 @@
 use crate::nodes::{Category, NodeSpec};
-use crate::{InputSpec, Layout, LayoutContext, Node, ProcessContext, Signal};
+use crate::{InputSpec, Layout, LayoutContext, Node, PortHint, ProcessContext, Signal};
 
 /// Separate R, G and B signals → RGB. The inverse of [`super::Split`].
 #[derive(Debug)]
@@ -18,6 +18,10 @@ impl Node for Combine {
             InputSpec::required("b"),
         ];
         INPUTS
+    }
+
+    fn output_hints(&self) -> &'static [PortHint] {
+        &[PortHint::Rgb]
     }
 
     fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {

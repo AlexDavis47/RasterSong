@@ -27,6 +27,32 @@ impl InputSpec {
     }
 }
 
+/// What an output carries, so editors can colour its wires. Rendering never looks at it.
+///
+/// A wire has a **kind** (video or audio) and may have a **part** of a signal: a colour channel
+/// or a frequency band. Hints set one or both; whatever a hint leaves open comes from the node's
+/// main input, so a delay on the red channel is still red video.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PortHint {
+    /// Everything from the main input (most effects).
+    Inherit,
+    /// Whole RGB video.
+    Rgb,
+    /// One channel of video.
+    Red,
+    Green,
+    Blue,
+    /// Whole audio.
+    Audio,
+    /// A frequency band; the kind comes from the main input.
+    Low,
+    Mid,
+    High,
+    /// Converted to audio or video; the part comes from the main input.
+    AsAudio,
+    AsVideo,
+}
+
 /// Named per-frame inputs the host supplies to the graph (decoded video, audio blocks).
 pub trait Sources {
     fn get(&self, name: &str) -> Option<&Signal>;
@@ -118,6 +144,12 @@ pub trait Node: Send {
     /// Output port names.
     fn outputs(&self) -> &'static [&'static str] {
         &["out"]
+    }
+
+    /// What each output carries, in the order of [`Node::outputs`]. Outputs left out are
+    /// [`PortHint::Inherit`].
+    fn output_hints(&self) -> &'static [PortHint] {
+        &[]
     }
 
     /// For source nodes, the name of the host-supplied signal they read.

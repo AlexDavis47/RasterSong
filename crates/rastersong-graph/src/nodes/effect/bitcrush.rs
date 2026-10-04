@@ -32,7 +32,8 @@ impl Bitcrush {
             -24.0,
             24.0,
             "Bits added per unit of the modulation input",
-        ),
+        )
+        .limits(-1000.0, 1000.0),
     ];
 
     pub fn new(params: &Params) -> Result<Self, String> {

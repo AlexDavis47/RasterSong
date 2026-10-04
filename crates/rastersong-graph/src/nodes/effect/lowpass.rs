@@ -34,7 +34,8 @@ impl Lowpass {
             100_000.0,
             "Cutoff in cycles per row; lower is smoother",
         )
-        .unit("cycles/row"),
+        .unit("cycles/row")
+        .limits(1e-06, 1e9),
         ParamSpec::number(
             "depth",
             "Depth",
@@ -42,7 +43,8 @@ impl Lowpass {
             -16.0,
             16.0,
             "Octaves the cutoff moves per unit of the modulation input",
-        ),
+        )
+        .limits(-64.0, 64.0),
     ];
 
     pub fn new(params: &Params) -> Result<Self, String> {

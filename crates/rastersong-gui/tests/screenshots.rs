@@ -15,6 +15,7 @@ use egui_kittest::kittest::Queryable;
 use rastersong_engine::{
     AudioClip, FakeBackend, FakeVideo, GraphDesc, Project, ProjectTrack, Rational,
 };
+use rastersong_gui::theme::WireStyle;
 use rastersong_gui::{App, AudioOut, STARTER_GRAPH, ThemeChoice};
 
 fn app(theme: ThemeChoice) -> App {
@@ -109,6 +110,19 @@ fn capture(theme: ThemeChoice, theme_name: &str) {
     }
     harness.run_steps(3);
     save(&mut harness, &format!("{theme_name}-1-loaded"));
+    for style in [WireStyle::Outline, WireStyle::Gradient] {
+        let mut settings = harness.state().settings().clone();
+        settings.wire_style = style;
+        harness.state_mut().set_settings(settings);
+        harness.run_steps(2);
+        save(
+            &mut harness,
+            &format!("{theme_name}-1-wires-{}", style.label().to_lowercase()),
+        );
+    }
+    let mut settings = harness.state().settings().clone();
+    settings.wire_style = WireStyle::Solid;
+    harness.state_mut().set_settings(settings);
 
     let split = harness
         .state()

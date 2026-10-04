@@ -212,6 +212,9 @@ pub trait Node: Send {
     fn outputs(&self) -> &'static [&'static str] { &["out"] }
 
     /// For source nodes, the name of the host-supplied signal they read ("video", "audio").
+    /// What each output carries (RGB, red, audio, a frequency band, …), for wire colours only.
+    fn output_hints(&self) -> &'static [PortHint] { &[] }
+
     fn source(&self) -> Option<&str> { None }
 
     /// Output layouts for the given input layouts, or an error if the inputs don't fit.
@@ -245,7 +248,8 @@ Rules every node must satisfy (enforced by tests, see [Testing Strategy](#testin
 Each node type is registered with a `NodeSpec`: a label, a category, a one-line description and a list of
 `ParamSpec`s (name, label, help text, and a number range, choice list or text default). Constructors read their
 parameters through those specs, so defaults and ranges live in one place, and the editor builds its parameter
-panels from the same specs.
+panels from the same specs. A number has a usual range, which the slider shows, and hard limits, the values the
+node can actually work with; unless a spec widens them, the limits are the usual range.
 
 The graph compiler validates the graph (unknown nodes, ports or parameters, missing inputs, cycles, exactly one
 output, layout mismatches), drops nodes that don't feed the output, orders the rest, and computes latency
@@ -447,12 +451,19 @@ rendered and cached by the engine on its render thread.
     duplicates it.
   - Wire thickness follows the RMS level of the signal at the playhead, so modulation is visible: a kick drum
     through a band split shows as the bass wire pulsing.
+  - Wire colour shows what a wire carries, from each output's `PortHint`. A wire has a base colour for its
+    kind (video neutral, audio teal) and, if it carries part of a signal, a second colour for that part: red,
+    green or blue from Split, low, mid or high from Three-Band Split. Effects keep the colours of their main
+    input, so a delay on the red channel is still red video; Video to Audio turns it into red audio. View →
+    Wires picks how the two show: solid (the part's colour, or the kind's), outlined (the kind's colour
+    outlined in the part's) or gradient (the part's colour down the centre, fading to the kind's at the edges).
   - When the graph can't render, a bar along the bottom of the graph says why and outlines the node at fault in
     red; clicking the bar shows the node.
   - Moving or renaming nodes doesn't re-render; any other edit does.
 - **Inspector:** the node's name (shown on the node instead of its type), its shared settings (Resampling,
   Channels) and its parameters, with units, sliders (logarithmic for wide ranges like cutoff) and
-  reset-to-default buttons. Audio inputs pick their track from a list. Values left at their default aren't
+  reset-to-default buttons. Each slider covers the parameter's usual range; typing (or dragging the value box)
+  past it, up to the node's limits, widens the slider to match. Audio inputs pick their track from a list. Values left at their default aren't
   written to files.
 - **Timeline:** a ruler, the video track with rendered frames marked in green, and any number of **audio tracks**,
   each with a name (which audio inputs select it by; renaming a track updates them), offset, mute and remove. Click
@@ -671,9 +682,9 @@ Collected from hands-on testing of the Phase 4 GUI (October 2026). Items already
 
 ### Node graph
 
-- [ ] Links snap to nearby pins (the grab radius is too small)
-- [ ] Link colors come from port metadata: an RGB splitter's outputs draw red, green and blue. Optional outline color or a center-to-edge gradient. Controlled by theme options
-- [ ] Better graph background
+- ~~Links snap to nearby pins (the grab radius is too small)~~: dropped; the current grab radius is fine
+- [x] Link colors come from port metadata: an RGB splitter's outputs draw red, green and blue. Optional outline color or a center-to-edge gradient. Controlled by theme options
+- ~~Better graph background~~: dropped; the current background is fine
 - [ ] Audio output is part of the graph instead of hidden from the user. Audio and video share one workflow
 
 ### Timeline
@@ -688,7 +699,7 @@ Collected from hands-on testing of the Phase 4 GUI (October 2026). Items already
 ### Parameters
 
 - [ ] **Modulation inputs on parameters** (major feature). The parameter value is the baseline and the connected signal modulates it on top, as in Serum 2. If connected, the field shows a blue automation control, a small line bar under the slider, in the color of the connected signal's link. Two modes: one-direction (the signal moves the value one way by its amplitude; dragging the control sets how far, increase or decrease) and bidirectional (the signal moves it both ways; dragging sets the range). This allows, for example, driving a delay's feedback or mix from an audio signal, beyond the single modulation input the node has now
-- [ ] Soft-bounded fields like Substance Designer: entering a value outside the bounds widens the slider's range so the user keeps full freedom
+- [x] Soft-bounded fields like Substance Designer: entering a value outside the bounds widens the slider's range so the user keeps full freedom
 
 ### Tools
 

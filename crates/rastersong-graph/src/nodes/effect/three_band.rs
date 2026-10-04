@@ -1,7 +1,7 @@
 use super::MAX_WARMUP_FRAMES;
 use crate::dsp::Biquad;
 use crate::nodes::{Category, NodeSpec};
-use crate::{InputSpec, Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
+use crate::{InputSpec, Node, ParamSpec, Params, PortHint, PrepareContext, ProcessContext, Signal};
 
 /// Splits a signal into low, mid and high bands. Crossovers are in Hz of the input signal's own
 /// sample rate (for an audio input, ordinary Hz). Mid is what remains after removing low and high,
@@ -29,7 +29,8 @@ impl ThreeBand {
             100_000.0,
             "Crossover between the low and mid bands, in Hz",
         )
-        .unit("Hz"),
+        .unit("Hz")
+        .limits(0.001, 1e9),
         ParamSpec::number(
             "high_hz",
             "Mid / high",
@@ -38,7 +39,8 @@ impl ThreeBand {
             100_000.0,
             "Crossover between the mid and high bands, in Hz",
         )
-        .unit("Hz"),
+        .unit("Hz")
+        .limits(0.001, 1e9),
     ];
 
     pub fn new(params: &Params) -> Result<Self, String> {
@@ -66,6 +68,10 @@ impl Node for ThreeBand {
 
     fn outputs(&self) -> &'static [&'static str] {
         &["low", "mid", "high"]
+    }
+
+    fn output_hints(&self) -> &'static [PortHint] {
+        &[PortHint::Low, PortHint::Mid, PortHint::High]
     }
 
     fn prepare(&mut self, ctx: &PrepareContext) {

@@ -33,7 +33,8 @@ impl Compressor {
             0.0,
             "Level above which the signal is turned down",
         )
-        .unit("dB"),
+        .unit("dB")
+        .limits(-200.0, 60.0),
         ParamSpec::number(
             "ratio",
             "Ratio",
@@ -41,7 +42,8 @@ impl Compressor {
             1.0,
             20.0,
             "How much is taken off above the threshold: 4 lets 1 dB through for every 4 dB over",
-        ),
+        )
+        .limits(1.0, 1000.0),
         ParamSpec::number(
             "attack",
             "Attack",
@@ -50,7 +52,8 @@ impl Compressor {
             1000.0,
             "How quickly the compressor turns the signal down once it goes over",
         )
-        .unit("ms"),
+        .unit("ms")
+        .limits(0.0, 1e6),
         ParamSpec::number(
             "release",
             "Release",
@@ -59,7 +62,8 @@ impl Compressor {
             5000.0,
             "How quickly it lets go once the signal falls back",
         )
-        .unit("ms"),
+        .unit("ms")
+        .limits(0.0, 1e6),
         ParamSpec::number(
             "knee",
             "Knee",
@@ -68,7 +72,8 @@ impl Compressor {
             24.0,
             "Width of the soft transition around the threshold; 0 is a hard knee",
         )
-        .unit("dB"),
+        .unit("dB")
+        .limits(0.0, 100.0),
         ParamSpec::number(
             "makeup",
             "Makeup",
@@ -77,7 +82,8 @@ impl Compressor {
             24.0,
             "Gain applied after compression",
         )
-        .unit("dB"),
+        .unit("dB")
+        .limits(-96.0, 96.0),
     ];
 
     pub const SPEC: NodeSpec = NodeSpec::new("Compressor", Category::Effect)

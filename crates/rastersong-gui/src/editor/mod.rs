@@ -3,6 +3,7 @@
 
 mod canvas;
 mod inspector;
+mod param_field;
 mod search;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};

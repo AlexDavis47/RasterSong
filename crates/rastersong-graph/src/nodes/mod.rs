@@ -19,7 +19,7 @@ pub use input::SourceNode;
 pub use output::Output;
 pub use structure::{Combine, Interleave, Pack, Split};
 
-use crate::{InputSpec, Node, ParamSpec, ParamValue, Params};
+use crate::{InputSpec, Node, ParamSpec, ParamValue, Params, PortHint};
 
 /// The node type name of the graph's output node.
 pub const OUTPUT: &str = "output";
@@ -92,6 +92,17 @@ pub struct NodeType {
     pub spec: NodeSpec,
     pub inputs: &'static [InputSpec],
     pub outputs: &'static [&'static str],
+    pub output_hints: &'static [PortHint],
+}
+
+impl NodeType {
+    /// What output `index` carries.
+    pub fn output_hint(&self, index: usize) -> PortHint {
+        self.output_hints
+            .get(index)
+            .copied()
+            .unwrap_or(PortHint::Inherit)
+    }
 }
 
 type Constructor = Box<dyn Fn(&Params) -> Result<Box<dyn Node>, String> + Send + Sync>;
@@ -135,6 +146,7 @@ impl Registry {
             spec,
             inputs: example.inputs(),
             outputs: example.outputs(),
+            output_hints: example.output_hints(),
         };
         self.entries.insert(
             kind.to_owned(),
@@ -180,8 +192,8 @@ impl Default for Registry {
     fn default() -> Self {
         let mut registry = Self::empty();
         registry
-            .register("video_input", SourceNode::VIDEO_SPEC, SourceNode::new)
-            .register("audio_input", SourceNode::AUDIO_SPEC, SourceNode::new)
+            .register("video_input", SourceNode::VIDEO_SPEC, SourceNode::video)
+            .register("audio_input", SourceNode::AUDIO_SPEC, SourceNode::audio)
             .register(OUTPUT, Output::SPEC, |_| Ok(Output))
             .register("split", Split::SPEC, |_| Ok(Split))
             .register("combine", Combine::SPEC, |_| Ok(Combine))
@@ -222,10 +234,23 @@ mod tests {
                     t.kind,
                     p.name
                 );
-                if let ParamKind::Number { default, min, max } = p.kind {
+                if let ParamKind::Number {
+                    default,
+                    min,
+                    max,
+                    limit_min,
+                    limit_max,
+                } = p.kind
+                {
                     assert!(
                         (min..=max).contains(&default),
                         "`{}.{}` default out of range",
+                        t.kind,
+                        p.name
+                    );
+                    assert!(
+                        limit_min <= min && max <= limit_max,
+                        "`{}.{}` limits narrower than its range",
                         t.kind,
                         p.name
                     );
@@ -249,6 +274,13 @@ mod tests {
         assert_eq!(delay.inputs.len(), 2);
         assert_eq!(delay.outputs, ["out"]);
         assert_eq!(registry.get("split").unwrap().outputs, ["r", "g", "b"]);
+        let split = registry.get("split").unwrap();
+        assert_eq!(split.output_hint(1), PortHint::Green);
+        assert_eq!(delay.output_hint(0), PortHint::Inherit);
+        assert_eq!(
+            registry.get("audio_input").unwrap().output_hint(0),
+            PortHint::Audio
+        );
         assert!(registry.get("nope").is_none());
     }
 }

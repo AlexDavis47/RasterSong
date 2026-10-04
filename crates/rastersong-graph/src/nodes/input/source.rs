@@ -1,13 +1,14 @@
 //! Source nodes: where host-supplied signals enter the graph.
 
 use crate::nodes::{Category, NodeSpec};
-use crate::{Layout, LayoutContext, Node, ProcessContext, Signal};
+use crate::{Layout, LayoutContext, Node, PortHint, ProcessContext, Signal};
 use crate::{ParamSpec, Params};
 
 /// Reads a host-supplied signal, e.g. `"video"` (RGB, `0..=1`) or `"audio"` (mono, `-1..=1`).
 #[derive(Debug)]
 pub struct SourceNode {
     name: String,
+    hint: &'static [PortHint],
 }
 
 impl SourceNode {
@@ -31,14 +32,28 @@ impl SourceNode {
         .describe("The audio track, one frame's worth per block, -1 to 1")
         .params(Self::AUDIO_PARAMS);
 
-    pub fn new(params: &Params) -> Result<Self, String> {
+    /// A video source (RGB).
+    pub fn video(params: &Params) -> Result<Self, String> {
         Ok(Self {
             name: params.text("source")?,
+            hint: &[PortHint::Rgb],
+        })
+    }
+
+    /// An audio source.
+    pub fn audio(params: &Params) -> Result<Self, String> {
+        Ok(Self {
+            name: params.text("source")?,
+            hint: &[PortHint::Audio],
         })
     }
 }
 
 impl Node for SourceNode {
+    fn output_hints(&self) -> &'static [PortHint] {
+        self.hint
+    }
+
     fn source(&self) -> Option<&str> {
         Some(&self.name)
     }

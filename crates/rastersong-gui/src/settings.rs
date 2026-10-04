@@ -3,12 +3,13 @@
 use rastersong_engine::PreviewScale;
 use serde::{Deserialize, Serialize};
 
-use crate::theme::ThemeChoice;
+use crate::theme::{ThemeChoice, WireStyle};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub theme: ThemeChoice,
+    pub wire_style: WireStyle,
     /// Preview resolution as a divisor of full resolution (1 = full, 2 = half, …).
     pub preview_divisor: u32,
     /// Playback volume, `0..=1`.
@@ -19,6 +20,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: ThemeChoice::default(),
+            wire_style: WireStyle::default(),
             preview_divisor: 2,
             volume: 0.8,
         }

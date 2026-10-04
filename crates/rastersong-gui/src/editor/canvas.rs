@@ -8,7 +8,7 @@
 //! - Right-click empty space to add a node there; right-click a node for its menu.
 //! - Delete removes the selection, Ctrl+D duplicates it, F frames the whole graph.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use eframe::egui::epaint::CubicBezierShape;
 use eframe::egui::{
@@ -19,7 +19,7 @@ use rastersong_engine::{Category, Failure, OutputLevel};
 
 use super::search::{NodeMenu, SearchMenu};
 use super::{GraphEditor, NodeKey};
-use crate::theme::Theme;
+use crate::theme::{Theme, WireStyle};
 
 const HEADER: f32 = 24.0;
 const ROW: f32 = 20.0;
@@ -42,7 +42,11 @@ pub struct CanvasContext<'a> {
     pub levels: &'a [OutputLevel],
     /// Why the graph can't render, shown along the bottom of the canvas.
     pub failure: Option<&'a Failure>,
+    pub wire_style: WireStyle,
 }
+
+/// How deep [`GraphEditor::output_color`] follows inherited colours upstream.
+const MAX_COLOR_DEPTH: usize = 64;
 
 /// One end of a wire being dragged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -172,6 +176,50 @@ impl GraphEditor {
             .collect()
     }
 
+    /// The colours of output `port` of `key`, from what each output carries (its `PortHint`).
+    /// Whatever a hint leaves open is looked up through the node's main input, upstream until
+    /// it's known. A wire with no kind upstream takes its node's category colour.
+    pub(super) fn output_color(&self, key: NodeKey, port: usize, theme: &Theme) -> WireColor {
+        let mut base = None;
+        let mut part = None;
+        let mut fallback = theme.unknown_category;
+        let mut at = (key, port);
+        for _ in 0..MAX_COLOR_DEPTH {
+            let Some(kind) = self.kind_of(at.0) else {
+                break;
+            };
+            if base.is_none() {
+                fallback = theme.category(Some(kind.spec.category));
+            }
+            let (hint_base, hint_part) = theme.hint_colors(kind.output_hint(at.1));
+            base = base.or(hint_base);
+            part = part.or(hint_part);
+            if base.is_some() && part.is_some() {
+                break;
+            }
+            match self.wires.iter().find(|w| w.to == (at.0, 0)) {
+                Some(wire) => at = wire.from,
+                None => break,
+            }
+        }
+        WireColor {
+            base: base.unwrap_or(fallback),
+            part: part.flatten(),
+        }
+    }
+
+    /// [`Self::output_color`] for every output of every node.
+    fn output_colors(&self, theme: &Theme) -> HashMap<(NodeKey, usize), WireColor> {
+        let mut colors = HashMap::new();
+        for node in &self.nodes {
+            let outputs = self.kind_of(node.key).map_or(0, |k| k.outputs.len());
+            for port in 0..outputs {
+                colors.insert((node.key, port), self.output_color(node.key, port, theme));
+            }
+        }
+        colors
+    }
+
     /// Draws the canvas and handles its input.
     pub fn show(&mut self, ui: &mut Ui, ctx: &CanvasContext) -> Response {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
@@ -197,6 +245,8 @@ impl GraphEditor {
         let to_screen = move |p: Pos2| graph_to_screen(view, rect, p);
         let levels = GraphEditor::level_map(ctx.levels);
         let pointer = ui.input(|i| i.pointer.hover_pos());
+
+        let output_colors = self.output_colors(theme);
 
         // Wires, behind the nodes.
         let pin_pos = |pin: Pin| -> Option<Pos2> {
@@ -224,17 +274,17 @@ impl GraphEditor {
             };
             let source = self.node(wire.from.0);
             let level = source.and_then(|n| levels.get(&(n.id.as_str(), wire.from.1)).copied());
-            let category = geometry
-                .iter()
-                .find(|g| g.key == wire.from.0)
-                .and_then(|g| g.category);
-            let color = theme.category(category).gamma_multiply(0.85);
+            let color = output_colors
+                .get(&wire.from)
+                .copied()
+                .unwrap_or(WireColor::plain(theme.unknown_category));
             draw_wire(
                 &painter,
                 to_screen(a),
                 to_screen(b),
                 wire_width(level) * view.zoom.clamp(0.6, 1.6),
                 color,
+                ctx.wire_style,
             );
         }
 
@@ -253,6 +303,7 @@ impl GraphEditor {
                 to_screen,
                 failed == Some(g.key),
                 hovered_pin,
+                &output_colors,
             );
         }
 
@@ -265,7 +316,8 @@ impl GraphEditor {
                 Pin::Out(..) => (start, pointer),
                 Pin::In(..) => (pointer, start),
             };
-            draw_wire(&painter, a, b, 2.0, theme.accent);
+            let color = WireColor::plain(theme.accent);
+            draw_wire(&painter, a, b, 2.0, color, WireStyle::Solid);
         }
 
         // Box selection.
@@ -600,6 +652,7 @@ impl GraphEditor {
         to_screen: impl Fn(Pos2) -> Pos2,
         failed: bool,
         hovered_pin: Option<Pin>,
+        output_colors: &HashMap<(NodeKey, usize), WireColor>,
     ) {
         let zoom = self.view.zoom;
         let rect = Rect::from_min_max(to_screen(g.rect.min), to_screen(g.rect.max));
@@ -678,7 +731,8 @@ impl GraphEditor {
         for (i, &(p, name)) in g.outputs.iter().enumerate() {
             let p = to_screen(p);
             let hovered = hovered_pin == Some(Pin::Out(g.key, i));
-            draw_pin(painter, theme, p, color, hovered, zoom);
+            let fill = output_colors.get(&(g.key, i)).map_or(color, |c| c.solid());
+            draw_pin(painter, theme, p, fill, hovered, zoom);
             if labels && !name.is_empty() {
                 painter.text(
                     p - vec2(PAD * zoom, 0.0),
@@ -756,15 +810,66 @@ fn draw_pin(
     painter.circle(p, radius, fill, Stroke::new(1.0, theme.pin_outline));
 }
 
-fn draw_wire(painter: &egui::Painter, from: Pos2, to: Pos2, width: f32, color: Color32) {
+/// A wire's colours: the kind of signal (video or audio), and the part of it the wire carries
+/// (a colour channel or frequency band), if any.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct WireColor {
+    pub base: Color32,
+    pub part: Option<Color32>,
+}
+
+impl WireColor {
+    fn plain(color: Color32) -> Self {
+        Self {
+            base: color,
+            part: None,
+        }
+    }
+
+    /// The single colour that best identifies the wire: its part, or else its kind.
+    pub fn solid(self) -> Color32 {
+        self.part.unwrap_or(self.base)
+    }
+}
+
+/// Rings of the gradient style, from the edge (base colour) to the centre (part colour).
+const GRADIENT_STEPS: usize = 5;
+
+fn draw_wire(
+    painter: &egui::Painter,
+    from: Pos2,
+    to: Pos2,
+    width: f32,
+    color: WireColor,
+    style: WireStyle,
+) {
     let reach = ((to.x - from.x).abs() * 0.5).max(40.0);
-    let curve = CubicBezierShape::from_points_stroke(
-        [from, from + vec2(reach, 0.0), to - vec2(reach, 0.0), to],
-        false,
-        Color32::TRANSPARENT,
-        Stroke::new(width, color),
-    );
-    painter.add(curve);
+    let points = [from, from + vec2(reach, 0.0), to - vec2(reach, 0.0), to];
+    let stroke = |width: f32, color: Color32| {
+        painter.add(CubicBezierShape::from_points_stroke(
+            points,
+            false,
+            Color32::TRANSPARENT,
+            Stroke::new(width, color),
+        ));
+    };
+    match (style, color.part) {
+        (WireStyle::Outline, Some(part)) => {
+            stroke(width + 3.0, part);
+            stroke(width, color.base);
+        }
+        (WireStyle::Gradient, Some(part)) => {
+            // Concentric strokes, widest first: base at the edge blending to the part at the centre.
+            let outer = width + 2.0;
+            for step in 0..GRADIENT_STEPS {
+                let t = step as f32 / (GRADIENT_STEPS - 1) as f32;
+                let w = outer * (1.0 - 0.8 * t);
+                stroke(w, color.base.lerp_to_gamma(part, t));
+            }
+        }
+        // Solid, or a whole signal with no part to show.
+        _ => stroke(width, color.solid().gamma_multiply(0.9)),
+    }
 }
 
 /// Graph space to screen space.
@@ -784,6 +889,34 @@ mod tests {
         assert_eq!(wire_width(Some(0.0)), 1.0);
         assert!(wire_width(Some(0.1)) < wire_width(Some(0.5)));
         assert_eq!(wire_width(Some(4.0)), 7.0, "capped");
+    }
+
+    #[test]
+    fn wires_take_their_colour_from_what_they_carry() {
+        let graph = rastersong_engine::GraphDesc::from_json(include_str!(
+            "../../../../examples/graphs/am_bands.json"
+        ))
+        .unwrap();
+        let editor = GraphEditor::new(&graph);
+        let theme = &Theme::DARK;
+        let color = |editor: &GraphEditor, id: &str| {
+            editor.output_color(editor.key_of(id).unwrap(), 0, theme)
+        };
+        let p = &theme.ports;
+        let wire = |base, part| WireColor { base, part };
+        assert_eq!(color(&editor, "split"), wire(p.video, Some(p.red)));
+        assert_eq!(color(&editor, "bands"), wire(p.audio, Some(p.low)));
+        // Effects follow their main input: the red carrier stays red video through modulation.
+        assert_eq!(color(&editor, "am_red"), wire(p.video, Some(p.red)));
+        assert_eq!(color(&editor, "combine"), wire(p.video, None));
+        assert_eq!(color(&editor, "audio"), wire(p.audio, None));
+
+        // Converting the red channel to audio keeps it red, as audio.
+        let mut editor = editor;
+        let split = editor.key_of("split").unwrap();
+        let to_audio = editor.add_node("to_audio", Pos2::ZERO).unwrap();
+        editor.connect((split, 0), (to_audio, 0));
+        assert_eq!(color(&editor, "to_audio"), wire(p.audio, Some(p.red)));
     }
 
     #[test]

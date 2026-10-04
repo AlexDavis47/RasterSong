@@ -54,7 +54,8 @@ impl Distortion {
             48.0,
             "Gain before shaping; more drive, more distortion",
         )
-        .unit("dB"),
+        .unit("dB")
+        .limits(-96.0, 96.0),
         ParamSpec::number(
             "bias",
             "Bias",
@@ -62,7 +63,8 @@ impl Distortion {
             -1.0,
             1.0,
             "Offset added before shaping, for uneven distortion",
-        ),
+        )
+        .limits(-100.0, 100.0),
         ParamSpec::number(
             "mix",
             "Mix",

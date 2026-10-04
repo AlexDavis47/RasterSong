@@ -20,7 +20,7 @@ pub use offline::{FrameSink, RenderSettings, RenderedFrame, render};
 pub use project::{PROJECT_EXTENSION, PROJECT_VERSION, Project, ProjectTrack};
 pub use rastersong_graph::{
     Category, Channels, Connection, FORMAT_VERSION, GraphDesc, GraphError, Interpolation, NodeDesc,
-    NodeType, OutputLevel, ParamKind, ParamSpec, ParamValue, Registry,
+    NodeType, OutputLevel, ParamKind, ParamSpec, ParamValue, PortHint, Registry,
 };
 pub use rastersong_media::{
     AudioClip, AudioOptions, BackendInfo, FakeBackend, FakeVideo, FfmpegBackend, LibraryInfo,

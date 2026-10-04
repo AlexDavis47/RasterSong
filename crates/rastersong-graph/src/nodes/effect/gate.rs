@@ -38,7 +38,8 @@ impl Gate {
             0.0,
             "Level the signal must reach to open the gate",
         )
-        .unit("dB"),
+        .unit("dB")
+        .limits(-200.0, 60.0),
         ParamSpec::number(
             "attack",
             "Attack",
@@ -47,7 +48,8 @@ impl Gate {
             1000.0,
             "How quickly the gate opens",
         )
-        .unit("ms"),
+        .unit("ms")
+        .limits(0.0, 1e6),
         ParamSpec::number(
             "hold",
             "Hold",
@@ -56,7 +58,8 @@ impl Gate {
             5000.0,
             "How long the gate stays open after the signal drops below the threshold",
         )
-        .unit("ms"),
+        .unit("ms")
+        .limits(0.0, 1e6),
         ParamSpec::number(
             "release",
             "Release",
@@ -65,7 +68,8 @@ impl Gate {
             5000.0,
             "How quickly the gate closes",
         )
-        .unit("ms"),
+        .unit("ms")
+        .limits(0.0, 1e6),
         ParamSpec::number(
             "range",
             "Range",

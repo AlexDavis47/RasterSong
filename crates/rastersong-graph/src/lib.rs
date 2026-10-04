@@ -17,7 +17,7 @@ pub use desc::{
 };
 pub use error::GraphError;
 pub use graph::{CompileOptions, Graph, MAX_INPUTS, OutputLevel};
-pub use node::{InputSpec, LayoutContext, Node, PrepareContext, ProcessContext, Sources};
+pub use node::{InputSpec, LayoutContext, Node, PortHint, PrepareContext, ProcessContext, Sources};
 pub use nodes::{Category, NodeSpec, NodeType, Registry};
 pub use params::{ParamKind, ParamSpec, Params};
 pub use signal::{Layout, Signal};

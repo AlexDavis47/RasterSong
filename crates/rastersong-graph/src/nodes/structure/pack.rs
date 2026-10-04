@@ -1,5 +1,5 @@
 use crate::nodes::{Category, NodeSpec};
-use crate::{InputSpec, Layout, LayoutContext, Node, ProcessContext, Signal};
+use crate::{InputSpec, Layout, LayoutContext, Node, PortHint, ProcessContext, Signal};
 
 /// A packed mono carrier → RGB. The inverse of [`super::Interleave`].
 #[derive(Debug)]
@@ -14,6 +14,10 @@ impl Node for Pack {
     fn inputs(&self) -> &'static [InputSpec] {
         const INPUTS: &[InputSpec] = &[InputSpec::required("in")];
         INPUTS
+    }
+
+    fn output_hints(&self) -> &'static [PortHint] {
+        &[PortHint::Rgb]
     }
 
     fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {

@@ -1,6 +1,6 @@
 use super::expect_rgb;
 use crate::nodes::{Category, NodeSpec};
-use crate::{InputSpec, Layout, LayoutContext, Node, ProcessContext, Signal};
+use crate::{InputSpec, Layout, LayoutContext, Node, PortHint, ProcessContext, Signal};
 
 /// RGB → one mono carrier with the channels packed in sequence (R, G, B, R, G, B, …), three times
 /// as wide. The samples don't change, but downstream nodes now treat each channel value as its own
@@ -17,6 +17,10 @@ impl Node for Interleave {
     fn inputs(&self) -> &'static [InputSpec] {
         const INPUTS: &[InputSpec] = &[InputSpec::required("in")];
         INPUTS
+    }
+
+    fn output_hints(&self) -> &'static [PortHint] {
+        &[PortHint::Rgb]
     }
 
     fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {

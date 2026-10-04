@@ -3,7 +3,7 @@
 //! here, so nothing else holds a colour literal.
 
 use eframe::egui::{self, Color32, CornerRadius};
-use rastersong_engine::Category;
+use rastersong_engine::{Category, PortHint};
 use serde::{Deserialize, Serialize};
 
 /// The user's theme choice. Dark by default, whatever the system uses.
@@ -35,6 +35,44 @@ impl ThemeChoice {
     }
 }
 
+/// How wires are drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum WireStyle {
+    /// One flat colour.
+    #[default]
+    Solid,
+    /// The signal's kind in the middle, outlined in the part it carries (e.g. red).
+    Outline,
+    /// The part it carries down the centre, fading to the signal's kind at the edges.
+    Gradient,
+}
+
+impl WireStyle {
+    pub const ALL: [WireStyle; 3] = [Self::Solid, Self::Outline, Self::Gradient];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Solid => "Solid",
+            Self::Outline => "Outlined",
+            Self::Gradient => "Gradient",
+        }
+    }
+}
+
+/// Wire colours: a base colour per kind of signal, and one per part of a signal (channel or
+/// band). See [`PortHint`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct PortColors {
+    pub video: Color32,
+    pub audio: Color32,
+    pub red: Color32,
+    pub green: Color32,
+    pub blue: Color32,
+    pub low: Color32,
+    pub mid: Color32,
+    pub high: Color32,
+}
+
 /// Colours painted by the app.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Theme {
@@ -47,7 +85,6 @@ pub struct Theme {
 
     pub canvas_bg: Color32,
     pub grid_minor: Color32,
-    pub grid_major: Color32,
     pub node_body: Color32,
     pub node_shadow: Color32,
     pub node_outline: Color32,
@@ -61,6 +98,7 @@ pub struct Theme {
     pub error_bar: Color32,
     pub error_bar_hover: Color32,
     pub error_bar_text: Color32,
+    pub ports: PortColors,
 
     pub preview_bg: Color32,
 
@@ -83,7 +121,6 @@ impl Theme {
 
         canvas_bg: Color32::from_gray(14),
         grid_minor: Color32::from_gray(48),
-        grid_major: Color32::from_gray(40),
         node_body: Color32::from_gray(38),
         node_shadow: Color32::from_black_alpha(70),
         node_outline: Color32::from_gray(60),
@@ -101,6 +138,16 @@ impl Theme {
         error_bar: Color32::from_rgb(0x5a, 0x1e, 0x1e),
         error_bar_hover: Color32::from_rgb(0x6e, 0x24, 0x24),
         error_bar_text: Color32::from_rgb(0xff, 0xd0, 0xd0),
+        ports: PortColors {
+            video: Color32::from_gray(205),
+            audio: Color32::from_rgb(0x3c, 0xc4, 0xbc),
+            red: Color32::from_rgb(0xe8, 0x55, 0x4e),
+            green: Color32::from_rgb(0x4f, 0xc4, 0x5c),
+            blue: Color32::from_rgb(0x4d, 0x8e, 0xf0),
+            low: Color32::from_rgb(0xf0, 0x8a, 0x3a),
+            mid: Color32::from_rgb(0xe6, 0xcc, 0x4a),
+            high: Color32::from_rgb(0xb0, 0x7c, 0xec),
+        },
 
         preview_bg: Color32::BLACK,
 
@@ -122,7 +169,6 @@ impl Theme {
 
         canvas_bg: Color32::from_gray(236),
         grid_minor: Color32::from_gray(196),
-        grid_major: Color32::from_gray(214),
         node_body: Color32::from_gray(252),
         node_shadow: Color32::from_black_alpha(30),
         node_outline: Color32::from_gray(178),
@@ -140,6 +186,16 @@ impl Theme {
         error_bar: Color32::from_rgb(0xf6, 0xd4, 0xd4),
         error_bar_hover: Color32::from_rgb(0xf0, 0xc2, 0xc2),
         error_bar_text: Color32::from_rgb(0x7a, 0x10, 0x10),
+        ports: PortColors {
+            video: Color32::from_gray(80),
+            audio: Color32::from_rgb(0x14, 0x9a, 0x92),
+            red: Color32::from_rgb(0xd2, 0x3c, 0x34),
+            green: Color32::from_rgb(0x2e, 0x9e, 0x3c),
+            blue: Color32::from_rgb(0x2c, 0x6c, 0xd8),
+            low: Color32::from_rgb(0xdc, 0x70, 0x1c),
+            mid: Color32::from_rgb(0xb8, 0x98, 0x10),
+            high: Color32::from_rgb(0x8a, 0x52, 0xcc),
+        },
 
         preview_bg: Color32::from_gray(24),
 
@@ -163,6 +219,25 @@ impl Theme {
             &Self::DARK
         } else {
             &Self::LIGHT
+        }
+    }
+
+    /// What a hint says about a wire's colours: `(base, part)`, each `None` where the hint leaves
+    /// it to the main input. A part of `Some(None)` means "whole signal, no part".
+    pub fn hint_colors(&self, hint: PortHint) -> (Option<Color32>, Option<Option<Color32>>) {
+        let p = &self.ports;
+        match hint {
+            PortHint::Inherit => (None, None),
+            PortHint::Rgb => (Some(p.video), Some(None)),
+            PortHint::Audio => (Some(p.audio), Some(None)),
+            PortHint::Red => (Some(p.video), Some(Some(p.red))),
+            PortHint::Green => (Some(p.video), Some(Some(p.green))),
+            PortHint::Blue => (Some(p.video), Some(Some(p.blue))),
+            PortHint::Low => (None, Some(Some(p.low))),
+            PortHint::Mid => (None, Some(Some(p.mid))),
+            PortHint::High => (None, Some(Some(p.high))),
+            PortHint::AsAudio => (Some(p.audio), None),
+            PortHint::AsVideo => (Some(p.video), None),
         }
     }
 

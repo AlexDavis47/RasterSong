@@ -17,10 +17,11 @@ impl Am {
         "depth",
         "Depth",
         1.0,
-        -100.0,
-        100.0,
+        -10.0,
+        10.0,
         "How strongly the modulator scales the carrier: carrier × (1 + depth × modulator)",
-    )];
+    )
+    .unbounded()];
 
     pub fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
