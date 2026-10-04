@@ -13,7 +13,7 @@ use rastersong_engine::{
     OutputLevel, ParamValue, Registry,
 };
 
-pub use canvas::{ACCENT, CanvasContext, ERROR};
+pub use canvas::CanvasContext;
 pub use inspector::InspectorContext;
 
 /// Identifies a node in the editor, stable across renames.
@@ -65,6 +65,10 @@ pub struct GraphEditor {
     selected: BTreeSet<NodeKey>,
     /// The node shown in the inspector.
     active: Option<NodeKey>,
+    /// When each node was last brought to the front; nodes are drawn in this order (unraised
+    /// ones first, in graph order). Kept apart from `nodes` so raising a node doesn't reorder
+    /// the graph, which would count as an edit.
+    raised: HashMap<NodeKey, u64>,
     view: View,
     /// Fit the view to the graph the next time it's drawn.
     fit_pending: bool,
@@ -96,6 +100,7 @@ impl GraphEditor {
             next_key: 1,
             selected: BTreeSet::new(),
             active: None,
+            raised: HashMap::new(),
             view: View::default(),
             fit_pending: true,
             interaction: canvas::Interaction::default(),
@@ -115,6 +120,7 @@ impl GraphEditor {
         self.wires.clear();
         self.selected.clear();
         self.active = None;
+        self.raised.clear();
         self.search = None;
         self.node_menu = None;
         self.fit_pending = true;
@@ -146,6 +152,19 @@ impl GraphEditor {
                     .push(format!("dropped connection {} -> {}", c.from, c.to)),
             }
         }
+    }
+
+    /// Draws `key` above every other node.
+    fn raise(&mut self, key: NodeKey) {
+        let top = self.raised.values().max().map_or(1, |z| z + 1);
+        self.raised.insert(key, top);
+    }
+
+    /// Node indices in drawing order, back to front.
+    fn draw_order(&self) -> Vec<usize> {
+        let mut order: Vec<usize> = (0..self.nodes.len()).collect();
+        order.sort_by_key(|&i| self.raised.get(&self.nodes[i].key).copied().unwrap_or(0));
+        order
     }
 
     fn fresh_key(&mut self) -> NodeKey {
@@ -422,14 +441,18 @@ pub(crate) fn editor_outputs(kind: &NodeType) -> &'static [&'static str] {
     }
 }
 
-/// Removes everything that doesn't affect rendering (positions and names), so moving or renaming
-/// nodes doesn't re-render.
+/// Removes everything that doesn't affect rendering (positions, names and the order nodes and
+/// connections are listed in), so moving or renaming nodes doesn't re-render.
 pub fn without_layout(graph: &GraphDesc) -> GraphDesc {
     let mut graph = graph.clone();
     for node in &mut graph.nodes {
         node.position = None;
         node.label = None;
     }
+    graph.nodes.sort_by(|a, b| a.id.cmp(&b.id));
+    graph
+        .connections
+        .sort_by(|a, b| (&a.to, &a.from).cmp(&(&b.to, &b.from)));
     graph
 }
 
@@ -582,6 +605,29 @@ mod tests {
         moved.nodes[0].position = Some([500.0, 500.0]);
         moved.nodes[0].label = Some("Main video".into());
         assert_eq!(without_layout(&moved), without_layout(&graph));
+    }
+
+    #[test]
+    fn node_order_does_not_count_as_an_edit() {
+        let graph = graph();
+        let mut reordered = graph.clone();
+        reordered.nodes.reverse();
+        reordered.connections.reverse();
+        assert_eq!(without_layout(&reordered), without_layout(&graph));
+    }
+
+    #[test]
+    fn raising_a_node_keeps_the_graph_order() {
+        let mut editor = GraphEditor::new(&graph());
+        let before = editor.to_desc();
+        let first = editor.nodes[0].key;
+        editor.raise(first);
+        assert_eq!(editor.to_desc(), before);
+        assert_eq!(
+            *editor.draw_order().last().unwrap(),
+            0,
+            "drawn last, on top"
+        );
     }
 
     #[test]

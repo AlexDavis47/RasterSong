@@ -3,17 +3,13 @@
 
 use std::ops::Range;
 
-use eframe::egui::{
-    self, Align2, Color32, CornerRadius, FontId, Rect, Sense, Stroke, Ui, pos2, vec2,
-};
+use eframe::egui::{self, Align2, CornerRadius, FontId, Rect, Sense, Stroke, Ui, pos2, vec2};
 
-const HEADER_WIDTH: f32 = 190.0;
+use crate::theme::Theme;
+
+const HEADER_WIDTH: f32 = 250.0;
 const RULER_HEIGHT: f32 = 18.0;
 const LANE_HEIGHT: f32 = 26.0;
-
-const VIDEO_COLOR: Color32 = Color32::from_rgb(0x2d, 0x4f, 0x7a);
-const AUDIO_COLOR: Color32 = Color32::from_rgb(0xa8, 0x6a, 0x26);
-const CACHED_COLOR: Color32 = Color32::from_rgb(0x5c, 0xd6, 0x6a);
 
 /// One audio track as the timeline shows it.
 #[derive(Debug, Clone)]
@@ -95,6 +91,7 @@ pub fn timeline(
     track_names: &mut [String],
 ) -> TimelineResponse {
     let mut response = TimelineResponse::default();
+    let theme = Theme::of(ui.ctx());
     let duration = (model.frame_count as f64 / model.frame_rate).max(1e-6);
     let lanes_left = ui.min_rect().left() + HEADER_WIDTH + 8.0;
     let scale = TimeScale {
@@ -118,14 +115,14 @@ pub fn timeline(
             let x = scale.x(t);
             painter.line_segment(
                 [pos2(x, rect.bottom() - 5.0), pos2(x, rect.bottom())],
-                Stroke::new(1.0, Color32::from_gray(110)),
+                Stroke::new(1.0, theme.tick),
             );
             painter.text(
                 pos2(x + 3.0, rect.top()),
                 Align2::LEFT_TOP,
                 crate::timeline::timecode(t),
                 FontId::proportional(10.5),
-                Color32::from_gray(150),
+                theme.tick_label,
             );
             t += step;
         }
@@ -144,7 +141,7 @@ pub fn timeline(
         lanes = lanes.union(rect);
         seek(&lane, &scale, model, &mut response);
         let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, CornerRadius::same(3), VIDEO_COLOR);
+        painter.rect_filled(rect, CornerRadius::same(3), theme.video_block);
         for range in model.cached {
             let x0 = scale.x(range.start as f64 / model.frame_rate);
             let x1 = scale.x(range.end as f64 / model.frame_rate);
@@ -152,7 +149,7 @@ pub fn timeline(
                 pos2(x0, rect.bottom() - 4.0),
                 pos2(x1.max(x0 + 1.0), rect.bottom()),
             );
-            painter.rect_filled(bar, CornerRadius::ZERO, CACHED_COLOR);
+            painter.rect_filled(bar, CornerRadius::ZERO, theme.cached);
         }
     });
 
@@ -174,7 +171,7 @@ pub fn timeline(
                     response.actions.push(TrackAction::ToggleMute(i));
                 }
                 let name = &mut track_names[i];
-                let edit = egui::TextEdit::singleline(name).desired_width(HEADER_WIDTH - 70.0);
+                let edit = egui::TextEdit::singleline(name).desired_width(HEADER_WIDTH - 150.0);
                 let edit = ui
                     .add(edit)
                     .on_hover_text("Track name, used by Audio Input nodes");
@@ -185,6 +182,18 @@ pub fn timeline(
                     response
                         .actions
                         .push(TrackAction::Rename(i, name.trim().to_owned()));
+                }
+                let mut offset = track.offset;
+                let offset_edit = ui
+                    .add(
+                        egui::DragValue::new(&mut offset)
+                            .speed(0.01)
+                            .suffix(" s")
+                            .max_decimals(3),
+                    )
+                    .on_hover_text("Offset: seconds this track starts after the video");
+                if offset_edit.changed() {
+                    response.actions.push(TrackAction::SetOffset(i, offset));
                 }
                 if ui
                     .add(egui::Button::new("×").frame(false))
@@ -198,12 +207,12 @@ pub fn timeline(
                 ui.allocate_exact_size(vec2(scale.width, LANE_HEIGHT), Sense::click_and_drag());
             lanes = lanes.union(rect);
             let painter = ui.painter_at(rect);
-            painter.rect_filled(rect, CornerRadius::same(3), Color32::from_gray(30));
+            painter.rect_filled(rect, CornerRadius::same(3), theme.lane_bg);
             if selected {
                 painter.rect_stroke(
                     rect,
                     CornerRadius::same(3),
-                    Stroke::new(1.0, crate::editor::ACCENT),
+                    Stroke::new(1.0, theme.accent),
                     egui::StrokeKind::Inside,
                 );
             }
@@ -223,9 +232,9 @@ pub fn timeline(
                     );
                     on_block = drag.hovered() || drag.dragged();
                     let mut fill = if on_block {
-                        AUDIO_COLOR.gamma_multiply(1.25)
+                        theme.audio_block.gamma_multiply(1.25)
                     } else {
-                        AUDIO_COLOR
+                        theme.audio_block
                     };
                     if track.muted {
                         fill = fill.gamma_multiply(0.4);
@@ -236,7 +245,7 @@ pub fn timeline(
                         Align2::LEFT_CENTER,
                         &track.name,
                         FontId::proportional(11.0),
-                        Color32::from_gray(20),
+                        theme.block_text,
                     );
                     if drag.drag_started() || drag.clicked() {
                         response.actions.push(TrackAction::Select(i));
@@ -288,7 +297,7 @@ pub fn timeline(
         let painter = ui.painter_at(lanes.expand(2.0));
         painter.line_segment(
             [pos2(x, lanes.top()), pos2(x, lanes.bottom())],
-            Stroke::new(2.0, Color32::WHITE),
+            Stroke::new(2.0, theme.playhead),
         );
         painter.add(egui::Shape::convex_polygon(
             vec![
@@ -296,7 +305,7 @@ pub fn timeline(
                 pos2(x + 5.0, lanes.top()),
                 pos2(x, lanes.top() + 6.0),
             ],
-            Color32::WHITE,
+            theme.playhead,
             Stroke::NONE,
         ));
     }

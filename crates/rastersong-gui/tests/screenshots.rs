@@ -15,9 +15,9 @@ use egui_kittest::kittest::Queryable;
 use rastersong_engine::{
     AudioClip, FakeBackend, FakeVideo, GraphDesc, Project, ProjectTrack, Rational,
 };
-use rastersong_gui::{App, AudioOut, STARTER_GRAPH};
+use rastersong_gui::{App, AudioOut, STARTER_GRAPH, ThemeChoice};
 
-fn app() -> App {
+fn app(theme: ThemeChoice) -> App {
     let backend = FakeBackend::new()
         .with_video(
             "clip",
@@ -41,7 +41,22 @@ fn app() -> App {
     project
         .audio_tracks
         .push(ProjectTrack::new("audio".into(), PathBuf::from("song")));
-    App::new(Arc::new(backend), project, None, AudioOut::silent(None))
+    let mut app = App::new(Arc::new(backend), project, None, AudioOut::silent(None));
+    with_theme(&mut app, theme);
+    app
+}
+
+fn with_theme(app: &mut App, theme: ThemeChoice) {
+    let mut settings = app.settings().clone();
+    settings.theme = theme;
+    app.set_settings(settings);
+}
+
+fn gpu_harness(app: App) -> Harness<'static, App> {
+    Harness::builder()
+        .with_size(egui::vec2(1400.0, 900.0))
+        .wgpu()
+        .build_ui_state(|ui, app: &mut App| app.ui(ui), app)
 }
 
 fn save(harness: &mut Harness<'_, App>, name: &str) {
@@ -70,10 +85,21 @@ fn click_at(harness: &mut Harness<'_, App>, pos: egui::Pos2) {
 #[test]
 #[ignore = "needs a GPU; run explicitly to look at the UI"]
 fn screenshots() {
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(1400.0, 900.0))
-        .wgpu()
-        .build_ui_state(|ui, app: &mut App| app.ui(ui), app());
+    for (theme, name) in [(ThemeChoice::Dark, "dark"), (ThemeChoice::Light, "light")] {
+        capture(theme, name);
+    }
+}
+
+fn capture(theme: ThemeChoice, theme_name: &str) {
+    // A new project with nothing loaded yet.
+    let mut empty =
+        App::with_starter_project(Arc::new(FakeBackend::new()), None, AudioOut::silent(None));
+    with_theme(&mut empty, theme);
+    let mut harness = gpu_harness(empty);
+    harness.run_steps(4);
+    save(&mut harness, &format!("{theme_name}-0-empty"));
+
+    let mut harness = gpu_harness(app(theme));
 
     let deadline = Instant::now() + Duration::from_secs(20);
     while harness.state().engine().buffered_from(0) < 60 {
@@ -82,7 +108,7 @@ fn screenshots() {
         std::thread::sleep(Duration::from_millis(5));
     }
     harness.run_steps(3);
-    save(&mut harness, "1-loaded");
+    save(&mut harness, &format!("{theme_name}-1-loaded"));
 
     let split = harness
         .state()
@@ -99,7 +125,7 @@ fn screenshots() {
         + egui::vec2(0.0, 8.0);
     click_at(&mut harness, header);
     harness.run_steps(4);
-    save(&mut harness, "2-node-selected");
+    save(&mut harness, &format!("{theme_name}-2-node-selected"));
 
     // Right-click empty canvas: the search menu.
     let canvas = harness.state().editor().canvas_rect();
@@ -118,7 +144,7 @@ fn screenshots() {
     }
     harness.event(egui::Event::Text("de".into()));
     harness.run_steps(3);
-    save(&mut harness, "3-search");
+    save(&mut harness, &format!("{theme_name}-3-search"));
     harness.key_press(egui::Key::Escape);
     harness.run_steps(2);
 
@@ -165,11 +191,11 @@ fn screenshots() {
         std::thread::sleep(Duration::from_millis(5));
     }
     harness.run_steps(3);
-    save(&mut harness, "4-error");
+    save(&mut harness, &format!("{theme_name}-4-error"));
 
     harness.get_by_label("Help").click();
     harness.run_steps(2);
     harness.get_by_label("About RasterSong").click();
     harness.run_steps(3);
-    save(&mut harness, "5-about");
+    save(&mut harness, &format!("{theme_name}-5-about"));
 }

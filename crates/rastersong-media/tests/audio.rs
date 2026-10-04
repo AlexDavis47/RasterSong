@@ -42,6 +42,34 @@ fn decodes_pcm_exactly() {
     }
 }
 
+/// The samples of a WAV file's `data` chunk, read as little-endian `f32`.
+fn wav_f32_samples(bytes: &[u8]) -> Vec<f32> {
+    let mut at = 12; // "RIFF", size, "WAVE"
+    while at + 8 <= bytes.len() {
+        let id = &bytes[at..at + 4];
+        let size = u32::from_le_bytes(bytes[at + 4..at + 8].try_into().unwrap()) as usize;
+        if id == b"data" {
+            return bytes[at + 8..at + 8 + size]
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|&b| f32::from_le_bytes(b))
+                .collect();
+        }
+        at += 8 + size + size % 2;
+    }
+    panic!("no data chunk");
+}
+
+#[test]
+fn float_audio_at_the_output_format_is_copied_exactly() {
+    let clip = load("float.wav", AudioOptions::default());
+    assert_eq!((clip.sample_rate, clip.channels), (48_000, 2));
+    let expected = wav_f32_samples(&std::fs::read(fixture("float.wav")).unwrap());
+    assert_eq!(clip.samples.len(), expected.len());
+    assert!(clip.samples == expected, "samples differ from the file");
+}
+
 #[test]
 fn decodes_aac_without_priming_samples() {
     let clip = load("audio_only.m4a", AudioOptions::default());

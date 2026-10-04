@@ -2,11 +2,11 @@
 
 use std::collections::BTreeMap;
 
-use eframe::egui::{self, Color32, RichText, Ui};
+use eframe::egui::{self, RichText, Ui};
 use rastersong_engine::{Channels, Interpolation, ParamKind, ParamSpec, ParamValue};
 
 use super::GraphEditor;
-use super::canvas::ERROR;
+use crate::theme::Theme;
 
 /// What the inspector needs from outside the editor.
 #[derive(Debug, Default)]
@@ -30,7 +30,10 @@ impl GraphEditor {
             .cloned();
         let node = self.nodes.iter_mut().find(|n| n.key == key).unwrap();
         let Some(kind) = kind else {
-            ui.colored_label(ERROR, format!("Unknown node type `{}`", node.kind));
+            ui.colored_label(
+                Theme::of(ui.ctx()).error,
+                format!("Unknown node type `{}`", node.kind),
+            );
             return;
         };
 
@@ -74,10 +77,22 @@ impl GraphEditor {
                         ui.end_row();
                     }
                     if kind.spec.per_channel {
-                        ui.label("Channels").on_hover_text("How an RGB signal is processed");
+                        ui.label("Channels").on_hover_text(
+                            "How this node treats the red, green and blue of each pixel.",
+                        );
                         choice(ui, "channels", &mut node.channels, &[
-                            (Channels::Together, "Together", "R, G, B, R, G, B, … as one stream"),
-                            (Channels::Separate, "Separate", "R, G and B each processed on their own"),
+                            (
+                                Channels::Together,
+                                "Together",
+                                "Runs R, G, B, R, G, B… through the node as one stream. Colors bleed \
+                                 into each other, as in a low pass or a modulated delay.",
+                            ),
+                            (
+                                Channels::Separate,
+                                "Separate",
+                                "Runs red, green and blue each through their own copy of the node. \
+                                 The same as Split → node ×3 → Combine.",
+                            ),
                         ]);
                         ui.end_row();
                     }
@@ -86,6 +101,9 @@ impl GraphEditor {
 
         if !kind.spec.params.is_empty() {
             section(ui, "Parameters");
+            // Sized from the panel once, before the grid: sizing from the grid's own cells feeds
+            // back through the column widths and makes sliders change size while dragged.
+            let slider_width = (ui.available_width() - SLIDER_ROOM).clamp(80.0, 200.0);
             egui::Grid::new("params")
                 .num_columns(3)
                 .spacing([10.0, 8.0])
@@ -94,7 +112,7 @@ impl GraphEditor {
                     for spec in kind.spec.params {
                         let tracks = (node.kind == "audio_input" && spec.name == "source")
                             .then_some(ctx.tracks);
-                        param_row(ui, spec, &mut node.params, tracks);
+                        param_row(ui, spec, &mut node.params, tracks, slider_width);
                         ui.end_row();
                     }
                 });
@@ -104,6 +122,11 @@ impl GraphEditor {
         }
     }
 }
+
+/// Width the label, value box and reset button need beside a parameter slider.
+const SLIDER_ROOM: f32 = 170.0;
+/// Minimum width of a slider's value box, so it doesn't resize as the digits change.
+const VALUE_WIDTH: f32 = 64.0;
 
 fn section(ui: &mut Ui, title: &str) {
     ui.add_space(12.0);
@@ -131,6 +154,7 @@ fn param_row(
     spec: &ParamSpec,
     params: &mut BTreeMap<String, ParamValue>,
     tracks: Option<&[String]>,
+    slider_width: f32,
 ) {
     ui.label(spec.label).on_hover_text(spec.help);
     let default = spec.default_value();
@@ -145,7 +169,8 @@ fn param_row(
     };
     match (spec.kind, &mut value) {
         (ParamKind::Number { min, max, .. }, ParamValue::Number(n)) => {
-            ui.spacing_mut().slider_width = (ui.available_width() - 70.0).clamp(80.0, 200.0);
+            ui.spacing_mut().slider_width = slider_width;
+            ui.spacing_mut().interact_size.x = VALUE_WIDTH;
             let logarithmic = min > 0.0 && max / min >= 1000.0;
             if logarithmic || max - min <= 2000.0 {
                 ui.add(
@@ -185,7 +210,7 @@ fn param_row(
                 };
                 egui::ComboBox::from_id_salt(spec.name)
                     .selected_text(RichText::new(shown).color(if missing {
-                        ERROR
+                        Theme::of(ui.ctx()).error
                     } else {
                         ui.visuals().text_color()
                     }))
@@ -205,7 +230,7 @@ fn param_row(
         },
         // A value of the wrong type (from a hand-edited file): offer to reset it.
         _ => {
-            ui.colored_label(Color32::LIGHT_RED, format!("{value:?}"));
+            ui.colored_label(Theme::of(ui.ctx()).error, format!("{value:?}"));
         }
     }
     let is_default = value == default;

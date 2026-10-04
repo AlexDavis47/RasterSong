@@ -104,6 +104,14 @@ const FIXTURES: &[Fixture] = &[
         ],
     },
     Fixture {
+        name: "float.wav",
+        purpose: "No video stream; 32-bit float PCM stereo at 48 kHz, already in the decoded format",
+        args: &[
+            "-f", "lavfi", "-i", "sine=frequency=330:sample_rate=48000:duration=1",
+            "-ac", "2", "-c:a", "pcm_f32le",
+        ],
+    },
+    Fixture {
         name: "audio_only.m4a",
         purpose: "No video stream; compressed AAC mono at 48 kHz (encoder delay and priming samples)",
         args: &["-f", "lavfi", "-i", TONE, "-t", "2", "-c:a", "aac", "-b:a", "96k"],

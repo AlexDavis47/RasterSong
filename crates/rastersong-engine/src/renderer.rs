@@ -45,7 +45,8 @@ impl OutputSize {
             Self::Native => (width, height),
             Self::Exact(w, h) => (w, h),
             Self::Scaled(f) => {
-                let scale = |v: u32| ((v as f32 * f).round() as u32).max(1);
+                // At least 2 pixels, so chroma subsampling still has something to work with.
+                let scale = |v: u32| ((v as f32 * f).round() as u32).max(2);
                 (scale(width), scale(height))
             }
         }

@@ -1,5 +1,6 @@
 //! Developer tasks. Run with `cargo xtask <task>`.
 
+mod dist;
 mod ffmpeg;
 mod fixtures;
 mod util;
@@ -23,11 +24,14 @@ enum Task {
     },
     /// Generate the media test fixtures into fixtures/ using the fetched FFmpeg.
     Fixtures,
+    /// Build the app in release mode and package it as a zip for testers, in target/dist.
+    Dist,
 }
 
 fn main() -> Result<()> {
     match Xtask::parse().task {
         Task::FetchFfmpeg { force } => ffmpeg::fetch(force),
         Task::Fixtures => fixtures::generate(),
+        Task::Dist => dist::package(),
     }
 }

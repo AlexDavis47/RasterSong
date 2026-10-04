@@ -5,8 +5,14 @@ use std::collections::BTreeSet;
 use eframe::egui::{self, Key, Pos2, Ui};
 use rastersong_engine::NodeType;
 
-use super::canvas::{Geometry, Pin, category_color};
+use super::canvas::{Geometry, Pin};
 use super::{GraphEditor, NodeKey};
+use crate::theme::Theme;
+
+static NEXT_SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Height of the list of node types, fixed so the popup doesn't change size as it filters.
+const LIST_HEIGHT: f32 = 320.0;
 
 /// Opened by right-clicking empty canvas (or dropping a wire there). Typing filters; arrows move;
 /// Enter or a click adds the node where the menu was opened.
@@ -21,6 +27,9 @@ pub(super) struct SearchMenu {
     pub query: String,
     pub selected: usize,
     pub opened: bool,
+    /// Distinguishes this opening from earlier ones, so egui doesn't size the popup from a
+    /// previous, shorter list.
+    pub serial: u64,
 }
 
 impl SearchMenu {
@@ -32,6 +41,7 @@ impl SearchMenu {
             query: String::new(),
             selected: 0,
             opened: false,
+            serial: NEXT_SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }
 }
@@ -106,7 +116,7 @@ impl GraphEditor {
         let mut chosen = enter
             .then(|| found.get(menu.selected).map(|t| t.kind.clone()))
             .flatten();
-        let area = egui::Area::new(ui.id().with("node-search"))
+        let area = egui::Area::new(ui.id().with(("node-search", menu.serial)))
             .order(egui::Order::Foreground)
             .fixed_pos(menu.screen)
             .constrain(true)
@@ -127,7 +137,9 @@ impl GraphEditor {
                     }
                     ui.separator();
                     egui::ScrollArea::vertical()
-                        .max_height(320.0)
+                        .min_scrolled_height(LIST_HEIGHT)
+                        .max_height(LIST_HEIGHT)
+                        .auto_shrink([false, false])
                         .show(ui, |ui| {
                             if found.is_empty() {
                                 ui.weak("No matching nodes");
@@ -141,7 +153,7 @@ impl GraphEditor {
                                     ui.painter().circle_filled(
                                         dot.center(),
                                         3.5,
-                                        category_color(Some(t.spec.category)),
+                                        Theme::of(ui.ctx()).category(Some(t.spec.category)),
                                     );
                                     let label =
                                         ui.selectable_label(i == menu.selected, t.spec.label);

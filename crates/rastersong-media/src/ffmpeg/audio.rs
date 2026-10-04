@@ -95,9 +95,30 @@ impl Resampler {
         self.out_layout.nb_channels as usize
     }
 
+    /// Whether `f` is already in the output format (interleaved `f32` at the output rate and
+    /// layout), so its samples can be copied without a converter.
+    fn passes_through(&self, f: &ffi::AVFrame) -> bool {
+        f.format == ffi::AVSampleFormat::AV_SAMPLE_FMT_FLT as i32
+            && u32::try_from(f.sample_rate) == Ok(self.out_rate)
+            // SAFETY: both layouts are valid.
+            && unsafe { ffi::av_channel_layout_compare(&self.out_layout, &f.ch_layout) } == 0
+    }
+
     fn push(&mut self, frame: &frame::Audio) -> Result<(), MediaError> {
         // SAFETY: frame is a valid decoded audio frame and outlives `f`.
         let f = unsafe { &*frame.as_ptr() };
+        if self.passes_through(f) {
+            // Finish whatever the converter holds from earlier frames in another format.
+            self.flush()?;
+            self.free();
+            let count = f.nb_samples.max(0) as usize * self.channels();
+            if count > 0 {
+                // SAFETY: packed f32 audio keeps all `nb_samples × channels` samples in data[0].
+                let data = unsafe { std::slice::from_raw_parts(f.data[0] as *const f32, count) };
+                self.samples.extend_from_slice(data);
+            }
+            return Ok(());
+        }
         let unchanged = self.input == Some((f.format, f.sample_rate))
             // SAFETY: both layouts are valid.
             && unsafe { ffi::av_channel_layout_compare(&self.input_layout, &f.ch_layout) } == 0;

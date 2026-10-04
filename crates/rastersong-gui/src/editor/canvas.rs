@@ -19,6 +19,7 @@ use rastersong_engine::{Category, Failure, OutputLevel};
 
 use super::search::{NodeMenu, SearchMenu};
 use super::{GraphEditor, NodeKey};
+use crate::theme::Theme;
 
 const HEADER: f32 = 24.0;
 const ROW: f32 = 20.0;
@@ -33,9 +34,6 @@ const MIN_ZOOM: f32 = 0.2;
 const MAX_ZOOM: f32 = 3.0;
 /// Pointer movement (screen pixels) that turns a right-click into a pan.
 const DRAG_THRESHOLD: f32 = 4.0;
-
-pub const ACCENT: Color32 = Color32::from_rgb(0x6a, 0xa8, 0xff);
-pub const ERROR: Color32 = Color32::from_rgb(0xff, 0x6b, 0x6b);
 
 /// What the canvas needs from outside the editor each frame.
 #[derive(Debug, Default)]
@@ -87,17 +85,6 @@ pub(super) struct Geometry {
     pub outputs: Vec<(Pos2, &'static str)>,
 }
 
-pub fn category_color(category: Option<Category>) -> Color32 {
-    match category {
-        Some(Category::Input) => Color32::from_rgb(0x4a, 0x90, 0xd9),
-        Some(Category::Structure) => Color32::from_rgb(0xa6, 0x7c, 0xd6),
-        Some(Category::Convert) => Color32::from_rgb(0xd6, 0x5c, 0x8a),
-        Some(Category::Effect) => Color32::from_rgb(0xe0, 0x9a, 0x3c),
-        Some(Category::Output) => Color32::from_rgb(0x5c, 0xb8, 0x5c),
-        None => Color32::from_gray(120),
-    }
-}
-
 /// Wire thickness for an output level: thin for silence, thick for a full-scale signal.
 pub fn wire_width(rms: Option<f32>) -> f32 {
     match rms {
@@ -111,13 +98,18 @@ impl GraphEditor {
     pub(super) fn geometry(&self, ui: &Ui) -> Vec<Geometry> {
         let measure = |text: &str, size: f32| {
             ui.painter()
-                .layout_no_wrap(text.to_owned(), FontId::proportional(size), Color32::WHITE)
+                .layout_no_wrap(
+                    text.to_owned(),
+                    FontId::proportional(size),
+                    Color32::PLACEHOLDER,
+                )
                 .size()
                 .x
         };
-        self.nodes
-            .iter()
-            .map(|node| {
+        self.draw_order()
+            .into_iter()
+            .map(|i| {
+                let node = &self.nodes[i];
                 let kind = self.registry.get(&node.kind);
                 let title = node.label.clone().unwrap_or_else(|| {
                     kind.map_or_else(
@@ -185,14 +177,15 @@ impl GraphEditor {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         let painter = ui.painter_at(rect);
         let visuals = ui.visuals().clone();
-        painter.rect_filled(rect, CornerRadius::ZERO, visuals.extreme_bg_color);
+        let theme = Theme::for_visuals(&visuals);
+        painter.rect_filled(rect, CornerRadius::ZERO, theme.canvas_bg);
 
         let geometry = self.geometry(ui);
         if self.fit_pending && rect.width() > 50.0 {
             self.fit(rect, &geometry);
             self.fit_pending = false;
         }
-        self.draw_grid(&painter, rect);
+        self.draw_grid(&painter, rect, theme);
 
         let menus_open = self.search.is_some() || self.node_menu.is_some();
         if !menus_open {
@@ -234,7 +227,7 @@ impl GraphEditor {
                 .iter()
                 .find(|g| g.key == wire.from.0)
                 .and_then(|g| g.category);
-            let color = category_color(category).gamma_multiply(0.85);
+            let color = theme.category(category).gamma_multiply(0.85);
             draw_wire(
                 &painter,
                 to_screen(a),
@@ -254,6 +247,7 @@ impl GraphEditor {
             self.draw_node(
                 &painter,
                 &visuals,
+                theme,
                 g,
                 to_screen,
                 failed == Some(g.key),
@@ -270,23 +264,27 @@ impl GraphEditor {
                 Pin::Out(..) => (start, pointer),
                 Pin::In(..) => (pointer, start),
             };
-            draw_wire(&painter, a, b, 2.0, ACCENT);
+            draw_wire(&painter, a, b, 2.0, theme.accent);
         }
 
         // Box selection.
         if let (Interaction::BoxSelect { start, .. }, Some(pointer)) = (self.interaction, pointer) {
             let area = Rect::from_two_pos(to_screen(start), pointer);
-            painter.rect_filled(area, CornerRadius::same(2), ACCENT.gamma_multiply(0.12));
+            painter.rect_filled(
+                area,
+                CornerRadius::same(2),
+                theme.accent.gamma_multiply(0.12),
+            );
             painter.rect_stroke(
                 area,
                 CornerRadius::same(2),
-                Stroke::new(1.0, ACCENT),
+                Stroke::new(1.0, theme.accent),
                 StrokeKind::Inside,
             );
         }
 
         if let Some(failure) = ctx.failure {
-            self.error_bar(ui, rect, failure, &geometry);
+            self.error_bar(ui, rect, failure, &geometry, theme);
         }
         if self.nodes.is_empty() {
             painter.text(
@@ -482,11 +480,7 @@ impl GraphEditor {
                 self.selected = BTreeSet::from([key]);
             }
             self.active = Some(key);
-            // Bring it to the front.
-            if let Some(i) = self.nodes.iter().position(|n| n.key == key) {
-                let node = self.nodes.remove(i);
-                self.nodes.push(node);
-            }
+            self.raise(key);
             return Interaction::MoveNodes;
         }
         Interaction::BoxSelect {
@@ -544,12 +538,12 @@ impl GraphEditor {
         self.view.offset = rect.size() / 2.0 - bounds.center().to_vec2() * zoom;
     }
 
-    fn draw_grid(&self, painter: &egui::Painter, rect: Rect) {
+    fn draw_grid(&self, painter: &egui::Painter, rect: Rect, theme: &Theme) {
         let spacing = 24.0 * self.view.zoom;
         if spacing < 8.0 {
             return;
         }
-        let color = Color32::from_gray(48);
+        let color = theme.grid_minor;
         let origin = rect.min + self.view.offset;
         let start = origin - ((origin - rect.min) / spacing).floor() * spacing;
         let mut x = start.x;
@@ -568,6 +562,7 @@ impl GraphEditor {
         &self,
         painter: &egui::Painter,
         visuals: &egui::Visuals,
+        theme: &Theme,
         g: &Geometry,
         to_screen: impl Fn(Pos2) -> Pos2,
         failed: bool,
@@ -576,14 +571,14 @@ impl GraphEditor {
         let zoom = self.view.zoom;
         let rect = Rect::from_min_max(to_screen(g.rect.min), to_screen(g.rect.max));
         let rounding = CornerRadius::same((6.0 * zoom).round().clamp(1.0, 12.0) as u8);
-        let color = category_color(g.category);
+        let color = theme.category(g.category);
 
         painter.rect_filled(
             rect.translate(vec2(0.0, 3.0 * zoom)),
             rounding,
-            Color32::from_black_alpha(70),
+            theme.node_shadow,
         );
-        painter.rect_filled(rect, rounding, Color32::from_gray(38));
+        painter.rect_filled(rect, rounding, theme.node_body);
         let header = Rect::from_min_size(rect.min, vec2(rect.width(), HEADER * zoom));
         painter.rect_filled(
             header,
@@ -602,17 +597,15 @@ impl GraphEditor {
         );
 
         let outline = if failed {
-            Some(Stroke::new(2.0, ERROR))
+            Stroke::new(2.0, theme.error)
         } else if self.active == Some(g.key) {
-            Some(Stroke::new(2.0, ACCENT))
+            Stroke::new(2.0, theme.accent)
         } else if self.selected.contains(&g.key) {
-            Some(Stroke::new(1.5, ACCENT.gamma_multiply(0.7)))
+            Stroke::new(1.5, theme.accent.gamma_multiply(0.7))
         } else {
-            Some(Stroke::new(1.0, Color32::from_gray(60)))
+            Stroke::new(1.0, theme.node_outline)
         };
-        if let Some(stroke) = outline {
-            painter.rect_stroke(rect, rounding, stroke, StrokeKind::Outside);
-        }
+        painter.rect_stroke(rect, rounding, outline, StrokeKind::Outside);
 
         let text = visuals.text_color();
         if zoom > 0.35 {
@@ -629,11 +622,11 @@ impl GraphEditor {
             let p = to_screen(p);
             let hovered = hovered_pin == Some(Pin::In(g.key, i));
             let fill = if required {
-                Color32::from_gray(225)
+                theme.pin_required
             } else {
-                Color32::from_gray(120)
+                theme.pin_optional
             };
-            draw_pin(painter, p, fill, hovered, zoom);
+            draw_pin(painter, theme, p, fill, hovered, zoom);
             if labels {
                 let color = if required {
                     text
@@ -652,7 +645,7 @@ impl GraphEditor {
         for (i, &(p, name)) in g.outputs.iter().enumerate() {
             let p = to_screen(p);
             let hovered = hovered_pin == Some(Pin::Out(g.key, i));
-            draw_pin(painter, p, color, hovered, zoom);
+            draw_pin(painter, theme, p, color, hovered, zoom);
             if labels && !name.is_empty() {
                 painter.text(
                     p - vec2(PAD * zoom, 0.0),
@@ -665,14 +658,21 @@ impl GraphEditor {
         }
     }
 
-    fn error_bar(&mut self, ui: &mut Ui, rect: Rect, failure: &Failure, geometry: &[Geometry]) {
+    fn error_bar(
+        &mut self,
+        ui: &mut Ui,
+        rect: Rect,
+        failure: &Failure,
+        geometry: &[Geometry],
+        theme: &Theme,
+    ) {
         let height = 30.0;
         let bar = Rect::from_min_max(pos2(rect.left(), rect.bottom() - height), rect.max);
         let response = ui.interact(bar, ui.id().with("graph-error"), Sense::click());
         let fill = if response.hovered() {
-            Color32::from_rgb(0x6e, 0x24, 0x24)
+            theme.error_bar_hover
         } else {
-            Color32::from_rgb(0x5a, 0x1e, 0x1e)
+            theme.error_bar
         };
         ui.painter().rect_filled(bar, CornerRadius::ZERO, fill);
         let node = failure.node.as_deref().and_then(|id| self.key_of(id));
@@ -690,8 +690,7 @@ impl GraphEditor {
             }
             _ => failure.message.clone(),
         };
-        let text =
-            egui::RichText::new(format!("⚠  {message}")).color(Color32::from_rgb(0xff, 0xd0, 0xd0));
+        let text = egui::RichText::new(format!("⚠  {message}")).color(theme.error_bar_text);
         ui.put(
             bar.shrink2(vec2(10.0, 0.0)),
             egui::Label::new(text).truncate(),
@@ -709,12 +708,19 @@ impl GraphEditor {
     }
 }
 
-fn draw_pin(painter: &egui::Painter, p: Pos2, fill: Color32, hovered: bool, zoom: f32) {
+fn draw_pin(
+    painter: &egui::Painter,
+    theme: &Theme,
+    p: Pos2,
+    fill: Color32,
+    hovered: bool,
+    zoom: f32,
+) {
     let radius = PIN_RADIUS * zoom.clamp(0.7, 1.6);
     if hovered {
-        painter.circle_stroke(p, radius + 3.0, Stroke::new(1.5, ACCENT));
+        painter.circle_stroke(p, radius + 3.0, Stroke::new(1.5, theme.accent));
     }
-    painter.circle(p, radius, fill, Stroke::new(1.0, Color32::from_gray(25)));
+    painter.circle(p, radius, fill, Stroke::new(1.0, theme.pin_outline));
 }
 
 fn draw_wire(painter: &egui::Painter, from: Pos2, to: Pos2, width: f32, color: Color32) {

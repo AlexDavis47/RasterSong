@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use eframe::egui;
 use rastersong_engine::{FfmpegBackend, PROJECT_EXTENSION};
-use rastersong_gui::{App, AudioOut};
+use rastersong_gui::{App, AudioOut, Settings};
 use tracing_subscriber::EnvFilter;
 
 /// Our crates at info, dependencies (wgpu in particular is very chatty) at warn.
@@ -34,8 +34,14 @@ fn main() -> anyhow::Result<()> {
     eframe::run_native(
         "RasterSong",
         options,
-        Box::new(move |_cc| {
+        Box::new(move |cc| {
             let mut app = App::with_starter_project(backend, Some(backend_info), AudioOut::start());
+            if let Some(settings) = cc
+                .storage
+                .and_then(|s| eframe::get_value::<Settings>(s, Settings::STORAGE_KEY))
+            {
+                app.set_settings(settings);
+            }
             if let Some(path) = open {
                 if path.extension().is_some_and(|e| e == PROJECT_EXTENSION) {
                     app.open_project(&path);
@@ -54,5 +60,9 @@ struct Window(App);
 impl eframe::App for Window {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.0.ui(ui);
+    }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, Settings::STORAGE_KEY, self.0.settings());
     }
 }

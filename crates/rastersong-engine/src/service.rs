@@ -24,14 +24,39 @@ pub enum PreviewScale {
     Full,
     Half,
     Quarter,
+    Eighth,
+    Sixteenth,
 }
 
 impl PreviewScale {
+    pub const ALL: [PreviewScale; 5] = [
+        Self::Full,
+        Self::Half,
+        Self::Quarter,
+        Self::Eighth,
+        Self::Sixteenth,
+    ];
+
+    /// How many times smaller than full resolution each side is.
+    pub fn divisor(self) -> u32 {
+        match self {
+            Self::Full => 1,
+            Self::Half => 2,
+            Self::Quarter => 4,
+            Self::Eighth => 8,
+            Self::Sixteenth => 16,
+        }
+    }
+
+    /// The scale with the given divisor, if there is one.
+    pub fn from_divisor(divisor: u32) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.divisor() == divisor)
+    }
+
     pub fn output_size(self) -> OutputSize {
         match self {
             Self::Full => OutputSize::Native,
-            Self::Half => OutputSize::Scaled(0.5),
-            Self::Quarter => OutputSize::Scaled(0.25),
+            scaled => OutputSize::Scaled(1.0 / scaled.divisor() as f32),
         }
     }
 }
@@ -223,11 +248,18 @@ impl Engine {
         self.edit(|state| state.tracks = tracks);
     }
 
+    /// The graph to render. Setting the graph already being rendered changes nothing.
     pub fn set_graph(&self, graph: GraphDesc) {
+        if lock(&self.shared.state).graph.as_ref() == Some(&graph) {
+            return;
+        }
         self.edit(|state| state.graph = Some(graph));
     }
 
     pub fn set_preview_scale(&self, scale: PreviewScale) {
+        if lock(&self.shared.state).key.scale == scale {
+            return;
+        }
         self.edit(|state| state.key.scale = scale);
     }
 

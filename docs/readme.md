@@ -427,8 +427,8 @@ underneath, the **node graph**, and the **inspector**. The app only holds UI sta
 rendered and cached by the engine on its render thread.
 
 - **Preview controls:** play/pause, timecode and frame, how far ahead is rendered (and the playback speed when
-  rendering can't keep up), preview resolution (full, ½, ¼; ½ by default), the selected audio track's offset, and
-  playback volume.
+  rendering can't keep up), preview resolution (full, ½, ¼, ⅛, 1/16; ½ by default) and playback volume. With no
+  video loaded, the preview offers an Open Video button.
 - **Node graph** (our own editor, drawn on a pannable, zoomable canvas):
   - Scroll wheel zooms around the pointer; middle- or right-drag pans; F frames the whole graph.
   - Left-drag on empty space box-selects (Shift adds). Click a node to select it and show it in the inspector;
@@ -448,8 +448,8 @@ rendered and cached by the engine on its render thread.
   reset-to-default buttons. Audio inputs pick their track from a list. Values left at their default aren't
   written to files.
 - **Timeline:** a ruler, the video track with rendered frames marked in green, and any number of **audio tracks**,
-  each with a name (which audio inputs select it by; renaming a track updates them), mute and remove. Click or drag
-  to seek; drag a track's block to move it against the video.
+  each with a name (which audio inputs select it by; renaming a track updates them), offset, mute and remove. Click
+  or drag to seek; drag a track's block to move it against the video.
 - **Preview audio** mixes the unmuted tracks and follows the playhead. When playback slows because rendering can't
   keep up, the audio is time-stretched (WSOLA: slowed without lowering the pitch) to stay with the picture, and
   fades out when playback all but stops. Volume and mute only affect playback, never rendering.
@@ -458,6 +458,9 @@ rendered and cached by the engine on its render thread.
   offset, volume, mute) and the graph. Media paths inside the project's folder are saved relative to it, so a
   project folder can be moved or shared. Version 1 projects (one audio file) are upgraded on load. Graphs can also
   be imported and exported on their own.
+- **Theme:** View → Theme picks Dark (the default), Light or Follow system. Every colour the app paints itself
+  comes from `rastersong-gui/src/theme.rs`. The theme, preview resolution and volume are remembered between
+  sessions.
 - **About** credits FFmpeg and its LGPL license and lists the loaded FFmpeg libraries and build configuration.
 
 ### Export / Offline Rendering
@@ -566,7 +569,12 @@ the Xcode command line tools.
 
 ### Packaging
 
-Using `cargo-packager` or `cargo-dist`:
+For user testing, `cargo xtask dist` (Windows only) builds the app in release mode with the C runtime linked
+statically and writes `target/dist/RasterSong-<version>-<commit>-windows-x64.zip`: the exe, the FFmpeg DLLs it
+links and the license files. Testers unzip it and run `rastersong.exe`. The build is unsigned, so SmartScreen
+warns on first launch.
+
+Planned for releases, using `cargo-packager` or `cargo-dist`:
 
 - **Windows:** installer, FFmpeg DLLs next to the executable
 - **macOS:** `.app` bundle, FFmpeg libraries in `Frameworks/` via rpath
@@ -621,6 +629,82 @@ Each phase ends with its tests passing in CI.
 - Multi-clip timeline
 - More nodes and interpolation modes
 - Fuzzing
+
+## Needed Updates
+
+Collected from hands-on testing of the Phase 4 GUI (October 2026). Items already resolved are not listed. For a later agent to implement; the sections at the end hold the decisions made so far.
+
+### 1.0 requirements
+
+- [ ] Undo/redo (graph edits, timeline edits, parameter changes)
+- [ ] Copy and paste (nodes with their internal connections)
+- [ ] New nodes: compressor, gate, distortion
+- [ ] Node parameter inputs (modulation, below)
+- [ ] Automation clips (below)
+
+### Bugs
+
+- [x] Playback slows near the end of the video while waiting for more buffer
+- [x] Moving a node sets the dirty flag and invalidates the cache (position is editor-only metadata and must not)
+- [x] Preview pane layout is wrong until a video is loaded
+- [x] Preview pane controls jump to the top while the loading spinner shows
+- [x] The node search popup shrinks in height over a long session
+- [x] Rarely, dragging a slider resizes it instead of changing the value
+
+### Preview
+
+- [x] 1/8 and 1/16 preview resolutions
+- [x] Load button in the preview when no video is loaded, like the audio channels have
+- [x] Audio offset leaves the preview pane (it belongs to the audio track, see Timeline)
+
+### Node graph
+
+- [ ] Links snap to nearby pins (the grab radius is too small)
+- [ ] Link colors come from port metadata: an RGB splitter's outputs draw red, green and blue. Optional outline color or a center-to-edge gradient. Controlled by theme options
+- [ ] Better graph background
+- [ ] Audio output is part of the graph instead of hidden from the user. Audio and video share one workflow
+
+### Timeline
+
+- [ ] Reaper-style track headers on the left of each track, with the audio offset inside the audio track's header
+- [ ] Middle or right-drag grab-scrolls horizontally and vertically
+- [ ] Scroll wheel zooms, same controls as the graph
+- [ ] Ticks inlaid in the background so zooming reads naturally
+- [ ] Video tracks show thumbnails; audio tracks show waveforms
+- [ ] Automation clips: signals drawn as tracks in the playlist to time effects to specific moments. The graph sees one more input signal, keeping the processing graph unified
+
+### Parameters
+
+- [ ] **Modulation inputs on parameters** (major feature). The parameter value is the baseline and the connected signal modulates it on top, as in Serum 2. If connected, the field shows a blue automation control, a small line bar under the slider, in the color of the connected signal's link. Two modes: one-direction (the signal moves the value one way by its amplitude; dragging the control sets how far, increase or decrease) and bidirectional (the signal moves it both ways; dragging sets the range). This allows, for example, driving a delay's feedback or mix from an audio signal, beyond the single modulation input the node has now
+- [ ] Soft-bounded fields like Substance Designer: entering a value outside the bounds widens the slider's range so the user keeps full freedom
+
+### Tools
+
+- [ ] **Probe tool**, a magnifying glass for audio. While enabled, the master output fades down, and the links under the cursor are sampled at audio rate and heard. Volume is based on the distance from the cursor, so there are no hard cuts. Needs a robust mixer that can fade the master down and fade the channels of nearby links up
+
+### Style and code
+
+- [x] Colors come from a theme file for organization, with no magic numbers
+- [ ] Codebase organization and code quality checkup (to be done by a later agent; not started)
+
+### Decisions
+
+**Nodes: separate files or one mega-file?** Separate files. One node per file under `nodes/<category>/`, with its spec, parameters, implementation and tests together. The registry stays in `nodes/mod.rs`. Do this when adding compressor, gate and distortion, since `effects.rs` is already the largest node file.
+
+**Own node graph?** There is no library; the canvas (`editor/canvas.rs`) is already custom, so the issues are our own code. Keep it custom. Snapping, link colors, parameter modulation pins and the probe all need that control.
+
+**Categories ("Channels", "Conversion") stay as they are.** For reference: Channels (`split`, `combine`, `interleave`, `pack`) changes a signal's shape and leaves its values alone; Conversion (`to_audio`, `to_video`) changes the value range, `0..1` to `-1..1` and back.
+
+**"Audio to video" / "Video to audio" names: still open.** They are confusing. The names should describe the effect, which is the range change, with the ranges stated in the node description. Candidates: "Brightness to Wave" / "Wave to Brightness". Not decided.
+
+**Channels setting hover text.** The setting name stays. The hover descriptions are what to fix. Suggested text:
+- Label hover: "How this node treats the red, green and blue of each pixel."
+- Together: "Runs R, G, B, R, G, B… through the node as one stream. Colors bleed into each other, as in a low pass or a modulated delay."
+- Separate: "Runs red, green and blue each through their own copy of the node. The same as Split → node ×3 → Combine."
+
+**Is resampling only applied when needed?** Mostly. `graph.rs` creates a resample buffer only for secondary inputs that are unconnected or differ in length from the main input. Two gaps to close:
+- [x] `Modulator::fill_block` (`engine/sources.rs`) always interpolates per block, even at a ratio of exactly 1; add a copy fast path
+- [x] Check whether the decode-time `Resampler` in `media/ffmpeg/audio.rs` is skipped when the file's rate already matches; fix if not
 
 ## Open Questions
 

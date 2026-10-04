@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use eframe::egui::{self, Color32, CornerRadius, Margin, RichText, Ui};
+use eframe::egui::{self, Color32, CornerRadius, Margin, RichText, Ui, UiBuilder};
 use rastersong_engine::playback::{MixTrack, Mixer};
 use rastersong_engine::{
     AudioTrackSpec, BackendInfo, Engine, EngineConfig, EngineStatus, Frame, GraphDesc,
@@ -15,6 +15,8 @@ use rastersong_engine::{
 
 use crate::audio_out::AudioOut;
 use crate::editor::{CanvasContext, GraphEditor, InspectorContext, without_layout};
+use crate::settings::Settings;
+use crate::theme::{Theme, ThemeChoice, apply_style};
 use crate::timeline::{TimelineModel, TrackAction, TrackView, timecode, timeline};
 
 /// The graph a new project starts with: the basic workflow from the readme.
@@ -43,8 +45,9 @@ pub struct App {
     clock: PlaybackClock,
     /// Frame count and rate the clock was made for.
     clock_shape: Option<(usize, f64)>,
-    scale: PreviewScale,
-    volume: f32,
+    settings: Settings,
+    /// The theme last handed to egui.
+    applied_theme: Option<ThemeChoice>,
     selected_track: Option<usize>,
     /// Edit buffers for the track names in the timeline.
     track_names: Vec<String>,
@@ -92,8 +95,8 @@ impl App {
             editor,
             clock: PlaybackClock::new(30.0, 0),
             clock_shape: None,
-            scale: PreviewScale::Half,
-            volume: 0.8,
+            settings: Settings::default(),
+            applied_theme: None,
             preview: None,
             error: None,
             show_about: false,
@@ -129,6 +132,16 @@ impl App {
         &self.editor
     }
 
+    /// The user's settings, saved between sessions.
+    pub fn settings(&self) -> &Settings {
+        &self.settings
+    }
+
+    pub fn set_settings(&mut self, settings: Settings) {
+        self.settings = settings;
+        self.engine.set_preview_scale(self.settings.preview_scale());
+    }
+
     /// The track specs the engine should be rendering with.
     pub fn track_specs(&self) -> Vec<AudioTrackSpec> {
         self.project.track_specs()
@@ -136,7 +149,7 @@ impl App {
 
     /// Hands the whole project to the engine.
     fn send_project(&mut self) {
-        self.engine.set_preview_scale(self.scale);
+        self.engine.set_preview_scale(self.settings.preview_scale());
         self.engine.set_video(self.project.video.clone());
         self.engine.set_audio_tracks(self.project.track_specs());
         self.sent_graph = without_layout(&self.project.graph);
@@ -206,7 +219,8 @@ impl App {
         }
     }
 
-    fn is_dirty(&self) -> bool {
+    /// Whether the project has changed since it was last saved or opened.
+    pub fn is_dirty(&self) -> bool {
         self.project != self.saved
     }
 
@@ -217,6 +231,10 @@ impl App {
             self.engine.on_update(move || ctx.request_repaint());
             apply_style(ui.ctx());
             self.initialized = true;
+        }
+        if self.applied_theme != Some(self.settings.theme) {
+            ui.ctx().set_theme(self.settings.theme.preference());
+            self.applied_theme = Some(self.settings.theme);
         }
         self.shortcuts(ui);
 
@@ -349,7 +367,7 @@ impl App {
             self.clock.position() / fps,
             self.clock.speed(),
             self.clock.is_playing(),
-            self.volume,
+            self.settings.volume,
         );
         if self.clock.is_playing() {
             ui.ctx().request_repaint();
@@ -417,12 +435,7 @@ impl App {
                 ui.separator();
                 if ui.button("Open Video…").clicked() {
                     ui.close();
-                    if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("Video", VIDEO_EXTENSIONS)
-                        .pick_file()
-                    {
-                        self.open_video(path);
-                    }
+                    self.pick_video();
                 }
                 if ui.button("Add Audio Track…").clicked() {
                     ui.close();
@@ -438,6 +451,17 @@ impl App {
                     self.export_graph();
                 }
             });
+            ui.menu_button("View", |ui| {
+                ui.label(RichText::new("Theme").weak());
+                for choice in ThemeChoice::ALL {
+                    if ui
+                        .radio_value(&mut self.settings.theme, choice, choice.label())
+                        .clicked()
+                    {
+                        ui.close();
+                    }
+                }
+            });
             ui.menu_button("Help", |ui| {
                 if ui.button("About RasterSong").clicked() {
                     self.show_about = true;
@@ -445,6 +469,15 @@ impl App {
                 }
             });
         });
+    }
+
+    fn pick_video(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("Video", VIDEO_EXTENSIONS)
+            .pick_file()
+        {
+            self.open_video(path);
+        }
     }
 
     fn pick_audio_track(&mut self) {
@@ -497,14 +530,23 @@ impl App {
             (ui.available_height() - controls_height).max(80.0),
         );
         let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-        self.preview_image(ui, rect);
+        // Overlays (messages, spinners) go in a child, so they never move the controls below.
+        let open_video = {
+            let mut overlay = ui.new_child(UiBuilder::new().max_rect(rect));
+            self.preview_image(&mut overlay, rect)
+        };
+        if open_video {
+            self.pick_video();
+        }
         ui.add_space(6.0);
         self.controls(ui);
     }
 
-    fn preview_image(&mut self, ui: &mut Ui, rect: egui::Rect) {
+    /// Draws the preview into `rect`. Returns true if the user asked to open a video.
+    fn preview_image(&mut self, ui: &mut Ui, rect: egui::Rect) -> bool {
+        let theme = Theme::of(ui.ctx());
         ui.painter()
-            .rect_filled(rect, CornerRadius::same(4), Color32::BLACK);
+            .rect_filled(rect, CornerRadius::same(4), theme.preview_bg);
 
         if let Some(frame) = self.engine.frame(self.clock.frame()) {
             let changed = self
@@ -547,11 +589,32 @@ impl App {
         let message = |ui: &mut Ui, text: &str| {
             ui.put(
                 egui::Rect::from_center_size(rect.center(), egui::vec2(rect.width() - 40.0, 60.0)),
-                egui::Label::new(RichText::new(text).color(Color32::GRAY).size(15.0)).wrap(),
+                egui::Label::new(RichText::new(text).color(theme.text_dim).size(15.0)).wrap(),
             );
         };
+        let mut open_video = false;
         match self.engine.status() {
-            EngineStatus::Idle => message(ui, "Open a video to start\nFile → Open Video…"),
+            EngineStatus::Idle => {
+                let area =
+                    egui::Rect::from_center_size(rect.center(), egui::vec2(rect.width(), 80.0));
+                ui.scope_builder(
+                    UiBuilder::new()
+                        .max_rect(area)
+                        .layout(egui::Layout::top_down(egui::Align::Center)),
+                    |ui| {
+                        ui.label(
+                            RichText::new("Open a video to start")
+                                .color(theme.text_dim)
+                                .size(15.0),
+                        );
+                        ui.add_space(4.0);
+                        open_video = ui
+                            .button("Open Video…")
+                            .on_hover_text("Choose the video to process")
+                            .clicked();
+                    },
+                );
+            }
             EngineStatus::Loading => {
                 ui.put(
                     egui::Rect::from_center_size(rect.center(), egui::vec2(32.0, 32.0)),
@@ -574,6 +637,7 @@ impl App {
             }
             _ => {}
         }
+        open_video
     }
 
     /// Playback controls under the preview.
@@ -599,14 +663,21 @@ impl App {
                 ));
                 ui.weak(format!("frame {frame}"));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let buffered = self.engine.buffered_from(frame) as f64 / fps;
+                    let buffered_frames = self.engine.buffered_from(frame);
+                    let buffered = buffered_frames as f64 / fps;
                     let speed = self.clock.speed();
+                    let to_end = frame + buffered_frames >= info.frames;
+                    let ahead = if to_end {
+                        "rendered to the end".to_owned()
+                    } else {
+                        format!("{buffered:.1} s ahead")
+                    };
                     let (text, color) = if !self.clock.is_playing() || speed >= 1.0 {
-                        (format!("{buffered:.1} s ahead"), ui.visuals().weak_text_color())
+                        (ahead, ui.visuals().weak_text_color())
                     } else {
                         (
-                            format!("{speed:.2}× · {buffered:.1} s ahead"),
-                            Color32::from_rgb(0xf0, 0xc0, 0x40),
+                            format!("{speed:.2}× · {ahead}"),
+                            Theme::of(ui.ctx()).warning,
                         )
                     };
                     ui.colored_label(color, text).on_hover_text(
@@ -617,52 +688,28 @@ impl App {
         });
         ui.horizontal(|ui| {
             ui.label("Preview");
-            let before = self.scale;
+            let mut scale = self.settings.preview_scale();
             egui::ComboBox::from_id_salt("preview-scale")
-                .selected_text(scale_label(self.scale))
+                .selected_text(scale_label(scale))
                 .width(60.0)
                 .show_ui(ui, |ui| {
-                    for scale in [
-                        PreviewScale::Full,
-                        PreviewScale::Half,
-                        PreviewScale::Quarter,
-                    ] {
-                        ui.selectable_value(&mut self.scale, scale, scale_label(scale));
+                    for option in PreviewScale::ALL {
+                        ui.selectable_value(&mut scale, option, scale_label(option));
                     }
-                });
-            if self.scale != before {
-                self.engine.set_preview_scale(self.scale);
-            }
-
-            ui.separator();
-            let track = self
-                .selected_track
-                .and_then(|i| self.project.audio_tracks.get_mut(i));
-            let enabled = track.is_some();
-            let mut offset = track.as_ref().map_or(0.0, |t| t.offset);
-            let name = track
-                .as_ref()
-                .map_or_else(|| "Offset".to_owned(), |t| format!("{} offset", t.name));
-            ui.label(name);
-            let changed = ui
-                .add_enabled(
-                    enabled,
-                    egui::DragValue::new(&mut offset)
-                        .speed(0.01)
-                        .suffix(" s")
-                        .max_decimals(3),
-                )
-                .on_hover_text("Seconds the selected track starts after the video")
-                .changed();
-            if changed && let Some(track) = track {
-                track.offset = offset;
+                })
+                .response
+                .on_hover_text("Preview resolution. Lower is faster; export is always full size.");
+            if scale != self.settings.preview_scale() {
+                self.settings.set_preview_scale(scale);
+                self.engine.set_preview_scale(scale);
             }
 
             ui.separator();
             ui.label("🔊");
             ui.spacing_mut().slider_width = 70.0;
-            ui.add(egui::Slider::new(&mut self.volume, 0.0..=1.0).show_value(false))
-                .on_hover_text(format!("Playback volume {:.0}%", self.volume * 100.0));
+            let volume = self.settings.volume;
+            ui.add(egui::Slider::new(&mut self.settings.volume, 0.0..=1.0).show_value(false))
+                .on_hover_text(format!("Playback volume {:.0}%", volume * 100.0));
         });
     }
 
@@ -827,25 +874,7 @@ fn scale_label(scale: PreviewScale) -> &'static str {
         PreviewScale::Full => "Full",
         PreviewScale::Half => "½",
         PreviewScale::Quarter => "¼",
+        PreviewScale::Eighth => "⅛",
+        PreviewScale::Sixteenth => "1/16",
     }
-}
-
-/// Spacing and visuals shared by the whole app.
-fn apply_style(ctx: &egui::Context) {
-    ctx.all_styles_mut(|style| {
-        style.spacing.item_spacing = egui::vec2(8.0, 6.0);
-        style.spacing.button_padding = egui::vec2(8.0, 3.0);
-        style.spacing.interact_size.y = 22.0;
-        style.spacing.combo_width = 120.0;
-        style.visuals.selection.bg_fill = crate::editor::ACCENT.gamma_multiply(0.6);
-        style.visuals.hyperlink_color = crate::editor::ACCENT;
-        for widgets in [
-            &mut style.visuals.widgets.noninteractive,
-            &mut style.visuals.widgets.inactive,
-            &mut style.visuals.widgets.hovered,
-            &mut style.visuals.widgets.active,
-        ] {
-            widgets.corner_radius = CornerRadius::same(4);
-        }
-    });
 }

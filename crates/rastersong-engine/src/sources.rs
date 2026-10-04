@@ -66,6 +66,21 @@ impl Modulator {
     /// Time outside the clip is silence.
     pub fn fill_block(&self, start: f64, end: f64, out: &mut [f32]) {
         let n = out.len() as f64;
+        // The block lines up with whole source samples one-to-one: copy them.
+        let first = start * self.sample_rate;
+        let span = (end - start) * self.sample_rate;
+        if (span - n).abs() < 1e-6 && (first - first.round()).abs() < 1e-6 {
+            let first = first.round() as i64;
+            for (k, out) in out.iter_mut().enumerate() {
+                let i = first + k as i64;
+                *out = usize::try_from(i)
+                    .ok()
+                    .and_then(|i| self.samples.get(i))
+                    .copied()
+                    .unwrap_or(0.0);
+            }
+            return;
+        }
         let last = self.samples.len() as f64 - 1.0;
         for (k, out) in out.iter_mut().enumerate() {
             let t = start + (k as f64 + 0.5) / n * (end - start);
@@ -103,6 +118,20 @@ mod tests {
         let mut block = [0.0; 5];
         m.fill_block(0.5, 1.0, &mut block);
         assert_eq!(block, [5.0, 6.0, 7.0, 8.0, 9.0]);
+    }
+
+    #[test]
+    fn aligned_blocks_are_exact_copies() {
+        // Values that interpolation would round differently: a copy keeps them bit for bit.
+        let samples: Vec<f32> = (0..96_000).map(|i| (i as f32 * 0.37).sin() / 3.0).collect();
+        let m = modulator(samples.clone(), 48_000);
+        let mut block = vec![0.0; m.block_len(25.0) as usize];
+        let start = 37.0 / 25.0;
+        m.fill_block(start, start + 1.0 / 25.0, &mut block);
+        assert_eq!(block, samples[71_040..71_040 + 1920]);
+        // Reaching past either end of the clip reads silence.
+        m.fill_block(-1.0 / 25.0, 0.0, &mut block);
+        assert!(block.iter().all(|&s| s == 0.0));
     }
 
     #[test]

@@ -250,3 +250,37 @@ fn idle_frames_do_not_rerender() {
         &harness.state().engine().frame(0).unwrap()
     ));
 }
+
+#[test]
+fn moving_a_node_keeps_rendered_frames_but_is_an_unsaved_change() {
+    let mut harness = loaded();
+    let before = harness.state().engine().frame(0).unwrap();
+    assert!(!harness.state().is_dirty());
+    // Pick a node that isn't drawn on top, so clicking it also raises it.
+    let video = key(&harness, "video");
+    let rect = harness.state().editor().node_screen_rect(video).unwrap();
+    let grab = rect.center_top() + vec2(0.0, 8.0);
+    drag(&mut harness, grab, grab + vec2(40.0, 25.0));
+    harness.run_steps(3);
+    assert!(
+        harness.state().is_dirty(),
+        "positions are saved with the project"
+    );
+    assert!(
+        Arc::ptr_eq(&before, &harness.state().engine().frame(0).unwrap()),
+        "moving a node must not re-render"
+    );
+}
+
+#[test]
+fn the_theme_is_dark_unless_chosen_otherwise() {
+    let mut harness = harness(app());
+    harness.run_steps(2);
+    assert_eq!(harness.ctx.theme(), egui::Theme::Dark);
+
+    let mut settings = harness.state().settings().clone();
+    settings.theme = rastersong_gui::ThemeChoice::Light;
+    harness.state_mut().set_settings(settings);
+    harness.run_steps(2);
+    assert_eq!(harness.ctx.theme(), egui::Theme::Light);
+}

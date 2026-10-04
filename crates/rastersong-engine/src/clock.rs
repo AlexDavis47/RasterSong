@@ -67,11 +67,20 @@ impl PlaybackClock {
         self.position = frame.min(self.frame_count.saturating_sub(1)) as f64;
     }
 
+    /// The speed playback can sustain with `buffered_frames` rendered from the current frame:
+    /// `min(buffered_seconds, 1)`, except that a buffer reaching the last frame is complete and
+    /// plays at full speed, however short it is.
+    pub fn sustainable_speed(&self, buffered_frames: usize) -> f64 {
+        if self.frame() + buffered_frames >= self.frame_count {
+            return 1.0;
+        }
+        (buffered_frames as f64 / self.frame_rate).min(1.0)
+    }
+
     /// Advances by `dt` seconds of wall time, given how many consecutive frames starting at the
     /// current one are rendered. Stops at the last frame.
     pub fn advance(&mut self, dt: f64, buffered_frames: usize) {
-        let buffered_seconds = buffered_frames as f64 / self.frame_rate;
-        self.speed = buffered_seconds.min(1.0);
+        self.speed = self.sustainable_speed(buffered_frames);
         if !self.playing {
             return;
         }
@@ -137,6 +146,17 @@ mod tests {
         assert!(!clock.is_playing());
         clock.play();
         assert_eq!(clock.frame(), 0);
+    }
+
+    #[test]
+    fn plays_the_last_second_at_full_speed() {
+        let mut clock = PlaybackClock::new(30.0, 300);
+        clock.seek(290);
+        clock.play();
+        // Only 10 frames exist from here, and all are rendered.
+        clock.advance(0.1, 10);
+        assert_eq!(clock.speed(), 1.0);
+        assert_eq!(clock.frame(), 293);
     }
 
     #[test]
