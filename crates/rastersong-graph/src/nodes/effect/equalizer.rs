@@ -27,7 +27,7 @@ pub struct Equalizer {
 }
 
 params! { Equalizer {
-    UNIT: ParamSpec::choice("unit", "Unit", FreqUnit::OPTIONS, "cycles/row", "Unit for the three frequencies"),
+    UNIT: FreqUnit::param("Row", "Unit for the three frequencies"),
     LOW_FREQ: ParamSpec::number("low_freq", "Low freq", 5.0, 0.01, 1000.0, "Corner of the low shelf")
         .limits(1e-06, 1e9)
         .octaves(),

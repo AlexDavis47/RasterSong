@@ -50,6 +50,73 @@ struct RenamedParam {
 
 const RENAMED_PARAMS: &[RenamedParam] = &[];
 
+/// A choice parameter whose option was renamed, on a node type that keeps its name.
+struct RenamedChoice {
+    kind: &'static str,
+    param: &'static str,
+    old: &'static str,
+    new: &'static str,
+}
+
+/// Frequency units were once written out ("cycles/row"); the parameter's meaning already says
+/// cycles.
+const RENAMED_CHOICES: &[RenamedChoice] = &[
+    RenamedChoice {
+        kind: "filter",
+        param: "unit",
+        old: "cycles/row",
+        new: "Row",
+    },
+    RenamedChoice {
+        kind: "filter",
+        param: "unit",
+        old: "cycles/frame",
+        new: "Frame",
+    },
+    RenamedChoice {
+        kind: "filter",
+        param: "unit",
+        old: "Hz",
+        new: "Hertz",
+    },
+    RenamedChoice {
+        kind: "equalizer",
+        param: "unit",
+        old: "cycles/row",
+        new: "Row",
+    },
+    RenamedChoice {
+        kind: "equalizer",
+        param: "unit",
+        old: "cycles/frame",
+        new: "Frame",
+    },
+    RenamedChoice {
+        kind: "equalizer",
+        param: "unit",
+        old: "Hz",
+        new: "Hertz",
+    },
+    RenamedChoice {
+        kind: "oscillator",
+        param: "unit",
+        old: "cycles/row",
+        new: "Row",
+    },
+    RenamedChoice {
+        kind: "oscillator",
+        param: "unit",
+        old: "cycles/frame",
+        new: "Frame",
+    },
+    RenamedChoice {
+        kind: "oscillator",
+        param: "unit",
+        old: "Hz",
+        new: "Hertz",
+    },
+];
+
 impl GraphDesc {
     /// Rewrites anything written for older node versions. Graphs already up to date are left
     /// as they are. [`GraphDesc::from_json`] calls it; call it on graphs deserialized any other
@@ -57,6 +124,7 @@ impl GraphDesc {
     pub fn upgrade(&mut self) {
         self.rename_kinds(RENAMED_KINDS);
         self.rename_params(RENAMED_PARAMS);
+        self.rename_choices(RENAMED_CHOICES);
         self.convert_modulation_inputs(MODULATION_INPUTS);
     }
 
@@ -83,6 +151,18 @@ impl GraphDesc {
                     if c.to == format!("{}.@{}", node.id, r.old) {
                         c.to = format!("{}.@{}", node.id, r.new);
                     }
+                }
+            }
+        }
+    }
+
+    fn rename_choices(&mut self, renames: &[RenamedChoice]) {
+        for r in renames {
+            for node in self.nodes.iter_mut().filter(|n| n.kind == r.kind) {
+                if let Some(ParamValue::Text(value)) = node.params.get_mut(r.param)
+                    && value == r.old
+                {
+                    *value = r.new.to_owned();
                 }
             }
         }
@@ -146,6 +226,31 @@ mod tests {
         let mut again = graph.clone();
         again.upgrade();
         assert_eq!(again, graph);
+    }
+
+    #[test]
+    fn old_frequency_unit_names_are_renamed() {
+        let mut graph = GraphDesc::from_json(
+            r#"{ "version": 1,
+                "nodes": [
+                    { "id": "f", "type": "filter", "params": { "unit": "cycles/frame" } },
+                    { "id": "o", "type": "oscillator", "params": { "unit": "Hz" } },
+                    { "id": "e", "type": "equalizer", "params": { "unit": "cycles/row" } },
+                    { "id": "d", "type": "delay", "params": { "unit": "rows" } }
+                ] }"#,
+        )
+        .unwrap();
+        let unit = |graph: &GraphDesc, id: &str| {
+            graph.nodes.iter().find(|n| n.id == id).unwrap().params["unit"].clone()
+        };
+        let text = |s: &str| ParamValue::Text(s.to_owned());
+        assert_eq!(unit(&graph, "f"), text("Frame"));
+        assert_eq!(unit(&graph, "o"), text("Hertz"));
+        assert_eq!(unit(&graph, "e"), text("Row"));
+        assert_eq!(unit(&graph, "d"), text("rows"));
+        let once = graph.clone();
+        graph.upgrade();
+        assert_eq!(graph, once);
     }
 
     #[test]

@@ -66,6 +66,7 @@ impl Harness {
         }
         node.prepare(&PrepareContext {
             frame_rate: 30.0,
+            tempo: Default::default(),
             inputs: &vec![layout; inputs],
             outputs: &vec![layout; outputs],
             connected: &vec![true; inputs],

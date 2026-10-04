@@ -1,6 +1,6 @@
 use crate::dsp::{DelayLine, mix};
 use crate::nodes::support::MAX_WARMUP_FRAMES;
-use crate::nodes::{Category, LengthUnit, NodeKind, NodeSpec};
+use crate::nodes::{Category, TimeUnit, NodeKind, NodeSpec};
 use crate::{InputSpec, Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Frequency (phase) modulation: the carrier is read back through a delay whose length follows
@@ -9,7 +9,7 @@ use crate::{InputSpec, Node, ParamSpec, Params, PrepareContext, ProcessContext, 
 #[derive(Debug)]
 pub struct Fm {
     index: f64,
-    unit: LengthUnit,
+    unit: TimeUnit,
     mix: f32,
     /// Set in `prepare`.
     unit_samples: f64,
@@ -28,7 +28,7 @@ params! { Fm {
     )
     .exposed()
     .limits(0.0, 1000.0),
-    UNIT: ParamSpec::choice("unit", "Unit", LengthUnit::OPTIONS, "rows", "Unit for the index"),
+    UNIT: TimeUnit::param("rows", "Unit for the index"),
     MIX: ParamSpec::number("mix", "Mix", 1.0, 0.0, 1.0, "0 is the dry carrier, 1 is only the modulated carrier"),
 } }
 

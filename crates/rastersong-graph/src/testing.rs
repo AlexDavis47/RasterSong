@@ -3,11 +3,23 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::{Layout, Node, ParamValue, PrepareContext, ProcessContext, Registry, Signal};
+use crate::{Layout, Node, ParamValue, PrepareContext, ProcessContext, Registry, Signal, Tempo};
 
 /// Creates `kind` with `params` (JSON) and prepares it for mono blocks of `len` samples at
 /// `rate` samples per second, with the given inputs connected.
 pub fn node(kind: &str, params: &str, len: usize, rate: f64, connected: &[bool]) -> Box<dyn Node> {
+    node_with_tempo(kind, params, len, rate, connected, Tempo::default())
+}
+
+/// Like [`node`], at a given project tempo.
+pub fn node_with_tempo(
+    kind: &str,
+    params: &str,
+    len: usize,
+    rate: f64,
+    connected: &[bool],
+    tempo: Tempo,
+) -> Box<dyn Node> {
     let params: BTreeMap<String, ParamValue> = serde_json::from_str(params).unwrap();
     let registry = Registry::shared();
     let mut node = registry.create(kind, &params).unwrap().unwrap();
@@ -15,6 +27,7 @@ pub fn node(kind: &str, params: &str, len: usize, rate: f64, connected: &[bool])
     let layout = Layout::mono(len as u32, 1);
     node.prepare(&PrepareContext {
         frame_rate: rate / len as f64,
+        tempo,
         inputs: &vec![layout; spec.inputs.len()],
         outputs: &vec![layout; spec.outputs.len()],
         connected,

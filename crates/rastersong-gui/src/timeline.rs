@@ -14,7 +14,7 @@ use eframe::egui::{
     self, Align2, CornerRadius, FontId, Key, PointerButton, Rect, Sense, Stroke, TextureId, Ui,
     UiBuilder, Vec2, pos2, vec2,
 };
-use rastersong_engine::{LoopRegion, Waveform};
+use rastersong_engine::{LoopRegion, Tempo, TimelineMode, Waveform};
 
 use crate::name_edit::name_edit;
 use crate::theme::Theme;
@@ -30,6 +30,8 @@ const RULER_HEIGHT: f32 = 22.0;
 pub const LANE_HEIGHT: f32 = 58.0;
 /// Width of the button that fits the whole video.
 const FIT_WIDTH: f32 = 44.0;
+/// Width of the button that switches the ruler between time and tempo.
+const MODE_WIDTH: f32 = 66.0;
 /// Height of the row holding the "add track" button.
 const ADD_ROW_HEIGHT: f32 = 34.0;
 /// Smallest spacing between labelled ruler ticks, in pixels.
@@ -74,6 +76,9 @@ pub struct TimelineModel<'a> {
     /// Source thumbnails decoded so far, by frame.
     pub thumbnails: &'a BTreeMap<usize, Thumbnail>,
     pub loop_region: Option<LoopRegion>,
+    /// The project tempo, which the ruler follows in [`TimelineMode::Tempo`].
+    pub tempo: Tempo,
+    pub mode: TimelineMode,
 }
 
 /// Something the user did to a track.
@@ -96,6 +101,8 @@ pub struct TimelineResponse {
     pub wanted_thumbnails: Vec<usize>,
     /// A new loop region (`Some(None)` to remove it).
     pub loop_region: Option<Option<LoopRegion>>,
+    /// The mode button was clicked: switch between the time and tempo rulers.
+    pub toggle_mode: bool,
 }
 
 /// How close (pixels) the pointer must be to a loop edge on the ruler to drag that edge.
@@ -199,6 +206,115 @@ pub fn tick_steps(px_per_sec: f64, frame_rate: f64) -> (f64, u32) {
         .into_iter()
         .find(|&(step, _)| step >= min)
         .unwrap_or((7200.0, 4))
+}
+
+/// Labelled ruler tick spacing in beats, and the number of unlabelled divisions between labels,
+/// for a zoom of `px_per_sec` at `tempo`: sixteenth notes down to single beats, then bars and runs
+/// of bars.
+pub fn beat_tick_steps(px_per_sec: f64, tempo: &Tempo) -> (f64, u32) {
+    let min_beats = MIN_TICK_SPACING / px_per_sec.max(1e-9) / tempo.seconds_per_beat();
+    let bar = f64::from(tempo.sanitized().beats_per_bar);
+    let mut candidates = vec![
+        (0.25, 1),
+        (0.5, 2),
+        (1.0, 4),
+        (bar, tempo.sanitized().beats_per_bar),
+    ];
+    let mut bars = 2.0;
+    while bars <= 4096.0 {
+        let divisions = if bars <= 2.0 { 2 } else { 4 };
+        candidates.push((bars * bar, divisions));
+        bars *= 2.0;
+    }
+    candidates
+        .into_iter()
+        .find(|&(step, _)| step >= min_beats)
+        .unwrap_or((8192.0 * bar, 4))
+}
+
+/// A position in beats (from the first beat) as `bar`, `bar.beat` or `bar.beat.sixteenth`,
+/// counting from 1 like a DAW; the shortest form that names the position.
+pub fn bars_label(beats: f64, beats_per_bar: u32) -> String {
+    let per_bar = f64::from(beats_per_bar.max(1));
+    let bar = (beats / per_bar + 1e-9).floor();
+    let in_bar = (beats - bar * per_bar).max(0.0);
+    let beat = (in_bar + 1e-9).floor();
+    let sub = in_bar - beat;
+    let bar_number = bar as i64 + 1;
+    if in_bar < 1e-6 {
+        bar_number.to_string()
+    } else if sub < 1e-6 {
+        format!("{bar_number}.{}", beat as i64 + 1)
+    } else {
+        format!(
+            "{bar_number}.{}.{}",
+            beat as i64 + 1,
+            (sub * 4.0).round() as i64 + 1
+        )
+    }
+}
+
+/// The ruler's grid: where ticks fall and how major ones are labelled.
+struct RulerGrid {
+    /// Time of tick 0, in seconds.
+    origin: f64,
+    /// Seconds between ticks.
+    minor: f64,
+    /// Ticks per labelled (major) tick.
+    divisions: u32,
+    /// Beats between ticks and the bar length, in tempo mode.
+    bars: Option<(f64, u32)>,
+}
+
+impl RulerGrid {
+    fn new(model: &TimelineModel, px_per_sec: f64) -> Self {
+        match model.mode {
+            TimelineMode::Time => {
+                let (major, divisions) = tick_steps(px_per_sec, model.frame_rate);
+                Self {
+                    origin: 0.0,
+                    minor: major / f64::from(divisions),
+                    divisions,
+                    bars: None,
+                }
+            }
+            TimelineMode::Tempo => {
+                let tempo = model.tempo.sanitized();
+                let (major, divisions) = beat_tick_steps(px_per_sec, &tempo);
+                let minor_beats = major / f64::from(divisions);
+                Self {
+                    origin: tempo.offset_secs,
+                    minor: minor_beats * tempo.seconds_per_beat(),
+                    divisions,
+                    bars: Some((minor_beats, tempo.beats_per_bar)),
+                }
+            }
+        }
+    }
+
+    fn time(&self, k: i64) -> f64 {
+        self.origin + k as f64 * self.minor
+    }
+
+    /// The tick at or before `seconds`.
+    fn tick_at_or_before(&self, seconds: f64) -> i64 {
+        ((seconds - self.origin) / self.minor).floor() as i64
+    }
+
+    fn label(&self, k: i64) -> String {
+        match self.bars {
+            Some((minor_beats, per_bar)) => bars_label(k as f64 * minor_beats, per_bar),
+            None => timecode(self.time(k)),
+        }
+    }
+
+    /// `seconds` moved to the nearest tick (in tempo mode) or frame (in time mode).
+    fn snap(&self, seconds: f64, frame_rate: f64) -> f64 {
+        match self.bars {
+            Some(_) => self.time((((seconds - self.origin) / self.minor).round()) as i64),
+            None => (seconds * frame_rate).round() / frame_rate,
+        }
+    }
 }
 
 /// `seconds` as `m:ss.cc`.
@@ -333,6 +449,32 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         pos2(area.left() + HEADER_WIDTH - FIT_WIDTH, area.top() + 1.0),
         vec2(FIT_WIDTH, RULER_HEIGHT - 2.0),
     );
+    let mode_button = Rect::from_min_size(
+        pos2(fit_button.left() - MODE_WIDTH - 4.0, fit_button.top()),
+        vec2(MODE_WIDTH, RULER_HEIGHT - 2.0),
+    );
+    let (icon, name, hover) = match model.mode {
+        TimelineMode::Time => (
+            "⏱",
+            "Time",
+            "The ruler shows minutes and seconds. Click to show bars and beats and edit the tempo.",
+        ),
+        TimelineMode::Tempo => (
+            "♪",
+            "Tempo",
+            "The ruler shows bars and beats. Click to show minutes and seconds.",
+        ),
+    };
+    if ui
+        .put(
+            mode_button,
+            egui::Button::new(egui::RichText::new(format!("{icon} {name}")).small()),
+        )
+        .on_hover_text(hover)
+        .clicked()
+    {
+        response.toggle_mode = true;
+    }
     let fit_clicked = ui
         .put(
             fit_button,
@@ -376,8 +518,7 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
     loop_ruler(ui, &areas, model, view, &mut response);
 
     // Ruler and tick lines.
-    let (major, divisions) = tick_steps(view.px_per_sec, model.frame_rate);
-    let minor = major / f64::from(divisions);
+    let grid = RulerGrid::new(model, view.px_per_sec);
     let body_lanes = Rect::from_min_max(pos2(lanes_left, areas.body.top()), areas.body.max);
     let painter = ui.painter_at(areas.ruler.union(body_lanes));
     let shown_loop = match response.loop_region {
@@ -387,12 +528,12 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
     if let Some(region) = shown_loop {
         paint_loop(&painter, region, x, areas.ruler, body_lanes, theme);
     }
-    let first = (view.left / minor).floor() as i64;
-    let last = (view.seconds(lanes_left, areas.lanes.right()) / minor).ceil() as i64;
+    let first = grid.tick_at_or_before(view.left);
+    let last = grid.tick_at_or_before(view.seconds(lanes_left, areas.lanes.right())) + 1;
     for k in first..=last {
-        let t = k as f64 * minor;
+        let t = grid.time(k);
         let tx = x(t);
-        let is_major = k.rem_euclid(i64::from(divisions)) == 0;
+        let is_major = k.rem_euclid(i64::from(grid.divisions)) == 0;
         let tick_top = if is_major { 8.0 } else { 15.0 };
         painter.line_segment(
             [
@@ -410,7 +551,7 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
             painter.text(
                 pos2(tx + 3.0, areas.ruler.top() + 1.0),
                 Align2::LEFT_TOP,
-                timecode(t),
+                grid.label(k),
                 FontId::proportional(10.5),
                 theme.tick_label,
             );
@@ -522,9 +663,11 @@ fn loop_ruler(
         ui.id().with("timeline-ruler"),
         Sense::click_and_drag(),
     );
+    let grid = RulerGrid::new(model, view.px_per_sec);
+    let duration = model.frame_count as f64 / model.frame_rate;
     let snap = |x: f32| {
-        let frames = (view.seconds(lanes_left, x) * model.frame_rate).round();
-        frames.clamp(0.0, model.frame_count as f64) / model.frame_rate
+        grid.snap(view.seconds(lanes_left, x), model.frame_rate)
+            .clamp(0.0, duration)
     };
     let seek = |x: f32, response: &mut TimelineResponse| {
         let frame = (view.seconds(lanes_left, x) * model.frame_rate).floor();
@@ -962,6 +1105,74 @@ mod tests {
         // Very zoomed in: every frame.
         assert_eq!(tick_steps(10_000.0, 30.0).0, 1.0 / 30.0);
         assert_eq!(tick_steps(1000.0, 30.0).0, 5.0 / 30.0);
+    }
+
+    #[test]
+    fn beat_ticks_go_from_sixteenths_to_runs_of_bars() {
+        let tempo = Tempo::default(); // 120 bpm, 4/4: a beat is half a second.
+        // 150 px per beat (300 px/s): half a beat is under the minimum spacing, so a label every
+        // beat, divided in quarters.
+        assert_eq!(beat_tick_steps(300.0, &tempo), (1.0, 4));
+        // 180 px per beat: half beats fit.
+        assert_eq!(beat_tick_steps(360.0, &tempo), (0.5, 2));
+        // Zoomed far in: sixteenths.
+        assert_eq!(beat_tick_steps(10_000.0, &tempo), (0.25, 1));
+        // 1000 px for 10 s = 100 px/s = 50 px a beat, 200 px a bar: a label per bar.
+        assert_eq!(beat_tick_steps(100.0, &tempo), (4.0, 4));
+        // Far out: runs of bars.
+        let (major, _) = beat_tick_steps(1.0, &tempo);
+        assert!(major >= 4.0 * 32.0, "{major}");
+        // A 3/4 bar is three beats.
+        let waltz = Tempo {
+            beats_per_bar: 3,
+            ..tempo
+        };
+        assert_eq!(beat_tick_steps(100.0, &waltz), (3.0, 3));
+    }
+
+    #[test]
+    fn bar_labels_count_from_one() {
+        assert_eq!(bars_label(0.0, 4), "1");
+        assert_eq!(bars_label(1.0, 4), "1.2");
+        assert_eq!(bars_label(4.0, 4), "2");
+        assert_eq!(bars_label(5.75, 4), "2.2.4");
+        assert_eq!(bars_label(6.0, 3), "3");
+        // Before the first beat counts back through the bars.
+        assert_eq!(bars_label(-4.0, 4), "0");
+        assert_eq!(bars_label(-1.0, 4), "0.4");
+    }
+
+    #[test]
+    fn the_bars_grid_follows_tempo_and_offset() {
+        let model = |mode| TimelineModel {
+            frame_count: 300,
+            frame_rate: 30.0,
+            playhead: 0,
+            cached: &[],
+            video_name: None,
+            video_details: None,
+            tracks: Vec::new(),
+            selected_track: None,
+            thumbnails: Box::leak(Box::default()),
+            loop_region: None,
+            tempo: Tempo {
+                bpm: 120.0,
+                beats_per_bar: 4,
+                offset_secs: 0.25,
+            },
+            mode,
+        };
+        let grid = RulerGrid::new(&model(TimelineMode::Tempo), 360.0);
+        // Ticks every quarter beat (0.125 s), starting at the offset.
+        assert_eq!(grid.time(0), 0.25);
+        assert!((grid.time(4) - 0.75).abs() < 1e-12);
+        assert_eq!(grid.label(0), "1");
+        assert_eq!(grid.label(4), "1.2");
+        assert_eq!(grid.label(16), "2");
+        // Snapping lands on ticks; in time mode, on frames.
+        assert!((grid.snap(0.77, 30.0) - 0.75).abs() < 1e-12);
+        let time = RulerGrid::new(&model(TimelineMode::Time), 360.0);
+        assert!((time.snap(0.77, 30.0) - 23.0 / 30.0).abs() < 1e-12);
     }
 
     #[test]

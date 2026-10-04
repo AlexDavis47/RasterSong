@@ -43,7 +43,7 @@ params! { Envelope {
     RELEASE: ParamSpec::number("release", "Release", 50.0, 0.0, 5000.0, "How quickly the output falls when the input gets weaker")
         .fixed()
         .limits(0.0, 1e6),
-    UNIT: ParamSpec::choice("unit", "Unit", TimeUnit::OPTIONS, "ms", "Unit for attack and release"),
+    UNIT: TimeUnit::param("ms", "Unit for attack and release"),
 } }
 
 impl NodeKind for Envelope {

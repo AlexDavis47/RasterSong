@@ -41,7 +41,8 @@ impl Wave {
 ///
 /// Each pixel gets one value shared by its colour channels. An unmodulated oscillator computes its
 /// phase from the sample's position, so seeking is exact. A modulated frequency has to accumulate
-/// phase, so the oscillator's phase then depends on where the render started.
+/// phase, so the oscillator's phase then depends on where the render started. In cycles per beat
+/// or bar, an unmodulated wave starts its cycle on the beat grid of the project tempo.
 #[derive(Debug)]
 pub struct Oscillator {
     wave: Wave,
@@ -55,6 +56,9 @@ pub struct Oscillator {
     /// Set in `prepare`: samples per pixel and cycles per pixel for a frequency of one unit.
     group: usize,
     unit_step: f64,
+    /// Pixels from the start of the render to the first beat, for beat and bar units, so the
+    /// wave starts its cycle on the beat grid.
+    origin: f64,
     /// Whether the frequency is modulated, and the accumulated phase when it is.
     modulated: bool,
     accumulated: f64,
@@ -75,13 +79,7 @@ params! { Oscillator {
     .exposed()
     .limits(0.0, 1_000_000.0)
     .octaves(),
-    UNIT: ParamSpec::choice(
-        "unit",
-        "Unit",
-        FreqUnit::OPTIONS,
-        "cycles/row",
-        "Unit for the frequency: cycles per row keeps the look at any resolution",
-    ),
+    UNIT: FreqUnit::param("Row", "Unit for the frequency (cycles per unit): Row keeps the look at any resolution"),
     PHASE: ParamSpec::number(
         "phase",
         "Phase",
@@ -131,8 +129,10 @@ impl NodeKind for Oscillator {
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "wave": "triangle", "freq": 2.5 }"#,
         r#"{ "wave": "square", "pulse_width": 0.25, "phase": 0.3 }"#,
-        r#"{ "wave": "saw", "freq": 1, "unit": "cycles/frame" }"#,
-        r#"{ "wave": "ramp", "freq": 3000, "unit": "Hz", "amplitude": 1, "offset": 0 }"#,
+        r#"{ "wave": "saw", "freq": 1, "unit": "Frame" }"#,
+        r#"{ "wave": "ramp", "freq": 3000, "unit": "Hertz", "amplitude": 1, "offset": 0 }"#,
+        r#"{ "wave": "saw", "freq": 2, "unit": "Beat" }"#,
+        r#"{ "wave": "square", "freq": 0.25, "unit": "Bar" }"#,
     ];
     const BENCH: Option<&'static str> = Some(r#"{ "wave": "sine", "freq": 12 }"#);
 
@@ -148,6 +148,7 @@ impl NodeKind for Oscillator {
             width: params.number_at(Self::PULSE_WIDTH)?,
             group: 1,
             unit_step: 0.0,
+            origin: 0.0,
             modulated: false,
             accumulated: 0.0,
             clock: SampleClock::default(),
@@ -163,6 +164,10 @@ impl Node for Oscillator {
     fn prepare(&mut self, ctx: &PrepareContext) {
         self.group = ctx.main().samples_per_pixel.max(1) as usize;
         self.unit_step = self.unit.per_sample(1.0, ctx) * self.group as f64;
+        self.origin = match self.unit {
+            FreqUnit::Beat | FreqUnit::Bar => ctx.beat_offset_samples() / self.group as f64,
+            _ => 0.0,
+        };
         self.modulated = ctx.modulation(Self::FREQ).is_some();
         self.accumulated = self.phase;
     }
@@ -191,7 +196,7 @@ impl Node for Oscillator {
                 let step = self.freq * self.unit_step;
                 let first_pixel = start / group as u64;
                 for (pixel, chunk) in data.chunks_mut(group).enumerate() {
-                    let cycles = (first_pixel + pixel as u64) as f64 * step;
+                    let cycles = ((first_pixel + pixel as u64) as f64 - self.origin) * step;
                     chunk.fill(emit(self.phase + cycles.fract(), pixel * group));
                 }
             }
@@ -208,8 +213,8 @@ impl Node for Oscillator {
 mod tests {
     use std::collections::HashMap;
 
-    use crate::testing::{node, process_one};
-    use crate::{Layout, Node, ProcessContext, Signal};
+    use crate::testing::{node, node_with_tempo, process_one};
+    use crate::{Layout, Node, ProcessContext, Signal, Tempo};
 
     /// One block of `len` samples that is one row, so cycles per row are cycles per block.
     fn wave(params: &str, len: usize) -> Vec<f32> {
@@ -258,6 +263,63 @@ mod tests {
     fn phase_shifts_the_wave() {
         let out = wave(r#"{ "wave": "ramp", "freq": 1, "phase": 0.25 }"#, 4);
         assert_eq!(out, [0.25, 0.5, 0.75, 0.0]);
+    }
+
+    /// One block of a ramp at one cycle per beat. Blocks are 1000 samples at 30 frames a second
+    /// (30 kHz), so a beat at 120 bpm is 15000 samples: 15 blocks.
+    fn beat_ramp(tempo: Tempo, frame: u64) -> Vec<f32> {
+        let mut node = node_with_tempo(
+            "oscillator",
+            r#"{ "wave": "ramp", "freq": 1, "unit": "Beat", "amplitude": 0.5, "offset": 0.5 }"#,
+            1000,
+            30_000.0,
+            &[],
+            tempo,
+        );
+        let sources: HashMap<String, Signal> = HashMap::new();
+        let mut out = [Signal::zeros(Layout::mono(1000, 1))];
+        node.process(
+            &ProcessContext {
+                frame,
+                frame_rate: 30.0,
+                sources: &sources,
+                params: &[],
+            },
+            &[],
+            &mut out,
+        );
+        out[0].data.clone()
+    }
+
+    #[test]
+    fn beat_units_start_the_cycle_on_the_beat() {
+        for bpm in [90.0, 120.0, 133.0] {
+            let tempo = Tempo {
+                bpm,
+                ..Tempo::default()
+            };
+            let beat = 30_000.0 * 60.0 / bpm;
+            // Sample 0 is on the first beat: the ramp starts at its low point (0 after offset).
+            let out = beat_ramp(tempo, 0);
+            assert!(out[0].abs() < 1e-6, "{bpm} bpm");
+            // Each sample advances 1/beat of a cycle.
+            assert!((f64::from(out[500]) - 500.0 / beat).abs() < 1e-4, "{bpm} bpm");
+        }
+    }
+
+    #[test]
+    fn the_beat_offset_moves_the_grid() {
+        // The first beat is 0.1 s (3000 samples) in, so sample 3000 is the start of a cycle and
+        // sample 0 is 3000 samples into the previous one.
+        let tempo = Tempo {
+            offset_secs: 0.1,
+            ..Tempo::default()
+        };
+        let beat = 15_000.0;
+        let out = beat_ramp(tempo, 0);
+        assert!((f64::from(out[0]) - (1.0 - 3000.0 / beat)).abs() < 1e-4);
+        let out = beat_ramp(tempo, 3);
+        assert!(out[0].abs() < 1e-4, "frame 3 starts at sample 3000");
     }
 
     #[test]

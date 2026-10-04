@@ -92,6 +92,7 @@ pub fn renderer_with(graph: &str, registry: &Registry, size: OutputSize) -> Rend
             offset: 0.0,
         }],
         &GraphDesc::from_json(graph).unwrap(),
+        Default::default(),
         registry,
         size,
     )

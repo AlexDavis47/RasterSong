@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use rastersong_graph::{GraphDesc, Registry};
+use rastersong_graph::{GraphDesc, Registry, Tempo};
 use rastersong_media::{AudioClip, MediaBackend};
 
 use crate::sources::Modulator;
@@ -18,6 +18,8 @@ pub struct RenderSettings {
     pub frames: Option<usize>,
     /// Seconds the audio starts after the video.
     pub audio_offset: f64,
+    /// The project tempo, for beat and bar units.
+    pub tempo: Tempo,
 }
 
 /// One rendered frame, as packed RGB8.
@@ -56,6 +58,7 @@ pub fn render(
         video_path,
         &[track],
         graph,
+        settings.tempo,
         Registry::shared(),
         settings
             .size

@@ -1,20 +1,22 @@
 use crate::dsp::{db_to_gain, smoothing_coefficient};
-use crate::nodes::support::{ms_to_samples, settle_frames};
-use crate::nodes::{Category, NodeKind, NodeSpec};
+use crate::nodes::support::settle_frames;
+use crate::nodes::{Category, NodeKind, NodeSpec, TimeUnit};
 use crate::{InputSpec, Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Range at or below which a closed gate is fully silent.
 const SILENT_RANGE: f64 = -80.0;
 
 /// A noise gate: lets the signal through while it (or the sidechain, when connected) is above
-/// `threshold`, holds open for `hold` after it drops, then closes down to `range`. Times are
-/// milliseconds of the signal's own time.
+/// `threshold`, holds open for `hold` after it drops, then closes down to `range`. Times are in
+/// milliseconds of the signal's own time unless `unit` says otherwise.
 #[derive(Debug)]
 pub struct Gate {
     threshold: f64,
-    attack_ms: f64,
-    hold_ms: f64,
-    release_ms: f64,
+    /// Attack, hold and release, in `unit`.
+    attack_time: f64,
+    hold_time: f64,
+    release_time: f64,
+    unit: TimeUnit,
     range: f64,
     /// Set in `prepare`.
     threshold_gain: f32,
@@ -22,9 +24,10 @@ pub struct Gate {
     attack: f64,
     release: f64,
     hold_samples: u64,
-    sample_rate: f64,
-    /// Hold plus the slowest attack or release modulation can reach, in ms, for warmup.
-    longest_ms: f64,
+    /// Samples in one `unit`.
+    unit_samples: f64,
+    /// Hold plus the slowest attack or release modulation can reach, in samples, for warmup.
+    longest_samples: f64,
     sidechain: bool,
     /// Current gain, and samples left before the gate starts closing.
     gain: f64,
@@ -51,7 +54,6 @@ params! { Gate {
         1000.0,
         "How quickly the gate opens",
     )
-    .unit("ms")
     .limits(0.0, 1e6),
     HOLD: ParamSpec::number(
         "hold",
@@ -61,7 +63,6 @@ params! { Gate {
         5000.0,
         "How long the gate stays open after the signal drops below the threshold",
     )
-    .unit("ms")
     .limits(0.0, 1e6),
     RELEASE: ParamSpec::number(
         "release",
@@ -71,8 +72,8 @@ params! { Gate {
         5000.0,
         "How quickly the gate closes",
     )
-    .unit("ms")
     .limits(0.0, 1e6),
+    UNIT: TimeUnit::param("ms", "Unit for attack, hold and release"),
     RANGE: ParamSpec::number(
         "range",
         "Range",
@@ -100,23 +101,25 @@ impl NodeKind for Gate {
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "threshold": -12, "hold": 5, "release": 10 }"#,
         r#"{ "threshold": -6, "range": -20, "attack": 3 }"#,
+        r#"{ "threshold": -12, "unit": "beats", "attack": 0.001, "hold": 0.01, "release": 0.05 }"#,
     ];
     const BENCH: Option<&'static str> = Some("{}");
 
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
             threshold: params.number_at(Self::THRESHOLD)?,
-            attack_ms: params.number_at(Self::ATTACK)?,
-            hold_ms: params.number_at(Self::HOLD)?,
-            release_ms: params.number_at(Self::RELEASE)?,
+            attack_time: params.number_at(Self::ATTACK)?,
+            hold_time: params.number_at(Self::HOLD)?,
+            release_time: params.number_at(Self::RELEASE)?,
+            unit: params.choice_as(Self::UNIT)?,
             range: params.number_at(Self::RANGE)?,
             threshold_gain: 0.0,
             closed_gain: 0.0,
             attack: 0.0,
             release: 0.0,
             hold_samples: 0,
-            sample_rate: 1.0,
-            longest_ms: 0.0,
+            unit_samples: 1.0,
+            longest_samples: 0.0,
             sidechain: false,
             gain: 0.0,
             hold_left: 0,
@@ -139,14 +142,15 @@ impl Node for Gate {
     fn prepare(&mut self, ctx: &PrepareContext) {
         self.threshold_gain = db_to_gain(self.threshold) as f32;
         self.closed_gain = Self::closed_gain(self.range);
-        self.sample_rate = ctx.sample_rate();
-        self.attack = smoothing_coefficient(ms_to_samples(self.attack_ms, ctx));
-        self.release = smoothing_coefficient(ms_to_samples(self.release_ms, ctx));
-        self.hold_samples = ms_to_samples(self.hold_ms, ctx).round() as u64;
+        self.unit_samples = self.unit.samples(ctx);
+        self.attack = smoothing_coefficient(self.attack_time * self.unit_samples);
+        self.release = smoothing_coefficient(self.release_time * self.unit_samples);
+        self.hold_samples = (self.hold_time * self.unit_samples).round() as u64;
         let slowest = ctx
-            .param_max(Self::ATTACK, self.attack_ms)
-            .max(ctx.param_max(Self::RELEASE, self.release_ms));
-        self.longest_ms = ctx.param_max(Self::HOLD, self.hold_ms) + 7.0 * slowest;
+            .param_max(Self::ATTACK, self.attack_time)
+            .max(ctx.param_max(Self::RELEASE, self.release_time));
+        self.longest_samples =
+            (ctx.param_max(Self::HOLD, self.hold_time) + 7.0 * slowest) * self.unit_samples;
         self.sidechain = ctx.connected[1];
         self.reset();
     }
@@ -158,7 +162,7 @@ impl Node for Gate {
         } else {
             input
         };
-        let samples = |ms: f32| f64::from(ms) / 1000.0 * self.sample_rate;
+        let samples = |time: f32| f64::from(time) * self.unit_samples;
         let threshold = ctx.value(Self::THRESHOLD, f64::from(self.threshold_gain));
         let range = ctx.value(Self::RANGE, self.closed_gain);
         let (attack, hold) = (ctx.param(Self::ATTACK), ctx.param(Self::HOLD));
@@ -201,7 +205,7 @@ impl Node for Gate {
     }
 
     fn warmup_frames(&self, ctx: &PrepareContext) -> u32 {
-        settle_frames(ms_to_samples(self.longest_ms, ctx), ctx)
+        settle_frames(self.longest_samples, ctx)
     }
 }
 

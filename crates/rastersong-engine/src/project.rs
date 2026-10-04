@@ -2,12 +2,12 @@
 
 use std::path::{Path, PathBuf};
 
-use rastersong_graph::GraphDesc;
+use rastersong_graph::{GraphDesc, Tempo};
 use serde::{Deserialize, Serialize};
 
 use crate::{AudioTrackSpec, DEFAULT_AUDIO_TRACK};
 
-pub const PROJECT_VERSION: u32 = 2;
+pub const PROJECT_VERSION: u32 = 3;
 
 /// Conventional extension for project files.
 pub const PROJECT_EXTENSION: &str = "rastersong";
@@ -30,6 +30,21 @@ pub struct Project {
     /// The loop region on the timeline, if one has been made.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loop_region: Option<LoopRegion>,
+    /// The tempo beat and bar units follow.
+    #[serde(default)]
+    pub tempo: Tempo,
+    /// Whether the timeline ruler shows time or bars and beats (tempo).
+    #[serde(default)]
+    pub timeline_mode: TimelineMode,
+}
+
+/// How the timeline ruler and grid are labelled.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TimelineMode {
+    #[default]
+    Time,
+    Tempo,
 }
 
 /// A stretch of the timeline that playback repeats, in seconds.
@@ -104,6 +119,8 @@ impl Project {
             audio_tracks: Vec::new(),
             graph,
             loop_region: None,
+            tempo: Tempo::default(),
+            timeline_mode: TimelineMode::default(),
         }
     }
 
@@ -191,9 +208,12 @@ impl Project {
                         .collect(),
                     graph: v1.graph,
                     loop_region: None,
+                    tempo: Tempo::default(),
+                    timeline_mode: TimelineMode::default(),
                 }
             }
-            Some(v) if v == u64::from(PROJECT_VERSION) => {
+            // Version 2 lacks only the tempo and timeline mode, which default.
+            Some(v) if v == u64::from(PROJECT_VERSION) || v == 2 => {
                 serde_json::from_value(value).map_err(invalid)?
             }
             other => {
@@ -202,6 +222,8 @@ impl Project {
                 )));
             }
         };
+        project.version = PROJECT_VERSION;
+        project.tempo = project.tempo.sanitized();
         project.graph.upgrade();
         let dir = path.parent().unwrap_or(Path::new(""));
         let media = project
@@ -342,6 +364,41 @@ mod tests {
         );
         assert_eq!(track.path, dir.join("media/song.wav"));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn loads_version_2_with_default_tempo() {
+        let dir = temp_dir("project-v2");
+        let path = dir.join("old.rastersong");
+        std::fs::write(
+            &path,
+            r#"{ "version": 2, "graph": { "version": 1, "nodes": [] } }"#,
+        )
+        .unwrap();
+        let project = Project::load(&path).unwrap();
+        assert_eq!(project.version, PROJECT_VERSION);
+        assert_eq!(project.tempo, Tempo::default());
+        assert_eq!(project.timeline_mode, TimelineMode::Time);
+    }
+
+    #[test]
+    fn tempo_round_trips_and_is_sanitized_on_load() {
+        let dir = temp_dir("project-tempo");
+        let path = dir.join("tempo.rastersong");
+        let mut project =
+            Project::new(GraphDesc::from_json(r#"{ "version": 1, "nodes": [] }"#).unwrap());
+        project.tempo = Tempo {
+            bpm: 133.5,
+            beats_per_bar: 3,
+            offset_secs: 0.25,
+        };
+        project.timeline_mode = TimelineMode::Tempo;
+        project.save(&path).unwrap();
+        assert_eq!(Project::load(&path).unwrap(), project);
+
+        project.tempo.bpm = 0.0;
+        project.save(&path).unwrap();
+        assert_eq!(Project::load(&path).unwrap().tempo.bpm, Tempo::MIN_BPM);
     }
 
     #[test]

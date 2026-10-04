@@ -12,6 +12,7 @@ const AUDIO: u32 = 5;
 fn options() -> CompileOptions {
     CompileOptions {
         frame_rate: 30.0,
+        tempo: Default::default(),
         sources: HashMap::from([
             ("video".to_owned(), Layout::rgb(W, H)),
             ("audio".to_owned(), Layout::audio(AUDIO)),
@@ -510,4 +511,35 @@ fn generators_take_their_layout_from_the_host_and_draw_stripes() {
         .flat_map(|v| [v; 3])
         .collect();
     assert_eq!(out.data, [row.clone(), row].concat());
+}
+
+#[test]
+fn the_project_tempo_reaches_beat_nodes() {
+    // A pulse on the first half of every beat, on 24-sample frames at 30 fps (720 samples a
+    // second). At 400 bpm a beat is 108 samples (4.5 frames); at 100 bpm it is 432 (18 frames).
+    let json = graph_json(
+        r#"{ "id": "beat", "type": "beat", "params": { "shape": "pulse", "width": 0.5 } },
+           { "id": "out", "type": "output" }"#,
+        r#"{ "from": "beat", "to": "out" }"#,
+    );
+    let first_sample = |bpm: f64, frame: u64| {
+        let mut options = options();
+        options.tempo = rastersong_graph::Tempo {
+            bpm,
+            ..Default::default()
+        };
+        let mut graph = Graph::compile(
+            &GraphDesc::from_json(&json).unwrap(),
+            &Registry::default(),
+            &options,
+        )
+        .unwrap();
+        graph
+            .process(frame, &sources(|_| 0.0, |_| 0.0))
+            .unwrap()
+            .data[0]
+    };
+    // Frame 3 starts 72 samples (24 pixels) in: past half of a 400 bpm beat, early in a 100 bpm one.
+    assert_eq!(first_sample(400.0, 3), 0.0);
+    assert_eq!(first_sample(100.0, 3), 1.0);
 }

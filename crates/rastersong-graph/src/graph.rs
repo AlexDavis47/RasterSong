@@ -8,7 +8,7 @@ use crate::dsp::{DelayLine, resample};
 use crate::nodes::{OUTPUT, Registry};
 use crate::{
     GraphError, InputSpec, Layout, LayoutContext, Node, OutputSpec, ParamSpec, ParamValue,
-    PrepareContext, ProcessContext, Signal, Sources,
+    PrepareContext, ProcessContext, Signal, Sources, Tempo,
 };
 
 /// Most inputs a node can have.
@@ -28,6 +28,8 @@ static EMPTY_SIGNAL: Signal = Signal::EMPTY;
 #[derive(Debug, Clone)]
 pub struct CompileOptions {
     pub frame_rate: f64,
+    /// The project's tempo, for beat and bar units.
+    pub tempo: Tempo,
     /// Layouts of the signals the host will supply each frame, by source name.
     pub sources: HashMap<String, Layout>,
     /// The layout the output node must produce (the project's RGB frame).
@@ -646,6 +648,7 @@ impl<'a> Compiler<'a> {
             .collect();
         let ctx = PrepareContext {
             frame_rate: self.options.frame_rate,
+            tempo: self.options.tempo,
             inputs: &matched,
             outputs: &shape.node_outputs,
             connected: &connected,

@@ -19,12 +19,14 @@ pub use cache::{CacheKey, Frame, FrameCache};
 pub use clock::PlaybackClock;
 pub use error::EngineError;
 pub use offline::{FrameSink, RenderSettings, RenderedFrame, render};
-pub use project::{LoopRegion, PROJECT_EXTENSION, PROJECT_VERSION, Project, ProjectTrack};
+pub use project::{
+    LoopRegion, PROJECT_EXTENSION, PROJECT_VERSION, Project, ProjectTrack, TimelineMode,
+};
 pub use rastersong_graph::nodes::{AUDIO_INPUT, OUTPUT, SOURCE_PARAM, VIDEO_INPUT};
 pub use rastersong_graph::{
     Category, Channels, Connection, FORMAT_VERSION, GraphDesc, GraphError, Interpolation, ModMode,
     ModScale, Modulation, NodeDesc, NodeType, OutputLevel, OutputSpec, ParamKind, ParamLevel,
-    ParamSpec, ParamValue, PortHint, Registry,
+    ParamSpec, ParamValue, PortHint, Registry, Tempo,
 };
 pub use rastersong_media::{
     AudioClip, AudioOptions, BackendInfo, FakeBackend, FakeVideo, FfmpegBackend, LibraryInfo,

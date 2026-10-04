@@ -99,7 +99,7 @@ params! { Reverb {
     PREDELAY: ParamSpec::number("predelay", "Pre-delay", 0.0, 0.0, 100.0, "Gap before the reverb starts")
         .fixed()
         .limits(0.0, 10_000.0),
-    UNIT: ParamSpec::choice("unit", "Unit", TimeUnit::OPTIONS, "ms", "Unit for the pre-delay"),
+    UNIT: TimeUnit::param("ms", "Unit for the pre-delay"),
     MIX: ParamSpec::number("mix", "Mix", 0.3, 0.0, 1.0, "0 is the dry input, 1 is only the reverb")
         .exposed(),
 } }

@@ -44,6 +44,7 @@ fn nodes(c: &mut Criterion) {
         let (inputs, outputs) = (t.spec.inputs.len(), t.spec.outputs.len());
         node.prepare(&PrepareContext {
             frame_rate: FPS,
+            tempo: Default::default(),
             inputs: &vec![layout; inputs],
             outputs: &vec![layout; outputs],
             connected: &vec![true; inputs],
@@ -95,6 +96,7 @@ fn graphs(c: &mut Criterion) {
             Registry::shared(),
             &CompileOptions {
                 frame_rate: FPS,
+                tempo: Default::default(),
                 sources: HashMap::from([("video".to_owned(), video), ("audio".to_owned(), audio)]),
                 output: video,
             },

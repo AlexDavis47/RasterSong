@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use rastersong_graph::nodes::{AUDIO_INPUT, DEFAULT_AUDIO, DEFAULT_VIDEO, SOURCE_PARAM};
 use rastersong_graph::{
-    CompileOptions, Graph, GraphDesc, Layout, OutputLevel, ParamValue, Registry, Signal,
+    CompileOptions, Graph, GraphDesc, Layout, OutputLevel, ParamValue, Registry, Signal, Tempo,
 };
 use rastersong_media::{MediaBackend, MediaError, Rational, VideoSource};
 
@@ -113,6 +113,7 @@ impl Renderer {
         video_path: &Path,
         tracks: &[AudioTrack],
         graph: &GraphDesc,
+        tempo: Tempo,
         registry: &Registry,
         size: OutputSize,
     ) -> Result<Self, EngineError> {
@@ -148,6 +149,7 @@ impl Renderer {
             registry,
             &CompileOptions {
                 frame_rate: fps,
+                tempo,
                 sources: layouts.clone(),
                 output: video_layout,
             },

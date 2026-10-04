@@ -100,6 +100,7 @@ fn render(args: RenderArgs) -> Result<()> {
         size: args.size,
         frames: args.frames,
         audio_offset: args.audio_offset,
+        tempo: Default::default(),
     };
     let started = std::time::Instant::now();
     let info =

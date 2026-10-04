@@ -1,6 +1,6 @@
 use crate::dsp::{DelayLine, mix};
 use crate::nodes::support::MAX_WARMUP_FRAMES;
-use crate::nodes::{Category, LengthUnit, NodeKind, NodeSpec};
+use crate::nodes::{Category, TimeUnit, NodeKind, NodeSpec};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// A delay line, in rows or frames. Delaying by a fraction of a row and modulating the time with
@@ -8,7 +8,7 @@ use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 #[derive(Debug)]
 pub struct Delay {
     time: f64,
-    unit: LengthUnit,
+    unit: TimeUnit,
     feedback: f32,
     mix: f32,
     /// Set in `prepare`: samples per unit, the largest delay and feedback modulation can reach,
@@ -31,7 +31,7 @@ params! { Delay {
     )
     .exposed()
     .limits(0.0, 1000.0),
-    UNIT: ParamSpec::choice("unit", "Unit", LengthUnit::OPTIONS, "rows", "Unit for the time"),
+    UNIT: TimeUnit::param("rows", "Unit for the time"),
     FEEDBACK: ParamSpec::number(
         "feedback",
         "Feedback",

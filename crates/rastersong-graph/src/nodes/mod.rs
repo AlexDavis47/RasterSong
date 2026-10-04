@@ -12,7 +12,7 @@ pub mod support;
 
 use std::collections::BTreeMap;
 
-pub use support::{FreqUnit, GeneratorLayout, LengthUnit, SampleClock, TimeUnit};
+pub use support::{FreqUnit, GeneratorLayout, SampleClock, TimeUnit};
 
 use crate::graph::{MAX_INPUTS, MAX_PARAMS};
 use crate::{InputSpec, Node, OutputSpec, ParamSpec, ParamValue, Params, PortHint};
@@ -60,6 +60,7 @@ nodes! {
         source: [VideoInput, AudioInput],
     },
     generator {
+        beat: [Beat],
         oscillator: [Oscillator],
         noise: [Noise],
     },

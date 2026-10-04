@@ -108,10 +108,66 @@ pub struct LayoutContext<'a> {
     pub output_count: usize,
 }
 
+/// The project's musical tempo, which beat and bar units are measured in. Constant for now; a
+/// tempo map can replace it later without changing what nodes see.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tempo {
+    /// Beats per minute.
+    pub bpm: f64,
+    /// Beats in a bar (the time signature's numerator).
+    pub beats_per_bar: u32,
+    /// Seconds from the start of the video to the first beat.
+    #[serde(default)]
+    pub offset_secs: f64,
+}
+
+impl Default for Tempo {
+    fn default() -> Self {
+        Self {
+            bpm: 120.0,
+            beats_per_bar: 4,
+            offset_secs: 0.0,
+        }
+    }
+}
+
+impl Tempo {
+    pub const MIN_BPM: f64 = 20.0;
+    pub const MAX_BPM: f64 = 400.0;
+
+    /// The same tempo with values forced into usable ranges, so a hand-edited file can't make
+    /// a unit conversion divide by zero.
+    pub fn sanitized(self) -> Self {
+        Self {
+            bpm: if self.bpm.is_finite() {
+                self.bpm.clamp(Self::MIN_BPM, Self::MAX_BPM)
+            } else {
+                Self::default().bpm
+            },
+            beats_per_bar: self.beats_per_bar.clamp(1, 64),
+            offset_secs: if self.offset_secs.is_finite() {
+                self.offset_secs
+            } else {
+                0.0
+            },
+        }
+    }
+
+    pub fn seconds_per_beat(&self) -> f64 {
+        60.0 / self.sanitized().bpm
+    }
+
+    pub fn seconds_per_bar(&self) -> f64 {
+        self.seconds_per_beat() * f64::from(self.sanitized().beats_per_bar)
+    }
+}
+
 /// Context for [`Node::prepare`], [`Node::latency`] and [`Node::warmup_frames`].
 #[derive(Debug)]
 pub struct PrepareContext<'a> {
     pub frame_rate: f64,
+    pub tempo: Tempo,
     /// Input layouts as the node will receive them: every input has the main input's layout.
     pub inputs: &'a [Layout],
     pub outputs: &'a [Layout],
@@ -143,6 +199,20 @@ impl PrepareContext<'_> {
     /// Samples per second of the main signal.
     pub fn sample_rate(&self) -> f64 {
         self.samples_per_frame() as f64 * self.frame_rate
+    }
+
+    pub fn samples_per_beat(&self) -> f64 {
+        self.tempo.seconds_per_beat() * self.sample_rate()
+    }
+
+    pub fn samples_per_bar(&self) -> f64 {
+        self.tempo.seconds_per_bar() * self.sample_rate()
+    }
+
+    /// Samples from the start of the render to the first beat (negative if the first beat is
+    /// before the start).
+    pub fn beat_offset_samples(&self) -> f64 {
+        self.tempo.sanitized().offset_secs * self.sample_rate()
     }
 
     /// The range parameter `index` moves over when modulated, or `None` when it's constant.

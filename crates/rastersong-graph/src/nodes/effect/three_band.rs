@@ -1,17 +1,20 @@
 use crate::dsp::Biquad;
 use crate::nodes::support::MAX_WARMUP_FRAMES;
-use crate::nodes::{Category, NodeKind, NodeSpec};
+use crate::nodes::{Category, FreqUnit, NodeKind, NodeSpec};
 use crate::{
     Node, OutputSpec, ParamSpec, Params, PortHint, PrepareContext, ProcessContext, Signal,
 };
 
 /// Splits a signal into low, mid and high bands. Crossovers are in Hz of the input signal's own
-/// sample rate (for an audio input, ordinary Hz). Mid is what remains after removing low and high,
+/// sample rate (for an audio input, ordinary Hz) unless `unit` says otherwise. Mid is what remains after removing low and high,
 /// so the three bands always add back up to the input.
 #[derive(Debug)]
 pub struct ThreeBand {
     low_hz: f64,
     high_hz: f64,
+    unit: FreqUnit,
+    /// The low crossover in cycles per sample, set in `prepare`.
+    low_cycles: f64,
     low: Biquad,
     high: Biquad,
 }
@@ -23,9 +26,8 @@ params! { ThreeBand {
         250.0,
         1.0,
         100_000.0,
-        "Crossover between the low and mid bands, in Hz",
+        "Crossover between the low and mid bands",
     )
-    .unit("Hz")
     .fixed()
     .limits(0.001, 1e9),
     HIGH_HZ: ParamSpec::number(
@@ -34,11 +36,11 @@ params! { ThreeBand {
         4000.0,
         1.0,
         100_000.0,
-        "Crossover between the mid and high bands, in Hz",
+        "Crossover between the mid and high bands",
     )
-    .unit("Hz")
     .fixed()
     .limits(0.001, 1e9),
+    UNIT: FreqUnit::param("Hertz", "Unit for the crossovers"),
 } }
 
 impl NodeKind for ThreeBand {
@@ -52,7 +54,10 @@ impl NodeKind for ThreeBand {
             OutputSpec::new("high", "Everything above the high crossover").hint(PortHint::High),
         ])
         .per_channel();
-    const TEST_CONFIGS: &'static [&'static str] = &[r#"{ "low_hz": 300, "high_hz": 3000 }"#];
+    const TEST_CONFIGS: &'static [&'static str] = &[
+        r#"{ "low_hz": 300, "high_hz": 3000 }"#,
+        r#"{ "low_hz": 2, "high_hz": 9, "unit": "Beat" }"#,
+    ];
     const BENCH: Option<&'static str> = Some("{}");
 
     fn new(params: &Params) -> Result<Self, String> {
@@ -66,6 +71,8 @@ impl NodeKind for ThreeBand {
         Ok(Self {
             low_hz,
             high_hz,
+            unit: params.choice_as(Self::UNIT)?,
+            low_cycles: 0.0,
             low: Biquad::default(),
             high: Biquad::default(),
         })
@@ -74,9 +81,9 @@ impl NodeKind for ThreeBand {
 
 impl Node for ThreeBand {
     fn prepare(&mut self, ctx: &PrepareContext) {
-        let rate = ctx.sample_rate();
-        self.low = Biquad::butterworth(self.low_hz / rate, false);
-        self.high = Biquad::butterworth(self.high_hz / rate, true);
+        self.low_cycles = self.unit.per_sample(self.low_hz, ctx);
+        self.low = Biquad::butterworth(self.low_cycles, false);
+        self.high = Biquad::butterworth(self.unit.per_sample(self.high_hz, ctx), true);
     }
 
     fn process(&mut self, _ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
@@ -100,7 +107,7 @@ impl Node for ThreeBand {
 
     fn warmup_frames(&self, ctx: &PrepareContext) -> u32 {
         // The low band settles slowest: allow ten periods of the low crossover.
-        let settle_samples = 10.0 * ctx.sample_rate() / self.low_hz;
+        let settle_samples = 10.0 / self.low_cycles.max(f64::MIN_POSITIVE);
         ((settle_samples / ctx.samples_per_frame() as f64).ceil() as u32)
             .clamp(1, MAX_WARMUP_FRAMES)
     }

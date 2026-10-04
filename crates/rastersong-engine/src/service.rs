@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 
-use rastersong_graph::{GraphDesc, Registry};
+use rastersong_graph::{GraphDesc, Registry, Tempo};
 use rastersong_media::{AudioClip, AudioOptions, MediaBackend};
 
 use crate::cache::{CacheKey, Frame, FrameCache};
@@ -196,6 +196,7 @@ struct State {
     video: Option<PathBuf>,
     tracks: Vec<AudioTrackSpec>,
     graph: Option<GraphDesc>,
+    tempo: Tempo,
     key: CacheKey,
     playhead: usize,
     /// Frames playback repeats, so rendering ahead wraps round them too.
@@ -213,6 +214,7 @@ struct Snapshot {
     video: PathBuf,
     tracks: Vec<AudioTrackSpec>,
     graph: GraphDesc,
+    tempo: Tempo,
 }
 
 /// A renderer built for one version of the project.
@@ -235,6 +237,7 @@ impl Engine {
                 video: None,
                 tracks: Vec::new(),
                 graph: None,
+                tempo: Tempo::default(),
                 key,
                 playhead: 0,
                 looping: None,
@@ -287,6 +290,16 @@ impl Engine {
             return;
         }
         self.edit(|state| state.graph = Some(graph));
+    }
+
+    /// The project tempo that beat and bar units follow. Setting the tempo already in use changes
+    /// nothing.
+    pub fn set_tempo(&self, tempo: Tempo) {
+        let tempo = tempo.sanitized();
+        if lock(&self.shared.state).tempo == tempo {
+            return;
+        }
+        self.edit(|state| state.tempo = tempo);
     }
 
     pub fn set_preview_scale(&self, scale: PreviewScale) {
@@ -494,6 +507,7 @@ impl Worker {
                         video: video.clone(),
                         tracks: state.tracks.clone(),
                         graph: graph.clone(),
+                        tempo: state.tempo,
                     },
                 };
                 state.status = EngineStatus::Loading;
@@ -539,6 +553,7 @@ impl Worker {
                 &project.video,
                 &tracks,
                 &project.graph,
+                project.tempo,
                 Registry::shared(),
                 key.scale.output_size(),
             )

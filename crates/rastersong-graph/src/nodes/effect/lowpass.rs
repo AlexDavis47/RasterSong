@@ -1,19 +1,20 @@
 use std::f64::consts::TAU;
 
 use crate::nodes::support::MAX_WARMUP_FRAMES;
-use crate::nodes::{Category, NodeKind, NodeSpec};
+use crate::nodes::{Category, FreqUnit, NodeKind, NodeSpec};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
-/// One-pole low pass filter. The cutoff is in cycles per row, so the blur looks the same at any
-/// resolution; a signal modulating it moves it in octaves. The filter runs across rows and frames
+/// One-pole low pass filter. The cutoff is in cycles per row by default, so the blur looks the same
+/// at any resolution; a signal modulating it moves it in octaves. The filter runs across rows and frames
 /// like any audio filter, so its state carries from the end of one row to the next.
 #[derive(Debug)]
 pub struct Lowpass {
     cutoff: f64,
+    unit: FreqUnit,
     /// Cutoff in cycles per sample, set in `prepare`.
     base: f64,
-    /// Samples per row, set in `prepare`.
-    row: f64,
+    /// Cycles per sample of one unit of cutoff, set in `prepare`.
+    scale: f64,
     /// Whether the cutoff changes from sample to sample.
     modulated: bool,
     /// The lowest cutoff (cycles per sample) modulation can reach, for warmup.
@@ -30,12 +31,12 @@ params! { Lowpass {
         40.0,
         0.01,
         100_000.0,
-        "Cutoff in cycles per row; lower is smoother",
+        "Cutoff; lower is smoother",
     )
     .exposed()
-    .unit("cycles/row")
     .limits(1e-06, 1e9)
     .octaves(),
+    UNIT: FreqUnit::param("Row", "Unit for the cutoff"),
 } }
 
 impl NodeKind for Lowpass {
@@ -44,14 +45,19 @@ impl NodeKind for Lowpass {
         .describe("Smooths the signal along rows, a horizontal blur")
         .params(Self::PARAMS)
         .per_channel();
-    const TEST_CONFIGS: &'static [&'static str] = &[r#"{ "cutoff": 0.7 }"#, r#"{ "cutoff": 1.5 }"#];
+    const TEST_CONFIGS: &'static [&'static str] = &[
+        r#"{ "cutoff": 0.7 }"#,
+        r#"{ "cutoff": 1.5 }"#,
+        r#"{ "cutoff": 3, "unit": "Beat" }"#,
+    ];
     const BENCH: Option<&'static str> = Some(r#"{ "cutoff": 40 }"#);
 
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
             cutoff: params.number_at(Self::CUTOFF)?,
+            unit: params.choice_as(Self::UNIT)?,
             base: 0.0,
-            row: 1.0,
+            scale: 1.0,
             modulated: false,
             slowest: 0.0,
             coefficient: 1.0,
@@ -69,11 +75,11 @@ impl Lowpass {
 
 impl Node for Lowpass {
     fn prepare(&mut self, ctx: &PrepareContext) {
-        self.row = ctx.samples_per_row().max(1) as f64;
-        self.base = self.cutoff / self.row;
+        self.scale = self.unit.per_sample(1.0, ctx);
+        self.base = self.cutoff * self.scale;
         self.modulated = ctx.modulation(Self::CUTOFF).is_some();
         self.coefficient = Self::coefficient(self.base);
-        self.slowest = ctx.param_min(Self::CUTOFF, self.cutoff) / self.row;
+        self.slowest = ctx.param_min(Self::CUTOFF, self.cutoff) * self.scale;
     }
 
     fn process(&mut self, ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
@@ -82,7 +88,7 @@ impl Node for Lowpass {
         match ctx.param(Self::CUTOFF).filter(|_| self.modulated) {
             Some(cutoff) => {
                 for ((out, &x), &c) in outputs[0].data.iter_mut().zip(input).zip(cutoff) {
-                    let a = Self::coefficient(f64::from(c) / self.row);
+                    let a = Self::coefficient(f64::from(c) * self.scale);
                     y += a * (x - y);
                     *out = y;
                 }

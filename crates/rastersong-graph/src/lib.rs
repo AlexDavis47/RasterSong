@@ -23,7 +23,7 @@ pub use error::GraphError;
 pub use graph::{CompileOptions, Graph, MAX_INPUTS, MAX_PARAMS, OutputLevel, ParamLevel};
 pub use node::{
     InputSpec, LayoutContext, Node, OutputSpec, PortHint, PrepareContext, ProcessContext, Sources,
-    Value,
+    Tempo, Value,
 };
 pub use nodes::{Category, Choice, NodeKind, NodeSpec, NodeType, Registry};
 pub use params::{ModScale, ParamKind, ParamSpec, Params};

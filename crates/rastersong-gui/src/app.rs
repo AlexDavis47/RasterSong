@@ -11,8 +11,8 @@ use eframe::egui::{self, Color32, CornerRadius, Margin, RichText, Ui, UiBuilder}
 use rastersong_engine::playback::{MixTrack, Mixer};
 use rastersong_engine::{
     AudioTrackSpec, BackendInfo, Engine, EngineConfig, EngineStatus, Frame, GraphDesc,
-    MediaBackend, PROJECT_EXTENSION, PlaybackClock, PreviewScale, Project, ProjectTrack,
-    Thumbnails,
+    MediaBackend, PROJECT_EXTENSION, PlaybackClock, PreviewScale, Project, ProjectTrack, Tempo,
+    Thumbnails, TimelineMode,
 };
 
 use crate::audio_out::AudioOut;
@@ -209,6 +209,7 @@ impl App {
         self.engine.set_audio_tracks(self.project.track_specs());
         self.sent_graph = without_layout(&self.project.graph);
         self.engine.set_graph(self.sent_graph.clone());
+        self.engine.set_tempo(self.project.tempo);
         self.sent_mix = None;
     }
 
@@ -547,6 +548,7 @@ impl App {
         }
         self.project.graph = graph;
         self.engine.set_audio_tracks(self.project.track_specs());
+        self.engine.set_tempo(self.project.tempo);
 
         // Rebuild the playback mix when tracks, offsets or levels change, once decoded.
         let mix: Vec<(String, f64, f32)> = self
@@ -1117,6 +1119,7 @@ impl App {
             }
             return;
         };
+        self.tempo_bar(ui);
         let loaded = self.engine.loaded_tracks();
         let tracks = self
             .project
@@ -1160,6 +1163,8 @@ impl App {
             selected_track: self.selected_track,
             thumbnails: &thumbnails,
             loop_region: self.project.loop_region,
+            tempo: self.project.tempo,
+            mode: self.project.timeline_mode,
         };
         self.timeline_area = ui.available_rect_before_wrap();
         let response = timeline(ui, &model, &mut self.timeline_view);
@@ -1167,12 +1172,52 @@ impl App {
         if let Some(region) = response.loop_region {
             self.project.loop_region = region;
         }
+        if response.toggle_mode {
+            self.project.timeline_mode = match self.project.timeline_mode {
+                TimelineMode::Time => TimelineMode::Tempo,
+                TimelineMode::Tempo => TimelineMode::Time,
+            };
+        }
         if let Some(frame) = response.seek {
             self.clock.seek(frame);
         }
         for action in response.actions {
             self.track_action(action);
         }
+    }
+
+    /// In tempo mode, the tempo of the music that beat and bar units follow. Time mode shows
+    /// nothing: the mode button lives in the timeline's ruler header.
+    fn tempo_bar(&mut self, ui: &mut Ui) {
+        if self.project.timeline_mode != TimelineMode::Tempo {
+            return;
+        }
+        let tempo = &mut self.project.tempo;
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            ui.add(
+                egui::DragValue::new(&mut tempo.bpm)
+                    .range(Tempo::MIN_BPM..=Tempo::MAX_BPM)
+                    .speed(0.2)
+                    .max_decimals(2)
+                    .suffix(" bpm"),
+            )
+            .on_hover_text("Beats per minute. Beat and bar units in nodes follow it.");
+            ui.add(
+                egui::DragValue::new(&mut tempo.beats_per_bar)
+                    .range(1..=64)
+                    .suffix(" beats/bar"),
+            )
+            .on_hover_text("Beats in a bar (the time signature's top number)");
+            ui.add(
+                egui::DragValue::new(&mut tempo.offset_secs)
+                    .speed(0.005)
+                    .max_decimals(3)
+                    .prefix("first beat ")
+                    .suffix(" s"),
+            )
+            .on_hover_text("Seconds from the start of the video to the first beat");
+        });
     }
 
     /// Keeps the thumbnail service on the project's video, and a texture for each thumbnail it

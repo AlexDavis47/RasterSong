@@ -144,11 +144,26 @@ samples per frame and a modulator with 1,470) can never drift out of sync.
 | Frames | One full frame of the signal (block length) | Delay by 1 frame, feedback length |
 | Rows | One row of the signal (`width × samples_per_pixel`) | Delay by 1 row for wave effects |
 | Fraction of a row | Horizontal offsets | Shift by 0.1 row |
-| Cycles per row | Frequency of filters and oscillators | Low pass cutoff |
-| Hz | Frequencies of audio-domain nodes, relative to the input signal's own sample rate | Three-band crossovers |
+| Milliseconds, seconds | Time of the signal's own clock | Gate hold, reverb pre-delay |
+| Beats, bars | Musical time at the project tempo | Compressor release of half a beat |
+| Row, Frame (as frequencies) | Cycles per row or per frame, for filters and oscillators | Low pass cutoff |
+| Hertz | Frequencies of audio-domain nodes, relative to the input signal's own sample rate | Three-band crossovers |
+| Beat, Bar (as frequencies) | Cycles per beat or bar, locked to the beat grid | A wobble on every beat |
 
 All of these can be fractional. Because none of them are in samples, a half-resolution preview looks like a
 scaled-down version of the full render rather than a different effect.
+
+Every node that takes a time or a frequency has one `unit` parameter built with `TimeUnit::param` or
+`FreqUnit::param` (`nodes/support.rs`), so the list of units is the same everywhere. Frequency units are the
+inverses of the time units and are written `Row`, `Frame`, `Hertz`, `Beat` and `Bar` (the parameter's meaning already says cycles). Renamed options are upgraded by `migrate.rs`, so old graph files keep loading.
+
+**Tempo.** The project stores a constant tempo (`Tempo`: BPM, beats per bar, and the seconds from the start of
+the video to the first beat). It reaches the graph through `CompileOptions` and `PrepareContext`
+(`samples_per_beat()`, `samples_per_bar()`, `beat_offset_samples()`), so changing the tempo recompiles the graph.
+The timeline ruler can show Time or Tempo (bars and beats; the project's `timeline_mode`), switched with a button in the ruler header, and the tempo controls only appear in Tempo mode, and loop edges snap to the visible
+beat grid in bars mode. The `beat` generator outputs phase, decay, pulse or step signals locked to the grid, and an
+oscillator in Beat or Bar units starts its cycle on the first beat. Both are position-based, so seeking is
+exact. Tempo changes over time (a tempo map) are not supported yet; `Tempo` is a struct so one can replace it.
 
 ### Signals
 
@@ -269,7 +284,7 @@ registry. In the node's file:
   every built-in node.
 
 Shared building blocks live in `dsp.rs` (resampling, delay line, `mix`, dB conversion, `Biquad` with RBJ
-low/high/band/all-pass, peak and shelf designs) and `nodes/support.rs` (`LengthUnit`, `ms_to_samples`,
+low/high/band/all-pass, peak and shelf designs) and `nodes/support.rs` (`TimeUnit`, `FreqUnit`, `ms_to_samples`,
 `settle_frames`, the conversion `Mapping`).
 
 Rules every node must satisfy (enforced by tests, see [Testing Strategy](#testing-strategy)):
@@ -765,6 +780,7 @@ Collected from hands-on testing of the Phase 4 GUI (October 2026). Items already
 - [x] Middle or right-drag grab-scrolls horizontally and vertically
 - [x] Scroll wheel zooms, same controls as the graph
 - [x] Ticks inlaid in the background so zooming reads naturally
+- [x] Tempo, time signature and first-beat offset in the project; the ruler can show bars and beats
 - [x] Video tracks show thumbnails; audio tracks show waveforms
 - [ ] Automation clips: signals drawn as tracks in the playlist to time effects to specific moments. The graph sees one more input signal, keeping the processing graph unified
 

@@ -55,13 +55,7 @@ params! { Filter {
         .exposed()
         .limits(1e-06, 1e9)
         .octaves(),
-    UNIT: ParamSpec::choice(
-        "unit",
-        "Unit",
-        FreqUnit::OPTIONS,
-        "cycles/row",
-        "Unit for the cutoff",
-    ),
+    UNIT: FreqUnit::param("Row", "Unit for the cutoff"),
     Q: ParamSpec::number(
         "q",
         "Resonance",
