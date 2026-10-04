@@ -78,9 +78,14 @@ pub struct GraphEditor {
     /// The canvas and node layout as last drawn, for hit-testing from outside (tests).
     last_canvas: Rect,
     last_geometry: Vec<canvas::Geometry>,
+    /// Text last copied, for the Edit menu's Paste (keyboard paste reads the system clipboard).
+    clipboard: Option<String>,
     /// Problems found when loading a graph (e.g. connections to ports that don't exist).
     pub warnings: Vec<String>,
 }
+
+/// How far duplicates are placed from their originals, in graph space.
+const DUPLICATE_OFFSET: Vec2 = vec2(30.0, 30.0);
 
 impl std::fmt::Debug for GraphEditor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -108,6 +113,7 @@ impl GraphEditor {
             node_menu: None,
             last_canvas: Rect::NOTHING,
             last_geometry: Vec::new(),
+            clipboard: None,
             warnings: Vec::new(),
         };
         editor.load(graph);
@@ -116,14 +122,37 @@ impl GraphEditor {
 
     /// Replaces the edited graph.
     pub fn load(&mut self, graph: &GraphDesc) {
+        self.selected.clear();
+        self.active = None;
+        self.raised.clear();
+        self.fit_pending = true;
+        self.set_graph(graph);
+    }
+
+    /// Replaces the edited graph with an earlier state of the same one (undo or redo), keeping
+    /// the view, and the selection where its nodes still exist.
+    pub fn restore(&mut self, graph: &GraphDesc) {
+        let id_of = |editor: &Self, key: NodeKey| editor.node(key).map(|n| n.id.clone());
+        let selected: Vec<String> = self
+            .selected
+            .iter()
+            .filter_map(|&k| id_of(self, k))
+            .collect();
+        let active = self.active.and_then(|k| id_of(self, k));
+        self.set_graph(graph);
+        self.selected = selected.iter().filter_map(|id| self.key_of(id)).collect();
+        self.active = active.and_then(|id| self.key_of(&id));
+        self.raised.clear();
+    }
+
+    fn set_graph(&mut self, graph: &GraphDesc) {
         self.nodes.clear();
         self.wires.clear();
         self.selected.clear();
         self.active = None;
-        self.raised.clear();
         self.search = None;
         self.node_menu = None;
-        self.fit_pending = true;
+        self.interaction = canvas::Interaction::Idle;
         self.warnings.clear();
         let positions = auto_layout(graph);
         let mut keys = HashMap::new();
@@ -380,32 +409,113 @@ impl GraphEditor {
     /// Copies the given nodes (and the wires between them) next to the originals, and selects
     /// the copies.
     pub fn duplicate(&mut self, keys: &BTreeSet<NodeKey>) {
-        let mut copies = HashMap::new();
-        for key in keys {
-            let Some(original) = self.node(*key).cloned() else {
-                continue;
-            };
-            let Some(copy) = self.add_node(&original.kind, original.pos + vec2(30.0, 30.0)) else {
-                continue;
-            };
-            let node = self.node_mut(copy).unwrap();
-            node.params = original.params;
-            node.interpolation = original.interpolation;
-            node.channels = original.channels;
-            node.label = original.label;
-            copies.insert(*key, copy);
-        }
-        let inner: Vec<Wire> = self
-            .wires
+        let fragment = self.fragment(keys);
+        self.insert(&fragment, DUPLICATE_OFFSET);
+    }
+
+    /// The given nodes and the connections between them, as a graph of their own: what Copy
+    /// puts on the clipboard.
+    pub fn fragment(&self, keys: &BTreeSet<NodeKey>) -> GraphDesc {
+        let mut graph = self.to_desc();
+        let ids: BTreeSet<String> = keys
             .iter()
-            .filter(|w| copies.contains_key(&w.from.0) && copies.contains_key(&w.to.0))
-            .copied()
+            .filter_map(|&k| self.node(k).map(|n| n.id.clone()))
             .collect();
-        for w in inner {
-            self.connect((copies[&w.from.0], w.from.1), (copies[&w.to.0], w.to.1));
+        let node_of = |endpoint: &str| endpoint.split('.').next().unwrap_or("").to_owned();
+        graph.nodes.retain(|n| ids.contains(&n.id));
+        graph
+            .connections
+            .retain(|c| ids.contains(&node_of(&c.from)) && ids.contains(&node_of(&c.to)));
+        graph
+    }
+
+    /// Adds the nodes of `fragment` (with fresh ids) and its connections, moved by `offset`, and
+    /// selects them. Nodes of unknown types and connections that don't resolve are skipped.
+    /// Returns the keys of the new nodes.
+    pub fn insert(&mut self, fragment: &GraphDesc, offset: Vec2) -> Vec<NodeKey> {
+        let positions = auto_layout(fragment);
+        let mut keys = HashMap::new();
+        for (i, desc) in fragment.nodes.iter().enumerate() {
+            let pos = desc.position.map_or(positions[i], |[x, y]| pos2(x, y)) + offset;
+            let Some(key) = self.add_node(&desc.kind, pos) else {
+                continue;
+            };
+            let node = self.node_mut(key).unwrap();
+            node.params = desc.params.clone();
+            node.interpolation = desc.interpolation;
+            node.channels = desc.channels;
+            node.label = desc.label.clone();
+            keys.insert(desc.id.as_str(), key);
         }
-        self.selected = copies.values().copied().collect();
-        self.active = (copies.len() == 1).then(|| *copies.values().next().unwrap());
+        for c in &fragment.connections {
+            if let (Some(from), Some(to)) = (
+                self.endpoint(&keys, &c.from, false),
+                self.endpoint(&keys, &c.to, true),
+            ) {
+                self.connect(from, to);
+            }
+        }
+        let added: Vec<NodeKey> = fragment
+            .nodes
+            .iter()
+            .filter_map(|n| keys.get(n.id.as_str()).copied())
+            .collect();
+        self.selected = added.iter().copied().collect();
+        self.active = (added.len() == 1).then(|| added[0]);
+        added
+    }
+
+    /// The selected nodes as clipboard text, or `None` if nothing is selected.
+    pub fn copy_selection(&mut self) -> Option<String> {
+        if self.selected.is_empty() {
+            return None;
+        }
+        let text = self.fragment(&self.selected).to_json();
+        self.clipboard = Some(text.clone());
+        Some(text)
+    }
+
+    /// Pastes clipboard text (from [`Self::copy_selection`]) with its top-left node at `at`
+    /// (graph space). Text that isn't a graph is ignored.
+    pub fn paste(&mut self, text: &str, at: Pos2) -> bool {
+        let Ok(fragment) = GraphDesc::from_json(text) else {
+            return false;
+        };
+        let corner = fragment
+            .nodes
+            .iter()
+            .filter_map(|n| n.position)
+            .map(|[x, y]| pos2(x, y))
+            .reduce(|a, b| a.min(b))
+            .unwrap_or(Pos2::ZERO);
+        !self.insert(&fragment, at - corner).is_empty()
+    }
+
+    /// The text last copied from this editor, for pasting from the Edit menu.
+    pub fn clipboard(&self) -> Option<&str> {
+        self.clipboard.as_deref()
+    }
+
+    /// Where pasted nodes go when the pointer isn't over the canvas: the middle of the view.
+    pub fn view_center(&self) -> Pos2 {
+        ((self.last_canvas.size() / 2.0 - self.view.offset) / self.view.zoom).to_pos2()
+    }
+
+    /// Selects every node.
+    pub fn select_all(&mut self) {
+        self.selected = self.nodes.iter().map(|n| n.key).collect();
+    }
+
+    /// Removes the selected nodes.
+    pub fn delete_selection(&mut self) {
+        let selected = self.selected.clone();
+        self.remove_nodes(&selected);
+    }
+
+    /// Duplicates the selected nodes.
+    pub fn duplicate_selection(&mut self) {
+        let selected = self.selected.clone();
+        self.duplicate(&selected);
     }
 
     /// Points audio inputs that read track `old` at `new` (after a track is renamed).
@@ -596,6 +706,64 @@ mod tests {
                 .iter()
                 .any(|w| w.from.0 == split || w.to.0 == split)
         );
+    }
+
+    #[test]
+    fn copy_and_paste_keeps_internal_wires_and_places_at_the_target() {
+        let mut editor = GraphEditor::new(&graph());
+        let split = editor.key_of("split").unwrap();
+        let red = editor.key_of("am_red").unwrap();
+        let wires = editor.wires().len();
+        editor.selected = BTreeSet::from([split, red]);
+        let text = editor.copy_selection().unwrap();
+
+        let target = pos2(1000.0, 500.0);
+        assert!(editor.paste(&text, target));
+        assert_eq!(editor.node_count(), 11);
+        assert_eq!(
+            editor.wires().len(),
+            wires + 1,
+            "split.r -> am_red.carrier is copied"
+        );
+        let pasted: Vec<_> = editor
+            .selected()
+            .iter()
+            .map(|&k| editor.node(k).unwrap())
+            .collect();
+        assert_eq!(pasted.len(), 2);
+        assert!(
+            pasted.iter().all(|n| n.id != "split" && n.id != "am_red"),
+            "fresh ids"
+        );
+        let corner = pasted
+            .iter()
+            .map(|n| n.pos)
+            .reduce(|a, b| a.min(b))
+            .unwrap();
+        assert_eq!(corner, target);
+
+        assert!(!editor.paste("not a graph", target));
+        assert_eq!(editor.node_count(), 11);
+    }
+
+    #[test]
+    fn restoring_keeps_the_view_and_selection() {
+        let mut editor = GraphEditor::new(&graph());
+        let before = editor.to_desc();
+        editor.view = View {
+            offset: vec2(5.0, 6.0),
+            zoom: 1.5,
+        };
+        editor.fit_pending = false;
+        let split = editor.key_of("split").unwrap();
+        editor.set_active(Some(split));
+        editor.remove_nodes(&BTreeSet::from([editor.key_of("out").unwrap()]));
+
+        editor.restore(&before);
+        assert_eq!(editor.to_desc(), before);
+        assert_eq!(editor.view().zoom, 1.5);
+        assert!(!editor.fit_pending);
+        assert_eq!(editor.active().map(|n| n.id.as_str()), Some("split"));
     }
 
     #[test]

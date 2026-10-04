@@ -1,5 +1,7 @@
 //! Building blocks shared by the runtime and the nodes.
 
+use std::f64::consts::TAU;
+
 use crate::Interpolation;
 
 /// Resamples one frame block `src` to `dst.len()` samples.
@@ -83,6 +85,65 @@ impl DelayLine {
     }
 }
 
+/// Decibels to a linear gain.
+pub fn db_to_gain(db: f64) -> f64 {
+    10f64.powf(db / 20.0)
+}
+
+/// A linear level to decibels; silence is a very large negative number rather than -inf.
+pub fn gain_to_db(gain: f64) -> f64 {
+    20.0 * gain.max(1e-12).log10()
+}
+
+/// Coefficient of a one-pole smoother with a time constant of `samples`: each sample moves
+/// `1 - c` of the way to the target. Zero (or less) is instant.
+pub fn smoothing_coefficient(samples: f64) -> f64 {
+    if samples > 0.0 {
+        (-1.0 / samples).exp()
+    } else {
+        0.0
+    }
+}
+
+/// A second-order (biquad) filter section, transposed direct form II.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Biquad {
+    b: [f64; 3],
+    a: [f64; 2],
+    z: [f64; 2],
+}
+
+impl Biquad {
+    /// Butterworth low or high pass (RBJ cookbook) at `frequency` cycles per sample.
+    pub fn butterworth(frequency: f64, high_pass: bool) -> Self {
+        let w = TAU * frequency.clamp(1e-6, 0.49);
+        let alpha = w.sin() / (2.0 * std::f64::consts::FRAC_1_SQRT_2);
+        let cos = w.cos();
+        let a0 = 1.0 + alpha;
+        let (b0, b1) = if high_pass {
+            ((1.0 + cos) / 2.0, -(1.0 + cos))
+        } else {
+            ((1.0 - cos) / 2.0, 1.0 - cos)
+        };
+        Self {
+            b: [b0 / a0, b1 / a0, b0 / a0],
+            a: [-2.0 * cos / a0, (1.0 - alpha) / a0],
+            z: [0.0; 2],
+        }
+    }
+
+    pub fn process(&mut self, x: f64) -> f64 {
+        let y = self.b[0] * x + self.z[0];
+        self.z[0] = self.b[1] * x - self.a[0] * y + self.z[1];
+        self.z[1] = self.b[2] * x - self.a[1] * y;
+        y
+    }
+
+    pub fn reset(&mut self) {
+        self.z = [0.0; 2];
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,6 +184,15 @@ mod tests {
         assert_eq!(dst, [1.0, 2.0]);
         resample(&[], &mut dst, 1, Interpolation::Hold);
         assert_eq!(dst, [0.0, 0.0]);
+    }
+
+    #[test]
+    fn decibels_convert_both_ways() {
+        assert!((db_to_gain(-6.0) - 0.501).abs() < 1e-3);
+        assert!((gain_to_db(db_to_gain(-18.0)) + 18.0).abs() < 1e-9);
+        assert!(gain_to_db(0.0) < -200.0);
+        assert_eq!(smoothing_coefficient(0.0), 0.0);
+        assert!((smoothing_coefficient(1.0) - (-1f64).exp()).abs() < 1e-12);
     }
 
     #[test]

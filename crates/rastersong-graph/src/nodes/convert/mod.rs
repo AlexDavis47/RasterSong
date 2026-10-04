@@ -9,7 +9,13 @@
 //! applied in between push samples across that seam, and on the way back to video they wrap to
 //! the other end of the brightness range.
 
-use crate::{InputSpec, Node, ParamSpec, Params, ProcessContext, Signal};
+mod to_audio;
+mod to_video;
+
+pub use to_audio::ToAudio;
+pub use to_video::ToVideo;
+
+use crate::{ParamSpec, Params};
 
 /// The largest signed 8-bit sample, 127/128.
 const SIGNED_MAX: f32 = 127.0 / 128.0;
@@ -43,85 +49,6 @@ impl Mapping {
             "bugged" => Self::Bugged,
             _ => Self::Accurate,
         })
-    }
-}
-
-/// Video (`0..=1`) to audio (`-1..=1`).
-#[derive(Debug)]
-pub struct ToAudio {
-    mapping: Mapping,
-}
-
-impl ToAudio {
-    pub const PARAMS: &[ParamSpec] = Mapping::PARAMS;
-
-    pub fn new(params: &Params) -> Result<Self, String> {
-        Ok(Self {
-            mapping: Mapping::read(params)?,
-        })
-    }
-
-    pub fn convert(mapping: Mapping, x: f32) -> f32 {
-        let x = x.clamp(0.0, 1.0);
-        match mapping {
-            Mapping::Accurate => 2.0 * x - 1.0,
-            // The prototype's `pixel - 127`, in 8-bit steps. Signed 8-bit tops out one step
-            // below 1, which keeps white clear of black after the flip.
-            Mapping::Bugged => flip_sign_bit(((255.0 * x - 127.0) / 128.0).min(SIGNED_MAX)),
-        }
-    }
-}
-
-impl Node for ToAudio {
-    fn inputs(&self) -> &'static [InputSpec] {
-        const INPUTS: &[InputSpec] = &[InputSpec::required("in")];
-        INPUTS
-    }
-
-    fn process(&mut self, _ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
-        for (out, &x) in outputs[0].data.iter_mut().zip(&inputs[0].data) {
-            *out = Self::convert(self.mapping, x);
-        }
-    }
-}
-
-/// Audio (`-1..=1`) back to video (`0..=1`). `bugged` misreads the audio again, which undoes the
-/// first misread; samples that crossed the seam wrap to the other end of the brightness range.
-#[derive(Debug)]
-pub struct ToVideo {
-    mapping: Mapping,
-}
-
-impl ToVideo {
-    pub const PARAMS: &[ParamSpec] = Mapping::PARAMS;
-
-    pub fn new(params: &Params) -> Result<Self, String> {
-        Ok(Self {
-            mapping: Mapping::read(params)?,
-        })
-    }
-
-    pub fn convert(mapping: Mapping, a: f32) -> f32 {
-        match mapping {
-            Mapping::Accurate => (a.clamp(-1.0, 1.0) + 1.0) / 2.0,
-            Mapping::Bugged => {
-                let signed = flip_sign_bit(a.clamp(-1.0, SIGNED_MAX));
-                ((128.0 * signed + 127.0) / 255.0).max(0.0)
-            }
-        }
-    }
-}
-
-impl Node for ToVideo {
-    fn inputs(&self) -> &'static [InputSpec] {
-        const INPUTS: &[InputSpec] = &[InputSpec::required("in")];
-        INPUTS
-    }
-
-    fn process(&mut self, _ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
-        for (out, &a) in outputs[0].data.iter_mut().zip(&inputs[0].data) {
-            *out = Self::convert(self.mapping, a);
-        }
     }
 }
 

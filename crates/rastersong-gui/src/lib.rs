@@ -4,6 +4,7 @@
 mod app;
 pub mod audio_out;
 pub mod editor;
+pub mod history;
 pub mod settings;
 pub mod theme;
 mod timeline;

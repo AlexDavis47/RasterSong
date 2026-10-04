@@ -190,6 +190,7 @@ impl GraphEditor {
         let menus_open = self.search.is_some() || self.node_menu.is_some();
         if !menus_open {
             self.handle_input(ui, rect, &response, &geometry);
+            self.handle_clipboard(ui, rect);
         }
 
         let view = self.view;
@@ -435,22 +436,54 @@ impl GraphEditor {
                 )
             });
             if delete {
-                let selected = self.selected.clone();
-                self.remove_nodes(&selected);
+                self.delete_selection();
             }
             if duplicate {
-                let selected = self.selected.clone();
-                self.duplicate(&selected);
+                self.duplicate_selection();
             }
             if frame {
                 self.fit(rect, geometry);
             }
             if select_all {
-                self.selected = self.nodes.iter().map(|n| n.key).collect();
+                self.select_all();
             }
             if escape {
                 self.interaction = Interaction::Idle;
                 self.selected.clear();
+            }
+        }
+    }
+
+    /// Copy, cut and paste, whenever no text field has focus. The platform turns Ctrl+C, Ctrl+X and
+    /// Ctrl+V into these events.
+    fn handle_clipboard(&mut self, ui: &Ui, rect: Rect) {
+        if ui.ctx().egui_wants_keyboard_input() {
+            return;
+        }
+        let events = ui.input(|i| i.events.clone());
+        for event in events {
+            match event {
+                egui::Event::Copy => {
+                    if let Some(text) = self.copy_selection() {
+                        ui.ctx().copy_text(text);
+                    }
+                }
+                egui::Event::Cut => {
+                    if let Some(text) = self.copy_selection() {
+                        ui.ctx().copy_text(text);
+                        self.delete_selection();
+                    }
+                }
+                egui::Event::Paste(text) => {
+                    let at = match ui.input(|i| i.pointer.hover_pos()) {
+                        Some(p) if rect.contains(p) => {
+                            ((p - rect.min - self.view.offset) / self.view.zoom).to_pos2()
+                        }
+                        _ => self.view_center(),
+                    };
+                    self.paste(&text, at);
+                }
+                _ => {}
             }
         }
     }

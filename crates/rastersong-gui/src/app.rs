@@ -15,6 +15,7 @@ use rastersong_engine::{
 
 use crate::audio_out::AudioOut;
 use crate::editor::{CanvasContext, GraphEditor, InspectorContext, without_layout};
+use crate::history::History;
 use crate::settings::Settings;
 use crate::theme::{Theme, ThemeChoice, apply_style};
 use crate::timeline::{TimelineModel, TrackAction, TrackView, timecode, timeline};
@@ -29,6 +30,14 @@ const AUDIO_EXTENSIONS: &[&str] = &[
     "wav", "mp3", "flac", "ogg", "m4a", "aac", "opus", "aiff", "mp4", "mkv", "mov",
 ];
 
+/// Something that would throw away unsaved changes, waiting for the user to decide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pending {
+    Close,
+    NewProject,
+    OpenProject,
+}
+
 pub struct App {
     engine: Engine,
     audio: AudioOut,
@@ -37,6 +46,11 @@ pub struct App {
     project_path: Option<PathBuf>,
     /// The project as last saved or opened, to tell whether there are unsaved changes.
     saved: Project,
+    history: History,
+    /// An action waiting on "save changes?".
+    confirm: Option<Pending>,
+    /// The user chose to close without saving.
+    allow_close: bool,
     editor: GraphEditor,
     /// The graph (without layout) the engine is rendering.
     sent_graph: GraphDesc,
@@ -82,6 +96,9 @@ impl App {
             audio,
             backend_info,
             saved: project.clone(),
+            history: History::new(project.clone()),
+            confirm: None,
+            allow_close: false,
             sent_graph: GraphDesc::from_json(r#"{ "version": 1, "nodes": [] }"#).unwrap(),
             sent_mix: None,
             track_names: project
@@ -165,6 +182,7 @@ impl App {
         // The editor fills in positions and full port names; that isn't an unsaved change.
         project.graph = self.editor.to_desc();
         self.saved = project.clone();
+        self.history = History::new(project.clone());
         self.track_names = project
             .audio_tracks
             .iter()
@@ -219,6 +237,128 @@ impl App {
         }
     }
 
+    /// Asks to save unsaved changes before `action`, or does it straight away if there are none.
+    fn request(&mut self, ui: &Ui, action: Pending) {
+        if self.is_dirty() {
+            self.confirm = Some(action);
+        } else {
+            self.perform(ui, action);
+        }
+    }
+
+    fn perform(&mut self, ui: &Ui, action: Pending) {
+        match action {
+            Pending::Close => {
+                self.allow_close = true;
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            Pending::NewProject => {
+                let graph = GraphDesc::from_json(STARTER_GRAPH).unwrap();
+                self.load_project(Project::new(graph), None);
+            }
+            Pending::OpenProject => {
+                if let Some(path) = rfd::FileDialog::new()
+                    .add_filter("RasterSong project", &[PROJECT_EXTENSION])
+                    .pick_file()
+                {
+                    self.open_project(&path);
+                }
+            }
+        }
+    }
+
+    /// The "save changes?" dialog, while an action waits on it.
+    fn confirm_dialog(&mut self, ui: &Ui) {
+        let Some(action) = self.confirm else { return };
+        let name = self.project_name();
+        let mut choice = None;
+        egui::Modal::new(egui::Id::new("save-changes")).show(ui.ctx(), |ui| {
+            ui.set_width(340.0);
+            ui.heading(format!("Save changes to {name}?"));
+            ui.add_space(4.0);
+            ui.label("Your changes will be lost if you don't save them.");
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if ui.button("Save").clicked() {
+                    choice = Some(true);
+                }
+                if ui.button("Don't Save").clicked() {
+                    choice = Some(false);
+                }
+                if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    self.confirm = None;
+                }
+            });
+        });
+        match choice {
+            Some(true) => {
+                self.confirm = None;
+                self.save(false);
+                // Saving can be cancelled (or fail); then the action doesn't happen.
+                if !self.is_dirty() {
+                    self.perform(ui, action);
+                }
+            }
+            Some(false) => {
+                self.confirm = None;
+                self.perform(ui, action);
+            }
+            None => {}
+        }
+    }
+
+    /// Whether an action is waiting on "save changes?".
+    pub fn is_confirming(&self) -> bool {
+        self.confirm.is_some()
+    }
+
+    pub fn can_undo(&self) -> bool {
+        self.history.can_undo()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        self.history.can_redo()
+    }
+
+    pub fn undo(&mut self) {
+        if let Some(project) = self.history.undo().cloned() {
+            self.restore(project);
+        }
+    }
+
+    pub fn redo(&mut self) {
+        if let Some(project) = self.history.redo().cloned() {
+            self.restore(project);
+        }
+    }
+
+    /// Puts the project back to an earlier (or later) state from the history.
+    fn restore(&mut self, project: Project) {
+        if project.video != self.project.video {
+            self.engine.set_video(project.video.clone());
+        }
+        self.editor.restore(&project.graph);
+        self.track_names = project
+            .audio_tracks
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
+        self.selected_track = self
+            .selected_track
+            .filter(|&i| i < project.audio_tracks.len())
+            .or((!project.audio_tracks.is_empty()).then_some(0));
+        self.project = project;
+    }
+
+    /// Records the project in the undo history once the user has finished a gesture: no button
+    /// held and no text being typed, so a drag or a typed name is one step.
+    fn record_history(&mut self, ui: &Ui) {
+        let busy = ui.input(|i| i.pointer.any_down()) || ui.ctx().egui_wants_keyboard_input();
+        if !busy {
+            self.history.record(&self.project);
+        }
+    }
+
     /// Whether the project has changed since it was last saved or opened.
     pub fn is_dirty(&self) -> bool {
         self.project != self.saved
@@ -235,6 +375,11 @@ impl App {
         if self.applied_theme != Some(self.settings.theme) {
             ui.ctx().set_theme(self.settings.theme.preference());
             self.applied_theme = Some(self.settings.theme);
+        }
+        if ui.input(|i| i.viewport().close_requested()) && !self.allow_close && self.is_dirty() {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.confirm = Some(Pending::Close);
         }
         self.shortcuts(ui);
 
@@ -281,8 +426,10 @@ impl App {
             .show(ui, |ui| self.graph(ui));
 
         self.sync();
+        self.record_history(ui);
         self.tick(ui);
         self.windows(ui);
+        self.confirm_dialog(ui);
         self.update_title(ui);
     }
 
@@ -379,6 +526,21 @@ impl App {
         if ui.ctx().egui_wants_keyboard_input() {
             return;
         }
+        let (redo, undo) = ui.input_mut(|i| {
+            (
+                i.consume_key(
+                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                    egui::Key::Z,
+                ) || i.consume_key(egui::Modifiers::COMMAND, egui::Key::Y),
+                i.consume_key(egui::Modifiers::COMMAND, egui::Key::Z),
+            )
+        });
+        if undo {
+            self.undo();
+        }
+        if redo {
+            self.redo();
+        }
         let (space, left, right, home, save) = ui.input(|i| {
             (
                 i.key_pressed(egui::Key::Space),
@@ -411,18 +573,12 @@ impl App {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
                 if ui.button("New Project").clicked() {
-                    let graph = GraphDesc::from_json(STARTER_GRAPH).unwrap();
-                    self.load_project(Project::new(graph), None);
                     ui.close();
+                    self.request(ui, Pending::NewProject);
                 }
                 if ui.button("Open Project…").clicked() {
                     ui.close();
-                    if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("RasterSong project", &[PROJECT_EXTENSION])
-                        .pick_file()
-                    {
-                        self.open_project(&path);
-                    }
+                    self.request(ui, Pending::OpenProject);
                 }
                 if ui.button("Save Project").clicked() {
                     ui.close();
@@ -451,6 +607,7 @@ impl App {
                     self.export_graph();
                 }
             });
+            ui.menu_button("Edit", |ui| self.edit_menu(ui));
             ui.menu_button("View", |ui| {
                 ui.label(RichText::new("Theme").weak());
                 for choice in ThemeChoice::ALL {
@@ -469,6 +626,49 @@ impl App {
                 }
             });
         });
+    }
+
+    fn edit_menu(&mut self, ui: &mut Ui) {
+        let item = |ui: &mut Ui, enabled: bool, label: &str, keys: &str| {
+            ui.add_enabled(enabled, egui::Button::new(label).shortcut_text(keys))
+                .clicked()
+        };
+        if item(ui, self.can_undo(), "Undo", "Ctrl+Z") {
+            self.undo();
+        }
+        if item(ui, self.can_redo(), "Redo", "Ctrl+Shift+Z") {
+            self.redo();
+        }
+        ui.separator();
+        let selected = !self.editor.selected().is_empty();
+        if item(ui, selected, "Cut", "Ctrl+X")
+            && let Some(text) = self.editor.copy_selection()
+        {
+            ui.ctx().copy_text(text);
+            self.editor.delete_selection();
+        }
+        if item(ui, selected, "Copy", "Ctrl+C")
+            && let Some(text) = self.editor.copy_selection()
+        {
+            ui.ctx().copy_text(text);
+        }
+        let clipboard = self.editor.clipboard().map(str::to_owned);
+        if item(ui, clipboard.is_some(), "Paste", "Ctrl+V")
+            && let Some(text) = clipboard
+        {
+            let at = self.editor.view_center();
+            self.editor.paste(&text, at);
+        }
+        if item(ui, selected, "Duplicate", "Ctrl+D") {
+            self.editor.duplicate_selection();
+        }
+        if item(ui, selected, "Delete", "Del") {
+            self.editor.delete_selection();
+        }
+        ui.separator();
+        if item(ui, self.editor.node_count() > 0, "Select All", "Ctrl+A") {
+            self.editor.select_all();
+        }
     }
 
     fn pick_video(&mut self) {
@@ -848,15 +1048,18 @@ impl App {
         self.show_about = open;
     }
 
-    fn update_title(&mut self, ui: &Ui) {
-        let name = self
-            .project_path
+    fn project_name(&self) -> String {
+        self.project_path
             .as_ref()
             .and_then(|p| p.file_stem())
             .map_or_else(
                 || "Untitled".to_owned(),
                 |n| n.to_string_lossy().into_owned(),
-            );
+            )
+    }
+
+    fn update_title(&mut self, ui: &Ui) {
+        let name = self.project_name();
         let title = format!(
             "{name}{} — RasterSong",
             if self.is_dirty() { " •" } else { "" }

@@ -37,6 +37,9 @@ const NODES: &[(&str, &str, &str)] = &[
         r#"{ "cutoff": 40, "depth": 2 }"#,
     ),
     ("three_band", "three_band", "{}"),
+    ("compressor", "compressor", "{}"),
+    ("gate", "gate", "{}"),
+    ("distortion", "distortion", "{}"),
 ];
 
 struct NoSources;

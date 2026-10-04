@@ -284,3 +284,108 @@ fn the_theme_is_dark_unless_chosen_otherwise() {
     harness.run_steps(2);
     assert_eq!(harness.ctx.theme(), egui::Theme::Light);
 }
+
+/// Clicks a node's header, then leaves the pointer over the canvas so canvas keys apply.
+fn select(harness: &mut Harness<'_, App>, id: &str) {
+    let node = key(harness, id);
+    let rect = harness.state().editor().node_screen_rect(node).unwrap();
+    click(
+        harness,
+        rect.center_top() + vec2(0.0, 8.0),
+        PointerButton::Primary,
+    );
+}
+
+fn shortcut(harness: &mut Harness<'_, App>, modifiers: Modifiers, key: egui::Key) {
+    harness.key_press_modifiers(modifiers, key);
+    harness.run_steps(2);
+}
+
+#[test]
+fn undo_and_redo_step_through_edits() {
+    let mut harness = loaded();
+    assert!(!harness.state().can_undo());
+    select(&mut harness, "split");
+    shortcut(&mut harness, Modifiers::NONE, egui::Key::Delete);
+    assert_eq!(harness.state().editor().node_count(), 8);
+
+    shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
+    assert_eq!(harness.state().editor().node_count(), 9);
+    assert!(!harness.state().is_dirty(), "back to the saved state");
+
+    shortcut(
+        &mut harness,
+        Modifiers::COMMAND | Modifiers::SHIFT,
+        egui::Key::Z,
+    );
+    assert_eq!(harness.state().editor().node_count(), 8);
+}
+
+#[test]
+fn a_drag_is_one_undo_step() {
+    let mut harness = loaded();
+    let video = key(&harness, "video");
+    let before = harness.state().editor().node(video).unwrap().pos;
+    let rect = harness.state().editor().node_screen_rect(video).unwrap();
+    let grab = rect.center_top() + vec2(0.0, 8.0);
+    drag(&mut harness, grab, grab + vec2(60.0, 30.0));
+    harness.run_steps(2);
+    assert_ne!(harness.state().editor().node(video).unwrap().pos, before);
+
+    shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
+    let video = key(&harness, "video");
+    assert_eq!(harness.state().editor().node(video).unwrap().pos, before);
+    assert!(!harness.state().can_undo());
+}
+
+#[test]
+fn copy_and_paste_adds_the_nodes_at_the_pointer() {
+    let mut harness = loaded();
+    select(&mut harness, "split");
+    harness.event(Event::Copy);
+    harness.run_steps(2);
+    let text = harness.state().editor().clipboard().unwrap().to_owned();
+
+    let canvas = harness.state().editor().canvas_rect();
+    let spot = pos2(canvas.left() + 40.0, canvas.bottom() - 90.0);
+    harness.event(Event::PointerMoved(spot));
+    harness.event(Event::Paste(text));
+    harness.run_steps(2);
+
+    let editor = harness.state().editor();
+    assert_eq!(editor.node_count(), 10);
+    let pasted = editor.active().expect("the pasted node is selected");
+    assert_eq!(pasted.kind, "split");
+    assert_ne!(pasted.id, "split");
+    let placed = editor.node_screen_rect(pasted.key).unwrap().min;
+    assert!(placed.distance(spot) < 1.5, "placed at {placed:?}");
+}
+
+#[test]
+fn new_project_asks_before_dropping_changes() {
+    let mut harness = loaded();
+    select(&mut harness, "split");
+    shortcut(&mut harness, Modifiers::NONE, egui::Key::Delete);
+    assert!(harness.state().is_dirty());
+
+    harness.get_by_label("File").click();
+    harness.run_steps(2);
+    harness.get_by_label("New Project").click();
+    harness.run_steps(2);
+    assert!(harness.state().is_confirming());
+    assert_eq!(
+        harness.state().editor().node_count(),
+        8,
+        "nothing happens yet"
+    );
+
+    harness.get_by_label("Don't Save").click();
+    harness.run_steps(2);
+    assert!(!harness.state().is_confirming());
+    assert!(!harness.state().is_dirty());
+    assert_eq!(harness.state().editor().node_count(), 9);
+    assert!(
+        !harness.state().can_undo(),
+        "a new project starts a new history"
+    );
+}

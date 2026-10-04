@@ -24,6 +24,22 @@ const CONFIGS: &[(&str, &str)] = &[
     ("lowpass", r#"{ "cutoff": 0.7 }"#),
     ("lowpass", r#"{ "cutoff": 1.5, "depth": 2 }"#),
     ("three_band", r#"{ "low_hz": 300, "high_hz": 3000 }"#),
+    (
+        "compressor",
+        r#"{ "threshold": -12, "ratio": 6, "attack": 2, "release": 20 }"#,
+    ),
+    (
+        "compressor",
+        r#"{ "threshold": -30, "knee": 0, "makeup": 6 }"#,
+    ),
+    ("gate", r#"{ "threshold": -12, "hold": 5, "release": 10 }"#),
+    ("gate", r#"{ "threshold": -6, "range": -20, "attack": 3 }"#),
+    ("distortion", r#"{ "shape": "soft", "drive": 18 }"#),
+    (
+        "distortion",
+        r#"{ "shape": "fold", "drive": 24, "bias": 0.3, "mix": 0.6 }"#,
+    ),
+    ("distortion", r#"{ "shape": "wrap", "drive": 12 }"#),
     ("to_audio", r#"{ "mapping": "bugged" }"#),
     ("to_video", r#"{ "mapping": "bugged" }"#),
 ];

@@ -1,6 +1,7 @@
-//! Source and output nodes: where signals enter and leave the graph.
+//! Source nodes: where host-supplied signals enter the graph.
 
-use crate::{InputSpec, Layout, LayoutContext, Node, ProcessContext, Signal};
+use crate::nodes::{Category, NodeSpec};
+use crate::{Layout, LayoutContext, Node, ProcessContext, Signal};
 use crate::{ParamSpec, Params};
 
 /// Reads a host-supplied signal, e.g. `"video"` (RGB, `0..=1`) or `"audio"` (mono, `-1..=1`).
@@ -22,6 +23,13 @@ impl SourceNode {
         "audio",
         "Name of the host-supplied audio signal",
     )];
+
+    pub const VIDEO_SPEC: NodeSpec = NodeSpec::new("Video", Category::Input)
+        .describe("The video as RGB, 0 to 1")
+        .params(Self::VIDEO_PARAMS);
+    pub const AUDIO_SPEC: NodeSpec = NodeSpec::new("Audio", Category::Input)
+        .describe("The audio track, one frame's worth per block, -1 to 1")
+        .params(Self::AUDIO_PARAMS);
 
     pub fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
@@ -49,41 +57,5 @@ impl Node for SourceNode {
             .get(&self.name)
             .expect("source checked by the graph");
         outputs[0].data.copy_from_slice(&source.data);
-    }
-}
-
-/// The graph's result. Accepts an RGB signal of the output size, or a mono one, which is shown
-/// as grayscale.
-#[derive(Debug)]
-pub struct Output;
-
-impl Node for Output {
-    fn inputs(&self) -> &'static [InputSpec] {
-        const INPUTS: &[InputSpec] = &[InputSpec::required("in")];
-        INPUTS
-    }
-
-    fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
-        let input = ctx.inputs[0];
-        let size_matches = (input.width, input.height) == (ctx.output.width, ctx.output.height);
-        if size_matches && matches!(input.samples_per_pixel, 1 | 3) {
-            Ok(vec![ctx.output])
-        } else {
-            Err(format!(
-                "expects a {} or mono signal of that size, got {input}",
-                ctx.output
-            ))
-        }
-    }
-
-    fn process(&mut self, _ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
-        let input = inputs[0];
-        if input.layout.samples_per_pixel == 3 {
-            outputs[0].data.copy_from_slice(&input.data);
-        } else {
-            for (pixel, &value) in outputs[0].data.chunks_mut(3).zip(&input.data) {
-                pixel.fill(value);
-            }
-        }
     }
 }

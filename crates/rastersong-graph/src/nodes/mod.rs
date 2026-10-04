@@ -1,16 +1,23 @@
 //! Built-in nodes and the registry that creates nodes from graph files.
+//!
+//! One node per file under a folder for its category, holding its spec, parameters,
+//! implementation and tests. The registry below lists them all.
 
 mod convert;
-mod effects;
-mod io;
-mod structural;
+mod effect;
+mod input;
+mod output;
+mod structure;
 
 use std::collections::BTreeMap;
 
 pub use convert::{Mapping, ToAudio, ToVideo};
-pub use effects::{Am, Bitcrush, Delay, LengthUnit, Lowpass, ThreeBand};
-pub use io::{Output, SourceNode};
-pub use structural::{Combine, Interleave, Pack, Split};
+pub use effect::{
+    Am, Bitcrush, Compressor, Delay, Distortion, Gate, LengthUnit, Lowpass, Shape, ThreeBand,
+};
+pub use input::SourceNode;
+pub use output::Output;
+pub use structure::{Combine, Interleave, Pack, Split};
 
 use crate::{InputSpec, Node, ParamSpec, ParamValue, Params};
 
@@ -171,104 +178,25 @@ static EMPTY: BTreeMap<String, ParamValue> = BTreeMap::new();
 impl Default for Registry {
     /// All built-in nodes.
     fn default() -> Self {
-        use Category::{Convert, Effect, Input, Output as Out, Structure};
-
         let mut registry = Self::empty();
         registry
-            .register(
-                "video_input",
-                NodeSpec::new("Video", Input)
-                    .describe("The video as RGB, 0 to 1")
-                    .params(SourceNode::VIDEO_PARAMS),
-                SourceNode::new,
-            )
-            .register(
-                "audio_input",
-                NodeSpec::new("Audio", Input)
-                    .describe("The audio track, one frame's worth per block, -1 to 1")
-                    .params(SourceNode::AUDIO_PARAMS),
-                SourceNode::new,
-            )
-            .register(
-                OUTPUT,
-                NodeSpec::new("Output", Out).describe("The rendered result: RGB, or mono shown as grayscale"),
-                |_| Ok(Output),
-            )
-            .register(
-                "split",
-                NodeSpec::new("Split", Structure).describe("RGB into separate R, G and B signals"),
-                |_| Ok(Split),
-            )
-            .register(
-                "combine",
-                NodeSpec::new("Combine", Structure).describe("Separate R, G and B signals into RGB"),
-                |_| Ok(Combine),
-            )
-            .register(
-                "interleave",
-                NodeSpec::new("Interleave", Structure)
-                    .describe("RGB as one mono carrier, three times as wide (R, G, B, R, G, B, …)"),
-                |_| Ok(Interleave),
-            )
-            .register(
-                "pack",
-                NodeSpec::new("Pack", Structure).describe("A packed mono carrier back into RGB"),
-                |_| Ok(Pack),
-            )
-            .register(
-                "to_audio",
-                NodeSpec::new("Video to Audio", Convert)
-                    .describe("Video's 0 to 1 as audio's -1 to 1, as written to an 8-bit file")
-                    .params(ToAudio::PARAMS),
-                ToAudio::new,
-            )
-            .register(
-                "to_video",
-                NodeSpec::new("Audio to Video", Convert)
-                    .describe("Audio's -1 to 1 back to video's 0 to 1, as read from an 8-bit file")
-                    .params(ToVideo::PARAMS),
-                ToVideo::new,
-            )
-            .register(
-                "three_band",
-                NodeSpec::new("Three-Band Split", Effect)
-                    .describe("Low, mid and high frequency bands that add back up to the input")
-                    .params(ThreeBand::PARAMS)
-                    .per_channel(),
-                ThreeBand::new,
-            )
-            .register(
-                "am",
-                NodeSpec::new("Amplitude Modulation", Effect)
-                    .describe("Scales the carrier by the modulator")
-                    .params(Am::PARAMS)
-                    .per_channel(),
-                Am::new,
-            )
-            .register(
-                "delay",
-                NodeSpec::new("Delay", Effect)
-                    .describe("Delays the signal by rows or frames; modulating the time bends rows into waves")
-                    .params(Delay::PARAMS)
-                    .per_channel(),
-                Delay::new,
-            )
-            .register(
-                "bitcrush",
-                NodeSpec::new("Bit Crush", Effect)
-                    .describe("Reduces bit depth, posterizing the image")
-                    .params(Bitcrush::PARAMS)
-                    .per_channel(),
-                Bitcrush::new,
-            )
-            .register(
-                "lowpass",
-                NodeSpec::new("Low Pass", Effect)
-                    .describe("Smooths the signal along rows, a horizontal blur")
-                    .params(Lowpass::PARAMS)
-                    .per_channel(),
-                Lowpass::new,
-            );
+            .register("video_input", SourceNode::VIDEO_SPEC, SourceNode::new)
+            .register("audio_input", SourceNode::AUDIO_SPEC, SourceNode::new)
+            .register(OUTPUT, Output::SPEC, |_| Ok(Output))
+            .register("split", Split::SPEC, |_| Ok(Split))
+            .register("combine", Combine::SPEC, |_| Ok(Combine))
+            .register("interleave", Interleave::SPEC, |_| Ok(Interleave))
+            .register("pack", Pack::SPEC, |_| Ok(Pack))
+            .register("to_audio", ToAudio::SPEC, ToAudio::new)
+            .register("to_video", ToVideo::SPEC, ToVideo::new)
+            .register("three_band", ThreeBand::SPEC, ThreeBand::new)
+            .register("am", Am::SPEC, Am::new)
+            .register("delay", Delay::SPEC, Delay::new)
+            .register("bitcrush", Bitcrush::SPEC, Bitcrush::new)
+            .register("lowpass", Lowpass::SPEC, Lowpass::new)
+            .register("compressor", Compressor::SPEC, Compressor::new)
+            .register("gate", Gate::SPEC, Gate::new)
+            .register("distortion", Distortion::SPEC, Distortion::new);
         registry
     }
 }

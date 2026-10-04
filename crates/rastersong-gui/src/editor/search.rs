@@ -218,6 +218,13 @@ impl GraphEditor {
             .show(ui.ctx(), |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui: &mut Ui| {
                     ui.set_min_width(140.0);
+                    if ui.button(format!("Copy{plural}")).clicked() {
+                        self.selected = selection.clone();
+                        if let Some(text) = self.copy_selection() {
+                            ui.ctx().copy_text(text);
+                        }
+                        close = true;
+                    }
                     if ui.button(format!("Duplicate{plural}")).clicked() {
                         self.duplicate(&selection);
                         close = true;

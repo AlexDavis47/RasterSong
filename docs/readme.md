@@ -297,6 +297,9 @@ Working examples live in [`examples/graphs/`](../examples/graphs): `am_bands` (t
 | `delay` | `in`, `modulation`? → `out` | `time` (1), `depth` (0), `unit` (`rows` or `frames`), `feedback` (0), `mix` (1) |
 | `bitcrush` | `in`, `modulation`? → `out` | `bits` (4), `depth` (0, bits per unit of modulation) |
 | `lowpass` | `in`, `modulation`? → `out` | `cutoff` (40 cycles per row), `depth` (0, octaves per unit of modulation) |
+| `compressor` | `in`, `sidechain`? → `out` | `threshold` (-18 dB), `ratio` (4), `attack` (10 ms), `release` (100 ms), `knee` (6 dB), `makeup` (0 dB) |
+| `gate` | `in`, `sidechain`? → `out` | `threshold` (-40 dB), `attack` (1 ms), `hold` (50 ms), `release` (100 ms), `range` (-80 dB, silence) |
+| `distortion` | `in` → `out` | `shape` (`soft`, `hard`, `fold` or `wrap`), `drive` (12 dB), `bias` (0), `mix` (1) |
 
 **Range conversion and the bugged mapping.** `to_audio` and `to_video` model writing to and reading from an 8-bit
 file, so both clip to the range. `accurate` maps black to -1 and white to 1. `bugged` reproduces the original
@@ -306,6 +309,10 @@ white sit just either side of silence, and the dark and bright halves of the ima
 Effects between the two nodes push samples across that seam, and they come back as tears where dark turns bright
 and the reverse. Clipped samples come back mid-gray. `bugged_mosh` is the prototype workflow: interleave, encode,
 process, decode, pack.
+
+The compressor and gate follow their input's level, or the `sidechain` when it's connected. Their times are
+milliseconds of the signal's own time, so on a video carrier they span the same fraction of a frame at any
+resolution.
 
 `?` marks optional inputs. Audio inputs read the project's audio track named by `source`; a track that doesn't
 exist reads as silence.
@@ -453,7 +460,12 @@ rendered and cached by the engine on its render thread.
 - **Preview audio** mixes the unmuted tracks and follows the playhead. When playback slows because rendering can't
   keep up, the audio is time-stretched (WSOLA: slowed without lowering the pitch) to stay with the picture, and
   fades out when playback all but stops. Volume and mute only affect playback, never rendering.
-- **Keys:** Space plays/pauses, ←/→ step one frame, Home jumps to the start, Ctrl+S saves.
+- **Keys:** Space plays/pauses, ←/→ step one frame, Home jumps to the start, Ctrl+S saves, Ctrl+Z undoes,
+  Ctrl+Shift+Z (or Ctrl+Y) redoes. In the graph, Ctrl+C, Ctrl+X and Ctrl+V copy, cut and paste nodes with the
+  connections between them; pasted nodes land at the pointer. The **Edit** menu has the same commands.
+- **Undo** covers every change to the project: graph edits, node moves, parameters and the timeline. A drag, a
+  slider move or a typed name is one step. Closing the window, opening a project or starting a new one asks to
+  save unsaved changes first.
 - **Projects** are JSON files with the `.rastersong` extension holding the video, the audio tracks (file, name,
   offset, volume, mute) and the graph. Media paths inside the project's folder are saved relative to it, so a
   project folder can be moved or shared. Version 1 projects (one audio file) are upgraded on load. Graphs can also
@@ -623,7 +635,7 @@ Each phase ends with its tests passing in CI.
 - ~~Effects on RGB signals scramble channels when modulated~~: effects now have the `channels` setting.
 - What `interleave` and `pack` should mean (currently a relabel between RGB and a 3×-wide mono carrier)
 - Value ranges (video `0..1`, audio `-1..1`) and mono-only modulators
-- Undo/redo in the editor; asking before closing with unsaved changes
+- ~~Undo/redo in the editor; asking before closing with unsaved changes~~: done.
 
 **Later**
 - Multi-clip timeline
@@ -636,9 +648,9 @@ Collected from hands-on testing of the Phase 4 GUI (October 2026). Items already
 
 ### 1.0 requirements
 
-- [ ] Undo/redo (graph edits, timeline edits, parameter changes)
-- [ ] Copy and paste (nodes with their internal connections)
-- [ ] New nodes: compressor, gate, distortion
+- [x] Undo/redo (graph edits, timeline edits, parameter changes)
+- [x] Copy and paste (nodes with their internal connections)
+- [x] New nodes: compressor, gate, distortion
 - [ ] Node parameter inputs (modulation, below)
 - [ ] Automation clips (below)
 
@@ -689,7 +701,7 @@ Collected from hands-on testing of the Phase 4 GUI (October 2026). Items already
 
 ### Decisions
 
-**Nodes: separate files or one mega-file?** Separate files. One node per file under `nodes/<category>/`, with its spec, parameters, implementation and tests together. The registry stays in `nodes/mod.rs`. Do this when adding compressor, gate and distortion, since `effects.rs` is already the largest node file.
+**Nodes: separate files or one mega-file?** Separate files. One node per file under `nodes/<category>/`, with its spec, parameters, implementation and tests together. The registry stays in `nodes/mod.rs`. Done: each node also declares its own `SPEC`, which the registry lists.
 
 **Own node graph?** There is no library; the canvas (`editor/canvas.rs`) is already custom, so the issues are our own code. Keep it custom. Snapping, link colors, parameter modulation pins and the probe all need that control.
 
