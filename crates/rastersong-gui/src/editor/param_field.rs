@@ -28,8 +28,7 @@ pub struct NumberRange {
     pub limits: (f64, f64),
 }
 
-impl NumberRange {
-}
+impl NumberRange {}
 
 /// Whether a track showing `range` maps logarithmically.
 fn is_logarithmic(range: (f64, f64)) -> bool {

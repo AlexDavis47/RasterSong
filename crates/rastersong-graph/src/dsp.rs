@@ -224,6 +224,13 @@ impl Biquad {
         }
     }
 
+    /// Switches to `other`'s response, keeping this filter's state so the output doesn't jump.
+    /// For filters whose frequency or gain changes while they run.
+    pub fn retune(&mut self, other: Self) {
+        self.b = other.b;
+        self.a = other.a;
+    }
+
     pub fn process(&mut self, x: f64) -> f64 {
         let y = self.b[0] * x + self.z[0];
         self.z[0] = self.b[1] * x - self.a[0] * y + self.z[1];

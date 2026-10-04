@@ -156,7 +156,7 @@ fn modulatable_params() -> Vec<(String, usize)> {
     Registry::shared()
         .types()
         .into_iter()
-        .filter(|t| t.spec.category == Category::Effect)
+        .filter(|t| matches!(t.spec.category, Category::Effect | Category::Generator))
         .flat_map(|t| {
             t.spec
                 .params

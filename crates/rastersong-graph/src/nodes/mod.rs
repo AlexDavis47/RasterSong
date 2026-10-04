@@ -12,7 +12,7 @@ pub mod support;
 
 use std::collections::BTreeMap;
 
-pub use support::LengthUnit;
+pub use support::{FreqUnit, GeneratorLayout, LengthUnit, SampleClock, TimeUnit};
 
 use crate::graph::{MAX_INPUTS, MAX_PARAMS};
 use crate::{InputSpec, Node, OutputSpec, ParamSpec, ParamValue, Params, PortHint};
@@ -59,6 +59,10 @@ nodes! {
     input {
         source: [VideoInput, AudioInput],
     },
+    generator {
+        oscillator: [Oscillator],
+        noise: [Noise],
+    },
     output {
         video: [Output],
     },
@@ -81,6 +85,12 @@ nodes! {
         compressor: [Compressor],
         gate: [Gate],
         distortion: [Distortion],
+        blend: [Blend],
+        envelope: [Envelope],
+        filter: [Filter],
+        equalizer: [Equalizer],
+        fm: [Fm],
+        reverb: [Reverb],
     },
 }
 
@@ -88,6 +98,7 @@ nodes! {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Category {
     Input,
+    Generator,
     Structure,
     Convert,
     Effect,
@@ -96,8 +107,9 @@ pub enum Category {
 
 impl Category {
     /// Every category, in menu order. `ALL[c.index()] == c`.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Input,
+        Self::Generator,
         Self::Structure,
         Self::Convert,
         Self::Effect,
@@ -111,6 +123,7 @@ impl Category {
     pub fn label(self) -> &'static str {
         match self {
             Self::Input => "Inputs",
+            Self::Generator => "Generators",
             Self::Structure => "Channels",
             Self::Convert => "Conversion",
             Self::Effect => "Effects",
@@ -489,7 +502,7 @@ mod tests {
     #[test]
     fn every_effect_is_property_tested_and_benchmarked() {
         for t in Registry::default().types() {
-            if t.spec.category == Category::Effect {
+            if matches!(t.spec.category, Category::Effect | Category::Generator) {
                 assert!(
                     !t.test_configs.is_empty(),
                     "effect `{}` has no TEST_CONFIGS, so the property tests skip its settings",

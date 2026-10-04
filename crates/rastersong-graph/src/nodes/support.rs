@@ -1,6 +1,7 @@
 //! Helpers shared by several nodes: unit conversion and warmup.
 
-use crate::PrepareContext;
+use crate::nodes::{DEFAULT_AUDIO, DEFAULT_VIDEO};
+use crate::{Layout, LayoutContext, PrepareContext, ProcessContext};
 
 choice! {
     /// A length unit for user-facing parameters.
@@ -17,6 +18,106 @@ impl LengthUnit {
             Self::Rows => ctx.samples_per_row() as f64,
             Self::Frames => ctx.samples_per_frame() as f64,
         }
+    }
+}
+
+choice! {
+    /// A unit of time for user-facing parameters: the signal's own milliseconds, or rows or
+    /// frames, which look the same at any resolution.
+    pub enum TimeUnit {
+        Ms = "ms",
+        Rows = "rows",
+        Frames = "frames",
+    }
+}
+
+impl TimeUnit {
+    /// Samples in one of this unit.
+    pub fn samples(self, ctx: &PrepareContext) -> f64 {
+        match self {
+            Self::Ms => ms_to_samples(1.0, ctx),
+            Self::Rows => ctx.samples_per_row() as f64,
+            Self::Frames => ctx.samples_per_frame() as f64,
+        }
+    }
+}
+
+choice! {
+    /// A frequency unit for user-facing parameters.
+    pub enum FreqUnit {
+        /// Cycles per row: the pattern looks the same at any resolution.
+        Row = "cycles/row",
+        /// Cycles per frame.
+        Frame = "cycles/frame",
+        /// Cycles per second of the signal's own time.
+        Hz = "Hz",
+    }
+}
+
+impl FreqUnit {
+    /// Cycles per sample for `value` of this unit.
+    pub fn per_sample(self, value: f64, ctx: &PrepareContext) -> f64 {
+        match self {
+            Self::Row => value / ctx.samples_per_row().max(1) as f64,
+            Self::Frame => value / ctx.samples_per_frame().max(1) as f64,
+            Self::Hz => value / ctx.sample_rate().max(1.0),
+        }
+    }
+}
+
+choice! {
+    /// Which host signal a generator takes its layout (resolution or sample count) from.
+    pub enum GeneratorLayout {
+        /// The video's layout: RGB pixels in rows.
+        Video = "video",
+        /// The audio track's layout.
+        Audio = "audio",
+    }
+}
+
+impl GeneratorLayout {
+    /// The `layout` parameter every generator has.
+    pub const PARAM: crate::ParamSpec = crate::ParamSpec::choice(
+        "layout",
+        "Layout",
+        Self::OPTIONS,
+        "video",
+        "video makes a signal shaped like the video (RGB, rows); audio makes one shaped like the audio track",
+    );
+
+    /// The layout of the host signal this choice names.
+    pub fn output_layouts(self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
+        let name = match self {
+            Self::Video => DEFAULT_VIDEO,
+            Self::Audio => DEFAULT_AUDIO,
+        };
+        ctx.sources
+            .get(name)
+            .map(|&layout| vec![layout; ctx.output_count])
+            .ok_or_else(|| format!("the host provides no `{name}` source to take a layout from"))
+    }
+}
+
+/// Where a generator is in its stream, counted in samples from the start of the render.
+///
+/// The first block after a reset starts at `frame × block length`, so a render that begins at a
+/// seek position (after its warmup) produces exactly what a render from the start does. After
+/// that the generator counts its own samples, so it doesn't depend on how the stream is cut.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SampleClock {
+    next: Option<u64>,
+}
+
+impl SampleClock {
+    /// Index of the first sample of this block; advances past the block's `len` samples.
+    pub fn begin(&mut self, ctx: &ProcessContext, len: usize) -> u64 {
+        let start = self.next.unwrap_or(ctx.frame * len as u64);
+        self.next = Some(start + len as u64);
+        start
+    }
+
+    pub fn reset(&mut self) {
+        self.next = None;
     }
 }
 

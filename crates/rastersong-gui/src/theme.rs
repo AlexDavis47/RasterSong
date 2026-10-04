@@ -133,6 +133,7 @@ impl Theme {
         pin_outline: Color32::from_gray(25),
         categories: [
             Color32::from_rgb(0x4a, 0x90, 0xd9),
+            Color32::from_rgb(0x3c, 0xb8, 0xc8),
             Color32::from_rgb(0xa6, 0x7c, 0xd6),
             Color32::from_rgb(0xd6, 0x5c, 0x8a),
             Color32::from_rgb(0xe0, 0x9a, 0x3c),
@@ -181,6 +182,7 @@ impl Theme {
         pin_outline: Color32::from_gray(250),
         categories: [
             Color32::from_rgb(0x2f, 0x78, 0xc4),
+            Color32::from_rgb(0x1f, 0x9a, 0xaa),
             Color32::from_rgb(0x86, 0x58, 0xbe),
             Color32::from_rgb(0xc0, 0x40, 0x6e),
             Color32::from_rgb(0xcc, 0x7a, 0x14),

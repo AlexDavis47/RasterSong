@@ -493,3 +493,21 @@ fn nodes_without_inputs_get_their_layout_from_the_host_and_can_be_modulated() {
         &out.data[..4]
     );
 }
+
+#[test]
+fn generators_take_their_layout_from_the_host_and_draw_stripes() {
+    // A ramp of one cycle per row on the 4×2 RGB video: each pixel's channels share a value.
+    let json = graph_json(
+        r#"{ "id": "ramp", "type": "oscillator", "params": { "wave": "ramp", "freq": 1 } },
+           { "id": "out", "type": "output" }"#,
+        r#"{ "from": "ramp", "to": "out" }"#,
+    );
+    let mut graph = compile(&json).unwrap();
+    let out = graph.process(0, &sources(|_| 0.0, |_| 0.0)).unwrap();
+    assert_eq!(out.layout, Layout::rgb(W, H));
+    let row: Vec<f32> = [0.0, 0.25, 0.5, 0.75]
+        .into_iter()
+        .flat_map(|v| [v; 3])
+        .collect();
+    assert_eq!(out.data, [row.clone(), row].concat());
+}

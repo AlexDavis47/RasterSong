@@ -37,6 +37,52 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 |---|---|---|---|---|
 | `source` (Source) | `video` | text | no | Name of the host-supplied video signal |
 
+## Generators
+
+| Node | What it does |
+|---|---|
+| [Noise](#noise) | Random values in a chosen colour: grain in video, hiss in audio |
+| [Oscillator](#oscillator) | A sine, triangle, square, saw or ramp wave: stripes in video, a tone in audio |
+
+### `noise`
+
+**Noise**: Random values in a chosen colour: grain in video, hiss in audio
+
+**Outputs**
+
+- `out`: The noise
+
+**Parameters**
+
+| Name | Default | Range | Modulation | What it does |
+|---|---|---|---|---|
+| `color` (Color) | `white` | `white`, `pink`, `brown`, `blue`, `violet` | no | How the noise is spread over frequencies: white is sharp grain, brown is slow drift, violet is the finest grain |
+| `layout` (Layout) | `video` | `video`, `audio` | no | video makes a signal shaped like the video (RGB, rows); audio makes one shaped like the audio track |
+| `seed` (Seed) | 0 | 0 to 999 (up to 0 to 4000000000) | no | Picks which noise; the same seed always gives the same noise |
+| `amplitude` (Amplitude) | 0.5 | 0 to 1 (up to -10 to 10) | yes | Scales the noise, which spans -1 to 1 before the offset is added |
+| `offset` (Offset) | 0.5 | -1 to 1 (up to -10 to 10) | yes | Added to the noise: 0.5 with amplitude 0.5 fills the video range 0 to 1, 0 suits audio |
+
+### `oscillator`
+
+**Oscillator**: A sine, triangle, square, saw or ramp wave: stripes in video, a tone in audio
+
+**Outputs**
+
+- `out`: The wave
+
+**Parameters**
+
+| Name | Default | Range | Modulation | What it does |
+|---|---|---|---|---|
+| `wave` (Wave) | `sine` | `sine`, `triangle`, `square`, `saw`, `ramp` | no | The shape of one cycle |
+| `layout` (Layout) | `video` | `video`, `audio` | no | video makes a signal shaped like the video (RGB, rows); audio makes one shaped like the audio track |
+| `freq` (Frequency) | 8 | 0 to 100 (up to 0 to 1000000) | yes, in octaves | Cycles per unit of time or space: how many stripes fit in a row, or how high the tone is |
+| `unit` (Unit) | `cycles/row` | `cycles/row`, `cycles/frame`, `Hz` | no | Unit for the frequency: cycles per row keeps the look at any resolution |
+| `phase` (Phase) | 0 | 0 to 1 (up to -1000 to 1000) | no | Where in the cycle the wave starts, as a fraction of a cycle |
+| `amplitude` (Amplitude) | 0.5 | 0 to 1 (up to -10 to 10) | yes | Half the peak-to-peak height; with the offset it places the wave in the signal's range |
+| `offset` (Offset) | 0.5 | -1 to 1 (up to -10 to 10) | yes | Added to the wave: 0.5 with amplitude 0.5 fills the video range 0 to 1, 0 suits audio |
+| `pulse_width` (Pulse width) | 0.5 | 0 to 1 | yes | For the square wave, the fraction of the cycle it stays high |
+
 ## Channels
 
 | Node | What it does |
@@ -147,11 +193,17 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 |---|---|
 | [Amplitude Modulation](#am) | Scales the carrier by the modulator |
 | [Bit Crush](#bitcrush) | Reduces bit depth, posterizing the image |
+| [Blend](#blend) | Combines two signals: add, multiply, screen, difference and more |
 | [Compressor](#compressor) | Turns loud parts down, following the input or a sidechain |
 | [Delay](#delay) | Delays the signal by rows or frames; modulating the time bends rows into waves |
 | [Distortion](#distortion) | Drives the signal into a waveshaper: soft, hard, folding or wrapping |
+| [Envelope](#envelope) | Follows how strong the signal is, as a smooth curve from 0 up |
+| [Equalizer](#equalizer) | Boosts or cuts low, mid and high ranges with a shelf, a peak and a shelf |
+| [FM](#fm) | Bends the carrier by reading it through a delay the modulator controls |
+| [Filter](#filter) | A resonant low, high, band or all pass, tilt or comb filter |
 | [Gate](#gate) | Silences the signal while it, or a sidechain, is quiet |
 | [Low Pass](#lowpass) | Smooths the signal along rows, a horizontal blur |
+| [Reverb](#reverb) | A dense decaying wash of echoes |
 | [Three-Band Split](#three_band) | Low, mid and high frequency bands that add back up to the input |
 
 ### `am`
@@ -194,6 +246,28 @@ Can process R, G and B separately.
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
 | `bits` (Bits) | 4 bits | 1 to 24 | yes | Bit depth; fewer bits means fewer levels |
+
+### `blend`
+
+**Blend**: Combines two signals: add, multiply, screen, difference and more
+
+Can process R, G and B separately.
+
+**Inputs**
+
+- `a` (main, required): The base signal
+- `b` (required): The signal blended onto the base
+
+**Outputs**
+
+- `out`: The processed signal
+
+**Parameters**
+
+| Name | Default | Range | Modulation | What it does |
+|---|---|---|---|---|
+| `mode` (Mode) | `add` | `add`, `subtract`, `multiply`, `screen`, `difference`, `min`, `max`, `average`, `overlay` | no | How `a` and `b` are combined |
+| `amount` (Amount) | 1 | 0 to 1 | yes | 0 passes `a` through, 1 is the full blend |
 
 ### `compressor`
 
@@ -239,7 +313,7 @@ Can process R, G and B separately.
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `time` (Time) | 0.05 | 0.001 to 100 (up to 0 to 1000) | yes | Delay length, in rows or frames. Small fractions of a row give the finest waves |
+| `time` (Time) | 0.05 | 0 to 100 (up to 0 to 1000) | yes | Delay length, in rows or frames. Small fractions of a row give the finest waves |
 | `unit` (Unit) | `rows` | `rows`, `frames` | no | Unit for the time |
 | `feedback` (Feedback) | 0 | 0 to 0.99 | yes | How much of the delayed signal is fed back in |
 | `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the delayed signal |
@@ -266,6 +340,103 @@ Can process R, G and B separately.
 | `drive` (Drive) | 12 dB | 0 to 48 (up to -96 to 96) | yes | Gain before shaping; more drive, more distortion |
 | `bias` (Bias) | 0 | -1 to 1 (up to -100 to 100) | yes | Offset added before shaping, for uneven distortion |
 | `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the distorted signal |
+
+### `envelope`
+
+**Envelope**: Follows how strong the signal is, as a smooth curve from 0 up
+
+Can process R, G and B separately.
+
+**Inputs**
+
+- `in` (main, required): The signal to process
+
+**Outputs**
+
+- `out`: The processed signal
+
+**Parameters**
+
+| Name | Default | Range | Modulation | What it does |
+|---|---|---|---|---|
+| `detector` (Detector) | `peak` | `peak`, `rms` | no | peak follows each sample's magnitude, rms follows average power and is smoother |
+| `attack` (Attack) | 5 | 0 to 1000 (up to 0 to 1000000) | no | How quickly the output rises when the input gets stronger |
+| `release` (Release) | 50 | 0 to 5000 (up to 0 to 1000000) | no | How quickly the output falls when the input gets weaker |
+| `unit` (Unit) | `ms` | `ms`, `rows`, `frames` | no | Unit for attack and release |
+
+### `equalizer`
+
+**Equalizer**: Boosts or cuts low, mid and high ranges with a shelf, a peak and a shelf
+
+Can process R, G and B separately.
+
+**Inputs**
+
+- `in` (main, required): The signal to process
+
+**Outputs**
+
+- `out`: The processed signal
+
+**Parameters**
+
+| Name | Default | Range | Modulation | What it does |
+|---|---|---|---|---|
+| `unit` (Unit) | `cycles/row` | `cycles/row`, `cycles/frame`, `Hz` | no | Unit for the three frequencies |
+| `low_freq` (Low freq) | 5 | 0.01 to 1000 (up to 0.000001 to 1000000000) | yes, in octaves | Corner of the low shelf |
+| `low_gain` (Low gain) | 0 dB | -24 to 24 (up to -48 to 48) | yes | Boost or cut of everything below the low corner |
+| `mid_freq` (Mid freq) | 30 | 0.01 to 1000 (up to 0.000001 to 1000000000) | yes, in octaves | Centre of the mid band |
+| `mid_gain` (Mid gain) | 0 dB | -24 to 24 (up to -48 to 48) | yes | Boost or cut around the mid frequency |
+| `mid_q` (Mid Q) | 1 | 0.1 to 20 (up to 0.05 to 100) | yes | Width of the mid band: higher is narrower |
+| `high_freq` (High freq) | 150 | 0.01 to 1000 (up to 0.000001 to 1000000000) | yes, in octaves | Corner of the high shelf |
+| `high_gain` (High gain) | 0 dB | -24 to 24 (up to -48 to 48) | yes | Boost or cut of everything above the high corner |
+
+### `fm`
+
+**FM**: Bends the carrier by reading it through a delay the modulator controls
+
+Can process R, G and B separately.
+
+**Inputs**
+
+- `carrier` (main, required): The signal that gets bent
+- `modulator` (required): The signal that sets how far back the carrier is read
+
+**Outputs**
+
+- `out`: The processed signal
+
+**Parameters**
+
+| Name | Default | Range | Modulation | What it does |
+|---|---|---|---|---|
+| `index` (Index) | 0.5 | 0 to 10 (up to 0 to 1000) | yes | How far the modulator moves the carrier, in rows or frames: the modulator at +1 reads twice this far back, at -1 not at all |
+| `unit` (Unit) | `rows` | `rows`, `frames` | no | Unit for the index |
+| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry carrier, 1 is only the modulated carrier |
+
+### `filter`
+
+**Filter**: A resonant low, high, band or all pass, tilt or comb filter
+
+Can process R, G and B separately.
+
+**Inputs**
+
+- `in` (main, required): The signal to process
+
+**Outputs**
+
+- `out`: The processed signal
+
+**Parameters**
+
+| Name | Default | Range | Modulation | What it does |
+|---|---|---|---|---|
+| `response` (Type) | `lowpass` | `lowpass`, `highpass`, `bandpass`, `allpass`, `tilt`, `comb` | no | lowpass, highpass, bandpass, allpass, tilt (gain dB of low-versus-high balance) or comb (echo every cutoff cycle) |
+| `cutoff` (Cutoff) | 40 | 0.01 to 1000 (up to 0.000001 to 1000000000) | yes, in octaves | Frequency of the filter's corner or centre |
+| `unit` (Unit) | `cycles/row` | `cycles/row`, `cycles/frame`, `Hz` | no | Unit for the cutoff |
+| `q` (Resonance) | 0.707 | 0.1 to 20 (up to 0.05 to 100) | yes | Sharpness: 0.707 is flat, higher rings or narrows. For a comb, higher repeats more |
+| `gain` (Gain) | 0 dB | -24 to 24 (up to -48 to 48) | yes | For tilt: dB boost of lows and cut of highs (negative reverses) |
 
 ### `gate`
 
@@ -311,6 +482,32 @@ Can process R, G and B separately.
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
 | `cutoff` (Cutoff) | 40 cycles/row | 0.01 to 100000 (up to 0.000001 to 1000000000) | yes, in octaves | Cutoff in cycles per row; lower is smoother |
+
+### `reverb`
+
+**Reverb**: A dense decaying wash of echoes
+
+Uses 12 internal delay lines whose lengths follow the signal's sample rate. On video the tail is long in samples, so the node uses a lot of memory and asks the host to render up to 120 frames of warmup before a seek.
+
+Can process R, G and B separately.
+
+**Inputs**
+
+- `in` (main, required): The signal to process
+
+**Outputs**
+
+- `out`: The processed signal
+
+**Parameters**
+
+| Name | Default | Range | Modulation | What it does |
+|---|---|---|---|---|
+| `size` (Size) | 0.5 | 0 to 1 | no | How long the tail rings: higher is longer |
+| `damping` (Damping) | 0.5 | 0 to 1 | no | How quickly the tail loses its fast detail: higher is duller |
+| `predelay` (Pre-delay) | 0 | 0 to 100 (up to 0 to 10000) | no | Gap before the reverb starts |
+| `unit` (Unit) | `ms` | `ms`, `rows`, `frames` | no | Unit for the pre-delay |
+| `mix` (Mix) | 0.3 | 0 to 1 | yes | 0 is the dry input, 1 is only the reverb |
 
 ### `three_band`
 
