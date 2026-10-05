@@ -85,6 +85,51 @@ fn edits_never_serve_stale_frames() {
 }
 
 #[test]
+fn edits_to_nodes_that_do_not_feed_the_output_keep_the_cache() {
+    let engine = engine();
+    load(&engine, FINITE);
+    wait_until("all frames", || engine.buffered_from(0) == FRAMES);
+    let before = engine.frame(5).unwrap();
+
+    // Add an orphan node: nothing rendered is invalidated, so the very same frames are served.
+    let orphan = FINITE.replacen(
+        r#""nodes": ["#,
+        r#""nodes": [ { "id": "orphan", "type": "bitcrush", "position": [1, 2] },"#,
+        1,
+    );
+    assert_ne!(orphan, FINITE, "the test graph's node list was found");
+    engine.set_graph(GraphDesc::from_json(&orphan).unwrap());
+    assert_eq!(engine.buffered_from(0), FRAMES);
+    assert!(Arc::ptr_eq(&before, &engine.frame(5).unwrap()));
+
+    // A change that matters renders again.
+    engine.set_graph(GraphDesc::from_json(&crush(6)).unwrap());
+    assert!(
+        engine.frame(5).is_none_or(|f| !Arc::ptr_eq(&f, &before)),
+        "the cache was dropped"
+    );
+}
+
+#[test]
+fn bypassing_the_whole_graph_renders_the_video() {
+    let engine = engine();
+    load(&engine, &crush(2));
+    wait_until("processed frames", || engine.buffered_from(0) == FRAMES);
+    engine.set_bypass_all(true);
+    wait_until("bypassed frames", || engine.buffered_from(0) == FRAMES);
+    assert_eq!(
+        engine.frame(3).unwrap().rgb,
+        sequential(FINITE_PASSTHROUGH, OutputSize::Native)[3]
+    );
+    engine.set_bypass_all(false);
+    wait_until("processed again", || engine.buffered_from(0) == FRAMES);
+    assert_eq!(
+        engine.frame(3).unwrap().rgb,
+        sequential(&crush(2), OutputSize::Native)[3]
+    );
+}
+
+#[test]
 fn preview_scale_renders_smaller_frames() {
     let engine = engine();
     load(&engine, FINITE);
@@ -98,10 +143,10 @@ fn preview_scale_renders_smaller_frames() {
 #[test]
 fn reports_errors_and_recovers() {
     let engine = engine();
-    // Valid JSON, but `output` is missing its input.
+    // Valid JSON, but the graph has no output node.
     load(
         &engine,
-        r#"{ "version": 1, "nodes": [ { "id": "out", "type": "output" } ] }"#,
+        r#"{ "version": 1, "nodes": [ { "id": "v", "type": "video_input" } ] }"#,
     );
     wait_until("the failure", || {
         matches!(engine.status(), EngineStatus::Failed(_))
@@ -263,7 +308,7 @@ fn graph_failures_keep_the_video_info() {
     let engine = engine();
     load(
         &engine,
-        r#"{ "version": 1, "nodes": [ { "id": "out", "type": "output" } ] }"#,
+        r#"{ "version": 1, "nodes": [ { "id": "v", "type": "video_input" } ] }"#,
     );
     wait_until("the failure", || {
         matches!(engine.status(), EngineStatus::Failed(_))

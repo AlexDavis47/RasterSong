@@ -42,6 +42,7 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 | Node | What it does |
 |---|---|
 | [Beat](#beat) | A 0 to 1 signal locked to the project's beats or bars: phase, decay, pulse or steps |
+| [Constant](#constant) | The same value in every sample: a flat colour, or silence |
 | [Noise](#noise) | Random values in a chosen colour: grain in video, hiss in audio |
 | [Oscillator](#oscillator) | A sine, triangle, square, saw or ramp wave: stripes in video, a tone in audio |
 
@@ -63,6 +64,21 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 | `shape` (Shape) | `decay` | `phase`, `decay`, `pulse`, `step` | no | phase rises 0 to 1, decay falls 1 to 0, pulse is on for the width, step climbs in stairs |
 | `width` (Width) | 0.25 | 0 to 1 | no | For the pulse shape, the fraction of each cycle it stays on |
 | `steps` (Steps) | 4 | 1 to 32 (up to 1 to 1024) | no | For the step shape, how many stairs each cycle climbs |
+
+### `constant`
+
+**Constant**: The same value in every sample: a flat colour, or silence
+
+**Outputs**
+
+- `out`: The constant signal
+
+**Parameters**
+
+| Name | Default | Range | Modulation | What it does |
+|---|---|---|---|---|
+| `layout` (Layout) | `video` | `video`, `audio` | no | video makes a signal shaped like the video (RGB, rows); audio makes one shaped like the audio track |
+| `value` (Value) | 0 | -1 to 1 (up to -10 to 10) | yes | The value of every sample |
 
 ### `noise`
 

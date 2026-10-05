@@ -19,6 +19,10 @@ use rastersong_gui::theme::WireStyle;
 use rastersong_gui::{App, AudioOut, STARTER_GRAPH, ThemeChoice};
 
 fn app(theme: ThemeChoice) -> App {
+    app_with_tracks(theme, 1)
+}
+
+fn app_with_tracks(theme: ThemeChoice, tracks: usize) -> App {
     let backend = FakeBackend::new()
         .with_video(
             "clip",
@@ -39,9 +43,11 @@ fn app(theme: ThemeChoice) -> App {
         );
     let mut project = Project::new(GraphDesc::from_json(STARTER_GRAPH).unwrap());
     project.video = Some(PathBuf::from("clip"));
-    project
-        .audio_tracks
-        .push(ProjectTrack::new("audio".into(), PathBuf::from("song")));
+    for name in ["audio", "drums", "bass"].into_iter().take(tracks) {
+        project
+            .audio_tracks
+            .push(ProjectTrack::new(name.into(), PathBuf::from("song")));
+    }
     let mut app = App::new(Arc::new(backend), project, None, AudioOut::silent(None));
     with_theme(&mut app, theme);
     app
@@ -308,4 +314,207 @@ fn capture(theme: ThemeChoice, theme_name: &str) {
     harness.get_by_label("About RasterSong").click();
     harness.run_steps(3);
     save(&mut harness, &format!("{theme_name}-5-about"));
+}
+
+fn alt_click_at(harness: &mut Harness<'_, App>, pos: egui::Pos2) {
+    harness.event(egui::Event::PointerMoved(pos));
+    harness.run_steps(1);
+    for pressed in [true, false] {
+        harness.event_modifiers(
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::ALT,
+            },
+            egui::Modifiers::ALT,
+        );
+        harness.run_steps(1);
+    }
+    harness.run_steps(2);
+}
+
+/// A bypassed node (Alt+click) with the node stats shown, the right-click menu, and the whole
+/// graph bypassed.
+#[test]
+#[ignore = "needs a GPU; run explicitly to look at the UI"]
+fn bypass_screenshots() {
+    for (theme, name) in [(ThemeChoice::Dark, "dark"), (ThemeChoice::Light, "light")] {
+        let mut harness = gpu_harness(app(theme));
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while harness.state().engine().buffered_from(0) < 30 {
+            assert!(Instant::now() < deadline, "timed out waiting for frames");
+            harness.step();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        harness.run_steps(3);
+        let mut settings = harness.state().settings().clone();
+        settings.node_stats = true;
+        harness.state_mut().set_settings(settings);
+
+        let key = harness
+            .state()
+            .editor()
+            .key_of("three_band")
+            .or(harness.state().editor().key_of("bands"))
+            .unwrap();
+        let rect = harness.state().editor().node_screen_rect(key).unwrap();
+        alt_click_at(&mut harness, rect.center_top() + egui::vec2(0.0, 8.0));
+        save(&mut harness, &format!("{name}-7-bypassed"));
+
+        // Right-click menu.
+        let pos = rect.center_top() + egui::vec2(0.0, 8.0);
+        harness.event(egui::Event::PointerMoved(pos));
+        harness.run_steps(1);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.run_steps(1);
+        }
+        harness.run_steps(2);
+        save(&mut harness, &format!("{name}-8-node-menu"));
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(2);
+
+        harness.get_by_label("Bypass graph").click();
+        harness.run_steps(6);
+        save(&mut harness, &format!("{name}-9-graph-bypassed"));
+    }
+}
+
+fn wait_for_frames(harness: &mut Harness<'_, App>, count: usize) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while harness.state().engine().buffered_from(0) < count {
+        assert!(Instant::now() < deadline, "timed out waiting for frames");
+        harness.step();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    harness.run_steps(3);
+}
+
+/// The preview's unprocessed view, the split in both orders, and zooming.
+#[test]
+#[ignore = "needs a GPU; run explicitly to look at the UI"]
+fn preview_screenshots() {
+    for (theme, name) in [(ThemeChoice::Dark, "dark"), (ThemeChoice::Light, "light")] {
+        let mut harness = gpu_harness(app(theme));
+        wait_for_frames(&mut harness, 30);
+        save(&mut harness, &format!("{name}-10-preview-processed"));
+
+        harness.get_by_label("Unprocessed").click();
+        // Give the source engine time to render its frames.
+        for _ in 0..100 {
+            harness.run_steps(1);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        save(&mut harness, &format!("{name}-11-preview-unprocessed"));
+
+        harness.get_by_label("Split").click();
+        harness.run_steps(4);
+        save(
+            &mut harness,
+            &format!("{name}-12-split-unprocessed-selected"),
+        );
+
+        harness.get_by_label("Unprocessed").click();
+        harness.run_steps(4);
+        save(&mut harness, &format!("{name}-13-split-processed-selected"));
+
+        // Zoom in on the preview with the wheel.
+        let pos = egui::pos2(300.0, 250.0);
+        harness.event(egui::Event::PointerMoved(pos));
+        harness.run_steps(1);
+        for _ in 0..3 {
+            harness.event(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, 300.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.run_steps(5);
+        }
+        save(&mut harness, &format!("{name}-14-preview-zoomed"));
+        harness.key_press(egui::Key::F);
+        harness.run_steps(3);
+        save(&mut harness, &format!("{name}-15-preview-fit-again"));
+    }
+}
+
+fn two_track_app(theme: ThemeChoice) -> App {
+    app_with_tracks(theme, 2)
+}
+
+/// Dragging a track header to reorder, and Alt+click on mute to solo.
+#[test]
+#[ignore = "needs a GPU; run explicitly to look at the UI"]
+fn track_screenshots() {
+    let theme = ThemeChoice::Dark;
+    let mut harness = gpu_harness(two_track_app(theme));
+    wait_for_frames(&mut harness, 10);
+    save(&mut harness, "dark-16-two-tracks");
+
+    // Drag the second header above the first.
+    let from = egui::pos2(205.0, 842.0);
+    harness.event(egui::Event::PointerMoved(from));
+    harness.run_steps(1);
+    harness.event(egui::Event::PointerButton {
+        pos: from,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.run_steps(1);
+    for y in [830.0, 800.0, 760.0, 742.0] {
+        harness.event(egui::Event::PointerMoved(egui::pos2(205.0, y)));
+        harness.run_steps(2);
+    }
+    save(&mut harness, "dark-17-track-drag");
+    harness.event(egui::Event::PointerButton {
+        pos: egui::pos2(205.0, 742.0),
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.run_steps(4);
+    save(&mut harness, "dark-18-track-dropped");
+    let names: Vec<String> = harness
+        .state()
+        .project()
+        .audio_tracks
+        .iter()
+        .map(|t| t.name.clone())
+        .collect();
+    assert_eq!(names, ["drums", "audio"]);
+
+    // Alt+click the first track's mute button: solo.
+    let mutes = harness.get_all_by_label("🔊");
+    let first = mutes.into_iter().next().unwrap().rect().center();
+    harness.event(egui::Event::PointerMoved(first));
+    harness.run_steps(1);
+    for pressed in [true, false] {
+        harness.event_modifiers(
+            egui::Event::PointerButton {
+                pos: first,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::ALT,
+            },
+            egui::Modifiers::ALT,
+        );
+        harness.run_steps(1);
+    }
+    harness.run_steps(3);
+    save(&mut harness, "dark-19-solo");
+    let muted: Vec<bool> = harness
+        .state()
+        .project()
+        .audio_tracks
+        .iter()
+        .map(|t| t.muted)
+        .collect();
+    assert_eq!(muted, [false, true]);
 }

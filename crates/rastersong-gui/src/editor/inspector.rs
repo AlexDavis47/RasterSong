@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use eframe::egui::{self, RichText, Ui};
 use rastersong_engine::{AUDIO_INPUT, SOURCE_PARAM};
 use rastersong_engine::{
-    Channels, Interpolation, ModMode, Modulation, ParamKind, ParamLevel, ParamSpec, ParamValue,
+    Channels, Interpolation, Modulation, ParamKind, ParamLevel, ParamSpec, ParamValue,
 };
 
 use super::param_field::{GUTTER_WIDTH, Modulated, NumberRange, param_field, reset_gesture};
@@ -172,10 +172,7 @@ impl GraphEditor {
                     let mut modulation = wire.map(|color| {
                         let current = node.modulation.get(spec.name).copied();
                         let base = spec.number_value(&node.params).unwrap_or(0.0);
-                        let value = current.unwrap_or(Modulation {
-                            amount: spec.default_modulation_amount(base),
-                            mode: ModMode::Bipolar,
-                        });
+                        let value = current.unwrap_or_else(|| spec.default_modulation(base));
                         (value, current, color)
                     });
                     let mut expose = spec.modulatable.then_some(exposed);

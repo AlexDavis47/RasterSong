@@ -6,6 +6,7 @@ use eframe::egui::{self, Key, Pos2, Ui};
 use rastersong_engine::NodeType;
 
 use super::canvas::{Geometry, Pin};
+use super::linked;
 use super::{GraphEditor, NodeKey};
 use crate::theme::Theme;
 
@@ -193,8 +194,8 @@ impl GraphEditor {
             return;
         };
         match menu.from {
-            Some(Pin::Out(node, output)) => self.connect((node, output), (key, 0)),
-            Some(Pin::In(node, input)) => self.connect((key, 0), (node, input)),
+            Some(Pin::Out(node, output)) => self.connect_new((node, output), (key, 0)),
+            Some(Pin::In(node, input)) => self.connect_new((key, 0), (node, input)),
             None => {}
         }
         self.set_active(Some(key));
@@ -232,6 +233,21 @@ impl GraphEditor {
                     if ui.button(format!("Duplicate{plural}")).clicked() {
                         self.duplicate(&selection);
                         close = true;
+                    }
+                    let bypassable = selection
+                        .iter()
+                        .filter_map(|&k| self.node(k))
+                        .filter(|n| n.kind != linked::OUTPUT)
+                        .collect::<Vec<_>>();
+                    if !bypassable.is_empty() {
+                        let mut bypassed = bypassable.iter().all(|n| n.bypass);
+                        if ui
+                            .checkbox(&mut bypassed, format!("Bypass{plural}"))
+                            .clicked()
+                        {
+                            self.toggle_bypass(&selection);
+                            close = true;
+                        }
                     }
                     if ui.button(format!("Delete{plural}")).clicked() {
                         self.remove_nodes(&selection);

@@ -152,11 +152,11 @@ impl ParamSpec {
         }
     }
 
-    /// The modulation a newly connected signal gets: the default amount, both ways.
+    /// The modulation a newly connected signal gets: the default amount, one way.
     pub fn default_modulation(&self, base: f64) -> Modulation {
         Modulation {
             amount: self.default_modulation_amount(base),
-            mode: ModMode::Bipolar,
+            mode: ModMode::Unipolar,
         }
     }
 

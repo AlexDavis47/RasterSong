@@ -87,6 +87,13 @@ pub enum TrackAction {
     Select(usize),
     SetOffset(usize, f64),
     ToggleMute(usize),
+    /// Alt+click on mute: play this track alone, or restore the mutes if it already is.
+    Solo(usize),
+    /// A header was dragged to a new place: the track at `from` moves to index `to`.
+    Move {
+        from: usize,
+        to: usize,
+    },
     Rename(usize, String),
     RenameVideo(String),
     Remove(usize),
@@ -600,6 +607,7 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
             }
         });
     });
+    let mut dragging: Option<(usize, usize)> = None;
     for (i, track) in model.tracks.iter().enumerate() {
         let rect = areas.header(i + 1, view.scroll_y);
         let fill = if model.selected_track == Some(i) {
@@ -608,9 +616,54 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
             ui.visuals().faint_bg_color
         };
         header_painter.rect_filled(rect, CornerRadius::same(3), fill);
+        // The header's background drags the track to a new place. It goes under the widgets
+        // (which are made after it), so they keep their clicks.
+        let grip = ui.interact(
+            rect.intersect(header_clip),
+            ui.id().with(("track-drag", i)),
+            Sense::drag(),
+        );
+        if grip.drag_started() {
+            response.actions.push(TrackAction::Select(i));
+        }
+        if (grip.dragged() || grip.drag_stopped())
+            && let Some(p) = grip.interact_pointer_pos()
+        {
+            let slot = drop_slot(p.y - areas.body.top() + view.scroll_y, model.tracks.len());
+            if grip.dragged() {
+                dragging = Some((i, slot));
+            } else if let Some(to) = move_destination(i, slot) {
+                response.actions.push(TrackAction::Move { from: i, to });
+            }
+        }
+        if grip.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        } else if grip.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        }
+        grip.on_hover_text("Drag to reorder the tracks");
         header(ui, rect, header_clip, |ui| {
             audio_header(ui, track, i, &mut response);
         });
+    }
+    // Where a dragged header would land.
+    if let Some((from, slot)) = dragging {
+        let y = areas.row_top(1 + slot, view.scroll_y);
+        let marker = move_destination(from, slot).is_some();
+        header_painter.line_segment(
+            [
+                pos2(areas.headers.left(), y),
+                pos2(areas.headers.right(), y),
+            ],
+            Stroke::new(
+                2.5,
+                if marker {
+                    theme.accent
+                } else {
+                    theme.accent.gamma_multiply(0.3)
+                },
+            ),
+        );
     }
     let add_row = Rect::from_min_size(
         pos2(areas.headers.left(), areas.row_top(rows, view.scroll_y)),
@@ -987,6 +1040,19 @@ impl AudioLane<'_> {
     }
 }
 
+/// The gap between tracks (0 is above the first, `tracks` is below the last) nearest to `y`,
+/// measured from the top of the body plus the scroll, where row 0 is the video.
+fn drop_slot(y: f32, tracks: usize) -> usize {
+    ((y / LANE_HEIGHT - 1.0).round().max(0.0) as usize).min(tracks)
+}
+
+/// The index a track dragged from `from` ends up at when dropped in gap `slot`, or `None` if that
+/// leaves it where it is.
+pub fn move_destination(from: usize, slot: usize) -> Option<usize> {
+    let to = if slot > from { slot - 1 } else { slot };
+    (to != from).then_some(to)
+}
+
 /// The widgets of an audio track's header: name, mute and remove; then the offset.
 fn audio_header(ui: &mut Ui, track: &TrackView, index: usize, response: &mut TimelineResponse) {
     ui.vertical(|ui| {
@@ -1009,13 +1075,17 @@ fn audio_header(ui: &mut Ui, track: &TrackView, index: usize, response: &mut Tim
             if ui
                 .add(mute)
                 .on_hover_text(if track.muted {
-                    "Unmute"
+                    "Unmute (Alt+click to solo)"
                 } else {
-                    "Mute in playback"
+                    "Mute in playback (Alt+click to solo)"
                 })
                 .clicked()
             {
-                response.actions.push(TrackAction::ToggleMute(index));
+                response.actions.push(if ui.input(|i| i.modifiers.alt) {
+                    TrackAction::Solo(index)
+                } else {
+                    TrackAction::ToggleMute(index)
+                });
             }
             if ui
                 .add(egui::Button::new("×").frame(false))
@@ -1061,6 +1131,25 @@ fn header(ui: &mut Ui, rect: Rect, clip: Rect, contents: impl FnOnce(&mut Ui)) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dropping_in_a_gap_moves_the_track_there() {
+        // Three tracks: gaps 0..=3. Dragging track 0 below track 1 (gap 2) puts it at index 1.
+        assert_eq!(move_destination(0, 2), Some(1));
+        assert_eq!(move_destination(2, 0), Some(0));
+        assert_eq!(move_destination(1, 1), None);
+        assert_eq!(move_destination(1, 2), None);
+        assert_eq!(move_destination(0, 3), Some(2));
+    }
+
+    #[test]
+    fn the_nearest_gap_is_chosen_and_limited_to_the_tracks() {
+        // The video is row 0, so the gap above the first track is at one lane down.
+        assert_eq!(drop_slot(LANE_HEIGHT, 3), 0);
+        assert_eq!(drop_slot(LANE_HEIGHT * 1.6, 3), 1);
+        assert_eq!(drop_slot(-50.0, 3), 0);
+        assert_eq!(drop_slot(LANE_HEIGHT * 20.0, 3), 3);
+    }
 
     #[test]
     fn view_maps_time_and_zooms_around_the_pointer() {

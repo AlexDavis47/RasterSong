@@ -36,6 +36,9 @@ pub struct Project {
     /// Whether the timeline ruler shows time or bars and beats (tempo).
     #[serde(default)]
     pub timeline_mode: TimelineMode,
+    /// Skips the whole graph in the preview, as if the video were plugged into the output.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bypass_graph: bool,
 }
 
 /// How the timeline ruler and grid are labelled.
@@ -121,6 +124,7 @@ impl Project {
             loop_region: None,
             tempo: Tempo::default(),
             timeline_mode: TimelineMode::default(),
+            bypass_graph: false,
         }
     }
 
@@ -210,6 +214,7 @@ impl Project {
                     loop_region: None,
                     tempo: Tempo::default(),
                     timeline_mode: TimelineMode::default(),
+                    bypass_graph: false,
                 }
             }
             // Version 2 lacks only the tempo and timeline mode, which default.
@@ -364,6 +369,24 @@ mod tests {
         );
         assert_eq!(track.path, dir.join("media/song.wav"));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn graph_bypass_round_trips_and_defaults_off() {
+        let dir = temp_dir("project-bypass");
+        let path = dir.join("bypass.rastersong");
+        let mut project =
+            Project::new(GraphDesc::from_json(r#"{ "version": 2, "nodes": [] }"#).unwrap());
+        project.save(&path).unwrap();
+        assert!(
+            !std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("bypass_graph")
+        );
+        assert!(!Project::load(&path).unwrap().bypass_graph);
+        project.bypass_graph = true;
+        project.save(&path).unwrap();
+        assert!(Project::load(&path).unwrap().bypass_graph);
     }
 
     #[test]

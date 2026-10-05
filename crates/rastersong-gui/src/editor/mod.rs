@@ -35,6 +35,8 @@ pub struct EditorNode {
     pub params: BTreeMap<String, ParamValue>,
     pub interpolation: Interpolation,
     pub channels: Channels,
+    /// Whether the node is skipped: its input passes straight to its output.
+    pub bypass: bool,
     /// Top-left corner in graph space.
     pub pos: Pos2,
     /// How connected signals move parameters, by parameter name.
@@ -184,6 +186,7 @@ impl GraphEditor {
                 params: node.params.clone(),
                 interpolation: node.interpolation,
                 channels: node.channels,
+                bypass: node.bypass,
                 pos: node.position.map_or(positions[i], |[x, y]| pos2(x, y)),
                 modulation: node.modulation.clone(),
                 exposed: node.exposed.as_ref().map(|e| e.iter().cloned().collect()),
@@ -288,6 +291,7 @@ impl GraphEditor {
                     params: n.params.clone(),
                     interpolation: n.interpolation,
                     channels: n.channels,
+                    bypass: n.bypass,
                     label: n.label.clone(),
                     position: Some([n.pos.x.round(), n.pos.y.round()]),
                     modulation: n.modulation.clone(),
@@ -408,6 +412,7 @@ impl GraphEditor {
             params: BTreeMap::new(),
             interpolation: Interpolation::Hold,
             channels: Channels::Together,
+            bypass: false,
             pos,
             modulation: BTreeMap::new(),
             exposed: None,
@@ -437,6 +442,31 @@ impl GraphEditor {
             .filter(|&k| !self.is_linked(k))
             .collect();
         self.remove_nodes_unchecked(&keys);
+    }
+
+    /// Removes nodes like [`Self::remove_nodes`], but reconnects around each one: whatever read its
+    /// first output reads what fed its main input instead.
+    pub fn remove_nodes_and_repair(&mut self, keys: &BTreeSet<NodeKey>) {
+        let keys: Vec<NodeKey> = keys
+            .iter()
+            .copied()
+            .filter(|&k| !self.is_linked(k))
+            .collect();
+        for key in keys {
+            let feed = self.wires.iter().find(|w| w.to == (key, 0)).map(|w| w.from);
+            if let Some(from) = feed {
+                let readers: Vec<(NodeKey, usize)> = self
+                    .wires
+                    .iter()
+                    .filter(|w| w.from == (key, 0))
+                    .map(|w| w.to)
+                    .collect();
+                for to in readers {
+                    self.connect(from, to);
+                }
+            }
+            self.remove_nodes_unchecked(&BTreeSet::from([key]));
+        }
     }
 
     fn remove_nodes_unchecked(&mut self, keys: &BTreeSet<NodeKey>) {
@@ -496,6 +526,7 @@ impl GraphEditor {
             node.params = desc.params.clone();
             node.interpolation = desc.interpolation;
             node.channels = desc.channels;
+            node.bypass = desc.bypass;
             node.label = desc.label.clone();
             node.modulation = desc.modulation.clone();
             node.exposed = desc.exposed.as_ref().map(|e| e.iter().cloned().collect());
@@ -564,6 +595,32 @@ impl GraphEditor {
     pub fn delete_selection(&mut self) {
         let selected = self.selected.clone();
         self.remove_nodes(&selected);
+    }
+
+    /// Removes the selected nodes and reconnects around them.
+    pub fn delete_selection_and_repair(&mut self) {
+        let selected = self.selected.clone();
+        self.remove_nodes_and_repair(&selected);
+    }
+
+    /// Bypasses the selected nodes, or restores them if they are all bypassed already. The
+    /// project's output has nothing to pass through and is left alone.
+    pub fn toggle_bypass_selection(&mut self) {
+        let selected = self.selected.clone();
+        self.toggle_bypass(&selected);
+    }
+
+    /// Bypasses `nodes`, or restores them if they are all bypassed already.
+    pub(crate) fn toggle_bypass(&mut self, nodes: &BTreeSet<NodeKey>) {
+        let keys: Vec<NodeKey> = nodes
+            .iter()
+            .copied()
+            .filter(|&k| self.node(k).is_some_and(|n| n.kind != linked::OUTPUT))
+            .collect();
+        let all = keys.iter().all(|&k| self.node(k).is_some_and(|n| n.bypass));
+        for k in keys {
+            self.node_mut(k).unwrap().bypass = !all;
+        }
     }
 
     /// Duplicates the selected nodes.
@@ -724,6 +781,47 @@ mod tests {
         assert_eq!(editor.node(a).unwrap().id, "delay");
         assert_eq!(editor.node(b).unwrap().id, "delay_2");
         assert_eq!(editor.add_node("nope", Pos2::ZERO), None);
+    }
+
+    #[test]
+    fn deleting_with_repair_reconnects_around_the_node() {
+        let mut editor = GraphEditor::new(&graph());
+        let split = editor.key_of("split").unwrap();
+        let video = editor.key_of("video").unwrap();
+        let readers: Vec<_> = editor
+            .wires()
+            .iter()
+            .filter(|w| w.from == (split, 0))
+            .map(|w| w.to)
+            .collect();
+        assert!(!readers.is_empty());
+        editor.remove_nodes_and_repair(&BTreeSet::from([split]));
+        assert!(editor.node(split).is_none());
+        for to in readers {
+            assert!(
+                editor
+                    .wires()
+                    .iter()
+                    .any(|w| w.from == (video, 0) && w.to == to)
+            );
+        }
+    }
+
+    #[test]
+    fn bypass_toggles_and_is_saved() {
+        let mut editor = GraphEditor::new(&graph());
+        let split = editor.key_of("split").unwrap();
+        editor.selected.insert(split);
+        editor.toggle_bypass_selection();
+        let desc = editor.to_desc();
+        assert!(desc.nodes.iter().any(|n| n.id == "split" && n.bypass));
+        assert!(
+            GraphEditor::new(&desc)
+                .node(split)
+                .is_some_and(|n| n.bypass)
+        );
+        editor.toggle_bypass_selection();
+        assert!(!editor.node(split).unwrap().bypass);
     }
 
     #[test]

@@ -20,7 +20,9 @@ pub use desc::{
     ParamValue,
 };
 pub use error::GraphError;
-pub use graph::{CompileOptions, Graph, MAX_INPUTS, MAX_PARAMS, OutputLevel, ParamLevel};
+pub use graph::{
+    CompileOptions, Graph, MAX_INPUTS, MAX_PARAMS, NodeStats, OutputLevel, ParamLevel, render_form,
+};
 pub use node::{
     InputSpec, LayoutContext, Node, OutputSpec, PortHint, PrepareContext, ProcessContext, Sources,
     Tempo, Value,

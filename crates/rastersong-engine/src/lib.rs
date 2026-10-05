@@ -25,8 +25,8 @@ pub use project::{
 pub use rastersong_graph::nodes::{AUDIO_INPUT, OUTPUT, SOURCE_PARAM, VIDEO_INPUT};
 pub use rastersong_graph::{
     Category, Channels, Connection, FORMAT_VERSION, GraphDesc, GraphError, Interpolation, ModMode,
-    ModScale, Modulation, NodeDesc, NodeType, OutputLevel, OutputSpec, ParamKind, ParamLevel,
-    ParamSpec, ParamValue, PortHint, Registry, Tempo,
+    ModScale, Modulation, NodeDesc, NodeStats, NodeType, OutputLevel, OutputSpec, ParamKind,
+    ParamLevel, ParamSpec, ParamValue, PortHint, Registry, Tempo,
 };
 pub use rastersong_media::{
     AudioClip, AudioOptions, BackendInfo, FakeBackend, FakeVideo, FfmpegBackend, LibraryInfo,

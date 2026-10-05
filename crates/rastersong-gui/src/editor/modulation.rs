@@ -85,6 +85,32 @@ impl GraphEditor {
         node.exposed = (names != defaults).then_some(names);
     }
 
+    /// Connects as the user does by dragging a wire. A new wire to a parameter writes out the
+    /// default modulation (one-directional, unipolar) unless the node already has settings for it,
+    /// so it stays as it is if the default ever changes.
+    pub fn connect_new(&mut self, from: (NodeKey, usize), to: (NodeKey, usize)) {
+        self.connect(from, to);
+        let Some(index) = as_param(to.1) else { return };
+        if from.0 == to.0 {
+            return;
+        }
+        let Some(node) = self.node(to.0) else { return };
+        let spec = &self.specs_of(node)[index];
+        if node.modulation.contains_key(spec.name) {
+            return;
+        }
+        let base = spec.number_value(&node.params).unwrap_or(0.0);
+        let modulation = Modulation {
+            amount: spec.default_modulation_amount(base),
+            mode: ModMode::Unipolar,
+        };
+        let name = spec.name;
+        self.node_mut(to.0)
+            .unwrap()
+            .modulation
+            .insert(name.to_owned(), modulation);
+    }
+
     /// How parameter `index` of the node is modulated: its entry, or the default amount.
     pub fn modulation_of(&self, node: &EditorNode, index: usize) -> Modulation {
         let spec = &self.specs_of(node)[index];
@@ -92,10 +118,7 @@ impl GraphEditor {
         node.modulation
             .get(spec.name)
             .copied()
-            .unwrap_or(Modulation {
-                amount: spec.default_modulation_amount(base),
-                mode: ModMode::Bipolar,
-            })
+            .unwrap_or_else(|| spec.default_modulation(base))
     }
 }
 
@@ -142,6 +165,16 @@ mod tests {
         // A choice can't be exposed.
         editor.set_param_exposed(delay, 1, true);
         assert_eq!(editor.node(delay).unwrap().exposed, None);
+    }
+
+    #[test]
+    fn new_parameter_wires_start_unipolar() {
+        let (mut editor, delay) = editor_with_delay();
+        let audio = editor.key_of("audio").unwrap();
+        editor.connect_new((audio, 0), (delay, param_port(2)));
+        let node = editor.node(delay).unwrap();
+        let entry = node.modulation.values().next().unwrap();
+        assert_eq!(entry.mode, ModMode::Unipolar);
     }
 
     #[test]

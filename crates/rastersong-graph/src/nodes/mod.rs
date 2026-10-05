@@ -61,6 +61,7 @@ nodes! {
     },
     generator {
         beat: [Beat],
+        constant: [Constant],
         oscillator: [Oscillator],
         noise: [Noise],
     },

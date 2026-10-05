@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 
-use rastersong_graph::{GraphDesc, Registry, Tempo};
+use rastersong_graph::{GraphDesc, NodeStats, Registry, Tempo, render_form};
 use rastersong_media::{AudioClip, AudioOptions, MediaBackend};
 
 use crate::cache::{CacheKey, Frame, FrameCache};
@@ -196,6 +196,8 @@ struct State {
     video: Option<PathBuf>,
     tracks: Vec<AudioTrackSpec>,
     graph: Option<GraphDesc>,
+    /// Skips the whole graph: the video goes straight to the output.
+    bypass_all: bool,
     tempo: Tempo,
     key: CacheKey,
     playhead: usize,
@@ -204,6 +206,8 @@ struct State {
     status: EngineStatus,
     info: Option<RenderInfo>,
     loaded: Vec<LoadedTrack>,
+    /// What each node of the current graph costs, once it has compiled.
+    node_stats: Vec<NodeStats>,
     /// Bumped on every change, so the worker knows when to look again.
     changes: u64,
     shutdown: bool,
@@ -237,6 +241,7 @@ impl Engine {
                 video: None,
                 tracks: Vec::new(),
                 graph: None,
+                bypass_all: false,
                 tempo: Tempo::default(),
                 key,
                 playhead: 0,
@@ -244,6 +249,7 @@ impl Engine {
                 status: EngineStatus::Idle,
                 info: None,
                 loaded: Vec::new(),
+                node_stats: Vec::new(),
                 changes: 0,
                 shutdown: false,
             }),
@@ -284,12 +290,30 @@ impl Engine {
         self.edit(|state| state.tracks = tracks);
     }
 
-    /// The graph to render. Setting the graph already being rendered changes nothing.
+    /// The graph to render. Setting a graph that renders the same as the one in use changes
+    /// nothing: edits to nodes that don't feed the output, labels and positions are not edits as
+    /// far as rendered frames are concerned.
     pub fn set_graph(&self, graph: GraphDesc) {
-        if lock(&self.shared.state).graph.as_ref() == Some(&graph) {
-            return;
+        {
+            let state = lock(&self.shared.state);
+            if let Some(old) = &state.graph {
+                let registry = Registry::shared();
+                if render_form(old, registry, state.bypass_all)
+                    == render_form(&graph, registry, state.bypass_all)
+                {
+                    return;
+                }
+            }
         }
         self.edit(|state| state.graph = Some(graph));
+    }
+
+    /// Skips the whole graph, as if the video were plugged straight into the output.
+    pub fn set_bypass_all(&self, bypass: bool) {
+        if lock(&self.shared.state).bypass_all == bypass {
+            return;
+        }
+        self.edit(|state| state.bypass_all = bypass);
     }
 
     /// The project tempo that beat and bar units follow. Setting the tempo already in use changes
@@ -359,6 +383,12 @@ impl Engine {
     /// Size, frame rate and length of the current preview, once loaded.
     pub fn info(&self) -> Option<RenderInfo> {
         lock(&self.shared.state).info
+    }
+
+    /// Each node's own latency and warmup in the compiled graph, once it has compiled. Nodes that
+    /// don't feed the output aren't listed.
+    pub fn node_stats(&self) -> Vec<NodeStats> {
+        lock(&self.shared.state).node_stats.clone()
     }
 
     /// The decoded audio tracks, once loaded.
@@ -506,7 +536,7 @@ impl Worker {
                     project: Snapshot {
                         video: video.clone(),
                         tracks: state.tracks.clone(),
-                        graph: graph.clone(),
+                        graph: render_form(graph, Registry::shared(), state.bypass_all),
                         tempo: state.tempo,
                     },
                 };
@@ -589,6 +619,7 @@ impl Worker {
             Ok(renderer) => {
                 state.status = EngineStatus::Ready;
                 state.info = Some(*renderer.info());
+                state.node_stats = renderer.node_stats().to_vec();
                 self.built = Some(Built { key, renderer });
                 self.failed_at = None;
             }
@@ -596,6 +627,7 @@ impl Worker {
                 tracing::warn!("project can't be rendered: {}", failure.message);
                 state.status = EngineStatus::Failed(failure);
                 state.info = video_info;
+                state.node_stats.clear();
                 self.failed_at = Some(state.changes);
             }
         }

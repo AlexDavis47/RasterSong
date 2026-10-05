@@ -15,7 +15,7 @@ use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontId, Key, PointerButton, Pos2, Rect, Response, Sense,
     Stroke, StrokeKind, Ui, pos2, vec2,
 };
-use rastersong_engine::{Category, Failure, OutputLevel};
+use rastersong_engine::{Category, Failure, NodeStats, OutputLevel};
 
 use super::search::{NodeMenu, SearchMenu};
 use super::{GraphEditor, NodeKey};
@@ -44,6 +44,8 @@ pub struct CanvasContext<'a> {
     /// Why the graph can't render, shown along the bottom of the canvas.
     pub failure: Option<&'a Failure>,
     pub wire_style: WireStyle,
+    /// What each node costs, drawn under the nodes when not empty.
+    pub node_stats: &'a [NodeStats],
 }
 
 /// How deep [`GraphEditor::output_color`] follows inherited colours upstream.
@@ -329,6 +331,12 @@ impl GraphEditor {
             .and_then(|id| self.key_of(id));
         let hovered_pin = pointer.and_then(|p| self.pin_at(&geometry, rect, p));
         for g in &geometry {
+            if let Some(stats) = self
+                .node(g.key)
+                .and_then(|n| ctx.node_stats.iter().find(|s| *s.node == *n.id))
+            {
+                self.draw_node_stats(&painter, &visuals, theme, g, to_screen, stats);
+            }
             self.draw_node(
                 &painter,
                 &visuals,
@@ -415,8 +423,21 @@ impl GraphEditor {
         // Presses start an interaction, but only over the canvas.
         if hovered && let Some(p) = pointer {
             if pressed(PointerButton::Primary) {
-                self.interaction =
-                    self.press(p, rect, geometry, modifiers.shift || modifiers.command);
+                self.interaction = if modifiers.alt
+                    && self.pin_at(geometry, rect, p).is_none()
+                    && let Some(key) = self.node_at(geometry, rect, p)
+                {
+                    // Alt+click bypasses the node (or the whole selection it belongs to).
+                    let nodes = if self.selected.contains(&key) {
+                        self.selected.clone()
+                    } else {
+                        BTreeSet::from([key])
+                    };
+                    self.toggle_bypass(&nodes);
+                    Interaction::Idle
+                } else {
+                    self.press(p, rect, geometry, modifiers.shift || modifiers.command)
+                };
             } else if pressed(PointerButton::Middle) {
                 self.interaction = Interaction::Pan;
             } else if pressed(PointerButton::Secondary) {
@@ -457,7 +478,7 @@ impl GraphEditor {
                     match (from, target) {
                         (Pin::Out(n, o), Some(Pin::In(m, i)))
                         | (Pin::In(m, i), Some(Pin::Out(n, o))) => {
-                            self.connect((n, o), (m, i));
+                            self.connect_new((n, o), (m, i));
                         }
                         // Dropped on empty space: offer a node to connect to it.
                         (_, None) if pointer.is_some_and(|p| rect.contains(p)) => {
@@ -512,9 +533,10 @@ impl GraphEditor {
 
         // Keys act when the pointer is over the canvas and no text field has focus.
         if hovered && !ui.ctx().egui_wants_keyboard_input() {
-            let (delete, duplicate, frame, select_all, escape) = ui.input(|i| {
+            let (delete, repair, duplicate, frame, select_all, escape) = ui.input(|i| {
                 (
-                    i.key_pressed(Key::Delete) || i.key_pressed(Key::Backspace),
+                    i.key_pressed(Key::Delete),
+                    i.key_pressed(Key::Backspace),
                     i.modifiers.command && i.key_pressed(Key::D),
                     i.key_pressed(Key::F),
                     i.modifiers.command && i.key_pressed(Key::A),
@@ -523,6 +545,9 @@ impl GraphEditor {
             });
             if delete {
                 self.delete_selection();
+            }
+            if repair {
+                self.delete_selection_and_repair();
             }
             if duplicate {
                 self.duplicate_selection();
@@ -698,6 +723,7 @@ impl GraphEditor {
             theme.node_shadow,
         );
         painter.rect_filled(rect, rounding, theme.node_body);
+        let bypassed = self.node(g.key).is_some_and(|n| n.bypass);
         let header = Rect::from_min_size(rect.min, vec2(rect.width(), HEADER * zoom));
         painter.rect_filled(
             header,
@@ -721,6 +747,8 @@ impl GraphEditor {
             Stroke::new(2.0, theme.accent)
         } else if self.selected.contains(&g.key) {
             Stroke::new(1.5, theme.accent.gamma_multiply(0.7))
+        } else if bypassed {
+            Stroke::new(2.0, visuals.weak_text_color())
         } else {
             Stroke::new(1.0, theme.node_outline)
         };
@@ -731,10 +759,23 @@ impl GraphEditor {
             painter.text(
                 header.left_center() + vec2(PAD * zoom, 0.0),
                 Align2::LEFT_CENTER,
-                &g.title,
+                g.title.clone(),
                 FontId::proportional(FONT * zoom),
-                text,
+                if bypassed {
+                    text.gamma_multiply(0.6)
+                } else {
+                    text
+                },
             );
+            if bypassed {
+                painter.text(
+                    rect.left_top() - vec2(-PAD * zoom * 0.5, 4.0 * zoom),
+                    Align2::LEFT_BOTTOM,
+                    "Bypassed",
+                    FontId::proportional(LABEL_FONT * zoom * 1.1),
+                    text.gamma_multiply(0.75),
+                );
+            }
         }
         let labels = zoom > 0.45;
         for pin in &g.inputs {
@@ -780,6 +821,47 @@ impl GraphEditor {
                 );
             }
         }
+    }
+
+    /// The node's latency and warmup in small text under it, in the warning colour when the warmup
+    /// hit the limit.
+    fn draw_node_stats(
+        &self,
+        painter: &egui::Painter,
+        visuals: &egui::Visuals,
+        theme: &Theme,
+        g: &Geometry,
+        to_screen: impl Fn(Pos2) -> Pos2,
+        stats: &NodeStats,
+    ) {
+        if self.view.zoom <= 0.45 || (stats.latency_frames <= 0.0 && stats.warmup_frames == 0) {
+            return;
+        }
+        let mut parts = Vec::new();
+        if stats.latency_frames > 0.0 {
+            parts.push(format!(
+                "latency {} fr",
+                format_frames(stats.latency_frames)
+            ));
+        }
+        if stats.warmup_frames > 0 {
+            parts.push(format!("warmup {} fr", stats.warmup_frames));
+        }
+        let mut text = parts.join(" · ");
+        let color = if stats.warmup_truncated {
+            text = format!("⚠ {text} (limit)");
+            theme.warning
+        } else {
+            visuals.weak_text_color()
+        };
+        let rect = Rect::from_min_max(to_screen(g.rect.min), to_screen(g.rect.max));
+        painter.text(
+            rect.left_bottom() + vec2(PAD * self.view.zoom * 0.5, 5.0 * self.view.zoom),
+            Align2::LEFT_TOP,
+            text,
+            FontId::proportional(LABEL_FONT * self.view.zoom),
+            color,
+        );
     }
 
     fn error_bar(
@@ -829,6 +911,15 @@ impl GraphEditor {
             self.set_active(Some(key));
             self.view.offset = rect.size() / 2.0 - g.rect.center().to_vec2() * self.view.zoom;
         }
+    }
+}
+
+/// Frames as short text: whole numbers plainly, fractions to two places.
+fn format_frames(frames: f64) -> String {
+    if (frames - frames.round()).abs() < 0.005 {
+        format!("{}", frames.round())
+    } else {
+        format!("{frames:.2}")
     }
 }
 

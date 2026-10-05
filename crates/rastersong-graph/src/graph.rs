@@ -1,15 +1,20 @@
 //! Compiling a [`GraphDesc`] into a sequential schedule, and running it one frame at a time.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::desc::{Channels, GraphDesc, Interpolation, Modulation};
+use crate::desc::{Channels, Connection, GraphDesc, Interpolation, Modulation, NodeDesc};
 use crate::dsp::{DelayLine, resample};
-use crate::nodes::{OUTPUT, Registry};
+use crate::nodes::support::MAX_WARMUP_FRAMES;
+use crate::nodes::{OUTPUT, Registry, VIDEO_INPUT};
+
 use crate::{
     GraphError, InputSpec, Layout, LayoutContext, Node, OutputSpec, ParamSpec, ParamValue,
     PrepareContext, ProcessContext, Signal, Sources, Tempo,
 };
+
+/// The node type that fills unconnected inputs.
+const CONSTANT: &str = "constant";
 
 /// Most inputs a node can have.
 pub const MAX_INPUTS: usize = 8;
@@ -54,8 +59,22 @@ pub struct ParamLevel {
     pub value: f32,
 }
 
+/// What one node costs: how late its output is and how long it needs to settle.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NodeStats {
+    pub node: Arc<str>,
+    /// Frames the node itself delays its output by (not counting its inputs' latency).
+    pub latency_frames: f64,
+    /// Frames the node needs rendered before a seek for its output to be right.
+    pub warmup_frames: u32,
+    /// Whether the warmup reached [`MAX_WARMUP_FRAMES`], the most the host will render before a
+    /// seek, so the node's output right after a seek may not match a render from the start.
+    pub warmup_truncated: bool,
+}
+
 /// A compiled graph, ready to process frames in order.
 pub struct Graph {
+    node_stats: Vec<NodeStats>,
     steps: Vec<Step>,
     output_step: usize,
     frame_rate: f64,
@@ -287,6 +306,10 @@ impl Graph {
         registry: &Registry,
         options: &CompileOptions,
     ) -> Result<Self, GraphError> {
+        let bypassed = apply_bypass(desc, registry);
+        let desc = bypassed.as_ref().unwrap_or(desc);
+        let filled = fill_missing_inputs(desc, registry);
+        let desc = filled.as_ref().unwrap_or(desc);
         let mut pending = create_nodes(desc, registry)?;
         connect(desc, &mut pending)?;
 
@@ -315,6 +338,11 @@ impl Graph {
     /// anywhere other than the first frame.
     pub fn warmup_frames(&self) -> u32 {
         self.warmup_frames
+    }
+
+    /// Each node's own latency and warmup, in the order they run.
+    pub fn node_stats(&self) -> &[NodeStats] {
+        &self.node_stats
     }
 
     pub fn output_layout(&self) -> Layout {
@@ -467,6 +495,7 @@ struct Compiler<'a> {
     sources: Vec<(String, Layout)>,
     warmup_frames: u32,
     latency_frames: u32,
+    node_stats: Vec<NodeStats>,
 }
 
 impl<'a> Compiler<'a> {
@@ -489,11 +518,13 @@ impl<'a> Compiler<'a> {
             sources: Vec::new(),
             warmup_frames: 0,
             latency_frames: 0,
+            node_stats: Vec::new(),
         }
     }
 
     fn finish(self) -> Graph {
         Graph {
+            node_stats: self.node_stats,
             output_step: self.step_of[self.output],
             steps: self.steps,
             frame_rate: self.options.frame_rate,
@@ -671,8 +702,15 @@ impl<'a> Compiler<'a> {
             node.prepare(&ctx);
         }
         let node = &nodes[0];
-        self.warmup_frames = self.warmup_frames.max(node.warmup_frames(&ctx));
+        let warmup = node.warmup_frames(&ctx);
+        self.warmup_frames = self.warmup_frames.max(warmup);
         let own_latency = node.latency(&ctx) as f64 / ctx.samples_per_frame().max(1) as f64;
+        self.node_stats.push(NodeStats {
+            node: self.pending[n].id.as_str().into(),
+            latency_frames: own_latency,
+            warmup_frames: warmup,
+            warmup_truncated: warmup >= MAX_WARMUP_FRAMES,
+        });
         if let Some(name) = node.source() {
             self.sources
                 .push((name.to_owned(), shape.output_layouts[0]));
@@ -923,6 +961,224 @@ fn connect(desc: &GraphDesc, pending: &mut [Pending]) -> Result<(), GraphError> 
         }
     }
     Ok(())
+}
+
+/// The part of `desc` that decides what is rendered: bypassed nodes rewired away, nodes that don't
+/// feed the output dropped, and everything that only matters to the editor (labels, positions,
+/// exposed pins, modulation settings of unconnected parameters) cleared. Two graphs with equal
+/// render forms render identically, so the host re-renders only when it changes.
+///
+/// With `bypass_all` the graph is skipped: the first video input feeds the output directly.
+pub fn render_form(desc: &GraphDesc, registry: &Registry, bypass_all: bool) -> GraphDesc {
+    let mut form = if bypass_all {
+        passthrough(desc)
+    } else {
+        let bypassed = apply_bypass(desc, registry);
+        let desc = bypassed.as_ref().unwrap_or(desc);
+        contributing(desc)
+    };
+    let connected: HashSet<(String, String)> = form
+        .connections
+        .iter()
+        .filter_map(|c| {
+            let (id, port) = split_endpoint(&c.to);
+            let param = port?.strip_prefix(PARAM_PREFIX)?;
+            Some((id.to_owned(), param.to_owned()))
+        })
+        .collect();
+    for node in &mut form.nodes {
+        node.bypass = false;
+        node.label = None;
+        node.position = None;
+        node.exposed = None;
+        node.modulation
+            .retain(|param, _| connected.contains(&(node.id.clone(), param.clone())));
+    }
+    form
+}
+
+/// Just the first video input wired to the output.
+fn passthrough(desc: &GraphDesc) -> GraphDesc {
+    let video = desc.nodes.iter().find(|n| n.kind == VIDEO_INPUT);
+    let output = desc.nodes.iter().find(|n| n.kind == OUTPUT);
+    let nodes: Vec<NodeDesc> = video.into_iter().chain(output).cloned().collect();
+    let connections = match (video, output) {
+        (Some(v), Some(o)) => vec![Connection {
+            from: v.id.clone(),
+            to: o.id.clone(),
+        }],
+        _ => Vec::new(),
+    };
+    GraphDesc {
+        version: desc.version,
+        nodes,
+        connections,
+    }
+}
+
+/// The nodes that feed an output node, and the connections between them.
+fn contributing(desc: &GraphDesc) -> GraphDesc {
+    let mut keep: HashSet<&str> = desc
+        .nodes
+        .iter()
+        .filter(|n| n.kind == OUTPUT)
+        .map(|n| n.id.as_str())
+        .collect();
+    let mut queue: Vec<&str> = keep.iter().copied().collect();
+    while let Some(id) = queue.pop() {
+        for c in &desc.connections {
+            if split_endpoint(&c.to).0 == id {
+                let from = split_endpoint(&c.from).0;
+                if keep.insert(from) {
+                    queue.push(from);
+                }
+            }
+        }
+    }
+    GraphDesc {
+        version: desc.version,
+        nodes: desc
+            .nodes
+            .iter()
+            .filter(|n| keep.contains(n.id.as_str()))
+            .cloned()
+            .collect(),
+        connections: desc
+            .connections
+            .iter()
+            .filter(|c| {
+                keep.contains(split_endpoint(&c.from).0) && keep.contains(split_endpoint(&c.to).0)
+            })
+            .cloned()
+            .collect(),
+    }
+}
+
+/// Feeds every unconnected input that must have a signal (the main input and required ones) from
+/// a hidden constant zero, shaped like the video. A half-built
+/// graph then renders (black, or silence) instead of failing. Returns `None` when nothing is
+/// missing.
+fn fill_missing_inputs(desc: &GraphDesc, registry: &Registry) -> Option<GraphDesc> {
+    let mut filled = desc.clone();
+    let mut added = 0;
+    for node in &desc.nodes {
+        let Some(kind) = registry.get(&node.kind) else {
+            continue;
+        };
+        for (k, input) in kind.spec.inputs.iter().enumerate() {
+            if !(input.required || k == 0) {
+                continue;
+            }
+            let connected = desc.connections.iter().any(|c| {
+                let (to, port) = split_endpoint(&c.to);
+                to == node.id && port.map_or(k == 0, |p| p == input.name)
+            });
+            if connected {
+                continue;
+            }
+            let id = format!("~zero{added}");
+            added += 1;
+            filled.connections.push(Connection {
+                from: id.clone(),
+                to: format!("{}.{}", node.id, input.name),
+            });
+            filled.nodes.push(NodeDesc {
+                id,
+                kind: CONSTANT.to_owned(),
+                params: BTreeMap::new(),
+                interpolation: Interpolation::default(),
+                channels: Channels::default(),
+                bypass: false,
+                label: None,
+                position: None,
+                modulation: BTreeMap::new(),
+                exposed: None,
+            });
+        }
+    }
+    (added > 0).then_some(filled)
+}
+
+/// Removes bypassed nodes: whatever read a bypassed node's first output reads its main input's
+/// source instead, and its other outputs and parameter wires go nowhere. Returns `None` when
+/// nothing is bypassed. The output node and nodes without both an input and an output (which
+/// have nothing to pass through) are never bypassed.
+fn apply_bypass(desc: &GraphDesc, registry: &Registry) -> Option<GraphDesc> {
+    let passes_through = |d: &NodeDesc| {
+        d.bypass
+            && d.kind != OUTPUT
+            && registry
+                .get(&d.kind)
+                .is_some_and(|k| !k.spec.inputs.is_empty() && !k.spec.outputs.is_empty())
+    };
+    let bypassed: Vec<&NodeDesc> = desc.nodes.iter().filter(|d| passes_through(d)).collect();
+    if bypassed.is_empty() {
+        return None;
+    }
+    let kind_of = |id: &str| {
+        desc.nodes
+            .iter()
+            .find(|d| d.id == id)
+            .and_then(|d| registry.get(&d.kind))
+    };
+    let is_bypassed = |id: &str| bypassed.iter().any(|d| d.id == id);
+    // The first output's name, as a connection may leave the port out.
+    let first_output = |id: &str| kind_of(id).and_then(|k| k.spec.outputs.first().map(|o| o.name));
+    let main_input = |id: &str| kind_of(id).and_then(|k| k.spec.inputs.first().map(|i| i.name));
+
+    // What a bypassed node's main input is fed by.
+    let feed = |id: &str| {
+        desc.connections.iter().find(|c| {
+            let (to, port) = split_endpoint(&c.to);
+            to == id && port.is_none_or(|p| Some(p) == main_input(id))
+        })
+    };
+    let mut connections = Vec::new();
+    for c in &desc.connections {
+        let (to_id, _) = split_endpoint(&c.to);
+        if is_bypassed(to_id) {
+            continue;
+        }
+        let mut from = c.from.clone();
+        // Follow chains of bypassed nodes back to a real source. Each hop moves upstream, so a
+        // cycle of bypassed nodes ends by running out of hops.
+        let mut hops = 0;
+        let mut dropped = false;
+        loop {
+            let (id, port) = split_endpoint(&from);
+            if !is_bypassed(id) {
+                break;
+            }
+            if port.is_some_and(|p| Some(p) != first_output(id)) || hops > desc.nodes.len() {
+                dropped = true;
+                break;
+            }
+            match feed(id) {
+                Some(upstream) => from = upstream.from.clone(),
+                None => {
+                    dropped = true;
+                    break;
+                }
+            }
+            hops += 1;
+        }
+        if !dropped {
+            connections.push(Connection {
+                from,
+                to: c.to.clone(),
+            });
+        }
+    }
+    Some(GraphDesc {
+        version: desc.version,
+        nodes: desc
+            .nodes
+            .iter()
+            .filter(|d| !is_bypassed(&d.id))
+            .cloned()
+            .collect(),
+        connections,
+    })
 }
 
 /// Splits `"node.port"` into its parts; the port is optional.

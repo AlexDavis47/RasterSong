@@ -18,14 +18,21 @@ use rastersong_engine::{
 use crate::audio_out::AudioOut;
 use crate::editor::{CanvasContext, GraphEditor, InspectorContext, LinkedRename, without_layout};
 use crate::history::History;
+use crate::preview::{Feed, PreviewView, clamp_split, split_rects, split_sides};
 use crate::settings::Settings;
 use crate::theme::{Theme, ThemeChoice, WireStyle, apply_style};
 use crate::timeline::{
     Thumbnail, TimelineModel, TimelineView, TrackAction, TrackView, timecode, timeline,
 };
+use crate::track_ops::{SoloState, move_track, toggle_solo};
 
 /// The graph a new project starts with: the basic workflow from the readme.
 pub const STARTER_GRAPH: &str = include_str!("../../../examples/graphs/am_bands.json");
+
+/// What the source engine renders: the video, untouched.
+const SOURCE_GRAPH: &str = r#"{ "version": 2,
+    "nodes": [ { "id": "video", "type": "video_input" }, { "id": "out", "type": "output" } ],
+    "connections": [ { "from": "video", "to": "out" } ] }"#;
 
 const VIDEO_EXTENSIONS: &[&str] = &[
     "mp4", "mov", "mkv", "avi", "webm", "m4v", "ts", "mts", "m2ts", "mpg",
@@ -77,9 +84,23 @@ pub struct App {
     /// The theme last handed to egui.
     applied_theme: Option<ThemeChoice>,
     selected_track: Option<usize>,
+    /// What an Alt+click solo remembers, to put the mutes back.
+    solo: Option<SoloState>,
     /// When (egui time) the preview started waiting on a frame to render, if it is.
     waiting_since: Option<f64>,
     preview: Option<(egui::TextureHandle, Arc<Frame>)>,
+    /// Renders the original video, the preview's second feed. It only has a video while the
+    /// preview shows it, so it costs nothing otherwise.
+    source_engine: Engine,
+    /// The video the source engine was given.
+    source_video_sent: Option<PathBuf>,
+    source_preview: Option<(egui::TextureHandle, Arc<Frame>)>,
+    preview_view: PreviewView,
+    /// The feed the preview shows; with the split on, the one on the right.
+    preview_feed: Feed,
+    preview_split: bool,
+    /// The split's position across the preview, 0..1.
+    split_position: f32,
     error: Option<String>,
     show_about: bool,
     initialized: bool,
@@ -103,6 +124,7 @@ impl App {
     ) -> Self {
         let thumbnails = Thumbnails::new(backend.clone());
         let engine = Engine::new(backend.clone(), EngineConfig::default());
+        let source_engine = Engine::new(backend.clone(), EngineConfig::default());
         let editor = linked_editor(&project);
         // The editor fills in positions, full port names and missing linked nodes; that isn't an
         // unsaved change.
@@ -126,6 +148,7 @@ impl App {
             sent_mix: None,
             waiting_since: None,
             selected_track: (!project.audio_tracks.is_empty()).then_some(0),
+            solo: None,
             project,
             project_path: None,
             editor,
@@ -134,12 +157,21 @@ impl App {
             settings: Settings::default(),
             applied_theme: None,
             preview: None,
+            source_engine,
+            source_video_sent: None,
+            source_preview: None,
+            preview_view: PreviewView::default(),
+            preview_feed: Feed::default(),
+            preview_split: false,
+            split_position: 0.5,
             error: None,
             show_about: false,
             initialized: false,
             title: String::new(),
         };
         app.send_project();
+        app.source_engine
+            .set_graph(GraphDesc::from_json(SOURCE_GRAPH).expect("the source graph is valid"));
         app
     }
 
@@ -210,6 +242,7 @@ impl App {
         self.sent_graph = without_layout(&self.project.graph);
         self.engine.set_graph(self.sent_graph.clone());
         self.engine.set_tempo(self.project.tempo);
+        self.engine.set_bypass_all(self.project.bypass_graph);
         self.sent_mix = None;
     }
 
@@ -436,6 +469,10 @@ impl App {
                 let ctx = ctx.clone();
                 move || ctx.request_repaint()
             });
+            self.source_engine.on_update({
+                let ctx = ctx.clone();
+                move || ctx.request_repaint()
+            });
             self.thumbnails.on_update(move || ctx.request_repaint());
             apply_style(ui.ctx());
             self.initialized = true;
@@ -517,14 +554,61 @@ impl App {
             _ => None,
         };
         let levels = frame.as_ref().map_or(&[][..], |f| &f.levels[..]);
-        self.editor.show(
+        let stats = if self.settings.node_stats {
+            self.engine.node_stats()
+        } else {
+            Vec::new()
+        };
+        let canvas = self.editor.show(
             ui,
             &CanvasContext {
                 levels,
                 failure: failure.as_ref(),
                 wire_style: self.settings.wire_style,
+                node_stats: &stats,
             },
         );
+        self.bypass_all_button(ui, canvas.rect);
+    }
+
+    /// The toggle in the canvas's corner that skips the whole graph.
+    fn bypass_all_button(&mut self, ui: &mut Ui, canvas: egui::Rect) {
+        let id = ui.id().with("bypass-all");
+        egui::Area::new(id)
+            .order(egui::Order::Foreground)
+            .fixed_pos(canvas.right_top() + egui::vec2(-8.0, 8.0))
+            .pivot(egui::Align2::RIGHT_TOP)
+            .show(ui.ctx(), |ui| {
+                let on = self.project.bypass_graph;
+                let response = ui.selectable_label(on, "Bypass graph").on_hover_text(
+                    "Skip every node: the video goes straight to the output, to compare with the original",
+                );
+                if response.clicked() {
+                    self.project.bypass_graph = !on;
+                }
+            });
+    }
+
+    /// Whether the preview needs the original video.
+    fn wants_source(&self) -> bool {
+        self.preview_split || self.preview_feed == Feed::Unprocessed
+    }
+
+    /// Gives the source engine the video while the preview shows it, and takes it away after.
+    fn sync_source_engine(&mut self) {
+        let video = self
+            .wants_source()
+            .then(|| self.project.video.clone())
+            .flatten();
+        if self.source_video_sent != video {
+            self.source_engine.set_video(video.clone());
+            self.source_video_sent = video;
+            if self.source_video_sent.is_none() {
+                self.source_preview = None;
+            }
+        }
+        self.source_engine
+            .set_preview_scale(self.settings.preview_scale());
     }
 
     /// Sends edits to the engine and the audio output.
@@ -549,6 +633,8 @@ impl App {
         self.project.graph = graph;
         self.engine.set_audio_tracks(self.project.track_specs());
         self.engine.set_tempo(self.project.tempo);
+        self.engine.set_bypass_all(self.project.bypass_graph);
+        self.sync_source_engine();
 
         // Rebuild the playback mix when tracks, offsets or levels change, once decoded.
         let mix: Vec<(String, f64, f32)> = self
@@ -602,11 +688,13 @@ impl App {
             .filter(|l| l.enabled)
             .and_then(|l| l.frames(fps));
         self.clock.set_loop(looping.clone());
+        self.source_engine.set_loop(looping.clone());
         self.engine.set_loop(looping);
         let dt = f64::from(ui.input(|i| i.stable_dt)).min(0.1);
         let buffered = self.buffered_ahead();
         self.clock.advance(dt, buffered);
         self.engine.set_playhead(self.clock.frame());
+        self.source_engine.set_playhead(self.clock.frame());
         self.audio.update(
             self.clock.position() / fps,
             self.clock.speed(),
@@ -741,6 +829,11 @@ impl App {
                     }
                 }
                 ui.separator();
+                ui.checkbox(&mut self.settings.node_stats, "Node latency and warmup")
+                    .on_hover_text(
+                        "Show how many frames each node delays its output and needs to settle after a seek",
+                    );
+                ui.separator();
                 ui.label(RichText::new("Wires").weak());
                 for style in WireStyle::ALL {
                     if ui
@@ -874,49 +967,137 @@ impl App {
         self.controls(ui);
     }
 
+    /// Middle-drag pans the preview, the wheel zooms around the pointer, and F fits the frame.
+    fn preview_input(&mut self, ui: &Ui, rect: egui::Rect) {
+        let Some(pointer) = ui
+            .input(|i| i.pointer.hover_pos())
+            .filter(|p| rect.contains(*p))
+        else {
+            return;
+        };
+        let (scroll, pinch, panning, delta) = ui.input(|i| {
+            (
+                i.smooth_scroll_delta.y,
+                i.zoom_delta(),
+                i.pointer.middle_down(),
+                i.pointer.delta(),
+            )
+        });
+        let factor = (scroll * 0.0015).exp() * pinch;
+        if factor != 1.0 {
+            self.preview_view.zoom_at(rect, pointer, factor);
+        }
+        if panning {
+            self.preview_view.pan(delta);
+        }
+        if !ui.ctx().egui_wants_keyboard_input() && ui.input(|i| i.key_pressed(egui::Key::F)) {
+            self.preview_view.fit();
+        }
+    }
+
+    /// Paints the frame (or, with the split on, the two feeds either side of a draggable divider)
+    /// at the current pan and zoom.
+    fn paint_preview(&mut self, ui: &mut Ui, rect: egui::Rect, theme: &Theme) {
+        let size = [&self.preview, &self.source_preview]
+            .into_iter()
+            .flatten()
+            .map(|(_, f)| egui::vec2(f.width as f32, f.height as f32))
+            .next();
+        let Some(size) = size else { return };
+        let shown = self.preview_view.frame_rect(rect, size);
+        let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+        let painter = ui.painter().with_clip_rect(rect);
+        let draw = |painter: &egui::Painter, feed: Feed| {
+            let slot = match feed {
+                Feed::Processed => &self.preview,
+                Feed::Unprocessed => &self.source_preview,
+            };
+            // Keep showing the last frame while the next renders.
+            if let Some((texture, _)) = slot {
+                painter.image(texture.id(), shown, uv, Color32::WHITE);
+            }
+        };
+        if !self.preview_split {
+            draw(&painter, self.preview_feed);
+            return;
+        }
+        let (left, right) = split_sides(self.preview_feed);
+        let (left_pane, right_pane) = split_rects(rect, self.split_position);
+        draw(&painter.with_clip_rect(left_pane), left);
+        draw(&painter.with_clip_rect(right_pane), right);
+
+        let label = |feed: Feed, pos: egui::Pos2, align: egui::Align2| {
+            let galley = painter.layout_no_wrap(
+                feed.label().to_owned(),
+                egui::FontId::proportional(12.0),
+                Color32::WHITE,
+            );
+            let area = align.anchor_size(pos, galley.size());
+            painter.rect_filled(
+                area.expand(3.0),
+                CornerRadius::same(3),
+                Color32::from_black_alpha(150),
+            );
+            painter.galley(area.min, galley, Color32::WHITE);
+        };
+        label(
+            left,
+            left_pane.left_top() + egui::vec2(8.0, 6.0),
+            egui::Align2::LEFT_TOP,
+        );
+        label(
+            right,
+            right_pane.right_top() + egui::vec2(-8.0, 6.0),
+            egui::Align2::RIGHT_TOP,
+        );
+
+        // The divider and its handle.
+        let x = left_pane.right();
+        let grab = egui::Rect::from_min_max(
+            egui::pos2(x - 7.0, rect.top()),
+            egui::pos2(x + 7.0, rect.bottom()),
+        );
+        let response = ui
+            .interact(grab, ui.id().with("preview-split"), egui::Sense::drag())
+            .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+        if response.dragged() {
+            self.split_position =
+                clamp_split(self.split_position + response.drag_delta().x / rect.width());
+        }
+        let active = response.hovered() || response.dragged();
+        let line = Color32::WHITE.gamma_multiply(if active { 1.0 } else { 0.8 });
+        painter.line_segment(
+            [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+            egui::Stroke::new(if active { 2.0 } else { 1.5 }, line),
+        );
+        let centre = egui::pos2(x, rect.center().y);
+        painter.circle_filled(centre, 11.0, theme.accent);
+        painter.circle_stroke(centre, 11.0, egui::Stroke::new(1.5, Color32::WHITE));
+        for dx in [-3.0, 3.0] {
+            painter.line_segment(
+                [centre + egui::vec2(dx, -4.0), centre + egui::vec2(dx, 4.0)],
+                egui::Stroke::new(1.5, Color32::WHITE),
+            );
+        }
+    }
+
     /// Draws the preview into `rect`. Returns true if the user asked to open a video.
     fn preview_image(&mut self, ui: &mut Ui, rect: egui::Rect) -> bool {
         let theme = Theme::of(ui.ctx());
         ui.painter()
             .rect_filled(rect, CornerRadius::same(4), theme.preview_bg);
 
+        let ctx = ui.ctx().clone();
         if let Some(frame) = self.engine.frame(self.clock.frame()) {
-            let changed = self
-                .preview
-                .as_ref()
-                .is_none_or(|(_, shown)| !Arc::ptr_eq(shown, &frame));
-            if changed {
-                let image = egui::ColorImage::from_rgb(
-                    [frame.width as usize, frame.height as usize],
-                    &frame.rgb,
-                );
-                match &mut self.preview {
-                    Some((texture, shown)) => {
-                        texture.set(image, egui::TextureOptions::LINEAR);
-                        *shown = frame;
-                    }
-                    None => {
-                        let texture =
-                            ui.ctx()
-                                .load_texture("preview", image, egui::TextureOptions::LINEAR);
-                        self.preview = Some((texture, frame));
-                    }
-                }
-            }
+            update_texture(&ctx, &mut self.preview, "preview", frame);
         }
-
-        // Keep showing the last frame while the next renders.
-        if let Some((texture, frame)) = &self.preview {
-            let size = egui::vec2(frame.width as f32, frame.height as f32);
-            let fit = (rect.width() / size.x).min(rect.height() / size.y);
-            let shown = egui::Rect::from_center_size(rect.center(), size * fit);
-            ui.painter().image(
-                texture.id(),
-                shown,
-                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                Color32::WHITE,
-            );
+        if self.wants_source()
+            && let Some(frame) = self.source_engine.frame(self.clock.frame())
+        {
+            update_texture(&ctx, &mut self.source_preview, "preview-source", frame);
         }
+        self.preview_input(ui, rect);
+        self.paint_preview(ui, rect, theme);
 
         let message = |ui: &mut Ui, text: &str| {
             ui.put(
@@ -1048,6 +1229,25 @@ impl App {
             if scale != self.settings.preview_scale() {
                 self.settings.set_preview_scale(scale);
                 self.engine.set_preview_scale(scale);
+            }
+            let unprocessed = self.preview_feed == Feed::Unprocessed;
+            if ui
+                .add(egui::Button::selectable(unprocessed, "Unprocessed"))
+                .on_hover_text(
+                    "Show the original video instead of the processed one. Processing carries on.",
+                )
+                .clicked()
+            {
+                self.preview_feed = self.preview_feed.other();
+            }
+            if ui
+                .add(egui::Button::selectable(self.preview_split, "Split"))
+                .on_hover_text(
+                    "Compare both side by side. Drag the divider; switching Unprocessed swaps the sides.",
+                )
+                .clicked()
+            {
+                self.preview_split = !self.preview_split;
             }
             if let (Some(project), Some(preview)) = (self.thumbnails.info(), info) {
                 ui.weak(format!(
@@ -1296,6 +1496,17 @@ impl App {
                     track.muted = !track.muted;
                 }
             }
+            TrackAction::Solo(i) => {
+                toggle_solo(&mut self.project.audio_tracks, i, &mut self.solo);
+            }
+            TrackAction::Move { from, to } => {
+                self.selected_track = move_track(
+                    &mut self.project.audio_tracks,
+                    from,
+                    to,
+                    self.selected_track,
+                );
+            }
             TrackAction::Rename(i, name) => {
                 if let Some(old) = self.project.audio_tracks.get(i).map(|t| t.name.clone()) {
                     self.rename_track(&old, &name);
@@ -1439,4 +1650,32 @@ fn linked_editor(project: &Project) -> GraphEditor {
     editor.set_project_inputs(video, tracks);
     editor.ensure_linked_nodes();
     editor
+}
+
+/// Puts `frame` in `slot`'s texture, making the texture the first time. Does nothing if the frame
+/// is the one already there.
+fn update_texture(
+    ctx: &egui::Context,
+    slot: &mut Option<(egui::TextureHandle, Arc<Frame>)>,
+    name: &str,
+    frame: Arc<Frame>,
+) {
+    if slot
+        .as_ref()
+        .is_some_and(|(_, shown)| Arc::ptr_eq(shown, &frame))
+    {
+        return;
+    }
+    let image =
+        egui::ColorImage::from_rgb([frame.width as usize, frame.height as usize], &frame.rgb);
+    match slot {
+        Some((texture, shown)) => {
+            texture.set(image, egui::TextureOptions::LINEAR);
+            *shown = frame;
+        }
+        None => {
+            let texture = ctx.load_texture(name, image, egui::TextureOptions::LINEAR);
+            *slot = Some((texture, frame));
+        }
+    }
 }

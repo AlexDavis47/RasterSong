@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::GraphError;
 
-pub const FORMAT_VERSION: u32 = 1;
+/// Version 2 made a connected parameter with no `modulation` entry unipolar; version 1 meant
+/// bipolar. Version 1 graphs are rewritten with explicit entries on load.
+pub const FORMAT_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -31,6 +33,9 @@ pub struct NodeDesc {
     /// Whether an RGB signal is processed as one stream or as three separate channels.
     #[serde(default, skip_serializing_if = "is_default")]
     pub channels: Channels,
+    /// Passes the main input straight through to the first output, skipping the node's processing.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub bypass: bool,
     /// Name shown in the editor instead of the node type's. Has no effect on rendering.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
@@ -38,7 +43,7 @@ pub struct NodeDesc {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position: Option<[f32; 2]>,
     /// How signals connected to parameters (`"node.@param"`) move them, by parameter name.
-    /// A connected parameter with no entry uses its default amount, bipolar.
+    /// A connected parameter with no entry uses its default amount, unipolar.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub modulation: BTreeMap<String, Modulation>,
     /// Parameters whose modulation pins the editor shows, when they differ from the node type's
@@ -123,7 +128,7 @@ impl GraphDesc {
     pub fn from_json(json: &str) -> Result<Self, GraphError> {
         let desc: Self =
             serde_json::from_str(json).map_err(|e| GraphError::Parse(e.to_string()))?;
-        if desc.version != FORMAT_VERSION {
+        if !(1..=FORMAT_VERSION).contains(&desc.version) {
             return Err(GraphError::Parse(format!(
                 "unsupported graph format version {} (expected {FORMAT_VERSION})",
                 desc.version

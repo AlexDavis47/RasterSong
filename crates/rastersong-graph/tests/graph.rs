@@ -128,6 +128,84 @@ fn unused_nodes_are_not_run() {
 }
 
 #[test]
+fn unconnected_inputs_read_zeros() {
+    // The output with nothing connected renders black.
+    let mut graph = compile(&graph_json(r#"{ "id": "out", "type": "output" }"#, "")).unwrap();
+    let out = graph.process(0, &sources(|_| 0.5, |_| 0.5)).unwrap();
+    assert!(out.data.iter().all(|&x| x == 0.0));
+
+    // So does a node on the way to it: the delay's main input is empty, and `am`'s modulator too.
+    let json = graph_json(
+        r#"{ "id": "video", "type": "video_input" }, { "id": "am", "type": "am" },
+           { "id": "d", "type": "delay" }, { "id": "out", "type": "output" }"#,
+        r#"{ "from": "video", "to": "am.carrier" }, { "from": "am", "to": "out" }"#,
+    );
+    let mut graph = compile(&json).unwrap();
+    let out = graph.process(0, &sources(|_| 0.5, |_| 0.5)).unwrap();
+    assert!(out.data.iter().all(|x| x.is_finite()));
+}
+
+fn render_form_of(json: &str, bypass_all: bool) -> GraphDesc {
+    rastersong_graph::render_form(
+        &GraphDesc::from_json(json).unwrap(),
+        &Registry::default(),
+        bypass_all,
+    )
+}
+
+const CHAIN: &str = r#"{ "version": 2,
+    "nodes": [
+        { "id": "video", "type": "video_input" },
+        { "id": "d", "type": "delay", "params": { "time": 1 } },
+        { "id": "out", "type": "output" }
+    ],
+    "connections": [ { "from": "video", "to": "d" }, { "from": "d", "to": "out" } ] }"#;
+
+#[test]
+fn render_form_ignores_nodes_that_do_not_feed_the_output() {
+    let base = render_form_of(CHAIN, false);
+    // An orphan node, an orphan wired from the chain, and editor-only details change nothing.
+    let with_orphans = CHAIN
+        .replace(
+            r#"{ "id": "out", "type": "output" }"#,
+            r#"{ "id": "out", "type": "output", "position": [4, 5] },
+           { "id": "x", "type": "bitcrush", "params": { "bits": 3 } },
+           { "id": "n", "type": "noise", "label": "grain" }"#,
+        )
+        .replace(
+            r#"{ "from": "d", "to": "out" }"#,
+            r#"{ "from": "d", "to": "out" }, { "from": "d", "to": "x" }, { "from": "n", "to": "x.@bits" }"#,
+        );
+    assert_eq!(render_form_of(&with_orphans, false), base);
+    // Changing a node that does feed the output is a change.
+    let louder = CHAIN.replace(r#""time": 1"#, r#""time": 2"#);
+    assert_ne!(render_form_of(&louder, false), base);
+    // So is bypassing it, but bypassing an orphan is not.
+    let bypassed = CHAIN.replace(
+        r#""id": "d", "type": "delay""#,
+        r#""id": "d", "type": "delay", "bypass": true"#,
+    );
+    assert_ne!(render_form_of(&bypassed, false), base);
+    let orphan_bypassed = with_orphans.replace(
+        r#""id": "x", "type": "bitcrush""#,
+        r#""id": "x", "type": "bitcrush", "bypass": true"#,
+    );
+    assert_eq!(render_form_of(&orphan_bypassed, false), base);
+}
+
+#[test]
+fn render_form_with_global_bypass_wires_the_video_to_the_output() {
+    let form = render_form_of(CHAIN, true);
+    let ids: Vec<&str> = form.nodes.iter().map(|n| n.id.as_str()).collect();
+    assert_eq!(ids, ["video", "out"]);
+    let mut graph = Graph::compile(&form, &Registry::default(), &options()).unwrap();
+    let out = graph
+        .process(0, &sources(|i| i as f32 / 10.0, |_| 0.0))
+        .unwrap();
+    assert_eq!(out.data[3], 0.3);
+}
+
+#[test]
 fn reports_graph_errors() {
     type Check = fn(&GraphError) -> bool;
     let cases: &[(&str, &str, Check)] = &[
@@ -141,9 +219,6 @@ fn reports_graph_errors() {
         ),
         (r#"{ "id": "v", "type": "video_input" }"#, "", |e| {
             matches!(e, GraphError::OutputCount(0))
-        }),
-        (r#"{ "id": "o", "type": "output" }"#, "", |e| {
-            matches!(e, GraphError::MissingInput { .. })
         }),
         (
             r#"{ "id": "v", "type": "video_input" }, { "id": "o", "type": "output" }"#,
@@ -255,7 +330,7 @@ fn graph_files_round_trip() {
     let desc = GraphDesc::from_json(PASSTHROUGH).unwrap();
     assert_eq!(GraphDesc::from_json(&desc.to_json()).unwrap(), desc);
     assert!(matches!(
-        GraphDesc::from_json(r#"{ "version": 2, "nodes": [] }"#),
+        GraphDesc::from_json(r#"{ "version": 3, "nodes": [] }"#),
         Err(GraphError::Parse(_))
     ));
 }
@@ -542,4 +617,31 @@ fn the_project_tempo_reaches_beat_nodes() {
     // Frame 3 starts 72 samples (24 pixels) in: past half of a 400 bpm beat, early in a 100 bpm one.
     assert_eq!(first_sample(400.0, 3), 0.0);
     assert_eq!(first_sample(100.0, 3), 1.0);
+}
+
+#[test]
+fn bypassed_nodes_pass_their_main_input_through() {
+    let json = |bypass: &str| {
+        graph_json(
+            &format!(
+                r#"{{ "id": "video", "type": "video_input" }},
+                {{ "id": "a", "type": "delay" {bypass} }}, {{ "id": "b", "type": "delay" {bypass} }},
+                {{ "id": "out", "type": "output" }}"#
+            ),
+            r#"{ "from": "video", "to": "a" }, { "from": "a", "to": "b" },
+               { "from": "b", "to": "out" }"#,
+        )
+    };
+    let input = sources(|i| i as f32 / 100.0, |_| 0.0);
+    let mut bypassed = compile(&json(r#", "bypass": true"#)).unwrap();
+    assert_eq!(
+        bypassed.process(0, &input).unwrap().data,
+        input["video"].data
+    );
+    assert_eq!(bypassed.latency_frames(), 0);
+    // Without the flag the same chain is a real node chain, and the flag round-trips.
+    let plain = GraphDesc::from_json(&json("")).unwrap();
+    assert!(plain.nodes.iter().all(|n| !n.bypass));
+    let flagged = GraphDesc::from_json(&json(r#", "bypass": true"#)).unwrap();
+    assert!(flagged.to_json().contains(r#""bypass": true"#));
 }

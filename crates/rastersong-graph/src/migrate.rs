@@ -1,11 +1,13 @@
 //! Bringing graphs written for older versions of the nodes up to date.
 
-use crate::ParamValue;
-use crate::desc::{GraphDesc, ModMode, Modulation};
+use crate::desc::{FORMAT_VERSION, GraphDesc, ModMode, Modulation};
+use crate::{ParamValue, Registry};
 
 // Migrations are idempotent rewrites that recognise old graphs by their shape, so a graph that
-// is already up to date passes through unchanged and `FORMAT_VERSION` stays 1. Bump the version
-// only for a change to the file format itself (not to nodes), and keep the old shape readable.
+// is already up to date passes through unchanged. Bump `FORMAT_VERSION` only for a change to the
+// file format itself (not to nodes), and keep the old shape readable. Version 2 changed what a
+// connected parameter without a `modulation` entry means (bipolar -> unipolar); `upgrade_modulation`
+// writes the old meaning out for version 1 graphs.
 //
 // To rename or move something, add a row to one of the tables below and a test; never edit or
 // remove an existing row, since files written long ago may still use it.
@@ -126,6 +128,43 @@ impl GraphDesc {
         self.rename_params(RENAMED_PARAMS);
         self.rename_choices(RENAMED_CHOICES);
         self.convert_modulation_inputs(MODULATION_INPUTS);
+        self.upgrade_modulation(Registry::shared());
+    }
+
+    /// Version 1 graphs: a connected parameter with no `modulation` entry was bipolar, and is now
+    /// written out as such so it keeps its meaning.
+    fn upgrade_modulation(&mut self, registry: &Registry) {
+        if self.version >= FORMAT_VERSION {
+            return;
+        }
+        for c in &self.connections {
+            let Some((id, port)) = c.to.split_once('.') else {
+                continue;
+            };
+            let Some(param) = port.strip_prefix(crate::graph::PARAM_PREFIX) else {
+                continue;
+            };
+            let Some(node) = self.nodes.iter_mut().find(|n| n.id == id) else {
+                continue;
+            };
+            let Some(spec) = registry.get(&node.kind).and_then(|t| {
+                t.spec
+                    .params
+                    .iter()
+                    .find(|s| s.name == param && s.modulatable)
+            }) else {
+                continue;
+            };
+            if let Some(base) = spec.number_value(&node.params) {
+                node.modulation
+                    .entry(param.to_owned())
+                    .or_insert(Modulation {
+                        amount: spec.default_modulation_amount(base),
+                        mode: ModMode::Bipolar,
+                    });
+            }
+        }
+        self.version = FORMAT_VERSION;
     }
 
     fn rename_kinds(&mut self, renames: &[RenamedKind]) {
@@ -226,6 +265,39 @@ mod tests {
         let mut again = graph.clone();
         again.upgrade();
         assert_eq!(again, graph);
+    }
+
+    #[test]
+    fn version_1_parameter_connections_keep_their_bipolar_meaning() {
+        let json = r#"{ "version": 1,
+            "nodes": [
+                { "id": "a", "type": "audio_input" },
+                { "id": "d", "type": "delay", "params": { "time": 4 } },
+                { "id": "g", "type": "gate", "modulation": { "threshold": { "amount": 1, "mode": "unipolar" } } }
+            ],
+            "connections": [
+                { "from": "a", "to": "d.@time" },
+                { "from": "a", "to": "g.@threshold" }
+            ] }"#;
+        let graph = GraphDesc::from_json(json).unwrap();
+        assert_eq!(graph.version, FORMAT_VERSION);
+        let node = |id: &str| graph.nodes.iter().find(|n| n.id == id).unwrap();
+        assert_eq!(node("d").modulation["time"].mode, ModMode::Bipolar);
+        // An entry that was already there is left alone.
+        assert_eq!(node("g").modulation["threshold"].mode, ModMode::Unipolar);
+
+        // Current-version graphs without an entry stay unentried (unipolar by default).
+        let current =
+            GraphDesc::from_json(&json.replace("\"version\": 1", "\"version\": 2")).unwrap();
+        assert!(
+            current
+                .nodes
+                .iter()
+                .find(|n| n.id == "d")
+                .unwrap()
+                .modulation
+                .is_empty()
+        );
     }
 
     #[test]

@@ -10,6 +10,8 @@ use crate::theme::{ThemeChoice, WireStyle};
 pub struct Settings {
     pub theme: ThemeChoice,
     pub wire_style: WireStyle,
+    /// Show each node's latency and warmup under it in the graph editor.
+    pub node_stats: bool,
     /// Preview resolution as a divisor of full resolution (1 = full, 2 = half, …).
     pub preview_divisor: u32,
     /// Playback volume, `0..=1`.
@@ -21,6 +23,7 @@ impl Default for Settings {
         Self {
             theme: ThemeChoice::default(),
             wire_style: WireStyle::default(),
+            node_stats: false,
             preview_divisor: 2,
             volume: 0.8,
         }

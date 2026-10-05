@@ -193,6 +193,11 @@ impl Renderer {
         &self.info
     }
 
+    /// Each node's own latency and warmup.
+    pub fn node_stats(&self) -> &[rastersong_graph::NodeStats] {
+        self.graph.node_stats()
+    }
+
     pub fn latency_frames(&self) -> usize {
         self.latency
     }
