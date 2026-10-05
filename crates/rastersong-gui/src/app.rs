@@ -700,6 +700,9 @@ impl App {
             self.clock.speed(),
             self.clock.is_playing(),
             self.settings.volume,
+            // The tempo bar only shows in tempo mode, so the metronome only sounds there.
+            (self.settings.metronome && self.project.timeline_mode == TimelineMode::Tempo)
+                .then_some(self.project.tempo),
         );
         if self.clock.is_playing() {
             ui.ctx().request_repaint();
@@ -1417,6 +1420,11 @@ impl App {
                     .suffix(" s"),
             )
             .on_hover_text("Seconds from the start of the video to the first beat");
+            ui.toggle_value(&mut self.settings.metronome, "Metronome")
+                .on_hover_text(
+                    "Click on every beat while playing, higher on the first beat of each bar, \
+                     to check the tempo and first beat by ear",
+                );
         });
     }
 

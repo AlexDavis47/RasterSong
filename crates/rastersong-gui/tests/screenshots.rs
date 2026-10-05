@@ -13,7 +13,7 @@ use eframe::egui;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use rastersong_engine::{
-    AudioClip, FakeBackend, FakeVideo, GraphDesc, Project, ProjectTrack, Rational,
+    AudioClip, FakeBackend, FakeVideo, GraphDesc, Project, ProjectTrack, Rational, TimelineMode,
 };
 use rastersong_gui::theme::WireStyle;
 use rastersong_gui::{App, AudioOut, STARTER_GRAPH, ThemeChoice};
@@ -23,6 +23,10 @@ fn app(theme: ThemeChoice) -> App {
 }
 
 fn app_with_tracks(theme: ThemeChoice, tracks: usize) -> App {
+    app_in_mode(theme, tracks, TimelineMode::Time)
+}
+
+fn app_in_mode(theme: ThemeChoice, tracks: usize, mode: TimelineMode) -> App {
     let backend = FakeBackend::new()
         .with_video(
             "clip",
@@ -43,6 +47,7 @@ fn app_with_tracks(theme: ThemeChoice, tracks: usize) -> App {
         );
     let mut project = Project::new(GraphDesc::from_json(STARTER_GRAPH).unwrap());
     project.video = Some(PathBuf::from("clip"));
+    project.timeline_mode = mode;
     for name in ["audio", "drums", "bass"].into_iter().take(tracks) {
         project
             .audio_tracks
@@ -517,4 +522,18 @@ fn track_screenshots() {
         .map(|t| t.muted)
         .collect();
     assert_eq!(muted, [false, true]);
+}
+
+#[test]
+#[ignore = "needs a GPU; run explicitly to look at the UI"]
+fn tempo_bar_with_metronome() {
+    for (theme, name) in [(ThemeChoice::Dark, "dark"), (ThemeChoice::Light, "light")] {
+        let mut app = app_in_mode(theme, 1, TimelineMode::Tempo);
+        let mut settings = app.settings().clone();
+        settings.metronome = true;
+        app.set_settings(settings);
+        let mut harness = gpu_harness(app);
+        harness.run_steps(6);
+        save(&mut harness, &format!("{name}-tempo-metronome"));
+    }
 }

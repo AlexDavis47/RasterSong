@@ -119,6 +119,8 @@ struct ParamBinding {
     base: f64,
     modulation: Modulation,
     limits: (f64, f64),
+    /// Whether each sample's value is rounded to a whole number before clamping.
+    integer: bool,
     /// The modulated value of each sample, at the main input's length.
     values: Signal,
 }
@@ -132,6 +134,7 @@ impl ParamBinding {
             let value = self
                 .spec
                 .modulated(self.base, self.modulation, f64::from(s));
+            let value = if self.integer { value.round() } else { value };
             *v = value.clamp(lo, hi) as f32;
         }
     }
@@ -266,10 +269,15 @@ struct Pending {
     id: String,
     kind: String,
     params: BTreeMap<String, ParamValue>,
+    /// `params` with the integer parameters rounded: what the node instances are created with.
+    /// Modulation starts from the unrounded `params`, so only its result is rounded.
+    node_params: BTreeMap<String, ParamValue>,
     specs: &'static [ParamSpec],
     inputs: &'static [InputSpec],
     outputs: &'static [OutputSpec],
     modulation: BTreeMap<String, Modulation>,
+    /// For each parameter, whether it is rounded to whole numbers.
+    integer: Vec<bool>,
     node: Box<dyn Node>,
     interpolation: Interpolation,
     channels: Channels,
@@ -673,8 +681,14 @@ impl<'a> Compiler<'a> {
         let connected: Vec<bool> = p.wires.iter().map(Option::is_some).collect();
         let modulated: Vec<Option<(f64, f64)>> = (0..p.specs.len())
             .map(|i| {
-                p.modulation_of(i)
-                    .map(|(base, m, _)| p.specs[i].modulated_range(base, m))
+                p.modulation_of(i).map(|(base, m, _)| {
+                    let (lo, hi) = p.specs[i].modulated_range(base, m);
+                    if p.integer[i] {
+                        (lo.round(), hi.round())
+                    } else {
+                        (lo, hi)
+                    }
+                })
             })
             .collect();
         let ctx = PrepareContext {
@@ -693,7 +707,7 @@ impl<'a> Compiler<'a> {
         for _ in 1..shape.channels {
             let copy = self
                 .registry
-                .create(&self.pending[n].kind, &self.pending[n].params)
+                .create(&self.pending[n].kind, &self.pending[n].node_params)
                 .expect("the node type exists")
                 .map_err(|message| self.node_error(n, message))?;
             nodes.push(copy);
@@ -795,6 +809,7 @@ impl<'a> Compiler<'a> {
                     base,
                     modulation,
                     limits,
+                    integer: p.integer[index],
                     values: Signal::zeros(shape.reference),
                 })
             })
@@ -839,19 +854,34 @@ fn create_nodes(desc: &GraphDesc, registry: &Registry) -> Result<Vec<Pending>, G
         if pending.iter().any(|p| p.id == d.id) {
             return Err(GraphError::DuplicateId(d.id.clone()));
         }
-        let node = registry
-            .create(&d.kind, &d.params)
+        let spec = registry
+            .get(&d.kind)
             .ok_or_else(|| GraphError::UnknownNodeType {
                 id: d.id.clone(),
                 kind: d.kind.clone(),
             })?
-            .map_err(node_error)?;
-        // The registry checked the port and parameter counts when the type was registered.
-        let spec = registry
-            .get(&d.kind)
-            .expect("created above, so the type exists")
             .spec;
+        // The registry checked the port and parameter counts when the type was registered.
         let specs = spec.params;
+        // Rounded parameters: the node is created with whole numbers, the default included.
+        let mut node_params = d.params.clone();
+        let mut integer = vec![false; specs.len()];
+        for name in &d.integer {
+            let Some(index) = specs
+                .iter()
+                .position(|s| s.name == name && s.number_limits().is_some())
+            else {
+                return Err(node_error(format!("`{name}` isn't a number parameter")));
+            };
+            integer[index] = true;
+            if let Some(value) = specs[index].number_value(&d.params) {
+                node_params.insert(name.clone(), ParamValue::Number(value.round()));
+            }
+        }
+        let node = registry
+            .create(&d.kind, &node_params)
+            .expect("the type exists, checked above")
+            .map_err(node_error)?;
         for name in d.modulation.keys() {
             if !specs.iter().any(|s| s.name == name && s.modulatable) {
                 return Err(node_error(format!(
@@ -863,10 +893,12 @@ fn create_nodes(desc: &GraphDesc, registry: &Registry) -> Result<Vec<Pending>, G
             id: d.id.clone(),
             kind: d.kind.clone(),
             params: d.params.clone(),
+            node_params,
             specs,
             inputs: spec.inputs,
             outputs: spec.outputs,
             modulation: d.modulation.clone(),
+            integer,
             wires: vec![None; spec.inputs.len()],
             param_wires: vec![None; specs.len()],
             node,
@@ -1092,6 +1124,7 @@ fn fill_missing_inputs(desc: &GraphDesc, registry: &Registry) -> Option<GraphDes
                 label: None,
                 position: None,
                 modulation: BTreeMap::new(),
+                integer: Vec::new(),
                 exposed: None,
             });
         }

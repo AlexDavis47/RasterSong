@@ -16,6 +16,8 @@ pub struct Settings {
     pub preview_divisor: u32,
     /// Playback volume, `0..=1`.
     pub volume: f32,
+    /// Click on every beat during playback, to check the tempo by ear.
+    pub metronome: bool,
 }
 
 impl Default for Settings {
@@ -26,6 +28,7 @@ impl Default for Settings {
             node_stats: false,
             preview_divisor: 2,
             volume: 0.8,
+            metronome: false,
         }
     }
 }

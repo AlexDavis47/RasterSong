@@ -176,6 +176,8 @@ impl GraphEditor {
                         (value, current, color)
                     });
                     let mut expose = spec.modulatable.then_some(exposed);
+                    let mut integer = matches!(spec.kind, ParamKind::Number { .. })
+                        .then(|| node.integer.contains(spec.name));
                     let live = ctx
                         .params
                         .iter()
@@ -192,6 +194,7 @@ impl GraphEditor {
                                 params: &mut node.params,
                                 tracks,
                                 track_width,
+                                integer: integer.as_mut(),
                                 expose: expose.as_mut(),
                                 modulation: modulation.as_mut().map(|(m, _, c)| (m, *c)),
                                 live,
@@ -201,6 +204,13 @@ impl GraphEditor {
                     ui.add_space(PARAM_GAP);
                     if disconnected {
                         disconnect = Some(index);
+                    }
+                    if let Some(on) = integer {
+                        if on {
+                            node.integer.insert(spec.name.to_owned());
+                        } else {
+                            node.integer.remove(spec.name);
+                        }
                     }
                     if expose.is_some_and(|e| e != exposed) {
                         toggled = Some((index, !exposed));
@@ -238,6 +248,8 @@ struct ParamRow<'a, 'u> {
     /// For an audio input's track: the project's tracks.
     tracks: Option<&'a [String]>,
     track_width: f32,
+    /// Whether the number is rounded to whole numbers.
+    integer: Option<&'a mut bool>,
     /// Whether the parameter's pin shows on the node, for parameters that can be modulated.
     expose: Option<&'a mut bool>,
     /// The modulation of a connected parameter, and the wire's colour.
@@ -297,11 +309,13 @@ fn param_row(row: ParamRow) -> bool {
         params,
         tracks,
         track_width,
+        integer,
         expose,
         mut modulation,
         live,
     } = row;
     let mut disconnect = false;
+    let integer_on = integer.as_ref().is_some_and(|i| **i);
     let default = spec.default_value();
     let mut value = params
         .get(spec.name)
@@ -339,13 +353,18 @@ fn param_row(row: ParamRow) -> bool {
             ui.weak(spec.unit);
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            reset = ui
+            let reset_button = ui
                 .add_enabled(
                     value != default,
                     egui::Button::new("↺").small().frame(false),
                 )
-                .on_hover_text("Reset to default")
-                .clicked();
+                .on_hover_text("Reset to default");
+            reset = reset_button.clicked();
+            if let Some(integer) = integer {
+                ui.toggle_value(integer, "int").on_hover_text(
+                    "Round to whole numbers: the value, and, when a signal modulates it, the                      result at every sample",
+                );
+            }
         });
     });
     // Controls other than numbers start where a number's track does, past the gutter.
@@ -369,6 +388,7 @@ fn param_row(row: ParamRow) -> bool {
                 soft: (min, max),
                 limits: (limit_min, limit_max),
             };
+            let rounded = integer_on;
             ui.horizontal(|ui| {
                 let modulated = modulation.as_mut().map(|(m, color)| Modulated {
                     spec,
@@ -379,6 +399,9 @@ fn param_row(row: ParamRow) -> bool {
                 let response =
                     param_field(ui, spec.name, n, range, track_width, VALUE_WIDTH, modulated);
                 disconnect = response.disconnect;
+                if rounded {
+                    *n = n.round();
+                }
             });
         }
         (ParamKind::Choice { options, .. }, ParamValue::Text(s)) => {

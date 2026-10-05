@@ -46,6 +46,10 @@ pub struct NodeDesc {
     /// A connected parameter with no entry uses its default amount, unipolar.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub modulation: BTreeMap<String, Modulation>,
+    /// Number parameters that are rounded to whole numbers: the value set on the node and, for a
+    /// modulated parameter, the value of every sample after modulation (so a signal steps it).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub integer: Vec<String>,
     /// Parameters whose modulation pins the editor shows, when they differ from the node type's
     /// defaults. Has no effect on rendering.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -645,3 +645,60 @@ fn bypassed_nodes_pass_their_main_input_through() {
     let flagged = GraphDesc::from_json(&json(r#", "bypass": true"#)).unwrap();
     assert!(flagged.to_json().contains(r#""bypass": true"#));
 }
+
+/// AM of a carrier and modulator of 1.0 with `depth` set to 1.6 and an optional modulation, with
+/// `integer` listing the rounded parameters. The output is `1 + depth`.
+fn am_with_integer_depth(extra: &str, wire_depth: bool) -> Vec<f32> {
+    let depth_wire = if wire_depth {
+        r#", { "from": "audio", "to": "am.@depth" }"#
+    } else {
+        ""
+    };
+    let json = graph_json(
+        &format!(
+            r#"{{ "id": "video", "type": "video_input" }}, {{ "id": "audio", "type": "audio_input" }},
+               {{ "id": "am", "type": "am", "params": {{ "depth": 1.6 }}, {extra} }},
+               {{ "id": "out", "type": "output" }}"#
+        ),
+        &format!(
+            r#"{{ "from": "video", "to": "am.carrier" }}, {{ "from": "video", "to": "am.modulator" }},
+               {{ "from": "am", "to": "out" }}{depth_wire}"#
+        ),
+    );
+    let mut graph = compile(&json).unwrap();
+    let input = sources(|_| 1.0, |i| i as f32 / 10.0);
+    graph.process(0, &input).unwrap().data.clone()
+}
+
+#[test]
+fn integer_parameters_are_rounded() {
+    let out = am_with_integer_depth(r#""integer": ["depth"]"#, false);
+    assert!(out.iter().all(|&x| x == 3.0), "{out:?}");
+    // Without the option the fraction stays.
+    let out = am_with_integer_depth(r#""bypass": false"#, false);
+    assert!(out.iter().all(|&x| (x - 2.6).abs() < 1e-6), "{out:?}");
+}
+
+#[test]
+fn modulated_integer_parameters_step_after_modulation() {
+    let out = am_with_integer_depth(
+        r#""integer": ["depth"], "modulation": { "depth": { "amount": 5 } }"#,
+        true,
+    );
+    for (pixel, rgb) in out.chunks(3).enumerate() {
+        // depth = round(1.6 + 5 × a), unipolar by default would equal this for a >= 0.
+        let expected = 1.0 + (1.6 + 5.0 * f64::from(held_audio(pixel))).round() as f32;
+        assert!((rgb[0] - expected).abs() < 1e-6, "pixel {pixel}: {rgb:?}");
+    }
+}
+
+#[test]
+fn integer_needs_a_number_parameter() {
+    let json = graph_json(
+        r#"{ "id": "video", "type": "video_input" },
+           { "id": "d", "type": "distortion", "integer": ["shape"] },
+           { "id": "out", "type": "output" }"#,
+        r#"{ "from": "video", "to": "d" }, { "from": "d", "to": "out" }"#,
+    );
+    assert!(compile(&json).is_err());
+}

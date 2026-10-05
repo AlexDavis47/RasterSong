@@ -6,7 +6,8 @@ use std::time::Instant;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
-use rastersong_engine::playback::{Mixer, Stretcher, speed_gain};
+use rastersong_engine::Tempo;
+use rastersong_engine::playback::{Metronome, Mixer, Stretcher, speed_gain};
 
 /// Where playback is, as last reported by the UI. The audio thread extrapolates from it.
 #[derive(Debug, Clone, Copy)]
@@ -16,6 +17,8 @@ struct Transport {
     speed: f64,
     playing: bool,
     volume: f32,
+    /// The tempo to click along with, or `None` for no metronome.
+    metronome: Option<Tempo>,
     at: Instant,
 }
 
@@ -66,14 +69,23 @@ impl AudioOut {
         }
     }
 
-    /// Reports the playback position (video seconds), speed and volume. Call every UI frame.
-    pub fn update(&self, position: f64, speed: f64, playing: bool, volume: f32) {
+    /// Reports the playback position (video seconds), speed and volume, and the tempo of the
+    /// metronome if it is on. Call every UI frame.
+    pub fn update(
+        &self,
+        position: f64,
+        speed: f64,
+        playing: bool,
+        volume: f32,
+        metronome: Option<Tempo>,
+    ) {
         if let Ok(mut transport) = self.shared.transport.lock() {
             *transport = Some(Transport {
                 position,
                 speed,
                 playing,
                 volume,
+                metronome,
                 at: Instant::now(),
             });
         }
@@ -136,6 +148,7 @@ fn build<T: SizedSample + FromSample<f32>>(
 struct Source {
     stretcher: Stretcher,
     mixer: Arc<Mixer>,
+    metronome: Metronome,
     transport: Option<Transport>,
     hop: Vec<f32>,
     /// Frames of `hop` already played.
@@ -150,6 +163,7 @@ impl Source {
             played: stretcher.hop(),
             stretcher,
             mixer: Arc::new(Mixer::default()),
+            metronome: Metronome::new(rate),
             transport: None,
             hop,
         }
@@ -173,9 +187,19 @@ impl Source {
                 let gain = t.volume * speed_gain(t.speed);
                 self.stretcher
                     .next(&self.mixer, position, gain, &mut self.hop);
+                // Clicks follow the video's time, not the stretched audio, and ignore the speed
+                // fade so they stay audible while tuning at a crawl.
+                match t.metronome {
+                    Some(tempo) => {
+                        self.metronome
+                            .render(tempo, position, t.speed, t.volume, &mut self.hop);
+                    }
+                    None => self.metronome.reset(),
+                }
             }
             _ => {
                 self.stretcher.reset();
+                self.metronome.reset();
                 self.hop.fill(0.0);
             }
         }

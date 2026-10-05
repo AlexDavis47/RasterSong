@@ -41,6 +41,8 @@ pub struct EditorNode {
     pub pos: Pos2,
     /// How connected signals move parameters, by parameter name.
     pub modulation: BTreeMap<String, Modulation>,
+    /// The number parameters rounded to whole numbers.
+    pub integer: BTreeSet<String>,
     /// The parameters showing pins, when the user changed them from the type's defaults.
     pub exposed: Option<BTreeSet<String>>,
 }
@@ -189,6 +191,7 @@ impl GraphEditor {
                 bypass: node.bypass,
                 pos: node.position.map_or(positions[i], |[x, y]| pos2(x, y)),
                 modulation: node.modulation.clone(),
+                integer: node.integer.iter().cloned().collect(),
                 exposed: node.exposed.as_ref().map(|e| e.iter().cloned().collect()),
             });
         }
@@ -295,6 +298,7 @@ impl GraphEditor {
                     label: n.label.clone(),
                     position: Some([n.pos.x.round(), n.pos.y.round()]),
                     modulation: n.modulation.clone(),
+                    integer: n.integer.iter().cloned().collect(),
                     exposed: n.exposed.as_ref().map(|e| e.iter().cloned().collect()),
                 })
                 .collect(),
@@ -415,6 +419,7 @@ impl GraphEditor {
             bypass: false,
             pos,
             modulation: BTreeMap::new(),
+            integer: BTreeSet::new(),
             exposed: None,
         });
         Some(key)
@@ -529,6 +534,7 @@ impl GraphEditor {
             node.bypass = desc.bypass;
             node.label = desc.label.clone();
             node.modulation = desc.modulation.clone();
+            node.integer = desc.integer.iter().cloned().collect();
             node.exposed = desc.exposed.as_ref().map(|e| e.iter().cloned().collect());
             keys.insert(desc.id.as_str(), key);
         }
@@ -758,6 +764,18 @@ mod tests {
         assert_eq!(canonical(&back), canonical(&graph));
         // Loading the editor's own output gives the same graph again, positions included.
         assert_eq!(GraphEditor::new(&back).to_desc(), back);
+    }
+
+    #[test]
+    fn integer_parameters_survive_the_editor() {
+        let graph = GraphDesc::from_json(
+            r#"{ "version": 2, "nodes": [ { "id": "d", "type": "delay", "integer": ["time"] } ] }"#,
+        )
+        .unwrap();
+        let editor = GraphEditor::new(&graph);
+        let key = editor.key_of("d").unwrap();
+        assert!(editor.node(key).unwrap().integer.contains("time"));
+        assert_eq!(editor.to_desc().nodes[0].integer, ["time"]);
     }
 
     #[test]

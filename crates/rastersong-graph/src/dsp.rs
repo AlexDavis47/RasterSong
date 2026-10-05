@@ -243,6 +243,72 @@ impl Biquad {
     }
 }
 
+/// Taps in the Hilbert transformer. Odd, so the centre falls on a whole sample.
+pub const HILBERT_TAPS: usize = 65;
+
+/// A Hilbert transformer: for each input sample, the input delayed by [`Hilbert::LATENCY`]
+/// samples and its 90° phase-shifted copy, which together form the analytic signal that a
+/// frequency shifter rotates. A windowed FIR, so it is exact for frequencies well inside
+/// `0..Nyquist` and rolls off near DC and Nyquist.
+#[derive(Debug, Clone)]
+pub struct Hilbert {
+    taps: Vec<f32>,
+    history: Vec<f32>,
+    /// Index the next sample will be written to.
+    write: usize,
+}
+
+impl Default for Hilbert {
+    fn default() -> Self {
+        let m = HILBERT_TAPS / 2;
+        let taps = (0..HILBERT_TAPS)
+            .map(|k| {
+                let j = k as f64 - m as f64;
+                if (k + m).is_multiple_of(2) {
+                    // Even offsets from the centre are zero in an ideal Hilbert transformer.
+                    0.0
+                } else {
+                    // Blackman window.
+                    let w = 0.42 - 0.5 * (TAU * k as f64 / (HILBERT_TAPS - 1) as f64).cos()
+                        + 0.08 * (2.0 * TAU * k as f64 / (HILBERT_TAPS - 1) as f64).cos();
+                    (2.0 / (std::f64::consts::PI * j) * w) as f32
+                }
+            })
+            .collect();
+        Self {
+            taps,
+            history: vec![0.0; HILBERT_TAPS],
+            write: 0,
+        }
+    }
+}
+
+impl Hilbert {
+    /// Samples by which both outputs lag the input.
+    pub const LATENCY: usize = HILBERT_TAPS / 2;
+
+    /// Takes the next input sample; returns `(real, imaginary)`: the input from
+    /// [`Self::LATENCY`] samples ago and its quadrature.
+    pub fn push(&mut self, x: f32) -> (f32, f32) {
+        let n = self.history.len();
+        self.history[self.write] = x;
+        self.write = (self.write + 1) % n;
+        // Tap k multiplies the sample pushed k samples ago.
+        let newest = self.write + n - 1;
+        let mut imag = 0.0;
+        for k in (0..HILBERT_TAPS).filter(|k| (k + Self::LATENCY) % 2 == 1) {
+            imag += self.taps[k] * self.history[(newest - k) % n];
+        }
+        let real = self.history[(newest - Self::LATENCY) % n];
+        (real, imag)
+    }
+
+    pub fn reset(&mut self) {
+        self.history.fill(0.0);
+        self.write = 0;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,6 +428,26 @@ mod tests {
         assert!(gain_to_db(0.0) < -200.0);
         assert_eq!(smoothing_coefficient(0.0), 0.0);
         assert!((smoothing_coefficient(1.0) - (-1f64).exp()).abs() < 1e-12);
+    }
+
+    #[test]
+    fn hilbert_turns_a_cosine_into_a_sine() {
+        let mut h = Hilbert::default();
+        let freq = 0.05;
+        let mut worst = 0.0f32;
+        for n in 0..400 {
+            let x = (TAU * freq * n as f64).cos() as f32;
+            let (real, imag) = h.push(x);
+            if n > 2 * HILBERT_TAPS {
+                let t = n as f64 - Hilbert::LATENCY as f64;
+                let want_real = (TAU * freq * t).cos() as f32;
+                let want_imag = (TAU * freq * t).sin() as f32;
+                worst = worst
+                    .max((real - want_real).abs())
+                    .max((imag - want_imag).abs());
+            }
+        }
+        assert!(worst < 0.02, "worst error {worst}");
     }
 
     #[test]

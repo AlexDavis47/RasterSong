@@ -6,6 +6,7 @@
 
 use std::sync::Arc;
 
+use rastersong_graph::Tempo;
 use rastersong_media::AudioClip;
 
 /// One track in the mix.
@@ -189,6 +190,70 @@ impl Stretcher {
     }
 }
 
+/// Pitch of the click on the first beat of a bar, and on the other beats.
+const ACCENT_HZ: f64 = 1_600.0;
+const BEAT_HZ: f64 = 1_000.0;
+/// How long a click rings, as the time its level takes to fall by 60 dB.
+const CLICK_SECS: f64 = 0.03;
+const CLICK_LEVEL: f32 = 0.5;
+
+/// A metronome for tuning the project's tempo by ear: a short click on every beat of the grid
+/// the beat and bar units follow, higher on the first beat of each bar. It follows the video's
+/// time, not the stretched audio's, so clicks stay with the picture at any playback speed.
+#[derive(Debug, Clone)]
+pub struct Metronome {
+    rate: f64,
+    /// Index of the beat the previous sample was in, or `None` after a reset or a stop.
+    beat: Option<i64>,
+    /// The click that is ringing: samples played so far and its pitch.
+    click: Option<(usize, f64)>,
+}
+
+impl Metronome {
+    pub fn new(rate: f64) -> Self {
+        Self {
+            rate,
+            beat: None,
+            click: None,
+        }
+    }
+
+    /// Forgets where the last beat was, e.g. after playback stops, so the next render doesn't
+    /// click for a beat it only jumped over.
+    pub fn reset(&mut self) {
+        self.beat = None;
+        self.click = None;
+    }
+
+    /// Adds the clicks for the stereo frames `out` to it, where the video is at `position` seconds
+    /// at its start and moves `speed` seconds per second.
+    pub fn render(&mut self, tempo: Tempo, position: f64, speed: f64, gain: f32, out: &mut [f32]) {
+        let tempo = tempo.sanitized();
+        let beats_per_second = tempo.bpm / 60.0;
+        let step = speed / self.rate;
+        for (i, frame) in out.as_chunks_mut::<2>().0.iter_mut().enumerate() {
+            let time = position + i as f64 * step;
+            let beat = ((time - tempo.offset_secs) * beats_per_second).floor() as i64;
+            // A click starts when the beat counter moves forward onto a beat of the grid. Moving
+            // back (a loop or a seek) and the time before the first beat stay silent.
+            if beat >= 0 && self.beat.is_some_and(|previous| beat > previous) {
+                let downbeat = beat % i64::from(tempo.beats_per_bar) == 0;
+                self.click = Some((0, if downbeat { ACCENT_HZ } else { BEAT_HZ }));
+            }
+            self.beat = Some(beat);
+            if let Some((age, hz)) = self.click {
+                let t = age as f64 / self.rate;
+                let envelope = 10f64.powf(-3.0 * t / CLICK_SECS);
+                let value =
+                    ((std::f64::consts::TAU * hz * t).sin() * envelope) as f32 * CLICK_LEVEL * gain;
+                frame[0] += value;
+                frame[1] += value;
+                self.click = (t < CLICK_SECS * 2.0).then_some((age + 1, hz));
+            }
+        }
+    }
+}
+
 /// Fades preview audio out at very low playback speeds, where stretching turns into a drone.
 pub fn speed_gain(speed: f64) -> f32 {
     ((speed - 0.05) / 0.15).clamp(0.0, 1.0) as f32
@@ -309,6 +374,99 @@ mod tests {
         s.next(&mixer, 0.0, 1.0, &mut out);
         s.next(&mixer, 2.0, 1.0, &mut out);
         assert_eq!(s.previous, Some(2.0));
+    }
+
+    /// Renders `seconds` of the metronome at full speed, in hops like the audio thread's.
+    fn click_track(tempo: Tempo, start: f64, seconds: f64) -> Vec<f32> {
+        let mut metronome = Metronome::new(RATE);
+        let hop = 1_024;
+        let frames = (seconds * RATE) as usize / hop * hop;
+        let mut left = Vec::new();
+        for h in 0..frames / hop {
+            let mut out = vec![0.0; hop * 2];
+            let position = start + (h * hop) as f64 / RATE;
+            metronome.render(tempo, position, 1.0, 1.0, &mut out);
+            left.extend(out.as_chunks::<2>().0.iter().map(|f| f[0]));
+        }
+        left
+    }
+
+    fn loud_between(track: &[f32], from: f64, to: f64) -> bool {
+        let range = (from * RATE) as usize..(to * RATE) as usize;
+        track[range].iter().any(|x| x.abs() > 0.01)
+    }
+
+    #[test]
+    fn clicks_on_every_beat_and_nowhere_else() {
+        // 120 bpm: a beat every half second. The first sample isn't a click: nothing was before it.
+        let track = click_track(Tempo::default(), 0.0, 2.0);
+        for beat in [0.5, 1.0, 1.5] {
+            assert!(loud_between(&track, beat, beat + 0.01), "click at {beat}");
+            assert!(
+                !loud_between(&track, beat + 0.12, beat + 0.45),
+                "gap after {beat}"
+            );
+        }
+        assert!(!loud_between(&track, 0.0, 0.45));
+    }
+
+    #[test]
+    fn the_offset_moves_the_grid() {
+        let tempo = Tempo {
+            offset_secs: 0.2,
+            ..Tempo::default()
+        };
+        let track = click_track(tempo, 0.0, 1.0);
+        assert!(!loud_between(&track, 0.0, 0.19));
+        assert!(loud_between(&track, 0.7, 0.71));
+    }
+
+    #[test]
+    fn nothing_clicks_before_the_first_beat() {
+        let tempo = Tempo {
+            offset_secs: 1.0,
+            ..Tempo::default()
+        };
+        // 0 to 0.9 s lies before the offset, where beat numbers are negative.
+        let track = click_track(tempo, 0.0, 0.9);
+        assert!(!loud_between(&track, 0.0, 0.89));
+    }
+
+    #[test]
+    fn the_first_beat_of_a_bar_is_higher() {
+        // Beats 4 and 5 of a 4 beat bar start at 1.5 s and 2.0 s; zero crossings tell the pitch.
+        let track = click_track(Tempo::default(), 0.0, 2.1);
+        let crossings = |at: f64| {
+            let from = (at * RATE) as usize;
+            track[from..from + 480]
+                .windows(2)
+                .filter(|w| w[0] * w[1] < 0.0)
+                .count()
+        };
+        assert!(
+            crossings(2.0) > crossings(1.5) + 2,
+            "{} {}",
+            crossings(2.0),
+            crossings(1.5)
+        );
+    }
+
+    #[test]
+    fn jumping_back_stays_silent_and_stopping_forgets_the_beat() {
+        let mut metronome = Metronome::new(RATE);
+        let mut out = vec![0.0; 2_048];
+        metronome.render(Tempo::default(), 1.9, 1.0, 1.0, &mut out);
+        out.fill(0.0);
+        // A loop wraps from 2 s back to 0.1 s: the beat number drops from 4 to 0.
+        metronome.render(Tempo::default(), 0.1, 1.0, 1.0, &mut out);
+        assert!(out.iter().all(|&x| x == 0.0));
+        // Without the reset, 0.9 s (beat 1) after the last render in beat 0 would click.
+        metronome.reset();
+        metronome.render(Tempo::default(), 0.9, 1.0, 1.0, &mut out);
+        assert!(
+            out.iter().all(|&x| x == 0.0),
+            "no click for a beat only jumped over"
+        );
     }
 
     #[test]
