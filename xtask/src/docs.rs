@@ -6,7 +6,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{Result, bail};
-use rastersong_graph::{Category, ModScale, NodeType, ParamKind, ParamSpec, PortHint, Registry};
+use rastersong_graph::{
+    Category, ModScale, NodeType, ParamKind, ParamSpec, Range, Registry, TagRule,
+};
 
 use crate::util::workspace_root;
 
@@ -93,9 +95,10 @@ fn node(out: &mut String, t: &NodeType) {
     }
     out.push_str("**Outputs**\n\n");
     for output in spec.outputs {
-        let carries = match output.hint {
-            PortHint::Inherit => String::new(),
-            hint => format!(" ({})", hint_name(hint)),
+        let carries = if output.tag.is_inherit() {
+            String::new()
+        } else {
+            format!(" ({})", tag_rule_name(output.tag))
         };
         let _ = writeln!(out, "- `{}`{carries}: {}", output.name, output.help);
     }
@@ -119,20 +122,18 @@ fn node(out: &mut String, t: &NodeType) {
     }
 }
 
-fn hint_name(hint: PortHint) -> &'static str {
-    match hint {
-        PortHint::Inherit => "same as the main input",
-        PortHint::Rgb => "RGB video",
-        PortHint::Red => "red channel",
-        PortHint::Green => "green channel",
-        PortHint::Blue => "blue channel",
-        PortHint::Audio => "audio",
-        PortHint::Low => "low band",
-        PortHint::Mid => "mid band",
-        PortHint::High => "high band",
-        PortHint::AsAudio => "as audio",
-        PortHint::AsVideo => "as video",
+fn tag_rule_name(rule: TagRule) -> String {
+    let mut words = Vec::new();
+    if let Some(kind) = rule.kind {
+        words.push(kind.label().to_owned());
     }
+    if let Some(part) = rule.part.and_then(|p| p.label()) {
+        words.push(part);
+    }
+    if let Some(range) = rule.range.and_then(Range::label) {
+        words.push(range.to_owned());
+    }
+    words.join(", ")
 }
 
 fn number(n: f64) -> String {

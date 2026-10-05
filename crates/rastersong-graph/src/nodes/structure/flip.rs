@@ -50,7 +50,7 @@ impl Node for Flip {
         let input = ctx.inputs[0];
         let layout = match self.mode {
             Mode::Transpose => {
-                Layout::new(input.height, input.width, input.samples_per_pixel)
+                input.reshaped(input.height, input.width, input.samples_per_pixel)
             }
             _ => input,
         };
@@ -103,6 +103,7 @@ mod tests {
         let layouts = node
             .output_layouts(&LayoutContext {
                 inputs: &inputs,
+                connected: &[true],
                 sources: &sources,
                 output: input.layout,
                 output_count: 1,

@@ -6,16 +6,16 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 
 | Node | What it does |
 |---|---|
-| [Audio](#audio_input) | The audio track, one frame's worth per block, -1 to 1 |
+| [Audio](#audio_input) | The audio track, one frame's worth per block, -1 to 1, channels interleaved |
 | [Video](#video_input) | The video as RGB, 0 to 1 |
 
 ### `audio_input`
 
-**Audio**: The audio track, one frame's worth per block, -1 to 1
+**Audio**: The audio track, one frame's worth per block, -1 to 1, channels interleaved
 
 **Outputs**
 
-- `out` (audio): The audio, one frame's worth per block, from -1 to 1
+- `out` (audio, -1 to 1): The audio, one frame's worth per block, from -1 to 1; stereo comes as L, R, L, R, …
 
 **Parameters**
 
@@ -29,7 +29,7 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 
 **Outputs**
 
-- `out` (RGB video): The video, as RGB from 0 to 1
+- `out` (video, 0 to 1): The video, as RGB from 0 to 1
 
 **Parameters**
 
@@ -123,26 +123,34 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 
 | Node | What it does |
 |---|---|
-| [Combine](#combine) | Separate R, G and B signals into RGB |
+| [Combine Channels](#combine) | Separate signals into one interleaved signal: R, G, B into RGB, or L, R into stereo |
 | [Flip](#flip) | Mirrors, turns over or transposes the picture |
-| [Interleave](#interleave) | RGB as one mono carrier, three times as wide (R, G, B, R, G, B, …) |
-| [Pack](#pack) | A packed mono carrier back into RGB |
+| [Interleave](#interleave) | Channels as one mono carrier, as many times as wide (R, G, B, R, G, B, …) |
+| [Pack](#pack) | A packed mono carrier back into channels: RGB, stereo, … |
 | [Resample](#resample) | Resizes the picture; effects after it work at the new resolution |
-| [Split](#split) | RGB into separate R, G and B signals |
+| [Split Channels](#split) | Each channel of an interleaved signal on its own: R, G, B of video or L, R of stereo |
+| [Stretch to Match](#stretch) | A signal stretched to the length and layout of another |
 
 ### `combine`
 
-**Combine**: Separate R, G and B signals into RGB
+**Combine Channels**: Separate signals into one interleaved signal: R, G, B into RGB, or L, R into stereo
+
+Each connected input becomes one channel of the output, in order. The first input sets the size; the others are stretched to it. Three channels of video make RGB; two of audio make stereo.
 
 **Inputs**
 
-- `r` (main, required): The red channel
-- `g` (required): The green channel
-- `b` (required): The blue channel
+- `c1` (main, required): Channel 1: red, or left. Sets the size
+- `c2` (optional): Channel 2: green, or right
+- `c3` (optional): Channel 3: blue
+- `c4` (optional): Channel 4
+- `c5` (optional): Channel 5
+- `c6` (optional): Channel 6
+- `c7` (optional): Channel 7
+- `c8` (optional): Channel 8
 
 **Outputs**
 
-- `out` (RGB video): RGB video
+- `out` (): The channels interleaved, pixel by pixel
 
 ### `flip`
 
@@ -164,27 +172,33 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 
 ### `interleave`
 
-**Interleave**: RGB as one mono carrier, three times as wide (R, G, B, R, G, B, …)
+**Interleave**: Channels as one mono carrier, as many times as wide (R, G, B, R, G, B, …)
 
 **Inputs**
 
-- `in` (main, required): RGB video to pack
+- `in` (main, required): An interleaved signal, such as RGB video, to flatten
 
 **Outputs**
 
-- `out` (RGB video): The channels in sequence, as one mono signal three times as wide
+- `out`: The channels in sequence, as one mono signal as many times as wide as there are channels
 
 ### `pack`
 
-**Pack**: A packed mono carrier back into RGB
+**Pack**: A packed mono carrier back into channels: RGB, stereo, …
 
 **Inputs**
 
-- `in` (main, required): A mono signal three times as wide as the picture, as Interleave makes
+- `in` (main, required): A mono signal as many times as wide as the picture as there are channels, as Interleave makes
 
 **Outputs**
 
-- `out` (RGB video): RGB video
+- `out`: The interleaved signal
+
+**Parameters**
+
+| Name | Default | Range | Modulation | What it does |
+|---|---|---|---|---|
+| `channels` (Channels) | 3 | 1 to 8 (up to 1 to 64) | no | How many channels each pixel gets: 3 for RGB, 2 for stereo |
 
 ### `resample`
 
@@ -208,23 +222,46 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 
 ### `split`
 
-**Split**: RGB into separate R, G and B signals
+**Split Channels**: Each channel of an interleaved signal on its own: R, G, B of video or L, R of stereo
+
+One output per channel of the input: three for RGB video, two for stereo audio. Outputs past the input's channel count carry silence.
 
 **Inputs**
 
-- `in` (main, required): RGB video to take apart
+- `in` (main, required): The interleaved signal to take apart
 
 **Outputs**
 
-- `r` (red channel): The red channel
-- `g` (green channel): The green channel
-- `b` (blue channel): The blue channel
+- `c1`: Channel 1: red, or left
+- `c2`: Channel 2: green, or right
+- `c3`: Channel 3: blue
+- `c4`: Channel 4
+- `c5`: Channel 5
+- `c6`: Channel 6
+- `c7`: Channel 7
+- `c8`: Channel 8
+
+### `stretch`
+
+**Stretch to Match**: A signal stretched to the length and layout of another
+
+The output has `like`'s size and layout and `in`'s values: audio stretched over a picture, or a picture squeezed into an audio block. With pixel grouping (the default), a mono signal stretched over RGB moves each pixel's channels together; per sample, it is spread over every channel value.
+
+**Inputs**
+
+- `like` (main, required): The signal whose size and layout the result takes
+- `in` (required): The signal to stretch
+
+**Outputs**
+
+- `out`: `in` at the size of `like`
 
 ## Conversion
 
 | Node | What it does |
 |---|---|
 | [Audio to Video](#to_video) | Audio's -1 to 1 back to video's 0 to 1, as read from an 8-bit file |
+| [Relabel](#relabel) | Changes what a signal is said to be (kind, channels, range), not its samples |
 | [Video to Audio](#to_audio) | Video's 0 to 1 as audio's -1 to 1, as written to an 8-bit file |
 
 ### `to_video`
@@ -237,13 +274,36 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 
 **Outputs**
 
-- `out` (as video): The same samples as video, from 0 to 1
+- `out` (video, 0 to 1): The same samples as video, from 0 to 1
 
 **Parameters**
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
 | `mapping` (Mapping) | `accurate` | `accurate`, `bugged` | no | accurate maps black to -1 and white to 1; bugged reproduces the signed/unsigned misread, wrapping at mid-gray |
+
+### `relabel`
+
+**Relabel**: Changes what a signal is said to be (kind, channels, range), not its samples
+
+Signals carry a tag (video or audio, which channels, the range of values) that colours wires and drives warnings. Nothing converts a signal because of its tag; this node only rewrites it, for when a signal is reused on purpose as something else.
+
+**Inputs**
+
+- `in` (main, required): The signal to process
+
+**Outputs**
+
+- `out`: The same samples, relabelled
+
+**Parameters**
+
+| Name | Default | Range | Modulation | What it does |
+|---|---|---|---|---|
+| `kind` (Kind) | `keep` | `keep`, `video`, `audio`, `unknown` | no | What the signal is meant to be |
+| `channels` (Channels) | `keep` | `keep`, `named`, `numbered` | no | named gives the channels their usual names (RGB, stereo), numbered just counts them |
+| `range` (Range) | `keep` | `keep`, `0 to 1`, `-1 to 1`, `unknown` | no | The range the values are meant to span |
+| `part` (Part) | `keep` | `keep`, `whole` | no | whole stops treating the signal as one channel or band of another |
 
 ### `to_audio`
 
@@ -255,7 +315,7 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 
 **Outputs**
 
-- `out` (as audio): The same samples as audio, from -1 to 1
+- `out` (audio, -1 to 1): The same samples as audio, from -1 to 1
 
 **Parameters**
 
@@ -996,5 +1056,5 @@ Can process R, G and B separately.
 
 **Outputs**
 
-- `out`: The rendered picture
+- `out` (video, 0 to 1): The rendered picture
 

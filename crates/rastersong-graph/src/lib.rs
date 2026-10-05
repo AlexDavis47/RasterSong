@@ -16,17 +16,18 @@ mod signal;
 pub mod testing;
 
 pub use desc::{
-    Channels, Connection, FORMAT_VERSION, GraphDesc, Interpolation, ModMode, Modulation, NodeDesc,
-    ParamValue,
+    Channels, Connection, FORMAT_VERSION, GraphDesc, Grouping, Interpolation, ModMode, Modulation,
+    NodeDesc, ParamValue,
 };
 pub use error::GraphError;
 pub use graph::{
-    CompileOptions, Graph, MAX_INPUTS, MAX_PARAMS, NodeStats, OutputLevel, ParamLevel, render_form,
+    CompileOptions, Diagnostic, Graph, MAX_INPUTS, MAX_PARAMS, NodeStats, OutputLevel, ParamLevel,
+    render_form,
 };
 pub use node::{
-    InputSpec, LayoutContext, Node, OutputSpec, PortHint, PrepareContext, ProcessContext, Sources,
-    Tempo, Value,
+    InputSpec, LayoutContext, Node, OutputSpec, PrepareContext, ProcessContext, Sources, Tempo,
+    Value,
 };
 pub use nodes::{Category, Choice, NodeKind, NodeSpec, NodeType, Registry};
 pub use params::{ModScale, ParamKind, ParamSpec, Params};
-pub use signal::{Layout, Signal};
+pub use signal::{ChannelMap, Kind, Layout, Part, Range, Signal, Tag, TagRule};

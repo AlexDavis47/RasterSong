@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 use eframe::egui::{self, RichText, Ui};
 use rastersong_engine::{AUDIO_INPUT, SOURCE_PARAM};
 use rastersong_engine::{
-    Channels, Interpolation, Modulation, ParamKind, ParamLevel, ParamSpec, ParamValue,
+    Channels, Grouping, Interpolation, Modulation, NodeStats, NodeType, ParamKind, ParamLevel,
+    ParamSpec, ParamValue,
 };
 
 use super::param_field::{GUTTER_WIDTH, Modulated, NumberRange, param_field, reset_gesture};
@@ -52,6 +53,8 @@ impl GraphEditor {
                 })
                 .collect()
         };
+        // What the last compile found: the node's signals and warnings.
+        let compiled = self.compiled(key).cloned();
         let mut toggled: Option<(usize, bool)> = None;
         let mut disconnect: Option<usize> = None;
         let node = self.nodes.iter_mut().find(|n| n.key == key).unwrap();
@@ -96,6 +99,13 @@ impl GraphEditor {
         });
         ui.add_space(2.0);
         ui.label(RichText::new(kind.spec.description).small());
+        if let Some(compiled) = &compiled {
+            for warning in &compiled.diagnostics {
+                ui.add_space(4.0);
+                ui.colored_label(theme.warning, format!("⚠ {warning}"));
+            }
+            signals(ui, &kind, compiled);
+        }
 
         let shared_settings = kind.spec.inputs.len() > 1 || kind.spec.per_channel;
         if shared_settings {
@@ -109,27 +119,44 @@ impl GraphEditor {
                             "How the other inputs are stretched or shrunk to the length of the main input",
                         );
                         choice(ui, "resampling", &mut node.interpolation, Interpolation::default(), &[
-                            (Interpolation::Hold, "Hold", "Repeat samples; a pixel's R, G and B move together"),
+                            (Interpolation::Hold, "Hold", "Repeat samples"),
                             (Interpolation::Linear, "Linear", "Ramp smoothly between samples"),
+                        ]);
+                        ui.end_row();
+                        ui.label("Grouping").on_hover_text(
+                            "How a one-channel input is spread over a main input with several channels (RGB, stereo)",
+                        );
+                        choice(ui, "grouping", &mut node.grouping, Grouping::default(), &[
+                            (
+                                Grouping::Pixels,
+                                "Pixels",
+                                "Each value covers whole pixels, so a pixel's R, G and B (or L and R) move together",
+                            ),
+                            (
+                                Grouping::Samples,
+                                "Samples",
+                                "Spread over every value, ignoring pixels: a pixel's channels can differ",
+                            ),
                         ]);
                         ui.end_row();
                     }
                     if kind.spec.per_channel {
                         ui.label("Channels").on_hover_text(
-                            "How this node treats the red, green and blue of each pixel.",
+                            "How this node treats the channels of an interleaved signal: R, G, B of video, L, R of stereo.",
                         );
                         choice(ui, "channels", &mut node.channels, Channels::default(), &[
                             (
                                 Channels::Together,
                                 "Together",
-                                "Runs R, G, B, R, G, B… through the node as one stream. Colors bleed \
-                                 into each other, as in a low pass or a modulated delay.",
+                                "Runs R, G, B, R, G, B… (or L, R, L, R…) through the node as one \
+                                 stream. Channels bleed into each other, as in a low pass or a \
+                                 modulated delay.",
                             ),
                             (
                                 Channels::Separate,
                                 "Separate",
-                                "Runs red, green and blue each through their own copy of the node. \
-                                 The same as Split → node ×3 → Combine.",
+                                "Runs each channel through its own copy of the node. The same as \
+                                 Split Channels → the node once per channel → Combine Channels.",
                             ),
                         ]);
                         ui.end_row();
@@ -267,6 +294,31 @@ const MIN_TRACK: f32 = 60.0;
 const VALUE_WIDTH: f32 = 58.0;
 /// Space between parameters.
 const PARAM_GAP: f32 = 6.0;
+
+/// What each output carries, as the last compile worked it out: its size and tag.
+fn signals(ui: &mut Ui, kind: &NodeType, compiled: &NodeStats) {
+    if compiled.outputs.is_empty() {
+        return;
+    }
+    ui.add_space(4.0);
+    let output = |i: usize| kind.spec.outputs.get(i).map_or("?", |o| o.name);
+    // Split's unused channels are silence; listing them adds nothing.
+    let shown = match compiled.inputs.first() {
+        Some(input) if kind.kind == rastersong_engine::SPLIT => {
+            (input.samples_per_pixel as usize).clamp(1, compiled.outputs.len())
+        }
+        _ => compiled.outputs.len(),
+    };
+    for (i, layout) in compiled.outputs.iter().take(shown).enumerate() {
+        let text = if compiled.outputs.len() > 1 {
+            format!("{}: {layout}, {}", output(i), layout.tag)
+        } else {
+            format!("Output: {layout}, {}", layout.tag)
+        };
+        ui.label(RichText::new(text).small().weak())
+            .on_hover_text("What the signal is said to be. Advisory: it colours wires and drives warnings, and never changes processing. Relabel changes it.");
+    }
+}
 
 fn section(ui: &mut Ui, title: &str) {
     ui.add_space(12.0);

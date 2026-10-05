@@ -3,7 +3,7 @@
 //! here, so nothing else holds a colour literal.
 
 use eframe::egui::{self, Color32, CornerRadius};
-use rastersong_engine::{Category, PortHint};
+use rastersong_engine::{Category, Kind, Part, Tag, TagRule};
 use serde::{Deserialize, Serialize};
 
 /// The user's theme choice. Dark by default, whatever the system uses.
@@ -63,7 +63,7 @@ impl WireStyle {
 }
 
 /// Wire colours: a base colour per kind of signal, and one per part of a signal (channel or
-/// band). See [`PortHint`].
+/// band). See [`Tag`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct PortColors {
     pub video: Color32,
@@ -71,6 +71,8 @@ pub struct PortColors {
     pub red: Color32,
     pub green: Color32,
     pub blue: Color32,
+    pub left: Color32,
+    pub right: Color32,
     pub low: Color32,
     pub mid: Color32,
     pub high: Color32,
@@ -149,6 +151,8 @@ impl Theme {
             red: Color32::from_rgb(0xe8, 0x55, 0x4e),
             green: Color32::from_rgb(0x4f, 0xc4, 0x5c),
             blue: Color32::from_rgb(0x4d, 0x8e, 0xf0),
+            left: Color32::from_rgb(0x5c, 0xc8, 0xf0),
+            right: Color32::from_rgb(0xf0, 0x7c, 0xc8),
             low: Color32::from_rgb(0xf0, 0x8a, 0x3a),
             mid: Color32::from_rgb(0xe6, 0xcc, 0x4a),
             high: Color32::from_rgb(0xb0, 0x7c, 0xec),
@@ -198,6 +202,8 @@ impl Theme {
             red: Color32::from_rgb(0xd2, 0x3c, 0x34),
             green: Color32::from_rgb(0x2e, 0x9e, 0x3c),
             blue: Color32::from_rgb(0x2c, 0x6c, 0xd8),
+            left: Color32::from_rgb(0x18, 0x8c, 0xbc),
+            right: Color32::from_rgb(0xc0, 0x40, 0x96),
             low: Color32::from_rgb(0xdc, 0x70, 0x1c),
             mid: Color32::from_rgb(0xb8, 0x98, 0x10),
             high: Color32::from_rgb(0x8a, 0x52, 0xcc),
@@ -228,23 +234,44 @@ impl Theme {
         }
     }
 
-    /// What a hint says about a wire's colours: `(base, part)`, each `None` where the hint leaves
-    /// it to the main input. A part of `Some(None)` means "whole signal, no part".
-    pub fn hint_colors(&self, hint: PortHint) -> (Option<Color32>, Option<Option<Color32>>) {
-        let p = &self.ports;
-        match hint {
-            PortHint::Inherit => (None, None),
-            PortHint::Rgb => (Some(p.video), Some(None)),
-            PortHint::Audio => (Some(p.audio), Some(None)),
-            PortHint::Red => (Some(p.video), Some(Some(p.red))),
-            PortHint::Green => (Some(p.video), Some(Some(p.green))),
-            PortHint::Blue => (Some(p.video), Some(Some(p.blue))),
-            PortHint::Low => (None, Some(Some(p.low))),
-            PortHint::Mid => (None, Some(Some(p.mid))),
-            PortHint::High => (None, Some(Some(p.high))),
-            PortHint::AsAudio => (Some(p.audio), None),
-            PortHint::AsVideo => (Some(p.video), None),
+    /// The base colour of a kind of signal, or `None` when it isn't known.
+    pub fn kind_color(&self, kind: Kind) -> Option<Color32> {
+        match kind {
+            Kind::Unknown => None,
+            Kind::Video => Some(self.ports.video),
+            Kind::Audio => Some(self.ports.audio),
         }
+    }
+
+    /// The colour of a part of a signal, or `None` for a whole signal or an unnamed channel.
+    pub fn part_color(&self, part: Part) -> Option<Color32> {
+        let p = &self.ports;
+        match part {
+            Part::Whole | Part::Channel(_) => None,
+            Part::Red => Some(p.red),
+            Part::Green => Some(p.green),
+            Part::Blue => Some(p.blue),
+            Part::Left => Some(p.left),
+            Part::Right => Some(p.right),
+            Part::Low => Some(p.low),
+            Part::Mid => Some(p.mid),
+            Part::High => Some(p.high),
+        }
+    }
+
+    /// A compiled signal's wire colours: `(base, part)`.
+    pub fn tag_colors(&self, tag: Tag) -> (Option<Color32>, Option<Color32>) {
+        (self.kind_color(tag.kind), self.part_color(tag.part))
+    }
+
+    /// What an output's tag rule says about its wire's colours before the graph is compiled:
+    /// `(base, part)`, each `None` where the rule leaves it to the main input. A part of
+    /// `Some(None)` means "whole signal, no part".
+    pub fn rule_colors(&self, rule: TagRule) -> (Option<Color32>, Option<Option<Color32>>) {
+        (
+            rule.kind.and_then(|k| self.kind_color(k)),
+            rule.part.map(|p| self.part_color(p)),
+        )
     }
 
     pub fn category(&self, category: Option<Category>) -> Color32 {

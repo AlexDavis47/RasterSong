@@ -178,15 +178,18 @@ struct Signal {
 struct Layout {
     width: u32,
     height: u32,
-    samples_per_pixel: u32, // 1 for a single channel, 3 for interleaved RGB
+    samples_per_pixel: u32, // 1 for one channel, 2 for interleaved stereo, 3 for interleaved RGB
+    tag: Tag,               // what the samples are meant to be (advisory)
 }
 ```
 
 Video signals are nominally in `0.0..=1.0` (black to full intensity) and audio signals in `-1.0..=1.0`.
 Nothing clamps values between nodes; only the output clamps to `0..=1` when converting back to 8-bit.
 
-Audio modulators are also `Signal`s: one frame's worth of mono audio. Each frame's block always has the same
-length, `round(sample_rate / frame_rate)` samples, resampled from exactly that frame's span of time. So even when
+Audio modulators are also `Signal`s: one frame's worth of audio, with the track's channels interleaved as decoded
+(L, R, L, R, … for stereo, `samples_per_pixel = 2`). Nothing is downmixed: a graph that wants mono sums or splits
+the channels itself. Each frame's block always has the same length, `round(sample_rate / frame_rate)` samples per
+channel, resampled from exactly that frame's span of time. So even when
 the frame rate doesn't divide the sample rate (48 kHz at 29.97 fps is 1,601.6 samples per frame), or the video has
 a variable frame rate, the modulator stays locked to the picture.
 
@@ -194,11 +197,21 @@ a variable frame rate, the modulator stays locked to the picture.
 Whether it receives one color channel or a whole interleaved RGB stream, it processes it the same way. Layout
 is only used by:
 
-- **Structural nodes** (Split, Combine, Interleave, Pack, Output), which need to know how to take a signal apart and rebuild it
+- **Structural nodes** (Split Channels, Combine Channels, Interleave, Pack, Stretch to Match, Output), which need to know how to take a signal apart and rebuild it
 - **Unit conversion**, e.g. "1 row" is `width` samples for one channel but `3 × width` for interleaved RGB. Nodes ask the engine (`ctx.samples_per_row()`) rather than reasoning about layout themselves.
 
 Ports are untyped: any output can connect to any input. Conversions are always explicit nodes the user places,
 in the spirit of Substance Designer.
+
+**Tags are advisory.** Each `Layout` carries a `Tag`, worked out when the graph compiles: the signal's **kind**
+(video, audio or unknown), what its **channels** are (mono, stereo, RGB, or just numbered), which **part** of a
+whole it is (one channel, one frequency band) and its nominal **range** (`0..1`, `-1..1` or unknown). Tags colour
+wires and produce compile warnings, such as "expects values from -1 to 1, got 0 to 1" on a gate fed video. They
+never stop processing and never convert anything: RGB into a stereo effect just runs as interleaved samples. Each
+output port has a tag rule (`OutputSpec::tag`): most effects pass their main input's tag on, conversions set the
+kind and range, and nodes that set a range from their parameters (generators, Clamp, Remap, Offset) work it out
+themselves. Level-based nodes (Gate, Compressor, Limiter, Distortion) declare the range they're designed for
+(`NodeSpec::expects`). **Relabel** rewrites a tag on purpose, without touching the samples.
 
 ### Rate Matching
 
@@ -208,7 +221,7 @@ node runs, one frame block at a time.
 
 Every node has an **interpolation** setting for this resampling, available on all nodes:
 
-- **Hold** (default): each source sample is repeated. A mono modulator stretched across interleaved RGB affects R, G and B of one pixel equally.
+- **Hold** (default): each source sample is repeated.
 - **Linear**: smooth ramps between source samples. Ramps stop at the block edge rather than reading into the next frame.
 - More modes (e.g. smoothed) can be added later.
 
@@ -358,7 +371,7 @@ Working examples live in [`examples/graphs/`](../examples/graphs): `am_bands` (t
 The reference for every node (ports, parameters with defaults, ranges and units, modulation) is
 [`nodes.md`](nodes.md). It is generated from the node definitions by `cargo xtask docs`, and CI fails if it is out
 of date. Roughly: inputs (`video_input`, `audio_input`), the `output`, channel structure (`split`, `combine`,
-`interleave`, `pack`), range conversion (`to_audio`, `to_video`) and effects (`three_band`, `am`, `delay`,
+`interleave`, `pack`, `stretch`), conversion (`to_audio`, `to_video`, `relabel`) and effects (`three_band`, `am`, `delay`,
 `bitcrush`, `lowpass`, `compressor`, `gate`, `distortion`).
 
 **Range conversion and the bugged mapping.** `to_audio` and `to_video` model writing to and reading from an 8-bit
@@ -377,19 +390,31 @@ resolution.
 `?` marks optional inputs. Audio inputs read the project's audio track named by `source`; a track that doesn't
 exist reads as silence.
 
-Every node also has two shared settings:
+Every node also has these shared settings:
 
 - **`interpolation`** (shown as *Resampling*: `hold` or `linear`): how secondary inputs are stretched or shrunk
   to the main input's length.
-- **`channels`** (`together` or `separate`, effects only): with `separate`, an RGB signal is split into R, G and
-  B, each processed by its own copy of the node (with its own state), and recombined. Exactly equivalent to
-  Split → three nodes → Combine, without the wiring. Modulation inputs are shared by all three channels.
+- **`grouping`** (`pixels` or `samples`): how a one-channel secondary input is spread over a main input with
+  several channels. With `pixels` (the default) each source sample covers whole pixels, so a mono modulator
+  moves a pixel's R, G and B (or L and R) together; with `samples` it is spread over every value. The **Stretch
+  to Match** node does the same stretch on purpose, so the stretched signal itself can go on.
+- **`channels`** (`together` or `separate`, effects only): with `separate`, an interleaved signal (RGB, stereo,
+  any channel count) is split into its channels, each processed by its own copy of the node (with its own state,
+  and identical settings), and recombined. Exactly equivalent to Split Channels → one node per channel → Combine
+  Channels, without the wiring. Modulation inputs are shared by all channels. Units stay the same: a row is a
+  row of the picture either way. On a node that can't run per channel, or on a one-channel signal, it falls back
+  to `together` with a warning.
+
+**Split and Combine Channels** take any number of channels (up to 8). Split has one output per channel of its
+input (`c1`, `c2`, …; the editor names them R, G, B or L, R from the input's tag); Combine makes one channel per
+input up to the last one connected, so two mono audio signals make stereo and three video channels make RGB.
+Graphs written for the RGB-only versions (ports `r`, `g`, `b`) load with their ports renamed.
 
 **Channels and interleaving.** An RGB signal *is* the interleaved stream R, G, B, R, G, B, …, and effects process
 it sample by sample. That is [Approach 1](#core-concept): a low pass on RGB bleeds each channel into the next, and a
 *modulated* delay on RGB resamples the stream, scrambling channels into rainbow noise. For clean spatial effects
 such as bass-driven waves, `split` first and process each channel ([Approach 2](#core-concept)). `interleave` and
-`pack` don't change any samples; they relabel RGB as one 3×-wide mono carrier and back. The difference shows
+`pack` don't change any samples; they relabel RGB (or any channel count) as one 3×-wide mono carrier and back. The difference shows
 in rate matching: a mono modulator moves a pixel's R, G and B together on an RGB signal, but varies across them on
 the packed carrier.
 
@@ -515,12 +540,16 @@ rendered and cached by the engine on its render thread.
     duplicates it.
   - Wire thickness follows the RMS level of the signal at the playhead, so modulation is visible: a kick drum
     through a band split shows as the bass wire pulsing.
-  - Wire colour shows what a wire carries, from each output's `PortHint`. A wire has a base colour for its
-    kind (video neutral, audio teal) and, if it carries part of a signal, a second colour for that part: red,
-    green or blue from Split, low, mid or high from Three-Band Split. Effects keep the colours of their main
+  - Wire colour shows what a wire carries, from the tag the last compile gave each output (before that, from
+    the output's tag rule). A wire has a base colour for its kind (video neutral, audio teal) and, if it carries
+    part of a signal, a second colour for that part: red, green or blue, or left or right, from Split Channels;
+    low, mid or high from Three-Band Split. Effects keep the colours of their main
     input, so a delay on the red channel is still red video; Video to Audio turns it into red audio. View →
     Wires picks how the two show: solid (the part's colour, or the kind's), outlined (the kind's colour
     outlined in the part's) or gradient (the part's colour down the centre, fading to the kind's at the edges).
+  - Compile warnings (a signal whose tag doesn't suit the node, say) show as a badge on the node, with the
+    message in its tooltip and in the inspector, which also lists what each output carries. They never stop
+    the render.
   - When the graph can't render, a bar along the bottom of the graph says why and outlines the node at fault in
     red; clicking the bar shows the node.
   - Moving or renaming nodes doesn't re-render; any other edit does.

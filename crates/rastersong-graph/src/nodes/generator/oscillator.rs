@@ -2,7 +2,7 @@ use std::f64::consts::TAU;
 
 use crate::nodes::{Category, FreqUnit, GeneratorLayout, NodeKind, NodeSpec, SampleClock};
 use crate::{Layout, LayoutContext, Node, OutputSpec, ParamSpec, Params, PrepareContext};
-use crate::{ProcessContext, Signal};
+use crate::{ProcessContext, Range, Signal};
 
 choice! {
     /// The shape of one cycle.
@@ -158,7 +158,8 @@ impl NodeKind for Oscillator {
 
 impl Node for Oscillator {
     fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
-        self.layout.output_layouts(ctx)
+        self.layout
+            .output_layouts(ctx, Range::from_bounds(f64::from(self.offset - self.amplitude.abs()), f64::from(self.offset + self.amplitude.abs())))
     }
 
     fn prepare(&mut self, ctx: &PrepareContext) {

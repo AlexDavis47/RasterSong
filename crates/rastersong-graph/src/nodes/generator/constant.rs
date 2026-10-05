@@ -1,6 +1,6 @@
 use crate::nodes::{Category, GeneratorLayout, NodeKind, NodeSpec};
 use crate::{Layout, LayoutContext, Node, OutputSpec, ParamSpec, Params};
-use crate::{ProcessContext, Signal};
+use crate::{ProcessContext, Range, Signal};
 
 /// The same value in every sample. As video it is a flat colour (0 black, 1 white); as audio it is
 /// silence at 0 or a DC offset. Unconnected inputs read one with the value 0.
@@ -38,7 +38,11 @@ impl NodeKind for Constant {
 
 impl Node for Constant {
     fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
-        self.layout.output_layouts(ctx)
+        let nominal = self.layout.nominal();
+        let value = f64::from(self.value);
+        let fits = nominal.bounds().is_some_and(|(lo, hi)| (lo..=hi).contains(&value));
+        let range = if fits { nominal } else { Range::from_bounds(value, value) };
+        self.layout.output_layouts(ctx, range)
     }
 
     fn process(&mut self, ctx: &ProcessContext, _inputs: &[&Signal], outputs: &mut [Signal]) {

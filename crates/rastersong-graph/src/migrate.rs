@@ -52,6 +52,48 @@ struct RenamedParam {
 
 const RENAMED_PARAMS: &[RenamedParam] = &[];
 
+/// An input or output port that changed its name, on a node type that keeps its name.
+struct RenamedPort {
+    kind: &'static str,
+    old: &'static str,
+    new: &'static str,
+}
+
+/// Split and Combine were RGB only, with ports `r`, `g` and `b`; they now take any number of
+/// channels, numbered.
+const RENAMED_PORTS: &[RenamedPort] = &[
+    RenamedPort {
+        kind: "split",
+        old: "r",
+        new: "c1",
+    },
+    RenamedPort {
+        kind: "split",
+        old: "g",
+        new: "c2",
+    },
+    RenamedPort {
+        kind: "split",
+        old: "b",
+        new: "c3",
+    },
+    RenamedPort {
+        kind: "combine",
+        old: "r",
+        new: "c1",
+    },
+    RenamedPort {
+        kind: "combine",
+        old: "g",
+        new: "c2",
+    },
+    RenamedPort {
+        kind: "combine",
+        old: "b",
+        new: "c3",
+    },
+];
+
 /// A choice parameter whose option was renamed, on a node type that keeps its name.
 struct RenamedChoice {
     kind: &'static str,
@@ -126,6 +168,7 @@ impl GraphDesc {
     pub fn upgrade(&mut self) {
         self.rename_kinds(RENAMED_KINDS);
         self.rename_params(RENAMED_PARAMS);
+        self.rename_ports(RENAMED_PORTS);
         self.rename_choices(RENAMED_CHOICES);
         self.convert_modulation_inputs(MODULATION_INPUTS);
         self.upgrade_modulation(Registry::shared());
@@ -189,6 +232,27 @@ impl GraphDesc {
                 for c in &mut self.connections {
                     if c.to == format!("{}.@{}", node.id, r.old) {
                         c.to = format!("{}.@{}", node.id, r.new);
+                    }
+                }
+            }
+        }
+    }
+
+    fn rename_ports(&mut self, renames: &[RenamedPort]) {
+        for r in renames {
+            let ids: Vec<String> = self
+                .nodes
+                .iter()
+                .filter(|n| n.kind == r.kind)
+                .map(|n| n.id.clone())
+                .collect();
+            for id in ids {
+                let old = format!("{id}.{}", r.old);
+                for c in &mut self.connections {
+                    for end in [&mut c.from, &mut c.to] {
+                        if *end == old {
+                            *end = format!("{id}.{}", r.new);
+                        }
                     }
                 }
             }
@@ -320,6 +384,33 @@ mod tests {
         assert_eq!(unit(&graph, "o"), text("Hertz"));
         assert_eq!(unit(&graph, "e"), text("Row"));
         assert_eq!(unit(&graph, "d"), text("rows"));
+        let once = graph.clone();
+        graph.upgrade();
+        assert_eq!(graph, once);
+    }
+
+    #[test]
+    fn rgb_split_and_combine_ports_are_numbered() {
+        let mut graph = GraphDesc::from_json(
+            r#"{ "version": 2,
+                "nodes": [
+                    { "id": "s", "type": "split" },
+                    { "id": "c", "type": "combine" },
+                    { "id": "d", "type": "delay" }
+                ],
+                "connections": [
+                    { "from": "s.b", "to": "c.r" },
+                    { "from": "s.r", "to": "d" },
+                    { "from": "d", "to": "c.g" }
+                ] }"#,
+        )
+        .unwrap();
+        let ends: Vec<(&str, &str)> = graph
+            .connections
+            .iter()
+            .map(|c| (c.from.as_str(), c.to.as_str()))
+            .collect();
+        assert_eq!(ends, [("s.c3", "c.c1"), ("s.c1", "d"), ("d", "c.c2")]);
         let once = graph.clone();
         graph.upgrade();
         assert_eq!(graph, once);

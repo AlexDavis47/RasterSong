@@ -82,7 +82,8 @@ impl NodeKind for Distortion {
     const SPEC: NodeSpec = NodeSpec::new("Distortion", Category::Effect)
         .describe("Drives the signal into a waveshaper: soft, hard, folding or wrapping")
         .params(Self::PARAMS)
-        .per_channel();
+        .per_channel()
+        .expects(crate::Range::Bipolar);
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "shape": "soft", "drive": 18 }"#,
         r#"{ "shape": "hard", "drive": 30, "bias": -0.2 }"#,

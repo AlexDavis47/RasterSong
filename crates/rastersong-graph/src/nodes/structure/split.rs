@@ -1,22 +1,35 @@
-use crate::nodes::support::expect_rgb;
-use crate::nodes::{Category, NodeKind, NodeSpec};
+use crate::nodes::{CHANNEL_PORTS, Category, MAX_CHANNELS, NodeKind, NodeSpec, SPLIT};
 use crate::{
-    InputSpec, Layout, LayoutContext, Node, OutputSpec, Params, PortHint, ProcessContext, Signal,
+    InputSpec, Layout, LayoutContext, Node, OutputSpec, Params, Part, ProcessContext, Signal,
+    TagRule,
 };
 
-/// RGB → separate R, G and B signals.
+/// An interleaved signal → one signal per channel: R, G and B of video, L and R of stereo, or
+/// any other channels. Has as many outputs as the input has channels (up to
+/// [`MAX_CHANNELS`]); the editor names them from the input's tag.
 #[derive(Debug)]
 pub struct Split;
 
+const fn channel(name: &'static str, help: &'static str) -> OutputSpec {
+    // A split-off channel is a part of the whole; which one comes from the input's tag.
+    OutputSpec::new(name, help).tag(TagRule::INHERIT)
+}
+
 impl NodeKind for Split {
-    const KIND: &'static str = "split";
-    const SPEC: NodeSpec = NodeSpec::new("Split", Category::Structure)
-        .describe("RGB into separate R, G and B signals")
-        .inputs(&[InputSpec::required("in", "RGB video to take apart")])
+    const KIND: &'static str = SPLIT;
+    const SPEC: NodeSpec = NodeSpec::new("Split Channels", Category::Structure)
+        .describe("Each channel of an interleaved signal on its own: R, G, B of video or L, R of stereo")
+        .doc("One output per channel of the input: three for RGB video, two for stereo audio. Outputs past the input's channel count carry silence.")
+        .inputs(&[InputSpec::required("in", "The interleaved signal to take apart")])
         .outputs(&[
-            OutputSpec::new("r", "The red channel").hint(PortHint::Red),
-            OutputSpec::new("g", "The green channel").hint(PortHint::Green),
-            OutputSpec::new("b", "The blue channel").hint(PortHint::Blue),
+            channel(CHANNEL_PORTS[0], "Channel 1: red, or left"),
+            channel(CHANNEL_PORTS[1], "Channel 2: green, or right"),
+            channel(CHANNEL_PORTS[2], "Channel 3: blue"),
+            channel(CHANNEL_PORTS[3], "Channel 4"),
+            channel(CHANNEL_PORTS[4], "Channel 5"),
+            channel(CHANNEL_PORTS[5], "Channel 6"),
+            channel(CHANNEL_PORTS[6], "Channel 7"),
+            channel(CHANNEL_PORTS[7], "Channel 8"),
         ]);
 
     fn new(_: &Params) -> Result<Self, String> {
@@ -27,39 +40,99 @@ impl NodeKind for Split {
 impl Node for Split {
     fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
         let input = ctx.inputs[0];
-        expect_rgb(input)?;
-        Ok(vec![Layout::mono(input.width, input.height); 3])
+        let channels = input.samples_per_pixel as usize;
+        Ok((0..ctx.output_count)
+            .map(|c| {
+                let mut layout = input.reshaped(input.width, input.height, 1);
+                layout.tag.part = if c < channels {
+                    input.tag.channel_part(c)
+                } else {
+                    Part::Whole
+                };
+                layout
+            })
+            .collect())
+    }
+
+    fn diagnostics(&self, ctx: &LayoutContext) -> Vec<String> {
+        let channels = ctx.inputs[0].samples_per_pixel as usize;
+        match channels {
+            1 => vec!["the input has one channel, so only c1 carries it".into()],
+            n if n > MAX_CHANNELS => vec![format!(
+                "the input has {n} channels; only the first {MAX_CHANNELS} are split off"
+            )],
+            _ => Vec::new(),
+        }
     }
 
     fn process(&mut self, _ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
-        let [r, g, b] = outputs else { unreachable!() };
-        for (i, pixel) in inputs[0].data.as_chunks::<3>().0.iter().enumerate() {
-            r.data[i] = pixel[0];
-            g.data[i] = pixel[1];
-            b.data[i] = pixel[2];
+        let input = inputs[0];
+        let channels = input.layout.samples_per_pixel.max(1) as usize;
+        for (c, output) in outputs.iter_mut().enumerate() {
+            if c < channels {
+                for (out, &x) in output
+                    .data
+                    .iter_mut()
+                    .zip(input.data.iter().skip(c).step_by(channels))
+                {
+                    *out = x;
+                }
+            } else {
+                output.data.fill(0.0);
+            }
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{Layout, Registry, Signal};
+    use std::collections::HashMap;
+
+    use crate::nodes::MAX_CHANNELS;
+    use crate::{Layout, LayoutContext, Part, ProcessContext, Registry, Signal};
+
+    fn split(input: &Signal) -> Vec<Signal> {
+        let mut node = Registry::shared().create("split", &Default::default()).unwrap().unwrap();
+        let sources = HashMap::new();
+        let layouts = node
+            .output_layouts(&LayoutContext {
+                inputs: &[input.layout],
+                connected: &[true],
+                sources: &sources,
+                output: input.layout,
+                output_count: MAX_CHANNELS,
+            })
+            .unwrap();
+        let mut outputs: Vec<Signal> = layouts.into_iter().map(Signal::zeros).collect();
+        let ctx = ProcessContext {
+            frame: 0,
+            frame_rate: 1.0,
+            sources: &HashMap::<String, Signal>::new(),
+            params: &[],
+        };
+        node.process(&ctx, &[input], &mut outputs);
+        outputs
+    }
 
     #[test]
     fn separates_the_channels_of_each_pixel() {
-        let registry = Registry::shared();
-        let mut node = registry.create("split", &Default::default()).unwrap().unwrap();
-        let input = Signal::from_data(Layout::rgb(2, 1), vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6]);
-        let mut outputs = vec![Signal::zeros(Layout::mono(2, 1)); 3];
-        let ctx = crate::ProcessContext {
-            frame: 0,
-            frame_rate: 1.0,
-            sources: &std::collections::HashMap::<String, Signal>::new(),
-            params: &[],
-        };
-        node.process(&ctx, &[&input], &mut outputs);
+        let input = Signal::from_data(Layout::video(2, 1), vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6]);
+        let outputs = split(&input);
         assert_eq!(outputs[0].data, [0.1, 0.4]);
         assert_eq!(outputs[1].data, [0.2, 0.5]);
         assert_eq!(outputs[2].data, [0.3, 0.6]);
+        assert_eq!(outputs[3].data, [0.0, 0.0]);
+        assert_eq!(outputs[1].layout.tag.part, Part::Green);
+        assert_eq!(outputs[0].layout.samples_per_pixel, 1);
+    }
+
+    #[test]
+    fn splits_stereo_into_left_and_right() {
+        let input = Signal::from_data(Layout::audio_channels(3, 2), vec![1., -1., 2., -2., 3., -3.]);
+        let outputs = split(&input);
+        assert_eq!(outputs[0].data, [1.0, 2.0, 3.0]);
+        assert_eq!(outputs[1].data, [-1.0, -2.0, -3.0]);
+        assert_eq!(outputs[0].layout.tag.part, Part::Left);
+        assert_eq!(outputs[1].layout.tag.part, Part::Right);
     }
 }

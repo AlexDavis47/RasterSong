@@ -1,5 +1,5 @@
 use crate::nodes::{Category, NodeKind, NodeSpec};
-use crate::{Node, ParamSpec, Params, ProcessContext, Signal};
+use crate::{Layout, LayoutContext, Node, ParamSpec, Params, ProcessContext, Range, Signal};
 
 /// Adds a constant to the signal. Stateless.
 #[derive(Debug)]
@@ -38,6 +38,16 @@ impl NodeKind for Offset {
 }
 
 impl Node for Offset {
+    fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
+        // The input's nominal range moves with the offset.
+        let mut layout = ctx.inputs[0];
+        if let Some((lo, hi)) = layout.tag.range.bounds() {
+            let amount = f64::from(self.amount);
+            layout.tag.range = Range::from_bounds(lo + amount, hi + amount);
+        }
+        Ok(vec![layout])
+    }
+
     fn process(&mut self, ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
         let amount = ctx.value(Self::AMOUNT, f64::from(self.amount));
         for (i, (out, &x)) in outputs[0].data.iter_mut().zip(&inputs[0].data).enumerate() {

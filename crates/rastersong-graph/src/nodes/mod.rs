@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 pub use support::{FreqUnit, GeneratorLayout, SampleClock, TimeUnit};
 
 use crate::graph::{MAX_INPUTS, MAX_PARAMS};
-use crate::{InputSpec, Node, OutputSpec, ParamSpec, ParamValue, Params, PortHint};
+use crate::{InputSpec, Node, OutputSpec, ParamSpec, ParamValue, Params, Range, TagRule};
 
 /// The node type name of the graph's output node.
 pub const OUTPUT: &str = "output";
@@ -29,6 +29,13 @@ pub const DEFAULT_VIDEO: &str = "video";
 pub const DEFAULT_AUDIO: &str = "audio";
 /// The parameter of both input nodes that names the host signal they read.
 pub const SOURCE_PARAM: &str = "source";
+/// The node type names of the channel splitter and combiner, whose port counts follow the signal.
+pub const SPLIT: &str = "split";
+pub const COMBINE: &str = "combine";
+/// Most channels Split and Combine handle.
+pub const MAX_CHANNELS: usize = 8;
+/// The port names of Split's outputs and Combine's inputs, one per channel.
+pub const CHANNEL_PORTS: [&str; MAX_CHANNELS] = ["c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8"];
 
 /// Declares every built-in node: `category { file: [Types], … }`, one line per node file under
 /// `nodes/<category>/`. Generates the modules, the re-exports and [`Registry::default`].
@@ -75,10 +82,12 @@ nodes! {
         pack: [Pack],
         flip: [Flip],
         resample: [Resample],
+        stretch: [Stretch],
     },
     convert {
         to_audio: [ToAudio],
         to_video: [ToVideo],
+        relabel: [Relabel],
     },
     effect {
         three_band: [ThreeBand],
@@ -174,11 +183,15 @@ pub struct NodeSpec {
     pub params: &'static [ParamSpec],
     /// Input ports. The first is the main input. Source nodes have none.
     pub inputs: &'static [InputSpec],
-    /// Output ports, in order. Each carries what its [`PortHint`] says.
+    /// Output ports, in order. Each output's tag is set by its [`TagRule`].
     pub outputs: &'static [OutputSpec],
-    /// Whether the node can process R, G and B separately ([`crate::Channels::Separate`]).
-    /// True for effects, whose output has the same layout as their main input.
+    /// Whether the node can process each channel of an interleaved signal separately
+    /// ([`crate::Channels::Separate`]). True for effects, whose output has the same layout as
+    /// their main input.
     pub per_channel: bool,
+    /// The range the node is designed for on its main input (level thresholds in dB assume
+    /// audio's `-1..1`). Another known range only produces a compile warning.
+    pub expects: Range,
 }
 
 impl NodeSpec {
@@ -193,11 +206,17 @@ impl NodeSpec {
             inputs: MAIN_INPUT,
             outputs: MAIN_OUTPUT,
             per_channel: false,
+            expects: Range::Unknown,
         }
     }
 
     pub const fn per_channel(mut self) -> Self {
         self.per_channel = true;
+        self
+    }
+
+    pub const fn expects(mut self, range: Range) -> Self {
+        self.expects = range;
         self
     }
 
@@ -281,12 +300,12 @@ pub struct NodeType {
 }
 
 impl NodeType {
-    /// What output `index` carries.
-    pub fn output_hint(&self, index: usize) -> PortHint {
+    /// How output `index`'s tag is set.
+    pub fn output_tag(&self, index: usize) -> TagRule {
         self.spec
             .outputs
             .get(index)
-            .map_or(PortHint::Inherit, |o| o.hint)
+            .map_or(TagRule::INHERIT, |o| o.tag)
     }
 }
 
@@ -550,12 +569,11 @@ mod tests {
         assert_eq!(delay.spec.outputs[0].name, "out");
         let split = registry.get("split").unwrap();
         let names: Vec<_> = split.spec.outputs.iter().map(|o| o.name).collect();
-        assert_eq!(names, ["r", "g", "b"]);
-        assert_eq!(split.output_hint(1), PortHint::Green);
-        assert_eq!(delay.output_hint(0), PortHint::Inherit);
+        assert_eq!(names, CHANNEL_PORTS);
+        assert_eq!(delay.output_tag(0), TagRule::INHERIT);
         assert_eq!(
-            registry.get(AUDIO_INPUT).unwrap().output_hint(0),
-            PortHint::Audio
+            registry.get(AUDIO_INPUT).unwrap().output_tag(0),
+            TagRule::AUDIO
         );
         assert!(registry.get("nope").is_none());
     }

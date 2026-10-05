@@ -103,7 +103,8 @@ impl NodeKind for Compressor {
                 "A signal whose level drives the compression instead of the input's own",
             ),
         ])
-        .per_channel();
+        .per_channel()
+        .expects(crate::Range::Bipolar);
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "threshold": -12, "ratio": 6, "attack": 2, "release": 20 }"#,
         r#"{ "threshold": -30, "knee": 0, "makeup": 6 }"#,

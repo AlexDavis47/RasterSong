@@ -271,8 +271,8 @@ fn failures_name_the_node_at_fault() {
     let engine = engine();
     load(
         &engine,
-        r#"{ "version": 1, "nodes": [ { "id": "v", "type": "video_input" }, { "id": "c", "type": "combine" }, { "id": "o", "type": "output" } ],
-            "connections": [ { "from": "v", "to": "c.r" }, { "from": "v", "to": "c.g" }, { "from": "v", "to": "c.b" }, { "from": "c", "to": "o" } ] }"#,
+        r#"{ "version": 1, "nodes": [ { "id": "v", "type": "video_input" }, { "id": "c", "type": "pack", "params": { "channels": 7 } }, { "id": "o", "type": "output" } ],
+            "connections": [ { "from": "v", "to": "c" }, { "from": "c", "to": "o" } ] }"#,
     );
     wait_until("the failure", || {
         matches!(engine.status(), EngineStatus::Failed(_))

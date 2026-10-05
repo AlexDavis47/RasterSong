@@ -97,7 +97,8 @@ impl NodeKind for Gate {
                 "A signal whose level opens the gate instead of the input's own",
             ),
         ])
-        .per_channel();
+        .per_channel()
+        .expects(crate::Range::Bipolar);
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "threshold": -12, "hold": 5, "release": 10 }"#,
         r#"{ "threshold": -6, "range": -20, "attack": 3 }"#,

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{Layout, Signal};
+use crate::{Layout, Signal, TagRule};
 
 /// An input port. The first input of a node is its **main input**: it defines the node's output
 /// length and layout, and every other input is resampled to its length before `process`.
@@ -37,8 +37,10 @@ pub struct OutputSpec {
     pub name: &'static str,
     /// One sentence for tooltips and the generated reference.
     pub help: &'static str,
-    /// What the output carries, so editors can colour its wire.
-    pub hint: PortHint,
+    /// How the output's [`crate::Tag`] is set from what the node produced. Whatever the rule
+    /// leaves open comes from the node (by default its main input), so a delay on the red channel
+    /// is still red video.
+    pub tag: TagRule,
 }
 
 impl OutputSpec {
@@ -47,40 +49,14 @@ impl OutputSpec {
         Self {
             name,
             help,
-            hint: PortHint::Inherit,
+            tag: TagRule::INHERIT,
         }
     }
 
-    pub const fn hint(mut self, hint: PortHint) -> Self {
-        self.hint = hint;
+    pub const fn tag(mut self, tag: TagRule) -> Self {
+        self.tag = tag;
         self
     }
-}
-
-/// What an output carries, so editors can colour its wires. Rendering never looks at it.
-///
-/// A wire has a **kind** (video or audio) and may have a **part** of a signal: a colour channel
-/// or a frequency band. Hints set one or both; whatever a hint leaves open comes from the node's
-/// main input, so a delay on the red channel is still red video.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PortHint {
-    /// Everything from the main input (most effects).
-    Inherit,
-    /// Whole RGB video.
-    Rgb,
-    /// One channel of video.
-    Red,
-    Green,
-    Blue,
-    /// Whole audio.
-    Audio,
-    /// A frequency band; the kind comes from the main input.
-    Low,
-    Mid,
-    High,
-    /// Converted to audio or video; the part comes from the main input.
-    AsAudio,
-    AsVideo,
 }
 
 /// Named per-frame inputs the host supplies to the graph (decoded video, audio blocks).
@@ -97,9 +73,11 @@ impl Sources for HashMap<String, Signal> {
 /// Context for working out a node's output layouts at compile time.
 #[derive(Debug)]
 pub struct LayoutContext<'a> {
-    /// Layouts of the connected inputs as produced upstream (before rate matching). Unconnected
-    /// optional inputs have the main input's layout.
+    /// Layouts of the connected inputs as produced upstream (before rate matching), tags
+    /// included. Unconnected optional inputs have the main input's layout.
     pub inputs: &'a [Layout],
+    /// Which inputs are connected.
+    pub connected: &'a [bool],
     /// Layouts of the named sources the host will supply.
     pub sources: &'a HashMap<String, Layout>,
     /// The layout the graph's output must have.
@@ -318,10 +296,21 @@ pub trait Node: Send {
         None
     }
 
-    /// Output layouts for the given inputs, or an error message if the inputs don't fit this node.
-    /// The default passes the main input's layout through.
+    /// Output layouts for the given inputs, or an error message if the inputs can't be processed
+    /// at all. The default passes the main input's layout, tag included, through.
+    ///
+    /// The tag is advisory: never fail because of it (see [`Self::diagnostics`]). Nodes that
+    /// change the shape use [`Layout::reshaped`] to keep the tag; nodes that set a range (a
+    /// conversion, a clamp, a generator) write it here.
     fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
         Ok(vec![ctx.inputs[0]; ctx.output_count])
+    }
+
+    /// Warnings about the inputs that don't stop processing, such as a signal whose tag doesn't
+    /// match what the node is meant for.
+    fn diagnostics(&self, ctx: &LayoutContext) -> Vec<String> {
+        let _ = ctx;
+        Vec::new()
     }
 
     /// Called once the graph is compiled and all layouts are known. Allocate buffers here.

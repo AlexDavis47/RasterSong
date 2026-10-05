@@ -1,6 +1,6 @@
 use crate::nodes::{Category, GeneratorLayout, NodeKind, NodeSpec, SampleClock};
 use crate::{Layout, LayoutContext, Node, OutputSpec, ParamSpec, Params, PrepareContext};
-use crate::{ProcessContext, Signal};
+use crate::{ProcessContext, Range, Signal};
 
 choice! {
     /// The span the shape repeats over.
@@ -142,7 +142,7 @@ impl Beat {
 
 impl Node for Beat {
     fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
-        self.layout.output_layouts(ctx)
+        self.layout.output_layouts(ctx, Range::Unipolar)
     }
 
     fn prepare(&mut self, ctx: &PrepareContext) {

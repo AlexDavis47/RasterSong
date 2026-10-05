@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 
-use rastersong_graph::{GraphDesc, NodeStats, Registry, Tempo, render_form};
+use rastersong_graph::{CompileOptions, GraphDesc, NodeStats, Registry, Tempo, render_form};
 use rastersong_media::{AudioClip, AudioOptions, MediaBackend};
 
 use crate::cache::{CacheKey, Frame, FrameCache};
@@ -208,6 +208,8 @@ struct State {
     loaded: Vec<LoadedTrack>,
     /// What each node of the current graph costs, once it has compiled.
     node_stats: Vec<NodeStats>,
+    /// What the last graph that compiled was compiled against.
+    compile_options: Option<CompileOptions>,
     /// Bumped on every change, so the worker knows when to look again.
     changes: u64,
     shutdown: bool,
@@ -250,6 +252,7 @@ impl Engine {
                 info: None,
                 loaded: Vec::new(),
                 node_stats: Vec::new(),
+                compile_options: None,
                 changes: 0,
                 shutdown: false,
             }),
@@ -389,6 +392,13 @@ impl Engine {
     /// don't feed the output aren't listed.
     pub fn node_stats(&self) -> Vec<NodeStats> {
         lock(&self.shared.state).node_stats.clone()
+    }
+
+    /// The sources, frame rate, tempo and output size the last graph that compiled was
+    /// compiled against, for inspecting the edited graph ([`rastersong_graph::Graph::inspect`]).
+    /// Kept when a later graph fails to compile.
+    pub fn compile_options(&self) -> Option<CompileOptions> {
+        lock(&self.shared.state).compile_options.clone()
     }
 
     /// The decoded audio tracks, once loaded.
@@ -620,6 +630,7 @@ impl Worker {
                 state.status = EngineStatus::Ready;
                 state.info = Some(*renderer.info());
                 state.node_stats = renderer.node_stats().to_vec();
+                state.compile_options = Some(renderer.compile_options().clone());
                 self.built = Some(Built { key, renderer });
                 self.failed_at = None;
             }

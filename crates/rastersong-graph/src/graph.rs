@@ -3,14 +3,14 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::desc::{Channels, Connection, GraphDesc, Interpolation, Modulation, NodeDesc};
+use crate::desc::{Channels, Connection, GraphDesc, Grouping, Interpolation, Modulation, NodeDesc};
 use crate::dsp::{DelayLine, resample};
 use crate::nodes::support::MAX_WARMUP_FRAMES;
 use crate::nodes::{OUTPUT, Registry, VIDEO_INPUT};
 
 use crate::{
     GraphError, InputSpec, Layout, LayoutContext, Node, OutputSpec, ParamSpec, ParamValue,
-    PrepareContext, ProcessContext, Signal, Sources, Tempo,
+    PrepareContext, ProcessContext, Range, Signal, Sources, Tag, Tempo,
 };
 
 /// The node type that fills unconnected inputs.
@@ -30,7 +30,7 @@ const LEVEL_SAMPLES: usize = 4096;
 static EMPTY_SIGNAL: Signal = Signal::EMPTY;
 
 /// What the host tells the compiler about the render.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CompileOptions {
     pub frame_rate: f64,
     /// The project's tempo, for beat and bar units.
@@ -59,7 +59,8 @@ pub struct ParamLevel {
     pub value: f32,
 }
 
-/// What one node costs: how late its output is and how long it needs to settle.
+/// What compiling found out about one node: what it costs (how late its output is and how long it
+/// needs to settle), what its signals are, and anything worth warning about.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NodeStats {
     pub node: Arc<str>,
@@ -70,6 +71,19 @@ pub struct NodeStats {
     /// Whether the warmup reached [`MAX_WARMUP_FRAMES`], the most the host will render before a
     /// seek, so the node's output right after a seek may not match a render from the start.
     pub warmup_truncated: bool,
+    /// The layouts (and tags) of the node's inputs as they arrive, before rate matching.
+    pub inputs: Vec<Layout>,
+    /// The layouts (and tags) of the node's outputs.
+    pub outputs: Vec<Layout>,
+    /// Warnings that didn't stop the graph from compiling.
+    pub diagnostics: Vec<String>,
+}
+
+/// A compile warning about one node. Never stops processing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Diagnostic {
+    pub node: Arc<str>,
+    pub message: String,
 }
 
 /// A compiled graph, ready to process frames in order.
@@ -280,7 +294,12 @@ struct Pending {
     integer: Vec<bool>,
     node: Box<dyn Node>,
     interpolation: Interpolation,
+    grouping: Grouping,
     channels: Channels,
+    /// Whether the node type can run one copy per channel.
+    per_channel: bool,
+    /// The range the node type is designed for on its main input.
+    expects: Range,
     /// For each input port, the connected (node, output port).
     wires: Vec<Option<(usize, usize)>>,
     /// For each parameter, the (node, output port) modulating it.
@@ -336,6 +355,63 @@ impl Graph {
         Ok(compiler.finish())
     }
 
+    /// The layouts, tags and warnings of **every** node, including those that don't feed the
+    /// output, without building anything that processes. For editors, which want to show what a
+    /// node carries as soon as its input is connected. Latency and warmup are left at zero.
+    /// Nodes that can't be worked out (a shape a node rejects, a cycle, or anything downstream
+    /// of one) are left out; a graph that can't be read at all gives nothing.
+    pub fn inspect(
+        desc: &GraphDesc,
+        registry: &Registry,
+        options: &CompileOptions,
+    ) -> Vec<NodeStats> {
+        let bypassed = apply_bypass(desc, registry);
+        let desc = bypassed.as_ref().unwrap_or(desc);
+        let filled = fill_missing_inputs(desc, registry);
+        let desc = filled.as_ref().unwrap_or(desc);
+        let Ok(mut pending) = create_nodes(desc, registry) else {
+            return Vec::new();
+        };
+        if connect(desc, &mut pending).is_err() {
+            return Vec::new();
+        }
+        // Every node after its inputs; nodes in a cycle are left out.
+        let mut order = Vec::new();
+        let mut seen = vec![false; pending.len()];
+        for root in 0..pending.len() {
+            for n in schedule(&pending, root).unwrap_or_default() {
+                if !std::mem::replace(&mut seen[n], true) {
+                    order.push(n);
+                }
+            }
+        }
+
+        let mut compiler = Compiler::new(registry, options, pending, usize::MAX);
+        let mut stats = Vec::new();
+        for n in order {
+            let p = &compiler.pending[n];
+            if p.sources()
+                .any(|&(src, _)| compiler.layouts[src].is_empty())
+            {
+                continue;
+            }
+            let Ok(shape) = compiler.shape(n) else {
+                continue;
+            };
+            stats.push(NodeStats {
+                node: p.id.as_str().into(),
+                latency_frames: 0.0,
+                warmup_frames: 0,
+                warmup_truncated: false,
+                inputs: shape.input_layouts,
+                outputs: shape.output_layouts.clone(),
+                diagnostics: shape.diagnostics,
+            });
+            compiler.layouts[n] = shape.output_layouts;
+        }
+        stats
+    }
+
     /// Frames between a source frame going in and its result coming out of [`Self::process`].
     /// The host renders this many extra frames and drops the first ones.
     pub fn latency_frames(&self) -> u32 {
@@ -348,9 +424,22 @@ impl Graph {
         self.warmup_frames
     }
 
-    /// Each node's own latency and warmup, in the order they run.
+    /// Each node's own latency, warmup, signals and warnings, in the order they run.
     pub fn node_stats(&self) -> &[NodeStats] {
         &self.node_stats
+    }
+
+    /// Every compile warning, in the order the nodes run.
+    pub fn diagnostics(&self) -> Vec<Diagnostic> {
+        self.node_stats
+            .iter()
+            .flat_map(|s| {
+                s.diagnostics.iter().map(|message| Diagnostic {
+                    node: s.node.clone(),
+                    message: message.clone(),
+                })
+            })
+            .collect()
     }
 
     pub fn output_layout(&self) -> Layout {
@@ -407,7 +496,7 @@ impl Graph {
     pub fn process(&mut self, frame: u64, sources: &dyn Sources) -> Result<&Signal, GraphError> {
         for (name, layout) in &self.sources {
             match sources.get(name) {
-                Some(s) if s.layout == *layout && s.data.len() == layout.len() => {}
+                Some(s) if s.layout.same_shape(layout) && s.data.len() == layout.len() => {}
                 Some(s) => {
                     return Err(GraphError::Source {
                         name: name.clone(),
@@ -483,6 +572,8 @@ struct NodeShape {
     node_outputs: Vec<Layout>,
     /// Layouts of the step's outputs (interleaved again when channels are split).
     output_layouts: Vec<Layout>,
+    /// Warnings about the node's inputs and settings.
+    diagnostics: Vec<String>,
 }
 
 /// Compiles pending nodes into steps one at a time, in schedule order. Each step passes through
@@ -591,7 +682,8 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
-    /// Phase 1: the layouts the node and its inputs have.
+    /// Phase 1: the layouts (and tags) the node and its inputs have, and what's worth warning
+    /// about. Tags never fail a compile; only shapes a node can't process do.
     fn shape(&self, n: usize) -> Result<NodeShape, GraphError> {
         let p = &self.pending[n];
         let main = p.wires.first().map(|w| {
@@ -603,58 +695,103 @@ impl<'a> Compiler<'a> {
             .iter()
             .map(|w| w.map_or(main.unwrap(), |(src, port)| self.layouts[src][port]))
             .collect();
+        let connected: Vec<bool> = p.wires.iter().map(Option::is_some).collect();
+        let mut diagnostics = Vec::new();
+        let outputs_for = |inputs: &[Layout]| {
+            p.node
+                .output_layouts(&LayoutContext {
+                    inputs,
+                    connected: &connected,
+                    sources: &self.options.sources,
+                    output: self.options.output,
+                    output_count: p.outputs.len(),
+                })
+                .map_err(|message| self.node_error(n, message))
+                .inspect(|layouts| {
+                    assert_eq!(
+                        layouts.len(),
+                        p.outputs.len(),
+                        "node `{}` returned the wrong number of layouts",
+                        p.id
+                    );
+                })
+        };
 
         // Separate channels: one node per channel of the main input, each seeing a mono
         // signal. Every input reaches each copy as that one channel.
-        let channels = match (p.channels, main) {
-            (Channels::Separate, Some(main)) if main.samples_per_pixel > 1 => {
-                let per_channel = self
-                    .registry
-                    .get(&p.kind)
-                    .is_some_and(|t| t.spec.per_channel);
-                if !per_channel {
-                    return Err(self.node_error(n, "can't process channels separately".into()));
-                }
-                main.samples_per_pixel as usize
-            }
-            _ => 1,
-        };
-        let channel_layout = main.map(|m| {
-            if channels > 1 {
-                Layout::mono(m.width, m.height)
+        let mut separate = None;
+        if let (Channels::Separate, Some(main)) = (p.channels, main) {
+            if main.samples_per_pixel <= 1 {
+                diagnostics.push(
+                    "channels are set to separate, but the main input has one channel".into(),
+                );
+            } else if !p.per_channel {
+                diagnostics.push(
+                    "this node can't process channels separately, so they're processed together"
+                        .into(),
+                );
             } else {
-                m
+                let mut channel = main.reshaped(main.width, main.height, 1);
+                channel.tag.part = main.tag.part;
+                let node_outputs = outputs_for(&vec![channel; p.wires.len()])?;
+                if node_outputs.iter().all(|l| l.same_shape(&channel)) {
+                    separate = Some((main.samples_per_pixel as usize, channel, node_outputs));
+                } else {
+                    diagnostics.push(
+                        "this node changes the signal's shape, so channels are processed together"
+                            .into(),
+                    );
+                }
             }
-        });
+        }
 
-        let node_inputs = if channels > 1 {
-            vec![channel_layout.unwrap(); p.wires.len()]
-        } else {
-            input_layouts.clone()
+        let (channels, channel_layout, node_outputs, raw_outputs) = match separate {
+            Some((channels, channel, node_outputs)) => {
+                // Interleaved again: the main input's shape and channels, carrying what each
+                // copy's output is.
+                let main = main.unwrap();
+                let outputs = node_outputs
+                    .iter()
+                    .map(|l| {
+                        main.with_tag(Tag {
+                            channels: main.tag.channels,
+                            ..l.tag
+                        })
+                    })
+                    .collect();
+                (channels, Some(channel), node_outputs, outputs)
+            }
+            None => {
+                let outputs = outputs_for(&input_layouts)?;
+                (1, main, outputs.clone(), outputs)
+            }
         };
-        let node_outputs = p
-            .node
-            .output_layouts(&LayoutContext {
-                inputs: &node_inputs,
+        let output_layouts: Vec<Layout> = raw_outputs
+            .into_iter()
+            .zip(p.outputs)
+            .map(|(layout, spec)| {
+                layout.with_tag(spec.tag.apply(layout.tag, layout.samples_per_pixel))
+            })
+            .collect();
+
+        if let Some(main) = main {
+            let got = main.tag.range;
+            if p.expects != Range::Unknown && got != Range::Unknown && got != p.expects {
+                diagnostics.push(format!(
+                    "expects values from {}, got {}",
+                    p.expects.label().unwrap_or_default(),
+                    got.label().unwrap_or_default()
+                ));
+            }
+            diagnostics.extend(p.node.diagnostics(&LayoutContext {
+                inputs: &input_layouts,
+                connected: &connected,
                 sources: &self.options.sources,
                 output: self.options.output,
                 output_count: p.outputs.len(),
-            })
-            .map_err(|message| self.node_error(n, message))?;
-        assert_eq!(
-            node_outputs.len(),
-            p.outputs.len(),
-            "node `{}` returned the wrong number of layouts",
-            p.id
-        );
-        let output_layouts = if channels > 1 {
-            if node_outputs.iter().any(|&l| Some(l) != channel_layout) {
-                return Err(self.node_error(n, "can't process channels separately".into()));
-            }
-            vec![main.unwrap(); node_outputs.len()]
-        } else {
-            node_outputs.clone()
-        };
+            }));
+        }
+
         // A node without inputs measures its signals against its own output.
         let reference = main.unwrap_or_else(|| output_layouts[0]);
         Ok(NodeShape {
@@ -664,6 +801,7 @@ impl<'a> Compiler<'a> {
             channel_layout,
             node_outputs,
             output_layouts,
+            diagnostics,
         })
     }
 
@@ -724,6 +862,9 @@ impl<'a> Compiler<'a> {
             latency_frames: own_latency,
             warmup_frames: warmup,
             warmup_truncated: warmup >= MAX_WARMUP_FRAMES,
+            inputs: shape.input_layouts.clone(),
+            outputs: shape.output_layouts.clone(),
+            diagnostics: shape.diagnostics.clone(),
         });
         if let Some(name) = node.source() {
             self.sources
@@ -758,6 +899,7 @@ impl<'a> Compiler<'a> {
         wire: Option<(usize, usize)>,
         src_layout: Layout,
         secondary: bool,
+        grouping: Grouping,
     ) -> InputBinding {
         let compensation = wire.and_then(|(src, _)| {
             let delay = ((aligned - self.latency[src]) * src_layout.len() as f64).round() as usize;
@@ -765,7 +907,10 @@ impl<'a> Compiler<'a> {
         });
         let needs_resampling =
             secondary && (wire.is_none() || src_layout.len() != shape.reference.len());
-        let group = if src_layout.samples_per_pixel == 1 && shape.reference.samples_per_pixel > 1 {
+        let group = if grouping == Grouping::Pixels
+            && src_layout.samples_per_pixel == 1
+            && shape.reference.samples_per_pixel > 1
+        {
             shape.reference.samples_per_pixel as usize
         } else {
             1
@@ -780,11 +925,12 @@ impl<'a> Compiler<'a> {
 
     /// Phase 4a: the node's inputs. Every one but the main input is resampled to its length.
     fn bind_inputs(&self, n: usize, shape: &NodeShape, aligned: f64) -> Vec<InputBinding> {
+        let grouping = self.pending[n].grouping;
         self.pending[n]
             .wires
             .iter()
             .enumerate()
-            .map(|(k, &w)| self.binding(shape, aligned, w, shape.input_layouts[k], k > 0))
+            .map(|(k, &w)| self.binding(shape, aligned, w, shape.input_layouts[k], k > 0, grouping))
             .collect()
     }
 
@@ -805,6 +951,7 @@ impl<'a> Compiler<'a> {
                         Some((src, port)),
                         self.layouts[src][port],
                         true,
+                        p.grouping,
                     ),
                     base,
                     modulation,
@@ -903,7 +1050,10 @@ fn create_nodes(desc: &GraphDesc, registry: &Registry) -> Result<Vec<Pending>, G
             param_wires: vec![None; specs.len()],
             node,
             interpolation: d.interpolation,
+            grouping: d.grouping,
             channels: d.channels,
+            per_channel: spec.per_channel,
+            expects: spec.expects,
         });
     }
     Ok(pending)
@@ -1119,6 +1269,7 @@ fn fill_missing_inputs(desc: &GraphDesc, registry: &Registry) -> Option<GraphDes
                 kind: CONSTANT.to_owned(),
                 params: BTreeMap::new(),
                 interpolation: Interpolation::default(),
+                grouping: Grouping::default(),
                 channels: Channels::default(),
                 bypass: false,
                 label: None,

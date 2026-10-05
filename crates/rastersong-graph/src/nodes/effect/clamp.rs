@@ -1,5 +1,5 @@
 use crate::nodes::{Category, NodeKind, NodeSpec};
-use crate::{Node, ParamSpec, Params, ProcessContext, Signal};
+use crate::{Layout, LayoutContext, Node, ParamSpec, Params, ProcessContext, Range, Signal};
 
 /// Limits every sample to a range. Stateless.
 #[derive(Debug)]
@@ -39,6 +39,18 @@ impl NodeKind for Clamp {
 }
 
 impl Node for Clamp {
+    fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
+        // What survives is the clamp range, narrowed by the input's nominal range.
+        let mut layout = ctx.inputs[0];
+        let (mut lo, mut hi) = (f64::from(self.min), f64::from(self.max));
+        if let Some((in_lo, in_hi)) = layout.tag.range.bounds() {
+            lo = lo.max(in_lo);
+            hi = hi.min(in_hi);
+        }
+        layout.tag.range = Range::from_bounds(lo, hi.max(lo));
+        Ok(vec![layout])
+    }
+
     fn process(&mut self, ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
         let min = ctx.value(Self::MIN, f64::from(self.min));
         let max = ctx.value(Self::MAX, f64::from(self.max));

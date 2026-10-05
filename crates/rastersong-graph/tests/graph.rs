@@ -57,13 +57,14 @@ fn passthrough_returns_the_video() {
     let mut graph = compile(PASSTHROUGH).unwrap();
     let input = sources(|i| i as f32 / 100.0, |_| 0.0);
     let out = graph.process(0, &input).unwrap();
-    assert_eq!(out.layout, Layout::rgb(W, H));
+    assert!(out.layout.same_shape(&Layout::rgb(W, H)));
     assert_eq!(out.data, input["video"].data);
     assert_eq!(graph.latency_frames(), 0);
 }
 
 #[test]
 fn split_and_combine_round_trip_with_swapped_channels() {
+    // Written with the old RGB port names, which load as numbered channels.
     let json = graph_json(
         r#"{ "id": "video", "type": "video_input" }, { "id": "split", "type": "split" },
            { "id": "combine", "type": "combine" }, { "id": "out", "type": "output" }"#,
@@ -242,10 +243,10 @@ fn reports_graph_errors() {
             |e| matches!(e, GraphError::Cycle(_)),
         ),
         (
-            // Combine expects mono inputs.
-            r#"{ "id": "v", "type": "video_input" }, { "id": "c", "type": "combine" }, { "id": "o", "type": "output" }"#,
-            r#"{ "from": "v", "to": "c.r" }, { "from": "v", "to": "c.g" }, { "from": "v", "to": "c.b" }, { "from": "c", "to": "o" }"#,
-            |e| matches!(e, GraphError::Node { node, .. } if node == "c"),
+            // Pack needs rows that divide into whole pixels: 12 samples into pixels of 5.
+            r#"{ "id": "v", "type": "video_input" }, { "id": "p", "type": "pack", "params": { "channels": 5 } }, { "id": "o", "type": "output" }"#,
+            r#"{ "from": "v", "to": "p" }, { "from": "p", "to": "o" }"#,
+            |e| matches!(e, GraphError::Node { node, .. } if node == "p"),
         ),
         (
             // Output must match the project size.
@@ -353,9 +354,9 @@ fn separate_channels_match_splitting_by_hand() {
            { "id": "b", "type": "lowpass", "params": { "cutoff": 0.7, "depth": 1 } },
            { "id": "out", "type": "output" }"#,
         r#"{ "from": "video", "to": "split" },
-           { "from": "split.r", "to": "r" }, { "from": "split.g", "to": "g" }, { "from": "split.b", "to": "b" },
+           { "from": "split.c1", "to": "r" }, { "from": "split.c2", "to": "g" }, { "from": "split.c3", "to": "b" },
            { "from": "audio", "to": "r.modulation" }, { "from": "audio", "to": "g.modulation" }, { "from": "audio", "to": "b.modulation" },
-           { "from": "r", "to": "combine.r" }, { "from": "g", "to": "combine.g" }, { "from": "b", "to": "combine.b" },
+           { "from": "r", "to": "combine.c1" }, { "from": "g", "to": "combine.c2" }, { "from": "b", "to": "combine.c3" },
            { "from": "combine", "to": "out" }"#,
     );
     let together = separate.replace(r#", "channels": "separate""#, "");
@@ -382,13 +383,224 @@ fn separate_channels_match_splitting_by_hand() {
 }
 
 #[test]
-fn separate_channels_need_a_per_channel_node() {
+fn separate_channels_on_a_node_that_cant_fall_back_to_together_with_a_warning() {
     let json = graph_json(
         r#"{ "id": "v", "type": "video_input" }, { "id": "s", "type": "interleave", "channels": "separate" },
            { "id": "p", "type": "pack" }, { "id": "o", "type": "output" }"#,
         r#"{ "from": "v", "to": "s" }, { "from": "s", "to": "p" }, { "from": "p", "to": "o" }"#,
     );
-    assert!(matches!(compile(&json), Err(GraphError::Node { node, .. }) if node == "s"));
+    let mut graph = compile(&json).unwrap();
+    let warnings = graph.diagnostics();
+    assert!(
+        warnings
+            .iter()
+            .any(|d| &*d.node == "s" && d.message.contains("together")),
+        "{warnings:?}"
+    );
+    let input = sources(|i| i as f32, |_| 0.0);
+    assert_eq!(graph.process(0, &input).unwrap().data, input["video"].data);
+}
+
+#[test]
+fn separate_channels_on_a_mono_signal_is_a_warning() {
+    let json = graph_json(
+        r#"{ "id": "a", "type": "audio_input" }, { "id": "d", "type": "delay", "channels": "separate" },
+           { "id": "v", "type": "video_input" }, { "id": "am", "type": "am" }, { "id": "o", "type": "output" }"#,
+        r#"{ "from": "a", "to": "d" }, { "from": "v", "to": "am.carrier" }, { "from": "d", "to": "am.modulator" },
+           { "from": "am", "to": "o" }"#,
+    );
+    let graph = compile(&json).unwrap();
+    assert!(graph.diagnostics().iter().any(|d| &*d.node == "d"));
+}
+
+/// The compiled tag of `node`'s output `port`.
+fn tag_of(graph: &Graph, node: &str, port: usize) -> rastersong_graph::Tag {
+    graph
+        .node_stats()
+        .iter()
+        .find(|s| &*s.node == node)
+        .unwrap_or_else(|| panic!("no node `{node}`"))
+        .outputs[port]
+        .tag
+}
+
+#[test]
+fn tags_follow_the_signal_through_the_graph() {
+    use rastersong_graph::{ChannelMap, Kind, Part, Range};
+    let json = graph_json(
+        r#"{ "id": "video", "type": "video_input" }, { "id": "split", "type": "split" },
+           { "id": "d", "type": "delay" }, { "id": "audio", "type": "to_audio" },
+           { "id": "combine", "type": "combine" }, { "id": "back", "type": "to_video" },
+           { "id": "out", "type": "output" }"#,
+        r#"{ "from": "video", "to": "split" }, { "from": "split.c2", "to": "d" },
+           { "from": "d", "to": "audio" }, { "from": "audio", "to": "combine.c1" },
+           { "from": "split.c1", "to": "combine.c2" }, { "from": "split.c3", "to": "combine.c3" },
+           { "from": "combine", "to": "back" }, { "from": "back", "to": "out" }"#,
+    );
+    let graph = compile(&json).unwrap();
+    let video = tag_of(&graph, "video", 0);
+    assert_eq!(
+        (video.kind, video.channels, video.range),
+        (Kind::Video, ChannelMap::Rgb, Range::Unipolar)
+    );
+    // A delay on the green channel is still green video.
+    let green = tag_of(&graph, "d", 0);
+    assert_eq!(
+        (green.kind, green.part, green.channels),
+        (Kind::Video, Part::Green, ChannelMap::Mono)
+    );
+    // Converted to audio: the part stays, the kind and range change.
+    let audio = tag_of(&graph, "audio", 0);
+    assert_eq!(
+        (audio.kind, audio.part, audio.range),
+        (Kind::Audio, Part::Green, Range::Bipolar)
+    );
+    // Three audio channels combined aren't RGB.
+    let combined = tag_of(&graph, "combine", 0);
+    assert_eq!(
+        (combined.kind, combined.channels, combined.part),
+        (Kind::Audio, ChannelMap::Numbered, Part::Whole)
+    );
+    assert_eq!(tag_of(&graph, "back", 0).channels, ChannelMap::Rgb);
+}
+
+#[test]
+fn range_mismatches_are_warnings_not_errors() {
+    // A gate expects audio's -1 to 1; video's 0 to 1 still renders, with a warning.
+    let json = graph_json(
+        r#"{ "id": "video", "type": "video_input" }, { "id": "g", "type": "gate" },
+           { "id": "out", "type": "output" }"#,
+        r#"{ "from": "video", "to": "g" }, { "from": "g", "to": "out" }"#,
+    );
+    let mut graph = compile(&json).unwrap();
+    let warnings = graph.diagnostics();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert_eq!(&*warnings[0].node, "g");
+    assert!(
+        warnings[0].message.contains("-1 to 1"),
+        "{}",
+        warnings[0].message
+    );
+    assert!(graph.process(0, &sources(|_| 0.5, |_| 0.0)).is_ok());
+    // Audio into the output is shown, with a warning on the output.
+    let json = graph_json(
+        r#"{ "id": "video", "type": "video_input" }, { "id": "a", "type": "to_audio" },
+           { "id": "out", "type": "output" }"#,
+        r#"{ "from": "video", "to": "a" }, { "from": "a", "to": "out" }"#,
+    );
+    let graph = compile(&json).unwrap();
+    assert!(graph.diagnostics().iter().any(|d| &*d.node == "out"));
+    // A clean graph has none.
+    assert!(compile(PASSTHROUGH).unwrap().diagnostics().is_empty());
+}
+
+/// Options with stereo audio of `frames` frames.
+fn stereo_options(frames: u32) -> CompileOptions {
+    let mut options = options();
+    options
+        .sources
+        .insert("audio".into(), Layout::audio_channels(frames, 2));
+    options
+}
+
+#[test]
+fn stereo_splits_into_left_and_right_and_combines_back() {
+    use rastersong_graph::Part;
+    // Swap left and right through Split and Combine, with 20 dB (ten times) on the left only.
+    let json = graph_json(
+        r#"{ "id": "audio", "type": "audio_input" }, { "id": "split", "type": "split" },
+           { "id": "gain", "type": "gain", "params": { "gain": 20 } }, { "id": "combine", "type": "combine" },
+           { "id": "v", "type": "video_input" }, { "id": "am", "type": "am" }, { "id": "out", "type": "output" }"#,
+        r#"{ "from": "audio", "to": "split" }, { "from": "split.c1", "to": "gain" },
+           { "from": "split.c2", "to": "combine.c1" }, { "from": "gain", "to": "combine.c2" },
+           { "from": "v", "to": "am.carrier" }, { "from": "combine", "to": "am.modulator" }, { "from": "am", "to": "out" }"#,
+    );
+    let mut graph = Graph::compile(
+        &GraphDesc::from_json(&json).unwrap(),
+        &Registry::default(),
+        &stereo_options(3),
+    )
+    .unwrap();
+    assert_eq!(tag_of(&graph, "split", 0).part, Part::Left);
+    assert_eq!(tag_of(&graph, "split", 1).part, Part::Right);
+    let combined = graph
+        .node_stats()
+        .iter()
+        .find(|s| &*s.node == "combine")
+        .unwrap()
+        .outputs[0];
+    assert!(combined.same_shape(&Layout::audio_channels(3, 2)));
+    let audio = Signal::from_data(
+        Layout::audio_channels(3, 2),
+        vec![1., -1., 2., -2., 3., -3.],
+    );
+    let mut input = sources(|_| 0.0, |_| 0.0);
+    input.insert("audio".into(), audio);
+    graph.process(0, &input).unwrap();
+    // The combined signal's level: right (-1, -2, -3) then left ten times (10, 20, 30).
+    let level = graph
+        .levels()
+        .into_iter()
+        .find(|l| &*l.node == "combine")
+        .unwrap()
+        .rms;
+    let expected = ((14.0 + 1400.0) / 6.0f32).sqrt();
+    assert!((level - expected).abs() < 1e-5, "{level} vs {expected}");
+}
+
+#[test]
+fn separate_channels_work_on_stereo() {
+    // A one-sample delay per channel delays each of L and R by one frame of the pair.
+    let json = |channels: &str| {
+        graph_json(
+            &format!(
+                r#"{{ "id": "audio", "type": "audio_input" }},
+                   {{ "id": "d", "type": "delay", "params": {{ "time": 1, "unit": "rows" }}, "channels": "{channels}" }},
+                   {{ "id": "v", "type": "video_input" }}, {{ "id": "am", "type": "am" }}, {{ "id": "out", "type": "output" }}"#
+            ),
+            r#"{ "from": "audio", "to": "d" }, { "from": "v", "to": "am.carrier" },
+               { "from": "d", "to": "am.modulator" }, { "from": "am", "to": "out" }"#,
+        )
+    };
+    let graph = Graph::compile(
+        &GraphDesc::from_json(&json("separate")).unwrap(),
+        &Registry::default(),
+        &stereo_options(4),
+    )
+    .unwrap();
+    assert!(graph.diagnostics().is_empty(), "{:?}", graph.diagnostics());
+    // One row of a stereo block is its whole length, so either way it's a one-frame delay.
+    let stats = graph.node_stats().iter().find(|s| &*s.node == "d").unwrap();
+    assert!(stats.outputs[0].same_shape(&Layout::audio_channels(4, 2)));
+}
+
+#[test]
+fn grouping_chooses_how_mono_spreads_over_channels() {
+    // 5 audio samples over 8 RGB pixels: grouped by pixel, a pixel's channels match; spread over
+    // samples, they differ.
+    let json = |grouping: &str| {
+        graph_json(
+            &format!(
+                r#"{{ "id": "video", "type": "video_input" }}, {{ "id": "audio", "type": "audio_input" }},
+                   {{ "id": "s", "type": "stretch", "grouping": "{grouping}" }}, {{ "id": "out", "type": "output" }}"#
+            ),
+            r#"{ "from": "video", "to": "s.like" }, { "from": "audio", "to": "s.in" }, { "from": "s", "to": "out" }"#,
+        )
+    };
+    let input = sources(|_| 0.0, |i| i as f32);
+    let mut pixels = compile(&json("pixels")).unwrap();
+    let out = pixels.process(0, &input).unwrap().data.clone();
+    assert!(
+        out.chunks(3).all(|p| p[0] == p[1] && p[1] == p[2]),
+        "{out:?}"
+    );
+    assert_eq!(out[..6], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+    let mut samples = compile(&json("samples")).unwrap();
+    let out = samples.process(0, &input).unwrap().data.clone();
+    assert!(out.chunks(3).any(|p| p[0] != p[2]), "{out:?}");
+    // The stretched signal is still audio, at the picture's size: the output warns about it.
+    let graph = compile(&json("pixels")).unwrap();
+    assert_eq!(tag_of(&graph, "s", 0).kind, rastersong_graph::Kind::Audio);
 }
 
 #[test]
@@ -552,7 +764,7 @@ fn nodes_without_inputs_get_their_layout_from_the_host_and_can_be_modulated() {
     );
     let mut graph = compile_with(&plain, &registry).unwrap();
     let out = graph.process(0, &sources(|_| 0.0, |_| 0.0)).unwrap();
-    assert_eq!(out.layout, Layout::rgb(W, H));
+    assert!(out.layout.same_shape(&Layout::rgb(W, H)));
     assert!(out.data.iter().all(|&x| x == 0.25));
 
     // A signal connected to the parameter reaches a node that has no main input to measure it by.
@@ -580,7 +792,7 @@ fn generators_take_their_layout_from_the_host_and_draw_stripes() {
     );
     let mut graph = compile(&json).unwrap();
     let out = graph.process(0, &sources(|_| 0.0, |_| 0.0)).unwrap();
-    assert_eq!(out.layout, Layout::rgb(W, H));
+    assert!(out.layout.same_shape(&Layout::rgb(W, H)));
     let row: Vec<f32> = [0.0, 0.25, 0.5, 0.75]
         .into_iter()
         .flat_map(|v| [v; 3])
@@ -701,4 +913,62 @@ fn integer_needs_a_number_parameter() {
         r#"{ "from": "video", "to": "d" }, { "from": "d", "to": "out" }"#,
     );
     assert!(compile(&json).is_err());
+}
+
+#[test]
+fn time_units_mean_the_same_together_and_separate() {
+    // One row of RGB is 3 × W samples together and W per channel separately: either way a
+    // one-row delay moves the picture down by exactly one row.
+    let json = |channels: &str| {
+        graph_json(
+            &format!(
+                r#"{{ "id": "video", "type": "video_input" }},
+                   {{ "id": "d", "type": "delay", "params": {{ "time": 1, "unit": "rows" }}, "channels": "{channels}" }},
+                   {{ "id": "out", "type": "output" }}"#
+            ),
+            r#"{ "from": "video", "to": "d" }, { "from": "d", "to": "out" }"#,
+        )
+    };
+    let (mut together, mut separate) = (
+        compile(&json("together")).unwrap(),
+        compile(&json("separate")).unwrap(),
+    );
+    let row = (W * 3) as usize;
+    for n in 0..3 {
+        let input = sources(move |i| ((i + n * 7) % 11) as f32 / 10.0, |_| 0.0);
+        let a = together.process(n as u64, &input).unwrap().data.clone();
+        let b = separate.process(n as u64, &input).unwrap().data.clone();
+        assert_eq!(a, b, "frame {n}");
+        if n > 0 {
+            // Row 1 of this frame is row 0 of the same frame's input.
+            assert_eq!(a[row..2 * row], input["video"].data[..row]);
+        }
+    }
+}
+
+#[test]
+fn inspect_covers_nodes_that_dont_feed_the_output() {
+    use rastersong_graph::Part;
+    // A Split of stereo audio with nothing plugged into it, a node downstream of a failure,
+    // and the plain video-to-output chain.
+    let json = graph_json(
+        r#"{ "id": "video", "type": "video_input" }, { "id": "audio", "type": "audio_input" },
+           { "id": "split", "type": "split" }, { "id": "bad", "type": "pack", "params": { "channels": 7 } },
+           { "id": "after", "type": "delay" }, { "id": "out", "type": "output" }"#,
+        r#"{ "from": "audio", "to": "split" }, { "from": "video", "to": "bad" },
+           { "from": "bad", "to": "after" }, { "from": "video", "to": "out" }"#,
+    );
+    let stats = Graph::inspect(
+        &GraphDesc::from_json(&json).unwrap(),
+        &Registry::default(),
+        &stereo_options(4),
+    );
+    let of = |id: &str| stats.iter().find(|s| &*s.node == id);
+    let split = of("split").expect("the orphan split is inspected");
+    assert_eq!(split.inputs[0].samples_per_pixel, 2);
+    assert_eq!(split.outputs[0].tag.part, Part::Left);
+    assert_eq!(split.outputs[1].tag.part, Part::Right);
+    assert!(of("out").is_some());
+    // Pack can't make pixels of 7 channels, so it and what follows are left out.
+    assert!(of("bad").is_none() && of("after").is_none());
 }

@@ -1,7 +1,7 @@
 //! Helpers shared by several nodes: unit conversion and warmup.
 
 use crate::nodes::{DEFAULT_AUDIO, DEFAULT_VIDEO};
-use crate::{Layout, LayoutContext, PrepareContext, ProcessContext};
+use crate::{Layout, LayoutContext, PrepareContext, ProcessContext, Range, Tag};
 
 choice! {
     /// A unit of time for user-facing parameters. Rows and frames look the same at any
@@ -94,15 +94,27 @@ impl GeneratorLayout {
         "video makes a signal shaped like the video (RGB, rows); audio makes one shaped like the audio track",
     );
 
-    /// The layout of the host signal this choice names.
-    pub fn output_layouts(self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
-        let name = match self {
-            Self::Video => DEFAULT_VIDEO,
-            Self::Audio => DEFAULT_AUDIO,
+    /// The range of the host signal this choice names: what a generator's values usually mean.
+    pub fn nominal(self) -> Range {
+        match self {
+            Self::Video => Range::Unipolar,
+            Self::Audio => Range::Bipolar,
+        }
+    }
+
+    /// The shape of the host signal this choice names, tagged as that kind with the generator's
+    /// `range`.
+    pub fn output_layouts(self, ctx: &LayoutContext, range: Range) -> Result<Vec<Layout>, String> {
+        let (name, tag) = match self {
+            Self::Video => (DEFAULT_VIDEO, Tag::VIDEO),
+            Self::Audio => (DEFAULT_AUDIO, Tag::AUDIO),
         };
+        let tag = Tag { range, ..tag };
         ctx.sources
             .get(name)
-            .map(|&layout| vec![layout; ctx.output_count])
+            .map(|&layout| {
+                vec![layout.with_tag(tag.fit(layout.samples_per_pixel)); ctx.output_count]
+            })
             .ok_or_else(|| format!("the host provides no `{name}` source to take a layout from"))
     }
 }
@@ -183,15 +195,6 @@ pub const SIGNED_MAX: f32 = 127.0 / 128.0;
 /// the top half to the bottom. Its own inverse for samples in `-1..1`.
 pub fn flip_sign_bit(a: f32) -> f32 {
     if a < 0.0 { a + 1.0 } else { a - 1.0 }
-}
-
-/// Fails unless `layout` is an RGB signal.
-pub fn expect_rgb(layout: crate::Layout) -> Result<(), String> {
-    if layout.samples_per_pixel == 3 {
-        Ok(())
-    } else {
-        Err(format!("expects an RGB signal, got {layout}"))
-    }
 }
 
 #[cfg(test)]

@@ -125,3 +125,60 @@ fn latency_is_compensated_across_seeks() {
         assert_eq!(frame[0], expected, "frame {i}");
     }
 }
+
+#[test]
+fn stereo_tracks_reach_the_graph_interleaved() {
+    use std::path::Path;
+    use std::sync::Arc;
+
+    use rastersong_engine::sources::Modulator;
+    use rastersong_engine::{AudioClip, AudioTrack, ChannelMap, GraphDesc, Kind, Renderer};
+
+    // Left is a constant 0.5, right -0.5; the graph splits off the right and shows its level.
+    let clip = AudioClip {
+        sample_rate: 9000,
+        channels: 2,
+        samples: [0.5, -0.5].repeat(9000 * 3),
+    };
+    let graph = r#"{ "version": 2,
+      "nodes": [
+        { "id": "video", "type": "video_input" }, { "id": "audio", "type": "audio_input" },
+        { "id": "split", "type": "split" }, { "id": "am", "type": "am" }, { "id": "out", "type": "output" }
+      ],
+      "connections": [
+        { "from": "audio", "to": "split" }, { "from": "video", "to": "am.carrier" },
+        { "from": "split.c2", "to": "am.modulator" }, { "from": "am", "to": "out" }
+      ] }"#;
+    let mut r = Renderer::new(
+        &common::backend(),
+        Path::new(common::VIDEO),
+        &[AudioTrack {
+            name: "audio".into(),
+            modulator: Arc::new(Modulator::new(&clip)),
+            offset: 0.0,
+        }],
+        &GraphDesc::from_json(graph).unwrap(),
+        Default::default(),
+        &Registry::default(),
+        OutputSize::Native,
+    )
+    .unwrap();
+    let audio = &r
+        .node_stats()
+        .iter()
+        .find(|s| &*s.node == "audio")
+        .unwrap()
+        .outputs[0];
+    assert_eq!(audio.samples_per_pixel, 2);
+    assert_eq!(
+        (audio.tag.kind, audio.tag.channels),
+        (Kind::Audio, ChannelMap::Stereo)
+    );
+    r.render(10, &|| false).unwrap();
+    let right = r
+        .levels()
+        .into_iter()
+        .find(|l| &*l.node == "split" && l.output == 1)
+        .unwrap();
+    assert!((right.rms - 0.5).abs() < 1e-6, "{}", right.rms);
+}

@@ -2,7 +2,7 @@ use crate::dsp::Biquad;
 use crate::nodes::support::MAX_WARMUP_FRAMES;
 use crate::nodes::{Category, FreqUnit, NodeKind, NodeSpec};
 use crate::{
-    Node, OutputSpec, ParamSpec, Params, PortHint, PrepareContext, ProcessContext, Signal,
+    Node, OutputSpec, ParamSpec, Params, Part, PrepareContext, ProcessContext, Signal, TagRule,
 };
 
 /// Splits a signal into low, mid and high bands. Crossovers are in Hz of the input signal's own
@@ -49,9 +49,9 @@ impl NodeKind for ThreeBand {
         .describe("Low, mid and high frequency bands that add back up to the input")
         .params(Self::PARAMS)
         .outputs(&[
-            OutputSpec::new("low", "Everything below the low crossover").hint(PortHint::Low),
-            OutputSpec::new("mid", "What is left between the crossovers").hint(PortHint::Mid),
-            OutputSpec::new("high", "Everything above the high crossover").hint(PortHint::High),
+            OutputSpec::new("low", "Everything below the low crossover").tag(TagRule::INHERIT.part(Part::Low)),
+            OutputSpec::new("mid", "What is left between the crossovers").tag(TagRule::INHERIT.part(Part::Mid)),
+            OutputSpec::new("high", "Everything above the high crossover").tag(TagRule::INHERIT.part(Part::High)),
         ])
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[

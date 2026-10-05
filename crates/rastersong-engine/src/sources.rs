@@ -1,6 +1,6 @@
 //! Turning decoded media into the graph's per-frame source signals.
 
-use rastersong_graph::Signal;
+use rastersong_graph::{Layout, Signal};
 use rastersong_media::{AudioClip, VideoFrame};
 
 /// Decoded RGB8 → video signal in `0.0..=1.0`.
@@ -21,79 +21,106 @@ pub fn to_rgb8(signal: &Signal, out: &mut Vec<u8>) {
     );
 }
 
-/// A mono modulator, sampled per frame.
+/// An audio track as the graph reads it, sampled per frame. Channels stay interleaved as decoded
+/// (L, R, L, R, … for stereo): nothing is downmixed, so a graph that wants mono sums or splits
+/// the channels itself.
 #[derive(Debug, Clone)]
 pub struct Modulator {
+    /// Interleaved samples, `channels` per frame of audio.
     samples: Vec<f32>,
+    channels: usize,
     sample_rate: f64,
 }
 
 impl Modulator {
-    /// Downmixes `clip` to mono by averaging its channels.
     pub fn new(clip: &AudioClip) -> Self {
         let channels = clip.channels.max(1) as usize;
-        let samples = clip
-            .samples
-            .chunks_exact(channels)
-            .map(|frame| frame.iter().sum::<f32>() / channels as f32)
-            .collect();
+        let whole = clip.samples.len() / channels * channels;
         Self {
-            samples,
+            samples: clip.samples[..whole].to_vec(),
+            channels,
             sample_rate: f64::from(clip.sample_rate),
         }
     }
 
-    /// No audio: the modulator is silence.
+    /// No audio: the modulator is mono silence.
     pub fn silent() -> Self {
         Self {
             samples: Vec::new(),
+            channels: 1,
             sample_rate: 48_000.0,
         }
     }
 
-    pub fn duration_secs(&self) -> f64 {
-        self.samples.len() as f64 / self.sample_rate
+    /// Channels per frame of audio: 1 for mono, 2 for stereo.
+    pub fn channels(&self) -> u32 {
+        self.channels as u32
     }
 
-    /// Samples per video frame: the modulator block length at this frame rate.
+    /// Frames of audio (one sample per channel each).
+    fn frames(&self) -> usize {
+        self.samples.len() / self.channels
+    }
+
+    pub fn duration_secs(&self) -> f64 {
+        self.frames() as f64 / self.sample_rate
+    }
+
+    /// Frames of audio per video frame: the modulator block length at this frame rate. A block
+    /// holds this many samples per channel.
     pub fn block_len(&self, frame_rate: f64) -> u32 {
         (self.sample_rate / frame_rate).round().max(1.0) as u32
     }
 
-    /// Fills `out` with the audio between `start` and `end` seconds, resampled to `out.len()`
-    /// samples. Each video frame gets the audio of exactly its own time span, so audio and video
-    /// never drift apart, even when the frame rate doesn't divide the sample rate (or varies).
-    /// Time outside the clip is silence.
+    /// The graph layout of one block at this frame rate.
+    pub fn layout(&self, frame_rate: f64) -> Layout {
+        Layout::audio_channels(self.block_len(frame_rate), self.channels())
+    }
+
+    /// Sample `channel` of audio frame `i`, or silence outside the clip.
+    fn at(&self, i: i64, channel: usize) -> f32 {
+        usize::try_from(i)
+            .ok()
+            .and_then(|i| self.samples.get(i * self.channels + channel))
+            .copied()
+            .unwrap_or(0.0)
+    }
+
+    /// Fills `out` (interleaved, `channels` per frame) with the audio between `start` and `end`
+    /// seconds, resampled to `out.len() / channels` frames. Each video frame gets the audio of
+    /// exactly its own time span, so audio and video never drift apart, even when the frame rate
+    /// doesn't divide the sample rate (or varies). Time outside the clip is silence.
     pub fn fill_block(&self, start: f64, end: f64, out: &mut [f32]) {
-        let n = out.len() as f64;
-        // The block lines up with whole source samples one-to-one: copy them.
+        let channels = self.channels;
+        let n = (out.len() / channels) as f64;
+        // The block lines up with whole source frames one-to-one: copy them.
         let first = start * self.sample_rate;
         let span = (end - start) * self.sample_rate;
         if (span - n).abs() < 1e-6 && (first - first.round()).abs() < 1e-6 {
             let first = first.round() as i64;
-            for (k, out) in out.iter_mut().enumerate() {
-                let i = first + k as i64;
-                *out = usize::try_from(i)
-                    .ok()
-                    .and_then(|i| self.samples.get(i))
-                    .copied()
-                    .unwrap_or(0.0);
+            for (k, frame) in out.chunks_exact_mut(channels).enumerate() {
+                for (c, out) in frame.iter_mut().enumerate() {
+                    *out = self.at(first + k as i64, c);
+                }
             }
             return;
         }
-        let last = self.samples.len() as f64 - 1.0;
-        for (k, out) in out.iter_mut().enumerate() {
+        let last = self.frames() as f64 - 1.0;
+        for (k, frame) in out.chunks_exact_mut(channels).enumerate() {
             let t = start + (k as f64 + 0.5) / n * (end - start);
             let pos = t * self.sample_rate - 0.5;
-            *out = if self.samples.is_empty() || pos < -0.5 || pos > last + 0.5 {
-                0.0
-            } else {
-                let pos = pos.clamp(0.0, last);
-                let i = pos as usize;
-                let frac = (pos - i as f64) as f32;
-                let next = self.samples[(i + 1).min(last as usize)];
-                self.samples[i] + (next - self.samples[i]) * frac
-            };
+            if self.samples.is_empty() || pos < -0.5 || pos > last + 0.5 {
+                frame.fill(0.0);
+                continue;
+            }
+            let pos = pos.clamp(0.0, last);
+            let i = pos as i64;
+            let frac = (pos - i as f64) as f32;
+            let next = (i + 1).min(last as i64);
+            for (c, out) in frame.iter_mut().enumerate() {
+                let (a, b) = (self.at(i, c), self.at(next, c));
+                *out = a + (b - a) * frac;
+            }
         }
     }
 }
@@ -153,17 +180,23 @@ mod tests {
     }
 
     #[test]
-    fn outside_the_clip_is_silence_and_channels_are_averaged() {
+    fn outside_the_clip_is_silence_and_channels_stay_interleaved() {
         let m = Modulator::new(&AudioClip {
             sample_rate: 4,
             channels: 2,
-            samples: vec![1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0],
+            samples: vec![1.0, 0.0, 2.0, -1.0, 3.0, -2.0, 4.0, -3.0],
         });
-        let mut block = [9.0; 4];
+        assert_eq!(m.channels(), 2);
+        assert_eq!(m.layout(2.0), Layout::audio_channels(2, 2));
+        let mut block = [9.0; 8];
         m.fill_block(0.0, 1.0, &mut block);
-        assert_eq!(block, [0.5; 4]);
+        assert_eq!(block, [1.0, 0.0, 2.0, -1.0, 3.0, -2.0, 4.0, -3.0]);
         m.fill_block(5.0, 6.0, &mut block);
-        assert_eq!(block, [0.0; 4]);
+        assert_eq!(block, [0.0; 8]);
+        // Resampled, each channel is interpolated on its own: 4 frames into 2.
+        let mut half = [9.0; 4];
+        m.fill_block(0.0, 1.0, &mut half);
+        assert_eq!(half, [1.5, -0.5, 3.5, -2.5]);
     }
 
     #[test]

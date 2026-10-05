@@ -22,11 +22,14 @@ pub use offline::{FrameSink, RenderSettings, RenderedFrame, render};
 pub use project::{
     LoopRegion, PROJECT_EXTENSION, PROJECT_VERSION, Project, ProjectTrack, TimelineMode,
 };
-pub use rastersong_graph::nodes::{AUDIO_INPUT, OUTPUT, SOURCE_PARAM, VIDEO_INPUT};
+pub use rastersong_graph::nodes::{
+    AUDIO_INPUT, CHANNEL_PORTS, COMBINE, MAX_CHANNELS, OUTPUT, SOURCE_PARAM, SPLIT, VIDEO_INPUT,
+};
 pub use rastersong_graph::{
-    Category, Channels, Connection, FORMAT_VERSION, GraphDesc, GraphError, Interpolation, ModMode,
-    ModScale, Modulation, NodeDesc, NodeStats, NodeType, OutputLevel, OutputSpec, ParamKind,
-    ParamLevel, ParamSpec, ParamValue, PortHint, Registry, Tempo,
+    Category, ChannelMap, Channels, CompileOptions, Connection, Diagnostic, FORMAT_VERSION, Graph,
+    GraphDesc, GraphError, Grouping, Interpolation, Kind, Layout, ModMode, ModScale, Modulation,
+    NodeDesc, NodeStats, NodeType, OutputLevel, OutputSpec, ParamKind, ParamLevel, ParamSpec,
+    ParamValue, Part, Range, Registry, Tag, TagRule, Tempo,
 };
 pub use rastersong_media::{
     AudioClip, AudioOptions, BackendInfo, FakeBackend, FakeVideo, FfmpegBackend, LibraryInfo,

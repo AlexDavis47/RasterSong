@@ -4,7 +4,7 @@ use crate::nodes::{
     AUDIO_INPUT, Category, DEFAULT_AUDIO, DEFAULT_VIDEO, NodeKind, NodeSpec, SOURCE_PARAM,
     VIDEO_INPUT,
 };
-use crate::{Layout, LayoutContext, Node, OutputSpec, ParamSpec, Params, PortHint};
+use crate::{Layout, LayoutContext, Node, OutputSpec, ParamSpec, Params, TagRule};
 use crate::{ProcessContext, Signal};
 
 /// Reads a host-supplied signal by name.
@@ -50,7 +50,7 @@ impl NodeKind for VideoInput {
         .describe("The video as RGB, 0 to 1")
         .params(Self::PARAMS)
         .inputs(&[])
-        .outputs(&[OutputSpec::new("out", "The video, as RGB from 0 to 1").hint(PortHint::Rgb)]);
+        .outputs(&[OutputSpec::new("out", "The video, as RGB from 0 to 1").tag(TagRule::VIDEO)]);
 
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self(Source {
@@ -73,7 +73,8 @@ impl Node for VideoInput {
     }
 }
 
-/// Reads an audio track: one frame's worth of mono samples per block, in `-1..=1`.
+/// Reads an audio track: one frame's worth of samples per block, in `-1..=1`, with the track's
+/// channels interleaved (L, R, L, R, … for stereo).
 #[derive(Debug)]
 pub struct AudioInput(Source);
 
@@ -89,12 +90,12 @@ params! { AudioInput {
 impl NodeKind for AudioInput {
     const KIND: &'static str = AUDIO_INPUT;
     const SPEC: NodeSpec = NodeSpec::new("Audio", Category::Input)
-        .describe("The audio track, one frame's worth per block, -1 to 1")
+        .describe("The audio track, one frame's worth per block, -1 to 1, channels interleaved")
         .params(Self::PARAMS)
         .inputs(&[])
         .outputs(&[
-            OutputSpec::new("out", "The audio, one frame's worth per block, from -1 to 1")
-                .hint(PortHint::Audio),
+            OutputSpec::new("out", "The audio, one frame's worth per block, from -1 to 1; stereo comes as L, R, L, R, …")
+                .tag(TagRule::AUDIO),
         ]);
 
     fn new(params: &Params) -> Result<Self, String> {

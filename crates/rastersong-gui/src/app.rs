@@ -10,9 +10,9 @@ use std::sync::Arc;
 use eframe::egui::{self, Color32, CornerRadius, Margin, RichText, Ui, UiBuilder};
 use rastersong_engine::playback::{MixTrack, Mixer};
 use rastersong_engine::{
-    AudioTrackSpec, BackendInfo, Engine, EngineConfig, EngineStatus, Frame, GraphDesc,
-    MediaBackend, PROJECT_EXTENSION, PlaybackClock, PreviewScale, Project, ProjectTrack, Tempo,
-    Thumbnails, TimelineMode,
+    AudioTrackSpec, BackendInfo, CompileOptions, Engine, EngineConfig, EngineStatus, Frame, Graph,
+    GraphDesc, MediaBackend, NodeStats, PROJECT_EXTENSION, PlaybackClock, PreviewScale, Project,
+    ProjectTrack, Registry, Tempo, Thumbnails, TimelineMode,
 };
 
 use crate::audio_out::AudioOut;
@@ -75,6 +75,10 @@ pub struct App {
     editor: GraphEditor,
     /// The graph (without layout) the engine is rendering.
     sent_graph: GraphDesc,
+    /// The graph and compile options last inspected, and what inspecting them found: every
+    /// node's layouts, tags and warnings, including nodes that don't feed the output.
+    inspected_for: Option<(GraphDesc, CompileOptions)>,
+    inspected: Vec<NodeStats>,
     /// Mix last given to the audio output: (track, offset, gain) per track.
     sent_mix: Option<Vec<(String, f64, f32)>>,
     clock: PlaybackClock,
@@ -145,6 +149,8 @@ impl App {
             confirm: None,
             allow_close: false,
             sent_graph: GraphDesc::from_json(r#"{ "version": 1, "nodes": [] }"#).unwrap(),
+            inspected_for: None,
+            inspected: Vec::new(),
             sent_mix: None,
             waiting_since: None,
             selected_track: (!project.audio_tracks.is_empty()).then_some(0),
@@ -487,6 +493,7 @@ impl App {
             self.confirm = Some(Pending::Close);
         }
         self.shortcuts(ui);
+        self.update_inspection();
 
         let fill = ui.visuals().panel_fill;
         let panel = move |margin: i8| {
@@ -554,18 +561,13 @@ impl App {
             _ => None,
         };
         let levels = frame.as_ref().map_or(&[][..], |f| &f.levels[..]);
-        let stats = if self.settings.node_stats {
-            self.engine.node_stats()
-        } else {
-            Vec::new()
-        };
         let canvas = self.editor.show(
             ui,
             &CanvasContext {
                 levels,
                 failure: failure.as_ref(),
                 wire_style: self.settings.wire_style,
-                node_stats: &stats,
+                show_stats: self.settings.node_stats,
             },
         );
         self.bypass_all_button(ui, canvas.rect);
@@ -609,6 +611,39 @@ impl App {
         }
         self.source_engine
             .set_preview_scale(self.settings.preview_scale());
+    }
+
+    /// Gives the editor every node's layouts, tags and warnings (for wire colours, ports and the
+    /// inspector), with latency and warmup from the engine's compiled graph. The graph is
+    /// inspected again only when it or what it's compiled against changes.
+    fn update_inspection(&mut self) {
+        let stats = self.engine.node_stats();
+        let Some(options) = self.engine.compile_options() else {
+            self.editor.set_compiled(stats);
+            return;
+        };
+        let current = self
+            .inspected_for
+            .as_ref()
+            .is_some_and(|(graph, o)| *graph == self.sent_graph && *o == options);
+        if !current {
+            self.inspected = Graph::inspect(&self.sent_graph, Registry::shared(), &options);
+            self.inspected_for = Some((self.sent_graph.clone(), options));
+        }
+        let merged = self
+            .inspected
+            .iter()
+            .map(|node| {
+                let mut node = node.clone();
+                if let Some(compiled) = stats.iter().find(|s| s.node == node.node) {
+                    node.latency_frames = compiled.latency_frames;
+                    node.warmup_frames = compiled.warmup_frames;
+                    node.warmup_truncated = compiled.warmup_truncated;
+                }
+                node
+            })
+            .collect();
+        self.editor.set_compiled(merged);
     }
 
     /// Sends edits to the engine and the audio output.

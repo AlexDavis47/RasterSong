@@ -1,6 +1,6 @@
 use crate::nodes::support::{Mapping, SIGNED_MAX, flip_sign_bit};
 use crate::nodes::{Category, NodeKind, NodeSpec};
-use crate::{InputSpec, Node, OutputSpec, Params, PortHint, ProcessContext, Signal};
+use crate::{InputSpec, Node, OutputSpec, Params, ProcessContext, Signal, TagRule};
 
 /// Video (`0..=1`) to audio (`-1..=1`).
 #[derive(Debug)]
@@ -20,7 +20,7 @@ impl NodeKind for ToAudio {
         .inputs(&[InputSpec::required("in", "Video, with values from 0 to 1")])
         .outputs(&[
             OutputSpec::new("out", "The same samples as audio, from -1 to 1")
-                .hint(PortHint::AsAudio),
+                .tag(TagRule::AUDIO),
         ]);
     const TEST_CONFIGS: &'static [&'static str] =
         &[r#"{ "mapping": "bugged" }"#, r#"{ "mapping": "accurate" }"#];

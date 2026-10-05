@@ -1,6 +1,6 @@
 use crate::nodes::support::{Mapping, SIGNED_MAX, flip_sign_bit};
 use crate::nodes::{Category, NodeKind, NodeSpec};
-use crate::{InputSpec, Node, OutputSpec, Params, PortHint, ProcessContext, Signal};
+use crate::{InputSpec, Node, OutputSpec, Params, ProcessContext, Signal, TagRule};
 
 /// Audio (`-1..=1`) back to video (`0..=1`). `bugged` misreads the audio again, which undoes the
 /// first misread; samples that crossed the seam wrap to the other end of the brightness range.
@@ -21,7 +21,7 @@ impl NodeKind for ToVideo {
         .inputs(&[InputSpec::required("in", "Audio, with values from -1 to 1")])
         .outputs(&[
             OutputSpec::new("out", "The same samples as video, from 0 to 1")
-                .hint(PortHint::AsVideo),
+                .tag(TagRule::VIDEO),
         ]);
     const TEST_CONFIGS: &'static [&'static str] =
         &[r#"{ "mapping": "bugged" }"#, r#"{ "mapping": "accurate" }"#];

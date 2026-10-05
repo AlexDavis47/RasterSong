@@ -91,7 +91,7 @@ impl Node for Resample {
     fn process(&mut self, _ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
         let input = inputs[0];
         let out = &mut outputs[0];
-        if input.layout == out.layout {
+        if input.layout.same_shape(&out.layout) {
             out.data.copy_from_slice(&input.data);
             return;
         }
@@ -149,6 +149,7 @@ mod tests {
         let layouts = node
             .output_layouts(&LayoutContext {
                 inputs: &inputs,
+                connected: &[true],
                 sources: &sources,
                 output: input.layout,
                 output_count: 1,

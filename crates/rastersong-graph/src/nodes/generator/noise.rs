@@ -1,7 +1,7 @@
 use crate::nodes::support::settle_frames;
 use crate::nodes::{Category, GeneratorLayout, NodeKind, NodeSpec, SampleClock};
 use crate::{Layout, LayoutContext, Node, OutputSpec, ParamSpec, Params, PrepareContext};
-use crate::{ProcessContext, Signal};
+use crate::{ProcessContext, Range, Signal};
 
 choice! {
     /// How the noise's energy is spread across frequencies.
@@ -137,7 +137,8 @@ impl Noise {
 
 impl Node for Noise {
     fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
-        self.layout.output_layouts(ctx)
+        self.layout
+            .output_layouts(ctx, Range::from_bounds(f64::from(self.offset - self.amplitude.abs()), f64::from(self.offset + self.amplitude.abs())))
     }
 
     fn process(&mut self, ctx: &ProcessContext, _inputs: &[&Signal], outputs: &mut [Signal]) {

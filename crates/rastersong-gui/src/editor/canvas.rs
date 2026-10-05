@@ -15,7 +15,7 @@ use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontId, Key, PointerButton, Pos2, Rect, Response, Sense,
     Stroke, StrokeKind, Ui, pos2, vec2,
 };
-use rastersong_engine::{Category, Failure, NodeStats, OutputLevel};
+use rastersong_engine::{Category, Failure, Kind, NodeStats, OutputLevel, SPLIT, Tag};
 
 use super::search::{NodeMenu, SearchMenu};
 use super::{GraphEditor, NodeKey};
@@ -44,8 +44,8 @@ pub struct CanvasContext<'a> {
     /// Why the graph can't render, shown along the bottom of the canvas.
     pub failure: Option<&'a Failure>,
     pub wire_style: WireStyle,
-    /// What each node costs, drawn under the nodes when not empty.
-    pub node_stats: &'a [NodeStats],
+    /// Whether to draw each node's latency and warmup under it.
+    pub show_stats: bool,
 }
 
 /// How deep [`GraphEditor::output_color`] follows inherited colours upstream.
@@ -153,15 +153,28 @@ impl GraphEditor {
                             .collect()
                     })
                     .unwrap_or_default();
+                // Channel nodes show one port per channel, named from the signal.
+                if let Some((count, tag)) = self.channel_ports(node.key, true) {
+                    inputs.truncate(count);
+                    for (i, input) in inputs.iter_mut().enumerate() {
+                        input.0 = super::channel_label(tag, i);
+                    }
+                }
                 if let Some(k) = kind {
                     for index in self.exposed_params(node) {
                         let name = k.spec.params[index].name;
                         inputs.push((name, false, super::param_port(index), true));
                     }
                 }
-                let outputs: Vec<&'static str> = kind
+                let mut outputs: Vec<&'static str> = kind
                     .map(|k| super::editor_outputs(k).iter().map(|o| o.name).collect())
                     .unwrap_or_default();
+                if let Some((count, tag)) = self.channel_ports(node.key, false) {
+                    outputs.truncate(count);
+                    for (i, output) in outputs.iter_mut().enumerate() {
+                        *output = super::channel_label(tag, i);
+                    }
+                }
                 let labelled_outputs = outputs.len() > 1;
 
                 let widest = |names: &mut dyn Iterator<Item = &str>| {
@@ -173,7 +186,13 @@ impl GraphEditor {
                 } else {
                     0.0
                 };
-                let width = (measure(&title, FONT) + 2.0 * PAD)
+                // Room for the warning badge after the title.
+                let badge = if self.diagnostics(node.key).is_empty() {
+                    0.0
+                } else {
+                    14.0 + PAD * 0.5
+                };
+                let width = (measure(&title, FONT) + 2.0 * PAD + badge)
                     .max(in_width + out_width + 4.0 * PAD + 12.0)
                     .max(MIN_WIDTH);
                 let rows = inputs.len().max(outputs.len()).max(1);
@@ -211,14 +230,27 @@ impl GraphEditor {
             .collect()
     }
 
-    /// The colours of output `port` of `key`, from what each output carries (its `PortHint`).
-    /// Whatever a hint leaves open is looked up through the node's main input, upstream until
-    /// it's known. A wire with no kind upstream takes its node's category colour.
+    /// The colours of output `port` of `key`, from the tag the last compile gave it. Before a
+    /// node is compiled (or when it doesn't feed the output), from its output's tag rule:
+    /// whatever a rule leaves open is looked up through the node's main input, upstream until
+    /// it's known. A wire with no kind takes its node's category colour.
     pub(super) fn output_color(&self, key: NodeKey, port: usize, theme: &Theme) -> WireColor {
+        let category = theme.category(self.kind_of(key).map(|k| k.spec.category));
+        if let Some(layout) = self.compiled(key).and_then(|s| s.outputs.get(port)) {
+            let (base, part) = theme.tag_colors(layout.tag);
+            return WireColor {
+                base: base.unwrap_or(category),
+                part,
+            };
+        }
         let mut base = None;
         let mut part = None;
         let mut fallback = theme.unknown_category;
         let mut at = (key, port);
+        // A Split output passed on the way, whose part depends on what it splits, and the kind
+        // found upstream of it.
+        let mut split_port = None;
+        let mut split_base = None;
         for _ in 0..MAX_COLOR_DEPTH {
             let Some(kind) = self.kind_of(at.0) else {
                 break;
@@ -226,16 +258,36 @@ impl GraphEditor {
             if base.is_none() {
                 fallback = theme.category(Some(kind.spec.category));
             }
-            let (hint_base, hint_part) = theme.hint_colors(kind.output_hint(at.1));
-            base = base.or(hint_base);
-            part = part.or(hint_part);
-            if base.is_some() && part.is_some() {
+            if kind.kind == SPLIT && part.is_none() && split_port.is_none() {
+                split_port = Some(at.1);
+            }
+            let (rule_base, rule_part) = theme.rule_colors(kind.output_tag(at.1));
+            base = base.or(rule_base);
+            part = part.or(rule_part);
+            if split_port.is_some() {
+                split_base = split_base.or(rule_base);
+            }
+            if base.is_some() && part.is_some() && (split_port.is_none() || split_base.is_some()) {
                 break;
             }
             match self.wires.iter().find(|w| w.to == (at.0, 0)) {
                 Some(wire) => at = wire.from,
                 None => break,
             }
+        }
+        // Uncompiled, a split is taken to be of RGB video, or of stereo when it splits audio.
+        if let (None, Some(index)) = (part, split_port) {
+            let (kind, channels) = if split_base == Some(theme.ports.audio) {
+                (Kind::Audio, 2)
+            } else {
+                (Kind::Video, 3)
+            };
+            let tag = Tag {
+                kind,
+                ..Tag::UNKNOWN
+            }
+            .fit(channels);
+            part = Some(theme.part_color(tag.channel_part(index)));
         }
         WireColor {
             base: base.unwrap_or(fallback),
@@ -331,9 +383,8 @@ impl GraphEditor {
             .and_then(|id| self.key_of(id));
         let hovered_pin = pointer.and_then(|p| self.pin_at(&geometry, rect, p));
         for g in &geometry {
-            if let Some(stats) = self
-                .node(g.key)
-                .and_then(|n| ctx.node_stats.iter().find(|s| *s.node == *n.id))
+            if ctx.show_stats
+                && let Some(stats) = self.compiled(g.key)
             {
                 self.draw_node_stats(&painter, &visuals, theme, g, to_screen, stats);
             }
@@ -347,6 +398,25 @@ impl GraphEditor {
                 hovered_pin,
                 &output_colors,
             );
+        }
+        // Compile warnings: a badge on the node, the messages in its tooltip.
+        for g in &geometry {
+            let warnings = self.diagnostics(g.key);
+            if warnings.is_empty() || self.view.zoom <= 0.35 {
+                continue;
+            }
+            let badge = self.badge_rect(g, to_screen);
+            draw_warning_badge(&painter, theme, badge);
+            let response = ui.interact(
+                badge.intersect(rect),
+                ui.id().with(("node-warning", g.key)),
+                Sense::hover(),
+            );
+            response.on_hover_ui(|ui| {
+                for warning in warnings {
+                    ui.label(format!("⚠ {warning}"));
+                }
+            });
         }
 
         // The wire being dragged.
@@ -823,6 +893,15 @@ impl GraphEditor {
         }
     }
 
+    /// Where a node's warning badge goes, in screen space: the right end of its header.
+    fn badge_rect(&self, g: &Geometry, to_screen: impl Fn(Pos2) -> Pos2) -> Rect {
+        let zoom = self.view.zoom;
+        let size = 14.0 * zoom;
+        let center = to_screen(pos2(g.rect.right(), g.rect.top() + HEADER * 0.5))
+            - vec2(PAD * zoom * 0.5 + size * 0.5, 0.0);
+        Rect::from_center_size(center, vec2(size, size))
+    }
+
     /// The node's latency and warmup in small text under it, in the warning colour when the warmup
     /// hit the limit.
     fn draw_node_stats(
@@ -936,6 +1015,23 @@ fn draw_pin(
         painter.circle_stroke(p, radius + 3.0, Stroke::new(1.5, theme.accent));
     }
     painter.circle(p, radius, fill, Stroke::new(1.0, theme.pin_outline));
+}
+
+/// A node's compile-warning badge: an exclamation mark on a warning-coloured disc.
+fn draw_warning_badge(painter: &egui::Painter, theme: &Theme, rect: Rect) {
+    painter.circle(
+        rect.center(),
+        rect.width() * 0.5,
+        theme.warning,
+        Stroke::new(1.0, theme.pin_outline),
+    );
+    painter.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        "!",
+        FontId::proportional(rect.height() * 0.85),
+        theme.block_text,
+    );
 }
 
 /// A parameter's pin: a diamond, so parameters read apart from inputs.

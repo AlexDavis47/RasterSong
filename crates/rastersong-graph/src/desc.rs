@@ -30,7 +30,11 @@ pub struct NodeDesc {
     /// How secondary inputs are resampled to the main input's length.
     #[serde(default, skip_serializing_if = "is_default")]
     pub interpolation: Interpolation,
-    /// Whether an RGB signal is processed as one stream or as three separate channels.
+    /// How a mono secondary input is stretched over a multi-channel main input.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub grouping: Grouping,
+    /// Whether an interleaved signal (RGB, stereo) is processed as one stream or as one stream
+    /// per channel.
     #[serde(default, skip_serializing_if = "is_default")]
     pub channels: Channels,
     /// Passes the main input straight through to the first output, skipping the node's processing.
@@ -113,15 +117,28 @@ pub enum Interpolation {
     Linear,
 }
 
-/// How a node processes a multi-channel (RGB) main input.
+/// How a node processes a multi-channel (RGB, stereo) main input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Channels {
-    /// The interleaved stream R, G, B, R, G, B, … as one signal.
+    /// The interleaved stream (R, G, B, R, G, B, … or L, R, L, R, …) as one signal.
     #[default]
     Together,
-    /// R, G and B each through their own copy of the node, with its own state.
+    /// Each channel through its own copy of the node, with its own state. The copies are
+    /// identical: the same as Split, the node once per channel, and Combine.
     Separate,
+}
+
+/// How a secondary input with one channel is stretched over a main input with several.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Grouping {
+    /// Each source sample covers whole pixels, so a pixel's R, G and B (or L and R) move
+    /// together.
+    #[default]
+    Pixels,
+    /// Spread over every sample value, ignoring pixels: a pixel's channels can differ.
+    Samples,
 }
 
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {

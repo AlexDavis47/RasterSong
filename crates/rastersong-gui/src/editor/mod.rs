@@ -12,8 +12,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use eframe::egui::{Pos2, Rect, Vec2, pos2, vec2};
 use rastersong_engine::{
-    Channels, Connection, FORMAT_VERSION, GraphDesc, Interpolation, Modulation, NodeDesc, NodeType,
-    OutputLevel, OutputSpec, ParamValue, Registry,
+    COMBINE, ChannelMap, Channels, Connection, FORMAT_VERSION, GraphDesc, Grouping, Interpolation,
+    MAX_CHANNELS, Modulation, NodeDesc, NodeStats, NodeType, OutputLevel, OutputSpec, ParamValue,
+    Registry, SPLIT, Tag,
 };
 
 pub use canvas::CanvasContext;
@@ -34,6 +35,7 @@ pub struct EditorNode {
     pub label: Option<String>,
     pub params: BTreeMap<String, ParamValue>,
     pub interpolation: Interpolation,
+    pub grouping: Grouping,
     pub channels: Channels,
     /// Whether the node is skipped: its input passes straight to its output.
     pub bypass: bool,
@@ -100,6 +102,9 @@ pub struct GraphEditor {
     renames: Vec<LinkedRename>,
     /// Problems found when loading a graph (e.g. connections to ports that don't exist).
     pub warnings: Vec<String>,
+    /// What the last compile of the graph found out about each node: its signals' tags and
+    /// warnings. Nodes that weren't compiled (not feeding the output, bypassed) have none.
+    compiled: Vec<NodeStats>,
 }
 
 /// How far duplicates are placed from their originals, in graph space.
@@ -136,6 +141,7 @@ impl GraphEditor {
             project_tracks: Vec::new(),
             renames: Vec::new(),
             warnings: Vec::new(),
+            compiled: Vec::new(),
         };
         editor.load(graph);
         editor
@@ -187,6 +193,7 @@ impl GraphEditor {
                 label: node.label.clone(),
                 params: node.params.clone(),
                 interpolation: node.interpolation,
+                grouping: node.grouping,
                 channels: node.channels,
                 bypass: node.bypass,
                 pos: node.position.map_or(positions[i], |[x, y]| pos2(x, y)),
@@ -293,6 +300,7 @@ impl GraphEditor {
                     kind: n.kind.clone(),
                     params: n.params.clone(),
                     interpolation: n.interpolation,
+                    grouping: n.grouping,
                     channels: n.channels,
                     bypass: n.bypass,
                     label: n.label.clone(),
@@ -335,6 +343,69 @@ impl GraphEditor {
         self.nodes.len()
     }
 
+    /// Takes what the engine's last compile found out about each node.
+    pub fn set_compiled(&mut self, stats: Vec<NodeStats>) {
+        self.compiled = stats;
+    }
+
+    /// What the last compile found out about `key`, if it was compiled.
+    pub fn compiled(&self, key: NodeKey) -> Option<&NodeStats> {
+        let id = &self.node(key)?.id;
+        self.compiled.iter().find(|s| *s.node == **id)
+    }
+
+    /// The compile warnings about `key`.
+    pub fn diagnostics(&self, key: NodeKey) -> &[String] {
+        self.compiled(key).map_or(&[], |s| &s.diagnostics)
+    }
+
+    /// How many of a channel node's ports the editor shows, and the compiled signal that names
+    /// them: Split shows one output per channel of its input; Combine one input per channel plus
+    /// a free one. A connected port is always shown. `None` for other nodes, which show every
+    /// port.
+    fn channel_ports(&self, key: NodeKey, input: bool) -> Option<(usize, Option<Tag>)> {
+        let node = self.node(key)?;
+        let compiled = self.compiled(key);
+        let connected = |port: usize| {
+            self.wires.iter().any(|w| {
+                if input {
+                    w.to == (key, port)
+                } else {
+                    w.from == (key, port)
+                }
+            })
+        };
+        let last_connected = (0..MAX_CHANNELS).rev().find(|&p| connected(p));
+        let (count, tag) = match (node.kind.as_str(), input) {
+            (SPLIT, false) => {
+                let input = compiled.and_then(|s| s.inputs.first());
+                let channels = input.map_or(3, |l| l.samples_per_pixel as usize);
+                (channels, input.map(|l| l.tag))
+            }
+            (COMBINE, true) => {
+                let output = compiled.and_then(|s| s.outputs.first());
+                let spare = last_connected.map_or(2, |last| last + 2);
+                (spare.max(2), output.map(|l| l.tag))
+            }
+            _ => return None,
+        };
+        let count = count.max(last_connected.map_or(0, |p| p + 1));
+        Some((count.clamp(1, MAX_CHANNELS), tag))
+    }
+}
+
+/// The editor's label for channel `index` of a signal tagged `tag`: R, G, B for RGB, L, R for
+/// stereo, else its number.
+pub(crate) fn channel_label(tag: Option<Tag>, index: usize) -> &'static str {
+    const NUMBERS: [&str; MAX_CHANNELS] = ["1", "2", "3", "4", "5", "6", "7", "8"];
+    match tag.map(|t| t.channels) {
+        Some(ChannelMap::Rgb) if index < 3 => ["R", "G", "B"][index],
+        Some(ChannelMap::Stereo) if index < 2 => ["L", "R"][index],
+        _ => NUMBERS[index.min(MAX_CHANNELS - 1)],
+    }
+}
+
+impl GraphEditor {
     pub fn wires(&self) -> &[Wire] {
         &self.wires
     }
@@ -415,6 +486,7 @@ impl GraphEditor {
             label: None,
             params: BTreeMap::new(),
             interpolation: Interpolation::Hold,
+            grouping: Grouping::Pixels,
             channels: Channels::Together,
             bypass: false,
             pos,
@@ -530,6 +602,7 @@ impl GraphEditor {
             let node = self.node_mut(key).unwrap();
             node.params = desc.params.clone();
             node.interpolation = desc.interpolation;
+            node.grouping = desc.grouping;
             node.channels = desc.channels;
             node.bypass = desc.bypass;
             node.label = desc.label.clone();
@@ -725,6 +798,37 @@ mod tests {
 
     fn graph() -> GraphDesc {
         GraphDesc::from_json(GRAPH).unwrap()
+    }
+
+    #[test]
+    fn channel_nodes_show_a_port_per_channel() {
+        use rastersong_engine::Layout;
+        // am_bands splits the video three ways and combines three channels.
+        let mut editor = GraphEditor::new(&graph());
+        let split = editor.key_of("split").unwrap();
+        let combine = editor.key_of("combine").unwrap();
+        // Before a compile: three outputs, and the connected inputs plus a free one.
+        assert_eq!(editor.channel_ports(split, false), Some((3, None)));
+        assert_eq!(editor.channel_ports(combine, true).unwrap().0, 4);
+        assert_eq!(editor.channel_ports(split, true), None);
+        // Compiled with stereo coming in, Split shows two, named L and R.
+        let stereo = Layout::audio_channels(10, 2);
+        editor.set_compiled(vec![rastersong_engine::NodeStats {
+            node: "split".into(),
+            latency_frames: 0.0,
+            warmup_frames: 0,
+            warmup_truncated: false,
+            inputs: vec![stereo],
+            outputs: Vec::new(),
+            diagnostics: vec!["a warning".into()],
+        }]);
+        // A connected port stays shown even past the channel count.
+        let (count, tag) = editor.channel_ports(split, false).unwrap();
+        assert_eq!(count, 3);
+        assert_eq!(channel_label(tag, 0), "L");
+        assert_eq!(channel_label(tag, 2), "3");
+        assert_eq!(editor.diagnostics(split), ["a warning"]);
+        assert!(editor.diagnostics(combine).is_empty());
     }
 
     /// Connections with every port written out, sorted, for comparing graphs.

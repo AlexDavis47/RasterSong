@@ -48,7 +48,8 @@ impl NodeKind for Limiter {
     const SPEC: NodeSpec = NodeSpec::new("Limiter", Category::Effect)
         .describe("Stops the signal from passing a ceiling by pulling the gain down")
         .params(Self::PARAMS)
-        .per_channel();
+        .per_channel()
+        .expects(crate::Range::Bipolar);
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "ceiling": -12, "release": 10 }"#,
         r#"{ "ceiling": 0, "release": 0 }"#,

@@ -1,7 +1,8 @@
 //! Property tests for the node contract, run against every effect node in several configurations:
 //! - processing a stream in blocks of any size gives exactly the output of one large block,
 //! - `reset()` followed by the same input gives exactly the same output,
-//! - valid input never produces NaN or infinity.
+//! - valid input never produces NaN or infinity,
+//! - block-size independence and finite output hold for stereo and RGB blocks as well as mono.
 
 use std::collections::BTreeMap;
 
@@ -34,6 +35,9 @@ fn configs() -> Vec<(String, String)> {
 
 struct Harness {
     node: Box<dyn Node>,
+    /// Samples per pixel of the blocks: 1 (mono), 2 (stereo) or 3 (RGB). Rows are always
+    /// `WIDTH` samples.
+    channels: u32,
     inputs: usize,
     outputs: usize,
     /// A parameter modulated across its usual range by the modulation stream: its index and range.
@@ -42,18 +46,29 @@ struct Harness {
 
 impl Harness {
     fn new(kind: &str, params: &str, total_rows: usize) -> Self {
-        Self::modulating(kind, params, total_rows, None)
+        Self::modulating(kind, params, total_rows, None, 1)
+    }
+
+    /// With interleaved blocks of `channels` samples per pixel.
+    fn interleaved(kind: &str, params: &str, total_rows: usize, channels: u32) -> Self {
+        Self::modulating(kind, params, total_rows, None, channels)
     }
 
     /// With parameter `param` (an index into the node's specs) swept over its usual range.
-    fn modulating(kind: &str, params: &str, total_rows: usize, param: Option<usize>) -> Self {
+    fn modulating(
+        kind: &str,
+        params: &str,
+        total_rows: usize,
+        param: Option<usize>,
+        channels: u32,
+    ) -> Self {
         let params: BTreeMap<String, ParamValue> = serde_json::from_str(params).unwrap();
         let registry = Registry::shared();
         let spec = registry.get(kind).unwrap().spec;
         let specs = spec.params;
         let mut node = registry.create(kind, &params).unwrap().unwrap();
         let (inputs, outputs) = (spec.inputs.len(), spec.outputs.len());
-        let layout = Layout::mono(WIDTH, total_rows as u32);
+        let layout = Layout::new(WIDTH / channels, total_rows as u32, channels);
         let param = param.map(|index| {
             let ParamKind::Number { min, max, .. } = specs[index].kind else {
                 panic!("only numbers are modulated");
@@ -74,6 +89,7 @@ impl Harness {
         });
         Self {
             node,
+            channels,
             inputs,
             outputs,
             param,
@@ -94,7 +110,7 @@ impl Harness {
         let mut result = vec![Vec::new(); self.outputs];
         let mut start = 0;
         for (frame, &rows) in blocks.iter().enumerate() {
-            let layout = Layout::mono(WIDTH, rows as u32);
+            let layout = Layout::new(WIDTH / self.channels, rows as u32, self.channels);
             let range = start..start + layout.len();
             let streams = [signal, modulation];
             let inputs: Vec<Signal> = streams[..self.inputs]
@@ -175,7 +191,7 @@ proptest! {
     fn modulated_parameters_keep_the_node_contract((blocks, signal, modulation) in case()) {
         let rows: usize = blocks.iter().sum();
         for (kind, param) in modulatable_params() {
-            let mut harness = Harness::modulating(&kind, "{}", rows, Some(param));
+            let mut harness = Harness::modulating(&kind, "{}", rows, Some(param), 1);
             let whole = harness.run(&[rows], &signal, &modulation);
             let split = harness.run(&blocks, &signal, &modulation);
             prop_assert_eq!(&split, &whole, "{} param {} with blocks {:?}", kind, param, blocks);
@@ -194,6 +210,25 @@ proptest! {
             let whole = harness.run(&[rows], &signal, &modulation);
             let split = harness.run(&blocks, &signal, &modulation);
             prop_assert_eq!(&split, &whole, "{} {} with blocks {:?}", kind, params, blocks);
+        }
+    }
+
+    #[test]
+    fn interleaved_layouts_keep_the_node_contract((blocks, signal, modulation) in case()) {
+        // Stereo and RGB blocks: the same samples, grouped into pixels of 2 or 3. Nodes that
+        // measure in pixels or rows see different units; the contract must hold either way.
+        let rows: usize = blocks.iter().sum();
+        for channels in [2, 3] {
+            for (kind, params) in &configs() {
+                let mut harness = Harness::interleaved(kind, params, rows, channels);
+                let whole = harness.run(&[rows], &signal, &modulation);
+                let split = harness.run(&blocks, &signal, &modulation);
+                prop_assert_eq!(&split, &whole, "{} {} at {} channels with blocks {:?}", kind, params, channels, blocks);
+                prop_assert!(
+                    whole.iter().flatten().all(|x| x.is_finite()),
+                    "{} {} at {} channels produced NaN or infinity", kind, params, channels
+                );
+            }
         }
     }
 

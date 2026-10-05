@@ -1,5 +1,5 @@
 use crate::nodes::{Category, NodeKind, NodeSpec};
-use crate::{Node, ParamSpec, Params, ProcessContext, Signal};
+use crate::{Layout, LayoutContext, Node, ParamSpec, Params, ProcessContext, Range, Signal};
 
 choice! {
     /// What happens to samples outside the input range.
@@ -85,6 +85,21 @@ impl Remap {
 }
 
 impl Node for Remap {
+    fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
+        let mut layout = ctx.inputs[0];
+        let out = (f64::from(self.out_low), f64::from(self.out_high));
+        layout.tag.range = match (self.outside, layout.tag.range.bounds()) {
+            (Outside::Clamp, _) => Range::from_bounds(out.0, out.1),
+            // Extended, the input's nominal range maps through the same line.
+            (Outside::Extend, Some((lo, hi))) => {
+                let at = |x: f64| f64::from(self.map(x as f32, self.in_low, self.in_high, self.out_low, self.out_high));
+                Range::from_bounds(at(lo), at(hi))
+            }
+            (Outside::Extend, None) => Range::Unknown,
+        };
+        Ok(vec![layout])
+    }
+
     fn process(&mut self, ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
         let in_low = ctx.value(Self::IN_LOW, f64::from(self.in_low));
         let in_high = ctx.value(Self::IN_HIGH, f64::from(self.in_high));

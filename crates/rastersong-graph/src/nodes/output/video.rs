@@ -1,5 +1,7 @@
 use crate::nodes::{Category, NodeKind, NodeSpec, OUTPUT};
-use crate::{InputSpec, Layout, LayoutContext, Node, Params, ProcessContext, Signal};
+use crate::{
+    InputSpec, Layout, LayoutContext, Node, Params, ProcessContext, Range, Signal, TagRule,
+};
 
 /// The graph's result. Accepts an RGB signal of the output size, or a mono one, which is shown
 /// as grayscale.
@@ -14,7 +16,8 @@ impl NodeKind for Output {
             "in",
             "The picture to render: RGB, or mono for grayscale",
         )])
-        .outputs(&[crate::OutputSpec::new("out", "The rendered picture")]);
+        .outputs(&[crate::OutputSpec::new("out", "The rendered picture").tag(TagRule::VIDEO)])
+        .expects(Range::Unipolar);
 
     fn new(_: &Params) -> Result<Self, String> {
         Ok(Self)
@@ -84,6 +87,7 @@ mod tests {
             let inputs = [input];
             node.output_layouts(&LayoutContext {
                 inputs: &inputs,
+                connected: &[true],
                 sources: &sources,
                 output: Layout::rgb(4, 2),
                 output_count: 1,

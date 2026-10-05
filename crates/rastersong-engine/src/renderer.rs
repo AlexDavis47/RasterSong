@@ -83,6 +83,8 @@ pub struct Renderer {
     video: Box<dyn VideoSource>,
     tracks: Vec<AudioTrack>,
     graph: Graph,
+    /// What the graph was compiled against, so editors can inspect other graphs the same way.
+    options: CompileOptions,
     info: RenderInfo,
     fps: f64,
     latency: usize,
@@ -136,24 +138,18 @@ impl Renderer {
             }
         }
 
-        let video_layout = Layout::rgb(width, height);
+        let video_layout = Layout::video(width, height);
         let mut layouts = HashMap::from([(VIDEO_SOURCE.to_owned(), video_layout)]);
         for track in &tracks {
-            layouts.insert(
-                track.name.clone(),
-                Layout::audio(track.modulator.block_len(fps)),
-            );
+            layouts.insert(track.name.clone(), track.modulator.layout(fps));
         }
-        let compiled = Graph::compile(
-            graph,
-            registry,
-            &CompileOptions {
-                frame_rate: fps,
-                tempo,
-                sources: layouts.clone(),
-                output: video_layout,
-            },
-        )?;
+        let options = CompileOptions {
+            frame_rate: fps,
+            tempo,
+            sources: layouts.clone(),
+            output: video_layout,
+        };
+        let compiled = Graph::compile(graph, registry, &options)?;
         let graph = compiled;
 
         Ok(Self {
@@ -166,6 +162,7 @@ impl Renderer {
                 frames: source.frame_count,
             },
             fps,
+            options,
             latency: graph.latency_frames() as usize,
             warmup: graph.warmup_frames() as usize,
             graph,
@@ -191,6 +188,11 @@ impl Renderer {
 
     pub fn info(&self) -> &RenderInfo {
         &self.info
+    }
+
+    /// The sources, frame rate, tempo and output size the graph was compiled against.
+    pub fn compile_options(&self) -> &CompileOptions {
+        &self.options
     }
 
     /// Each node's own latency and warmup.
