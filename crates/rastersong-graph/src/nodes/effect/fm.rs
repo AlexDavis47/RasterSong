@@ -1,6 +1,6 @@
 use crate::dsp::{DelayLine, mix};
 use crate::nodes::support::MAX_WARMUP_FRAMES;
-use crate::nodes::{Category, TimeUnit, NodeKind, NodeSpec};
+use crate::nodes::{Category, NodeKind, NodeSpec, TimeUnit};
 use crate::{InputSpec, Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Frequency (phase) modulation: the carrier is read back through a delay whose length follows
@@ -39,7 +39,10 @@ impl NodeKind for Fm {
         .params(Self::PARAMS)
         .inputs(&[
             InputSpec::required("carrier", "The signal that gets bent"),
-            InputSpec::required("modulator", "The signal that sets how far back the carrier is read"),
+            InputSpec::required(
+                "modulator",
+                "The signal that sets how far back the carrier is read",
+            ),
         ])
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
@@ -120,6 +123,9 @@ mod tests {
     #[test]
     fn index_zero_is_the_dry_carrier() {
         let carrier = [0.3, -0.4, 0.5];
-        assert_eq!(fm(r#"{ "index": 0 }"#, &carrier, &[1.0, 0.5, -0.2]), carrier);
+        assert_eq!(
+            fm(r#"{ "index": 0 }"#, &carrier, &[1.0, 0.5, -0.2]),
+            carrier
+        );
     }
 }

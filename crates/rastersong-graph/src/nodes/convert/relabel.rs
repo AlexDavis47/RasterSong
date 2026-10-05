@@ -145,7 +145,10 @@ mod tests {
             .iter()
             .map(|&(k, v)| (k.to_owned(), ParamValue::Text(v.to_owned())))
             .collect();
-        let node = Registry::shared().create("relabel", &params).unwrap().unwrap();
+        let node = Registry::shared()
+            .create("relabel", &params)
+            .unwrap()
+            .unwrap();
         let sources = HashMap::new();
         node.output_layouts(&LayoutContext {
             inputs: &[input],
@@ -169,6 +172,9 @@ mod tests {
         assert!(audio.same_shape(&video));
         let numbered = relabel(&[("channels", "numbered")], video);
         assert_eq!(numbered.tag.channels, ChannelMap::Numbered);
-        assert_eq!(relabel(&[("channels", "named")], numbered).tag.channels, ChannelMap::Rgb);
+        assert_eq!(
+            relabel(&[("channels", "named")], numbered).tag.channels,
+            ChannelMap::Rgb
+        );
     }
 }

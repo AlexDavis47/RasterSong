@@ -19,8 +19,7 @@ impl NodeKind for ToAudio {
         .params(Self::PARAMS)
         .inputs(&[InputSpec::required("in", "Video, with values from 0 to 1")])
         .outputs(&[
-            OutputSpec::new("out", "The same samples as audio, from -1 to 1")
-                .tag(TagRule::AUDIO),
+            OutputSpec::new("out", "The same samples as audio, from -1 to 1").tag(TagRule::AUDIO),
         ]);
     const TEST_CONFIGS: &'static [&'static str] =
         &[r#"{ "mapping": "bugged" }"#, r#"{ "mapping": "accurate" }"#];

@@ -1044,7 +1044,22 @@ Can process R, G and B separately.
 
 | Node | What it does |
 |---|---|
+| [Audio Output](#audio_output) | The rendered sound: replaces the source audio in the preview and the export |
 | [Output](#output) | The rendered result: RGB, or mono shown as grayscale |
+
+### `audio_output`
+
+**Audio Output**: The rendered sound: replaces the source audio in the preview and the export
+
+Optional. Without it, or with nothing connected, the source audio is used untouched; so is a track wired straight in. Mono and stereo signals are written as they are; any other signal is written as interleaved samples to a stereo track. Each frame's block is resampled from its own rate to the project's audio rate, and clipped to -1 to 1.
+
+**Inputs**
+
+- `in` (main, required): The sound to output, from -1 to 1: mono, stereo, or any signal read as samples
+
+**Outputs**
+
+- `out` (audio, -1 to 1): The sound as written
 
 ### `output`
 

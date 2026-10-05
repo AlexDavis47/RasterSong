@@ -206,8 +206,10 @@ in the spirit of Substance Designer.
 **Tags are advisory.** Each `Layout` carries a `Tag`, worked out when the graph compiles: the signal's **kind**
 (video, audio or unknown), what its **channels** are (mono, stereo, RGB, or just numbered), which **part** of a
 whole it is (one channel, one frequency band) and its nominal **range** (`0..1`, `-1..1` or unknown). Tags colour
-wires and produce compile warnings, such as "expects values from -1 to 1, got 0 to 1" on a gate fed video. They
-never stop processing and never convert anything: RGB into a stereo effect just runs as interleaved samples. Each
+wires and produce compile **notes**, such as a gate fed video being told it's tuned for `-1..1` and that levels
+will act differently. Notes are suggestions, not mistakes: using a signal as something it wasn't made as is often
+the effect. **Warnings** are kept for things that are lost or can't be honoured (Split dropping channels past 8,
+Separate channels on a node that can't run per channel). Neither ever stops processing and never convert anything: RGB into a stereo effect just runs as interleaved samples. Each
 output port has a tag rule (`OutputSpec::tag`): most effects pass their main input's tag on, conversions set the
 kind and range, and nodes that set a range from their parameters (generators, Clamp, Remap, Offset) work it out
 themselves. Level-based nodes (Gate, Compressor, Limiter, Distortion) declare the range they're designed for
@@ -402,8 +404,8 @@ Every node also has these shared settings:
   any channel count) is split into its channels, each processed by its own copy of the node (with its own state,
   and identical settings), and recombined. Exactly equivalent to Split Channels → one node per channel → Combine
   Channels, without the wiring. Modulation inputs are shared by all channels. Units stay the same: a row is a
-  row of the picture either way. On a node that can't run per channel, or on a one-channel signal, it falls back
-  to `together` with a warning.
+  row of the picture either way. On a node that can't run per channel it falls back to `together` with a warning;
+  on a one-channel signal it simply has no effect (a note).
 
 **Split and Combine Channels** take any number of channels (up to 8). Split has one output per channel of its
 input (`c1`, `c2`, …; the editor names them R, G, B or L, R from the input's tag); Combine makes one channel per
@@ -417,6 +419,29 @@ such as bass-driven waves, `split` first and process each channel ([Approach 2](
 `pack` don't change any samples; they relabel RGB (or any channel count) as one 3×-wide mono carrier and back. The difference shows
 in rate matching: a mono modulator moves a pixel's R, G and B together on an RGB signal, but varies across them on
 the packed carrier.
+
+### Audio Output
+
+A graph can have one **Audio Output** node (optional; add it from the node menu). Its sound replaces the source
+audio in the preview and the export. Without one, with nothing connected to it, or with the graph bypassed, the
+source audio is used untouched; a track wired straight into it is also used as it is, not re-rendered.
+
+- **Any signal goes in.** One sample per pixel is mono, two are stereo; anything else (a picture, say) is written
+  as interleaved samples to a stereo track, with a note. Nothing is converted on the way in: wire a
+  video through Video to Audio first if you want its range mapped to `-1..1`.
+- **Resampling.** The graph works in one block per frame, so the sink treats the blocks as one stream at
+  `block length × frame rate` samples a second and resamples it to the project's audio rate (`audio_rate` in the
+  project file, 48 kHz by default) with a windowed-sinc kernel. History carries across blocks, so block edges don't
+  click. Picture-sized blocks are first averaged down in groups that divide the block evenly. The resampler is
+  causal, which delays the sound by its kernel's half-width in input samples (a fraction of a millisecond for
+  audio-rate blocks). Seeking renders at least one frame before the target, so a seek gives the same sound as
+  playing through.
+- **Sanitizing.** NaN and infinity become silence and the result is hard-clipped to `-1..1`. Use a Limiter to
+  soften it.
+- **Latency.** Both outputs line up at the later one's latency: the picture is held back to match the sound, or
+  the other way round, so they stay in sync without the host doing anything.
+- **Preview and export.** Each cached frame carries its sound, which preview playback reads. The CLI writes it to
+  the `.mkv` as it renders.
 
 ### Render Engine
 
@@ -547,9 +572,10 @@ rendered and cached by the engine on its render thread.
     input, so a delay on the red channel is still red video; Video to Audio turns it into red audio. View →
     Wires picks how the two show: solid (the part's colour, or the kind's), outlined (the kind's colour
     outlined in the part's) or gradient (the part's colour down the centre, fading to the kind's at the edges).
-  - Compile warnings (a signal whose tag doesn't suit the node, say) show as a badge on the node, with the
-    message in its tooltip and in the inspector, which also lists what each output carries. They never stop
-    the render.
+  - Compile notes and warnings show as a badge on the node, with the message in its tooltip and in the
+    inspector, which also lists what each output carries. Notes (a signal whose tag doesn't suit the node, say)
+    get a quiet "i" badge; warnings (something lost or ignored) a yellow "!". Neither stops the render. With
+    several inputs, the main input (which sets the output's length and layout) has a ring around its pin.
   - When the graph can't render, a bar along the bottom of the graph says why and outlines the node at fault in
     red; clicking the bar shows the node.
   - Moving or renaming nodes doesn't re-render; any other edit does.
@@ -582,7 +608,9 @@ rendered and cached by the engine on its render thread.
     the same or remove the region. Playing into the region repeats it; playing from after it plays on. While
     looping, rendering ahead wraps from the region's end to its start, so the loop plays without waiting. The
     region is saved with the project.
-- **Preview audio** mixes the unmuted tracks and follows the playhead. When playback slows because rendering can't
+- **Preview audio** mixes the unmuted tracks and follows the playhead. When the graph has an **Audio Output**,
+  playback plays its rendered sound instead (track volume and mute don't apply to it); a track wired straight into
+  the Audio Output plays as it is. When playback slows because rendering can't
   keep up, the audio is time-stretched (WSOLA: slowed without lowering the pitch) to stay with the picture, and
   fades out when playback all but stops. Volume and mute only affect playback, never rendering.
 - **Keys:** Space plays/pauses, ←/→ step one frame, Home jumps to the start, R turns looping on and off,
@@ -690,8 +718,9 @@ cargo xtask fixtures       # generate media test fixtures into fixtures/
 cargo test --workspace
 cargo run -p rastersong-gui
 
-# Render a video through a graph, modulated by an audio file, to a lossless .mkv (with the
-# audio as its soundtrack) or to a directory of PNG frames
+# Render a video through a graph, modulated by an audio file, to a lossless .mkv or to a
+# directory of PNG frames. The .mkv's soundtrack is the graph's Audio Output (rendered at
+# --audio-rate, 48000 by default), or the audio file untouched when the graph has none
 cargo run --release -p rastersong-cli -- render video.mp4 song.wav examples/graphs/am_bands.json out.mkv
 cargo run --release -p rastersong-cli -- render video.mp4 song.wav graph.json frames/ --size 320x180 --frames 60
 cargo run --release -p rastersong-cli -- render video.mp4 song.wav graph.json out.mkv --audio-offset -1.5
@@ -801,7 +830,7 @@ Collected from hands-on testing of the Phase 4 GUI (October 2026). Items already
 - ~~Links snap to nearby pins (the grab radius is too small)~~: dropped; the current grab radius is fine
 - [x] Link colors come from port metadata: an RGB splitter's outputs draw red, green and blue. Optional outline color or a center-to-edge gradient. Controlled by theme options
 - ~~Better graph background~~: dropped; the current background is fine
-- [ ] Audio output is part of the graph instead of hidden from the user. Audio and video share one workflow
+- [x] Audio output is part of the graph instead of hidden from the user. Audio and video share one workflow (the Audio Output node)
 
 ### Timeline
 
@@ -833,14 +862,32 @@ Collected from hands-on testing of the Phase 4 GUI (October 2026). Items already
 
 **Own node graph?** There is no library; the canvas (`editor/canvas.rs`) is already custom, so the issues are our own code. Keep it custom. Snapping, link colors, parameter modulation pins and the probe all need that control.
 
-**Categories ("Channels", "Conversion") stay as they are.** For reference: Channels (`split`, `combine`, `interleave`, `pack`) changes a signal's shape and leaves its values alone; Conversion (`to_audio`, `to_video`) changes the value range, `0..1` to `-1..1` and back.
+**Categories ("Channels", "Conversion") stay as they are.** For reference: Channels (`split`, `combine`, `interleave`, `pack`, `stretch`) changes a signal's shape and leaves its values alone; Conversion (`to_audio`, `to_video`) changes the value range, `0..1` to `-1..1` and back, and `relabel` changes only what a signal is said to be.
 
 **"Audio to video" / "Video to audio" names: still open.** They are confusing. The names should describe the effect, which is the range change, with the ranges stated in the node description. Candidates: "Brightness to Wave" / "Wave to Brightness". Not decided.
 
-**Channels setting hover text.** The setting name stays. The hover descriptions are what to fix. Suggested text:
-- Label hover: "How this node treats the red, green and blue of each pixel."
-- Together: "Runs R, G, B, R, G, B… through the node as one stream. Colors bleed into each other, as in a low pass or a modulated delay."
-- Separate: "Runs red, green and blue each through their own copy of the node. The same as Split → node ×3 → Combine."
+**Channels setting hover text.** The setting name stays. Done, generalized to any channel count:
+- Label hover: "How this node treats the channels of an interleaved signal: R, G, B of video, L, R of stereo."
+- Together: "Runs R, G, B, R, G, B… (or L, R, L, R…) through the node as one stream. Channels bleed into each other, as in a low pass or a modulated delay."
+- Separate: "Runs each channel through its own copy of the node. The same as Split Channels → the node once per channel → Combine Channels."
+
+**Signal unification (October 2026, done).** No node may require one domain: video and audio are the same `Signal`,
+and nothing converts implicitly. Type information is an advisory `Tag` on each `Layout` that colours wires and
+produces notes, never errors; conversions are explicit nodes; Relabel rewrites a tag on purpose. Audio inputs
+arrive natively interleaved (no downmix), Split/Combine Channels take any channel count, Stretch to Match and the
+per-node grouping setting make rate matching explicit, and the optional Audio Output renders the graph's sound
+(resampled to the project's `audio_rate`, sanitized, cached with each frame, muxed by the CLI). Both outputs line
+up at the later one's latency inside the graph. Deferred on purpose:
+- NaN and infinity are scrubbed only at the sinks, so a NaN inside a recursive node (feedback, IIR) stays in its
+  state until a reset, and a seek's warmup can bring it back.
+- Variable frame rate: the compiler assumes a constant frame rate; blocks keep their real timestamps, so VFR video
+  works but its sound is resampled as if the rate were constant.
+- Export from the app: the engine and the CLI's `.mkv` mux handle the rendered sound, but there is no GUI export
+  yet (see Export / Offline Rendering). Source audio without an Audio Output is, for the CLI, its one audio file;
+  a multi-track project needs a decision on mixing or multiple streams.
+- `cargo fmt` doesn't reach the node files (they're declared through the `nodes!` macro); CI checks them with
+  `rustfmt --edition 2024 --check crates/rastersong-graph/src/nodes/*/*.rs`, and that command without
+  `--check` formats them.
 
 **Is resampling only applied when needed?** Mostly. `graph.rs` creates a resample buffer only for secondary inputs that are unconnected or differ in length from the main input. Two gaps to close:
 - [x] `Modulator::fill_block` (`engine/sources.rs`) always interpolates per block, even at a ratio of exactly 1; add a copy fast path

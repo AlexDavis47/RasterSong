@@ -39,6 +39,20 @@ pub struct Project {
     /// Skips the whole graph in the preview, as if the video were plugged into the output.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub bypass_graph: bool,
+    /// Sample rate of the sound a graph with an Audio Output renders, in the preview and export.
+    #[serde(
+        default = "default_audio_rate",
+        skip_serializing_if = "is_default_audio_rate"
+    )]
+    pub audio_rate: u32,
+}
+
+fn default_audio_rate() -> u32 {
+    crate::DEFAULT_AUDIO_RATE
+}
+
+fn is_default_audio_rate(rate: &u32) -> bool {
+    *rate == crate::DEFAULT_AUDIO_RATE
 }
 
 /// How the timeline ruler and grid are labelled.
@@ -125,6 +139,7 @@ impl Project {
             tempo: Tempo::default(),
             timeline_mode: TimelineMode::default(),
             bypass_graph: false,
+            audio_rate: crate::DEFAULT_AUDIO_RATE,
         }
     }
 
@@ -215,6 +230,7 @@ impl Project {
                     tempo: Tempo::default(),
                     timeline_mode: TimelineMode::default(),
                     bypass_graph: false,
+                    audio_rate: crate::DEFAULT_AUDIO_RATE,
                 }
             }
             // Version 2 lacks only the tempo and timeline mode, which default.

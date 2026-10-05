@@ -11,7 +11,9 @@ use std::thread::JoinHandle;
 use rastersong_graph::{CompileOptions, GraphDesc, NodeStats, Registry, Tempo, render_form};
 use rastersong_media::{AudioClip, AudioOptions, MediaBackend};
 
+use crate::audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE};
 use crate::cache::{CacheKey, Frame, FrameCache};
+use crate::playback::RenderedSource;
 use crate::renderer;
 use crate::sources::Modulator;
 use crate::waveform::Waveform;
@@ -210,6 +212,10 @@ struct State {
     node_stats: Vec<NodeStats>,
     /// What the last graph that compiled was compiled against.
     compile_options: Option<CompileOptions>,
+    /// The rate the graph's sound is rendered at.
+    audio_rate: u32,
+    /// What the current render's audio is, once it has compiled.
+    audio_sink: AudioSink,
     /// Bumped on every change, so the worker knows when to look again.
     changes: u64,
     shutdown: bool,
@@ -221,6 +227,7 @@ struct Snapshot {
     tracks: Vec<AudioTrackSpec>,
     graph: GraphDesc,
     tempo: Tempo,
+    audio_rate: u32,
 }
 
 /// A renderer built for one version of the project.
@@ -253,6 +260,8 @@ impl Engine {
                 loaded: Vec::new(),
                 node_stats: Vec::new(),
                 compile_options: None,
+                audio_rate: DEFAULT_AUDIO_RATE,
+                audio_sink: AudioSink::Source,
                 changes: 0,
                 shutdown: false,
             }),
@@ -401,6 +410,30 @@ impl Engine {
         lock(&self.shared.state).compile_options.clone()
     }
 
+    /// Renders the graph's sound at `rate` samples a second. Setting the rate already in use
+    /// changes nothing.
+    pub fn set_audio_rate(&self, rate: u32) {
+        let rate = rate.max(1);
+        if lock(&self.shared.state).audio_rate == rate {
+            return;
+        }
+        self.edit(|state| state.audio_rate = rate);
+    }
+
+    /// What the current render's audio is: the source tracks (no audio output), one track passed
+    /// through, or the graph's rendered sound, which [`Self::rendered_audio`] plays.
+    pub fn audio_sink(&self) -> AudioSink {
+        lock(&self.shared.state).audio_sink.clone()
+    }
+
+    /// The rendered sound of the cached frames, for playback. Always reads the current cache, so
+    /// it never plays sound from before an edit.
+    pub fn rendered_audio(&self) -> Arc<dyn RenderedSource> {
+        Arc::new(RenderedAudio {
+            shared: self.shared.clone(),
+        })
+    }
+
     /// The decoded audio tracks, once loaded.
     pub fn loaded_tracks(&self) -> Vec<LoadedTrack> {
         lock(&self.shared.state).loaded.clone()
@@ -426,6 +459,32 @@ impl Drop for Engine {
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
+    }
+}
+
+/// The engine's cached sound, as playback reads it.
+struct RenderedAudio {
+    shared: Arc<Shared>,
+}
+
+impl std::fmt::Debug for RenderedAudio {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RenderedAudio").finish_non_exhaustive()
+    }
+}
+
+impl RenderedSource for RenderedAudio {
+    fn blocks(&self, frames: Range<usize>) -> Vec<Option<Arc<AudioBlock>>> {
+        let cache = lock(&self.shared.cache);
+        frames
+            .map(|i| cache.get(i).and_then(|f| f.audio.clone()))
+            .collect()
+    }
+
+    fn frame_rate(&self) -> f64 {
+        lock(&self.shared.state)
+            .info
+            .map_or(0.0, |info| info.frame_rate.as_f64())
     }
 }
 
@@ -548,6 +607,7 @@ impl Worker {
                         tracks: state.tracks.clone(),
                         graph: render_form(graph, Registry::shared(), state.bypass_all),
                         tempo: state.tempo,
+                        audio_rate: state.audio_rate,
                     },
                 };
                 state.status = EngineStatus::Loading;
@@ -597,6 +657,10 @@ impl Worker {
                 Registry::shared(),
                 key.scale.output_size(),
             )
+            .map(|mut renderer| {
+                renderer.set_audio_rate(project.audio_rate);
+                renderer
+            })
             .map_err(|e| Failure::from_error(&e))
         });
 
@@ -631,6 +695,7 @@ impl Worker {
                 state.info = Some(*renderer.info());
                 state.node_stats = renderer.node_stats().to_vec();
                 state.compile_options = Some(renderer.compile_options().clone());
+                state.audio_sink = renderer.audio_sink();
                 self.built = Some(Built { key, renderer });
                 self.failed_at = None;
             }
@@ -639,6 +704,7 @@ impl Worker {
                 state.status = EngineStatus::Failed(failure);
                 state.info = video_info;
                 state.node_stats.clear();
+                state.audio_sink = AudioSink::Source;
                 self.failed_at = Some(state.changes);
             }
         }
@@ -750,6 +816,7 @@ impl Worker {
                     rgb: rgb.to_vec(),
                     levels: built.renderer.levels().into(),
                     params: built.renderer.param_levels().into(),
+                    audio: built.renderer.audio().cloned().map(Arc::new),
                 };
                 let playhead = self.shared.playhead.load(Ordering::SeqCst);
                 let inserted = lock(&self.shared.cache).insert(built.key, frame, playhead);

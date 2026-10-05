@@ -31,8 +31,8 @@ struct RenderArgs {
     audio: PathBuf,
     /// Graph file (JSON).
     graph: PathBuf,
-    /// Output: a `.mkv` file (lossless FFV1 video with the modulator as its audio track), or a
-    /// directory to fill with a PNG sequence.
+    /// Output: a `.mkv` file (lossless FFV1 video with the graph's Audio Output as its sound, or
+    /// the modulator when it has none), or a directory to fill with a PNG sequence.
     out: PathBuf,
     /// Process and output at this size instead of the video's, e.g. `320x180`.
     #[arg(long, value_parser = parse_size)]
@@ -43,6 +43,9 @@ struct RenderArgs {
     /// Seconds the audio starts after the video (negative to start it earlier).
     #[arg(long, default_value_t = 0.0, allow_negative_numbers = true)]
     audio_offset: f64,
+    /// Sample rate of the sound a graph with an Audio Output renders (Hz).
+    #[arg(long, default_value_t = rastersong_engine::DEFAULT_AUDIO_RATE)]
+    audio_rate: u32,
 }
 
 fn parse_size(s: &str) -> Result<(u32, u32), String> {
@@ -95,12 +98,13 @@ fn render(args: RenderArgs) -> Result<()> {
         .load_audio(&args.audio, AudioOptions::default())
         .with_context(|| format!("loading audio from {}", args.audio.display()))?;
 
-    let mut sink = output::Output::new(&args.out, &audio);
+    let mut sink = output::Output::new(&args.out, &audio, args.audio_offset);
     let settings = RenderSettings {
         size: args.size,
         frames: args.frames,
         audio_offset: args.audio_offset,
         tempo: Default::default(),
+        audio_rate: Some(args.audio_rate),
     };
     let started = std::time::Instant::now();
     let info =

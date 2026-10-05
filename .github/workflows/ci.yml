@@ -18,6 +18,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: cargo fmt --all --check
+      # Node files are declared through the `nodes!` macro, which `cargo fmt` can't follow.
+      - run: rustfmt --edition 2024 --check crates/rastersong-graph/src/nodes/*/*.rs
 
   deny:
     runs-on: ubuntu-latest

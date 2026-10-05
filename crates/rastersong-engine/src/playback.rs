@@ -4,10 +4,13 @@
 //! (slowed without lowering the pitch) to stay with the picture. This module is pure DSP; the
 //! audio device is driven by the app.
 
+use std::ops::Range;
 use std::sync::Arc;
 
 use rastersong_graph::Tempo;
 use rastersong_media::AudioClip;
+
+use crate::AudioBlock;
 
 /// One track in the mix.
 #[derive(Debug, Clone)]
@@ -19,21 +22,45 @@ pub struct MixTrack {
     pub gain: f32,
 }
 
-/// Sums tracks into stereo at any rate and position.
+/// Rendered sound, one block per video frame, as the preview has it so far.
+pub trait RenderedSource: Send + Sync + std::fmt::Debug {
+    /// The rendered audio of each frame in `frames`, where it's ready.
+    fn blocks(&self, frames: Range<usize>) -> Vec<Option<Arc<AudioBlock>>>;
+
+    /// Video frames a second, to find the frame a time falls in. Zero when unknown.
+    fn frame_rate(&self) -> f64;
+}
+
+/// Sums tracks, or the graph's rendered sound, into stereo at any rate and position.
 #[derive(Debug, Clone, Default)]
 pub struct Mixer {
     tracks: Vec<MixTrack>,
+    rendered: Option<(Arc<dyn RenderedSource>, f32)>,
 }
 
 impl Mixer {
     pub fn new(tracks: Vec<MixTrack>) -> Self {
-        Self { tracks }
+        Self {
+            tracks,
+            rendered: None,
+        }
+    }
+
+    /// Plays the graph's rendered sound at linear `gain`. Frames not rendered yet are silent.
+    pub fn rendered(source: Arc<dyn RenderedSource>, gain: f32) -> Self {
+        Self {
+            tracks: Vec::new(),
+            rendered: Some((source, gain)),
+        }
     }
 
     /// Writes `out.len() / 2` interleaved stereo frames at `rate` Hz, starting at `start` seconds
     /// of video time. Time outside a track is silence; mono tracks play in both channels.
     pub fn render(&self, start: f64, rate: f64, out: &mut [f32]) {
         out.fill(0.0);
+        if let Some((source, gain)) = &self.rendered {
+            render_blocks(source.as_ref(), *gain, start, rate, out);
+        }
         for track in self.tracks.iter().filter(|t| t.gain > 0.0) {
             let clip = &track.clip;
             let channels = clip.channels as usize;
@@ -55,6 +82,44 @@ impl Mixer {
                 }
                 pos += step;
             }
+        }
+    }
+}
+
+/// Adds rendered blocks covering `start` onwards to `out` (stereo at `rate`), interpolating
+/// between their samples. Mono blocks play in both channels.
+fn render_blocks(source: &dyn RenderedSource, gain: f32, start: f64, rate: f64, out: &mut [f32]) {
+    let fps = source.frame_rate();
+    if fps <= 0.0 || gain <= 0.0 {
+        return;
+    }
+    let end = start + (out.len() / 2) as f64 / rate;
+    let first = ((start * fps).floor() - 1.0).max(0.0) as usize;
+    let last = ((end * fps).floor() + 2.0).max(0.0) as usize;
+    let blocks: Vec<Arc<AudioBlock>> = source.blocks(first..last).into_iter().flatten().collect();
+    let Some(block_rate) = blocks.first().map(|b| f64::from(b.sample_rate)) else {
+        return;
+    };
+    // Sample frame `k` (at the blocks' rate) of channel `c`, or silence where nothing is rendered.
+    let sample = |k: i64, c: usize| -> f32 {
+        let Ok(k) = u64::try_from(k) else {
+            return 0.0;
+        };
+        blocks
+            .iter()
+            .find(|b| b.start <= k && k < b.start + b.frames() as u64)
+            .map_or(0.0, |b| {
+                let channels = b.channels.max(1) as usize;
+                b.samples[(k - b.start) as usize * channels + c.min(channels - 1)]
+            })
+    };
+    for (j, frame) in out.as_chunks_mut::<2>().0.iter_mut().enumerate() {
+        let pos = (start + j as f64 / rate) * block_rate;
+        let i = pos.floor() as i64;
+        let frac = (pos - i as f64) as f32;
+        for (c, out) in frame.iter_mut().enumerate() {
+            let a = sample(i, c);
+            *out += (a + (sample(i + 1, c) - a) * frac) * gain;
         }
     }
 }

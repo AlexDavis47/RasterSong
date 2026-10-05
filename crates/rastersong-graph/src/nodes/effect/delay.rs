@@ -1,6 +1,6 @@
 use crate::dsp::{DelayLine, mix};
 use crate::nodes::support::MAX_WARMUP_FRAMES;
-use crate::nodes::{Category, TimeUnit, NodeKind, NodeSpec};
+use crate::nodes::{Category, NodeKind, NodeSpec, TimeUnit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// A delay line, in rows or frames. Delaying by a fraction of a row and modulating the time with
@@ -160,6 +160,9 @@ mod tests {
     fn mix_zero_is_the_dry_signal() {
         let mut delay = node("delay", r#"{ "time": 0.5, "mix": 0 }"#, 4, 4.0, &[true]);
         let input = vec![0.1, 0.2, 0.3, 0.4];
-        assert_eq!(process_one(delay.as_mut(), std::slice::from_ref(&input)), input);
+        assert_eq!(
+            process_one(delay.as_mut(), std::slice::from_ref(&input)),
+            input
+        );
     }
 }

@@ -6,11 +6,11 @@ use std::sync::Arc;
 use crate::desc::{Channels, Connection, GraphDesc, Grouping, Interpolation, Modulation, NodeDesc};
 use crate::dsp::{DelayLine, resample};
 use crate::nodes::support::MAX_WARMUP_FRAMES;
-use crate::nodes::{OUTPUT, Registry, VIDEO_INPUT};
+use crate::nodes::{AUDIO_INPUT, AUDIO_OUTPUT, OUTPUT, Registry, VIDEO_INPUT};
 
 use crate::{
-    GraphError, InputSpec, Layout, LayoutContext, Node, OutputSpec, ParamSpec, ParamValue,
-    PrepareContext, ProcessContext, Range, Signal, Sources, Tag, Tempo,
+    Diagnostic, GraphError, InputSpec, Layout, LayoutContext, Node, OutputSpec, ParamSpec,
+    ParamValue, PrepareContext, ProcessContext, Range, Severity, Signal, Sources, Tag, Tempo,
 };
 
 /// The node type that fills unconnected inputs.
@@ -75,14 +75,15 @@ pub struct NodeStats {
     pub inputs: Vec<Layout>,
     /// The layouts (and tags) of the node's outputs.
     pub outputs: Vec<Layout>,
-    /// Warnings that didn't stop the graph from compiling.
-    pub diagnostics: Vec<String>,
+    /// Notes and warnings that didn't stop the graph from compiling.
+    pub diagnostics: Vec<Diagnostic>,
 }
 
-/// A compile warning about one node. Never stops processing.
+/// A [`Diagnostic`] about one node.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Diagnostic {
+pub struct NodeDiagnostic {
     pub node: Arc<str>,
+    pub severity: Severity,
     pub message: String,
 }
 
@@ -91,6 +92,10 @@ pub struct Graph {
     node_stats: Vec<NodeStats>,
     steps: Vec<Step>,
     output_step: usize,
+    /// The audio output's step, if the graph has one.
+    audio_step: Option<usize>,
+    /// The source the audio output reads directly, when nothing processes it on the way.
+    audio_passthrough: Option<String>,
     frame_rate: f64,
     sources: Vec<(String, Layout)>,
     latency_frames: u32,
@@ -335,24 +340,61 @@ impl Graph {
     ) -> Result<Self, GraphError> {
         let bypassed = apply_bypass(desc, registry);
         let desc = bypassed.as_ref().unwrap_or(desc);
+        let active = without_idle_audio_outputs(desc);
+        let desc = active.as_ref().unwrap_or(desc);
         let filled = fill_missing_inputs(desc, registry);
         let desc = filled.as_ref().unwrap_or(desc);
         let mut pending = create_nodes(desc, registry)?;
         connect(desc, &mut pending)?;
 
-        let outputs: Vec<usize> = (0..pending.len())
-            .filter(|&i| pending[i].kind == OUTPUT)
-            .collect();
+        let of_kind = |kind: &str| -> Vec<usize> {
+            (0..pending.len())
+                .filter(|&i| pending[i].kind == kind)
+                .collect()
+        };
+        let outputs = of_kind(OUTPUT);
         let &[output] = outputs.as_slice() else {
             return Err(GraphError::OutputCount(outputs.len()));
         };
-        let order = schedule(&pending, output)?;
+        let audio_outputs = of_kind(AUDIO_OUTPUT);
+        if audio_outputs.len() > 1 {
+            return Err(GraphError::AudioOutputCount(audio_outputs.len()));
+        }
+        let sinks: Vec<usize> = std::iter::once(output).chain(audio_outputs).collect();
+        // Sinks are the ends of the graph: nothing may read them, so they can be compiled last.
+        if let Some(reader) = pending
+            .iter()
+            .find(|p| p.sources().any(|(s, _)| sinks.contains(s)))
+        {
+            return Err(GraphError::Node {
+                node: reader.id.clone(),
+                message: "can't read from an output node".into(),
+            });
+        }
+        let mut order = Vec::new();
+        for &sink in &sinks {
+            for n in schedule(&pending, sink)? {
+                if !order.contains(&n) && !sinks.contains(&n) {
+                    order.push(n);
+                }
+            }
+        }
+        order.extend(&sinks);
 
-        let mut compiler = Compiler::new(registry, options, pending, output);
+        // A track wired straight into the audio output is used as it is, not rendered.
+        let audio_passthrough = sinks
+            .get(1)
+            .and_then(|&audio| pending[audio].wires[0])
+            .filter(|&(src, _)| pending[src].kind == AUDIO_INPUT)
+            .and_then(|(src, _)| pending[src].node.source().map(str::to_owned));
+
+        let mut compiler = Compiler::new(registry, options, pending, sinks);
         for &n in &order {
             compiler.add_step(n)?;
         }
-        Ok(compiler.finish())
+        let mut graph = compiler.finish();
+        graph.audio_passthrough = audio_passthrough;
+        Ok(graph)
     }
 
     /// The layouts, tags and warnings of **every** node, including those that don't feed the
@@ -386,7 +428,7 @@ impl Graph {
             }
         }
 
-        let mut compiler = Compiler::new(registry, options, pending, usize::MAX);
+        let mut compiler = Compiler::new(registry, options, pending, Vec::new());
         let mut stats = Vec::new();
         for n in order {
             let p = &compiler.pending[n];
@@ -429,14 +471,15 @@ impl Graph {
         &self.node_stats
     }
 
-    /// Every compile warning, in the order the nodes run.
-    pub fn diagnostics(&self) -> Vec<Diagnostic> {
+    /// Every compile note and warning, in the order the nodes run.
+    pub fn diagnostics(&self) -> Vec<NodeDiagnostic> {
         self.node_stats
             .iter()
             .flat_map(|s| {
-                s.diagnostics.iter().map(|message| Diagnostic {
+                s.diagnostics.iter().map(|d| NodeDiagnostic {
                     node: s.node.clone(),
-                    message: message.clone(),
+                    severity: d.severity,
+                    message: d.message.clone(),
                 })
             })
             .collect()
@@ -444,6 +487,23 @@ impl Graph {
 
     pub fn output_layout(&self) -> Layout {
         self.steps[self.output_step].outputs[0].layout
+    }
+
+    /// The layout of the audio output's signal, if the graph has an audio output.
+    pub fn audio_layout(&self) -> Option<Layout> {
+        self.audio_step.map(|s| self.steps[s].outputs[0].layout)
+    }
+
+    /// The audio output's signal for the last processed frame, if the graph has one. It lines up
+    /// with the frame [`Self::process`] returned: both have [`Self::latency_frames`].
+    pub fn audio_output(&self) -> Option<&Signal> {
+        self.audio_step.map(|s| &self.steps[s].outputs[0])
+    }
+
+    /// When an audio input is wired straight into the audio output, the source it reads: the
+    /// host can then use that audio as it is instead of the rendered blocks.
+    pub fn audio_passthrough(&self) -> Option<&str> {
+        self.audio_passthrough.as_deref()
     }
 
     /// Clears all state, as if no frame had been processed.
@@ -573,7 +633,7 @@ struct NodeShape {
     /// Layouts of the step's outputs (interleaved again when channels are split).
     output_layouts: Vec<Layout>,
     /// Warnings about the node's inputs and settings.
-    diagnostics: Vec<String>,
+    diagnostics: Vec<Diagnostic>,
 }
 
 /// Compiles pending nodes into steps one at a time, in schedule order. Each step passes through
@@ -583,7 +643,11 @@ struct Compiler<'a> {
     registry: &'a Registry,
     options: &'a CompileOptions,
     pending: Vec<Pending>,
-    output: usize,
+    /// The sinks, by pending index: the video output, then the audio output if there is one.
+    /// They are compiled last, and all line up at the same latency.
+    sinks: Vec<usize>,
+    /// The latency every sink lines up at, in whole frames, once worked out.
+    sink_latency: Option<f64>,
     /// Output layouts of each node compiled so far, by pending index.
     layouts: Vec<Vec<Layout>>,
     /// Latency of each node's outputs relative to the sources, in frames.
@@ -602,14 +666,15 @@ impl<'a> Compiler<'a> {
         registry: &'a Registry,
         options: &'a CompileOptions,
         pending: Vec<Pending>,
-        output: usize,
+        sinks: Vec<usize>,
     ) -> Self {
         let count = pending.len();
         Self {
             registry,
             options,
             pending,
-            output,
+            sinks,
+            sink_latency: None,
             layouts: vec![Vec::new(); count],
             latency: vec![0.0; count],
             step_of: vec![usize::MAX; count],
@@ -624,7 +689,9 @@ impl<'a> Compiler<'a> {
     fn finish(self) -> Graph {
         Graph {
             node_stats: self.node_stats,
-            output_step: self.step_of[self.output],
+            output_step: self.step_of[self.sinks[0]],
+            audio_step: self.sinks.get(1).map(|&a| self.step_of[a]),
+            audio_passthrough: None,
             steps: self.steps,
             frame_rate: self.options.frame_rate,
             sources: self.sources,
@@ -722,14 +789,13 @@ impl<'a> Compiler<'a> {
         let mut separate = None;
         if let (Channels::Separate, Some(main)) = (p.channels, main) {
             if main.samples_per_pixel <= 1 {
-                diagnostics.push(
-                    "channels are set to separate, but the main input has one channel".into(),
-                );
+                diagnostics.push(Diagnostic::note(
+                    "Separate channels has no effect here: the signal has one channel.",
+                ));
             } else if !p.per_channel {
-                diagnostics.push(
-                    "this node can't process channels separately, so they're processed together"
-                        .into(),
-                );
+                diagnostics.push(Diagnostic::warning(
+                    "This node can't run once per channel, so the channels are processed together.",
+                ));
             } else {
                 let mut channel = main.reshaped(main.width, main.height, 1);
                 channel.tag.part = main.tag.part;
@@ -737,10 +803,9 @@ impl<'a> Compiler<'a> {
                 if node_outputs.iter().all(|l| l.same_shape(&channel)) {
                     separate = Some((main.samples_per_pixel as usize, channel, node_outputs));
                 } else {
-                    diagnostics.push(
-                        "this node changes the signal's shape, so channels are processed together"
-                            .into(),
-                    );
+                    diagnostics.push(Diagnostic::warning(
+                        "This node changes the signal's shape, so the channels are processed together.",
+                    ));
                 }
             }
         }
@@ -777,11 +842,7 @@ impl<'a> Compiler<'a> {
         if let Some(main) = main {
             let got = main.tag.range;
             if p.expects != Range::Unknown && got != Range::Unknown && got != p.expects {
-                diagnostics.push(format!(
-                    "expects values from {}, got {}",
-                    p.expects.label().unwrap_or_default(),
-                    got.label().unwrap_or_default()
-                ));
+                diagnostics.push(Diagnostic::note(range_note(p.expects, got)));
             }
             diagnostics.extend(p.node.diagnostics(&LayoutContext {
                 inputs: &input_layouts,
@@ -873,6 +934,23 @@ impl<'a> Compiler<'a> {
         Ok((nodes, own_latency))
     }
 
+    /// The latency all sinks line up at: the latest of their inputs, in whole frames. Sinks are
+    /// compiled after everything else, so their inputs' latencies are known.
+    fn sink_latency(&mut self) -> f64 {
+        if let Some(latency) = self.sink_latency {
+            return latency;
+        }
+        let latest = self
+            .sinks
+            .iter()
+            .flat_map(|&s| self.pending[s].sources())
+            .map(|&(src, _)| self.latency[src])
+            .fold(0.0, f64::max);
+        let latency = (latest - 1e-9).ceil().max(0.0);
+        self.sink_latency = Some(latency);
+        latency
+    }
+
     /// Phase 3: inputs that arrive with less latency than the latest one are delayed to line up.
     /// Returns the latency the node's inputs line up at, in frames, and records the node's own.
     fn align_latency(&mut self, n: usize, own_latency: f64) -> f64 {
@@ -880,10 +958,10 @@ impl<'a> Compiler<'a> {
             .sources()
             .map(|&(src, _)| self.latency[src])
             .fold(0.0, f64::max);
-        if n == self.output {
-            // The output's total latency is rounded up to whole frames so the host can skip
-            // exactly that many frames.
-            aligned = (aligned - 1e-9).ceil().max(0.0);
+        if self.sinks.contains(&n) {
+            // Every sink lines up at the latest one's latency, rounded up to whole frames, so
+            // the host skips exactly that many frames and sound and picture stay in sync.
+            aligned = self.sink_latency();
             self.latency_frames = aligned as u32;
         }
         self.latency[n] = aligned + own_latency;
@@ -962,6 +1040,21 @@ impl<'a> Compiler<'a> {
             })
             .collect()
     }
+}
+
+/// The note for a signal whose range differs from the one a node is tuned for: what to expect,
+/// and the conversion to use if the usual behaviour is wanted.
+fn range_note(expects: Range, got: Range) -> String {
+    let convert = match expects {
+        Range::Bipolar => " Video to Audio converts it if you want the usual behaviour.",
+        Range::Unipolar => " Audio to Video converts it if you want the usual behaviour.",
+        Range::Unknown => "",
+    };
+    format!(
+        "Tuned for values from {}; this signal runs {}, so levels and thresholds act differently.{convert}",
+        expects.label().unwrap_or_default(),
+        got.label().unwrap_or_default()
+    )
 }
 
 /// RMS over an evenly spread subset of at most [`LEVEL_SAMPLES`] samples.
@@ -1198,12 +1291,30 @@ fn passthrough(desc: &GraphDesc) -> GraphDesc {
     }
 }
 
+/// Whether anything is connected to node `id`'s inputs or parameters.
+fn is_fed(desc: &GraphDesc, id: &str) -> bool {
+    desc.connections
+        .iter()
+        .any(|c| split_endpoint(&c.to).0 == id)
+}
+
+/// `desc` without audio outputs that have nothing connected: those leave the source audio as it
+/// is, rather than outputting silence. `None` when there are none.
+fn without_idle_audio_outputs(desc: &GraphDesc) -> Option<GraphDesc> {
+    let idle = |n: &NodeDesc| n.kind == AUDIO_OUTPUT && !is_fed(desc, &n.id);
+    desc.nodes.iter().any(idle).then(|| GraphDesc {
+        version: desc.version,
+        nodes: desc.nodes.iter().filter(|n| !idle(n)).cloned().collect(),
+        connections: desc.connections.clone(),
+    })
+}
+
 /// The nodes that feed an output node, and the connections between them.
 fn contributing(desc: &GraphDesc) -> GraphDesc {
     let mut keep: HashSet<&str> = desc
         .nodes
         .iter()
-        .filter(|n| n.kind == OUTPUT)
+        .filter(|n| n.kind == OUTPUT || (n.kind == AUDIO_OUTPUT && is_fed(desc, &n.id)))
         .map(|n| n.id.as_str())
         .collect();
     let mut queue: Vec<&str> = keep.iter().copied().collect();

@@ -92,7 +92,15 @@ impl Node for Remap {
             (Outside::Clamp, _) => Range::from_bounds(out.0, out.1),
             // Extended, the input's nominal range maps through the same line.
             (Outside::Extend, Some((lo, hi))) => {
-                let at = |x: f64| f64::from(self.map(x as f32, self.in_low, self.in_high, self.out_low, self.out_high));
+                let at = |x: f64| {
+                    f64::from(self.map(
+                        x as f32,
+                        self.in_low,
+                        self.in_high,
+                        self.out_low,
+                        self.out_high,
+                    ))
+                };
                 Range::from_bounds(at(lo), at(hi))
             }
             (Outside::Extend, None) => Range::Unknown,
@@ -106,7 +114,13 @@ impl Node for Remap {
         let out_low = ctx.value(Self::OUT_LOW, f64::from(self.out_low));
         let out_high = ctx.value(Self::OUT_HIGH, f64::from(self.out_high));
         for (i, (out, &x)) in outputs[0].data.iter_mut().zip(&inputs[0].data).enumerate() {
-            *out = self.map(x, in_low.at(i), in_high.at(i), out_low.at(i), out_high.at(i));
+            *out = self.map(
+                x,
+                in_low.at(i),
+                in_high.at(i),
+                out_low.at(i),
+                out_high.at(i),
+            );
         }
     }
 }

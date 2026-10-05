@@ -49,9 +49,7 @@ impl Node for Flip {
     fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
         let input = ctx.inputs[0];
         let layout = match self.mode {
-            Mode::Transpose => {
-                input.reshaped(input.height, input.width, input.samples_per_pixel)
-            }
+            Mode::Transpose => input.reshaped(input.height, input.width, input.samples_per_pixel),
             _ => input,
         };
         Ok(vec![layout; ctx.output_count])
@@ -94,10 +92,7 @@ mod tests {
     /// its output layout and data.
     fn flip(mode: &str, input: &Signal) -> Signal {
         let params = [("mode".to_owned(), ParamValue::Text(mode.to_owned()))].into();
-        let mut node = Registry::shared()
-            .create("flip", &params)
-            .unwrap()
-            .unwrap();
+        let mut node = Registry::shared().create("flip", &params).unwrap().unwrap();
         let sources = HashMap::new();
         let inputs = [input.layout];
         let layouts = node
@@ -130,17 +125,26 @@ mod tests {
 
     #[test]
     fn horizontal_mirrors_each_row() {
-        assert_eq!(flip("horizontal", &picture()).data, [2.0, 1.0, 0.0, 5.0, 4.0, 3.0]);
+        assert_eq!(
+            flip("horizontal", &picture()).data,
+            [2.0, 1.0, 0.0, 5.0, 4.0, 3.0]
+        );
     }
 
     #[test]
     fn vertical_swaps_the_rows() {
-        assert_eq!(flip("vertical", &picture()).data, [3.0, 4.0, 5.0, 0.0, 1.0, 2.0]);
+        assert_eq!(
+            flip("vertical", &picture()).data,
+            [3.0, 4.0, 5.0, 0.0, 1.0, 2.0]
+        );
     }
 
     #[test]
     fn reverse_is_both() {
-        assert_eq!(flip("reverse", &picture()).data, [5.0, 4.0, 3.0, 2.0, 1.0, 0.0]);
+        assert_eq!(
+            flip("reverse", &picture()).data,
+            [5.0, 4.0, 3.0, 2.0, 1.0, 0.0]
+        );
     }
 
     #[test]
@@ -162,6 +166,9 @@ mod tests {
     #[test]
     fn pixels_keep_their_channel_order() {
         let rgb = Signal::from_data(Layout::rgb(2, 1), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
-        assert_eq!(flip("horizontal", &rgb).data, [4.0, 5.0, 6.0, 1.0, 2.0, 3.0]);
+        assert_eq!(
+            flip("horizontal", &rgb).data,
+            [4.0, 5.0, 6.0, 1.0, 2.0, 3.0]
+        );
     }
 }

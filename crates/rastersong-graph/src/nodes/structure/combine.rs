@@ -1,7 +1,7 @@
 use crate::nodes::{CHANNEL_PORTS, COMBINE, Category, NodeKind, NodeSpec};
 use crate::{
-    InputSpec, Layout, LayoutContext, Node, OutputSpec, Params, Part, ProcessContext, Signal,
-    TagRule,
+    Diagnostic, InputSpec, Layout, LayoutContext, Node, OutputSpec, Params, Part, ProcessContext,
+    Signal, TagRule,
 };
 
 /// Separate signals → one interleaved signal, a channel each: R, G, B into RGB, L, R into
@@ -35,20 +35,22 @@ impl NodeKind for Combine {
 
 /// How many channels the output has: up to the last connected input.
 fn channel_count(connected: &[bool]) -> usize {
-    connected.iter().rposition(|&c| c).map_or(1, |last| last + 1)
+    connected
+        .iter()
+        .rposition(|&c| c)
+        .map_or(1, |last| last + 1)
 }
 
 impl Node for Combine {
     fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
         let first = ctx.inputs[0];
         let count = channel_count(ctx.connected) as u32;
-        let mut layout =
-            first.reshaped(first.width, first.height, first.samples_per_pixel * count);
+        let mut layout = first.reshaped(first.width, first.height, first.samples_per_pixel * count);
         layout.tag.part = Part::Whole;
         Ok(vec![layout])
     }
 
-    fn diagnostics(&self, ctx: &LayoutContext) -> Vec<String> {
+    fn diagnostics(&self, ctx: &LayoutContext) -> Vec<Diagnostic> {
         let first = ctx.inputs[0];
         ctx.inputs
             .iter()
@@ -57,10 +59,10 @@ impl Node for Combine {
             .skip(1)
             .filter(|&(_, (layout, &connected))| connected && !layout.same_shape(&first))
             .map(|(i, (layout, _))| {
-                format!(
-                    "{} is {layout}, stretched to {}'s {first}",
+                Diagnostic::note(format!(
+                    "{} is {layout}, so it's stretched to fit {}'s {first}.",
                     CHANNEL_PORTS[i], CHANNEL_PORTS[0]
-                )
+                ))
             })
             .collect()
     }

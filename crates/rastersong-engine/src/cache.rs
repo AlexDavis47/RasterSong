@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use rastersong_graph::{OutputLevel, ParamLevel};
 
-use crate::PreviewScale;
+use crate::{AudioBlock, PreviewScale};
 
 /// Identifies what a frame was rendered with. Any graph edit bumps `version`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -25,6 +25,15 @@ pub struct Frame {
     pub levels: Arc<[OutputLevel]>,
     /// The value of every modulated parameter while rendering this frame.
     pub params: Arc<[ParamLevel]>,
+    /// The frame's rendered sound, when the graph has an audio output.
+    pub audio: Option<Arc<AudioBlock>>,
+}
+
+impl Frame {
+    /// Memory the frame's picture and sound take.
+    fn bytes(&self) -> usize {
+        self.rgb.len() + self.audio.as_ref().map_or(0, |a| a.samples.len() * 4)
+    }
 }
 
 impl std::fmt::Debug for Frame {
@@ -116,9 +125,9 @@ impl FrameCache {
         if key != self.key {
             return false;
         }
-        self.bytes += frame.rgb.len();
+        self.bytes += frame.bytes();
         if let Some(old) = self.frames.insert(frame.index, Arc::new(frame)) {
-            self.bytes -= old.rgb.len();
+            self.bytes -= old.bytes();
         }
         self.evict(playhead);
         true
@@ -141,7 +150,7 @@ impl FrameCache {
                 last
             };
             let frame = self.frames.remove(&victim).unwrap();
-            self.bytes -= frame.rgb.len();
+            self.bytes -= frame.bytes();
         }
     }
 }
@@ -163,6 +172,7 @@ mod tests {
             rgb: vec![index as u8; 3],
             levels: Arc::new([]),
             params: Arc::new([]),
+            audio: None,
         }
     }
 

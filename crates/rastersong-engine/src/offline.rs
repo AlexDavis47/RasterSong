@@ -8,7 +8,10 @@ use rastersong_graph::{GraphDesc, Registry, Tempo};
 use rastersong_media::{AudioClip, MediaBackend};
 
 use crate::sources::Modulator;
-use crate::{AudioTrack, DEFAULT_AUDIO_TRACK, EngineError, OutputSize, RenderInfo, Renderer};
+use crate::{
+    AudioBlock, AudioSink, AudioTrack, DEFAULT_AUDIO_RATE, DEFAULT_AUDIO_TRACK, EngineError,
+    OutputSize, RenderInfo, Renderer,
+};
 
 #[derive(Debug, Clone, Default)]
 pub struct RenderSettings {
@@ -20,6 +23,8 @@ pub struct RenderSettings {
     pub audio_offset: f64,
     /// The project tempo, for beat and bar units.
     pub tempo: Tempo,
+    /// The rate the graph's sound is rendered at; `None` is [`DEFAULT_AUDIO_RATE`].
+    pub audio_rate: Option<u32>,
 }
 
 /// One rendered frame, as packed RGB8.
@@ -27,12 +32,15 @@ pub struct RenderSettings {
 pub struct RenderedFrame<'a> {
     pub index: usize,
     pub rgb: &'a [u8],
+    /// The frame's rendered sound, when the render's audio is [`AudioSink::Rendered`].
+    pub audio: Option<&'a AudioBlock>,
 }
 
 /// Where rendered frames go.
 pub trait FrameSink {
-    /// Called once before the first frame, e.g. to create the output file.
-    fn start(&mut self, info: &RenderInfo) -> Result<(), EngineError>;
+    /// Called once before the first frame, e.g. to create the output file. `audio` says whether
+    /// the sound is the source audio, a track passed through, or rendered with each frame.
+    fn start(&mut self, info: &RenderInfo, audio: &AudioSink) -> Result<(), EngineError>;
 
     /// Called for each frame, in order.
     fn frame(&mut self, frame: RenderedFrame) -> Result<(), EngineError>;
@@ -64,16 +72,18 @@ pub fn render(
             .size
             .map_or(OutputSize::Native, |(w, h)| OutputSize::Exact(w, h)),
     )?;
+    renderer.set_audio_rate(settings.audio_rate.unwrap_or(DEFAULT_AUDIO_RATE));
     let mut info = *renderer.info();
     if let Some(limit) = settings.frames {
         info.frames = info.frames.min(limit);
     }
-    sink.start(&info)?;
+    sink.start(&info, &renderer.audio_sink())?;
     for index in 0..info.frames {
-        let rgb = renderer
+        renderer
             .render(index, &|| false)?
             .expect("offline renders are never cancelled");
-        sink.frame(RenderedFrame { index, rgb })?;
+        let (rgb, audio) = renderer.output();
+        sink.frame(RenderedFrame { index, rgb, audio })?;
     }
     Ok(info)
 }
@@ -113,7 +123,7 @@ mod tests {
     }
 
     impl FrameSink for Recorder {
-        fn start(&mut self, info: &RenderInfo) -> Result<(), EngineError> {
+        fn start(&mut self, info: &RenderInfo, _: &AudioSink) -> Result<(), EngineError> {
             self.info = Some(*info);
             Ok(())
         }

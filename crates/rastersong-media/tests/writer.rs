@@ -75,3 +75,30 @@ fn video_without_audio() {
     assert_eq!(backend.open_video(&path).unwrap().info().frame_count, 1);
     assert!(backend.load_audio(&path, AudioOptions::default()).is_err());
 }
+
+#[test]
+fn streamed_audio_is_written_as_far_as_the_video() {
+    // 10 frames at 25 fps with 320 mono samples each at 8 kHz, pushed before each frame.
+    let path = temp_file("streamed_audio.mkv");
+    let mut writer =
+        LosslessWriter::create_streaming(&path, 8, 8, Rational::new(25, 1), 8000, 1).unwrap();
+    let sample = |i: usize| ((i % 50) as f32 / 50.0) - 0.5;
+    for frame in 0..10 {
+        let block: Vec<f32> = (frame * 320..(frame + 1) * 320).map(sample).collect();
+        writer.push_audio(&block);
+        writer.write_frame(&pattern(frame, 8, 8)).unwrap();
+    }
+    writer.finish().unwrap();
+
+    let audio = FfmpegBackend::new()
+        .unwrap()
+        .load_audio(&path, AudioOptions::default())
+        .unwrap();
+    assert_eq!(
+        (audio.sample_rate, audio.channels, audio.frames()),
+        (8000, 1, 3200)
+    );
+    for (i, &got) in audio.samples.iter().enumerate() {
+        assert!((got - sample(i)).abs() <= 1.0 / 32767.0, "sample {i}");
+    }
+}

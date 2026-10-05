@@ -26,8 +26,7 @@ impl NodeKind for Offset {
         .describe("Adds a constant to every sample")
         .params(Self::PARAMS)
         .per_channel();
-    const TEST_CONFIGS: &'static [&'static str] =
-        &[r#"{ "amount": 0.25 }"#, r#"{ "amount": -1 }"#];
+    const TEST_CONFIGS: &'static [&'static str] = &[r#"{ "amount": 0.25 }"#, r#"{ "amount": -1 }"#];
     const BENCH: Option<&'static str> = Some(r#"{ "amount": 0.25 }"#);
 
     fn new(params: &Params) -> Result<Self, String> {

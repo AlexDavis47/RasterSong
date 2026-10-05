@@ -182,3 +182,136 @@ fn stereo_tracks_reach_the_graph_interleaved() {
         .unwrap();
     assert!((right.rms - 0.5).abs() < 1e-6, "{}", right.rms);
 }
+
+/// The test video with its audio inverted into an Audio Output.
+const SOUND: &str = r#"{ "version": 2,
+  "nodes": [
+    { "id": "video", "type": "video_input" }, { "id": "audio", "type": "audio_input" },
+    { "id": "inv", "type": "invert", "params": { "mode": "audio" } },
+    { "id": "sound", "type": "audio_output" }, { "id": "out", "type": "output" }
+  ],
+  "connections": [
+    { "from": "video", "to": "out" }, { "from": "audio", "to": "inv" }, { "from": "inv", "to": "sound" }
+  ] }"#;
+
+#[test]
+fn an_audio_output_renders_sound_with_each_frame() {
+    use rastersong_engine::AudioSink;
+
+    let mut r = renderer(SOUND);
+    assert_eq!(
+        r.audio_sink(),
+        AudioSink::Rendered {
+            sample_rate: 48_000,
+            channels: 1
+        }
+    );
+    // 30 fps: exactly 1600 samples a frame at 48 kHz, one block after another.
+    let mut blocks = Vec::new();
+    for i in 0..6 {
+        r.render(i, &|| false).unwrap();
+        blocks.push(r.audio().unwrap().clone());
+    }
+    for (i, b) in blocks.iter().enumerate() {
+        assert_eq!((b.start, b.frames()), (i as u64 * 1600, 1600));
+    }
+    // The source is a sine at 0.8; inverted and resampled, it's still a full-level wave.
+    let peak = blocks[3].samples.iter().fold(0.0f32, |m, x| m.max(x.abs()));
+    assert!((0.7..=0.81).contains(&peak), "{peak}");
+
+    // After a seek (with its warm-up), the same frame has the same sound.
+    let mut seeking = renderer(SOUND);
+    seeking.render(30, &|| false).unwrap();
+    seeking.render(4, &|| false).unwrap();
+    assert_eq!(seeking.audio().unwrap(), &blocks[4]);
+
+    // Another rate.
+    r.set_audio_rate(24_000);
+    r.render(2, &|| false).unwrap();
+    assert_eq!(r.audio().unwrap().frames(), 800);
+}
+
+#[test]
+fn a_track_wired_straight_to_the_audio_output_is_passed_through() {
+    use rastersong_engine::AudioSink;
+
+    let graph = SOUND.replace(
+        r#"{ "from": "audio", "to": "inv" }, { "from": "inv", "to": "sound" }"#,
+        r#"{ "from": "audio", "to": "sound" }"#,
+    );
+    let mut r = renderer(&graph);
+    assert_eq!(r.audio_sink(), AudioSink::Passthrough("audio".into()));
+    r.render(0, &|| false).unwrap();
+    assert!(r.audio().is_none());
+    assert_eq!(renderer(common::FINITE).audio_sink(), AudioSink::Source);
+}
+
+#[test]
+fn tracks_at_different_rates_meet_in_one_graph() {
+    use std::path::Path;
+    use std::sync::Arc;
+
+    use rastersong_engine::sources::Modulator;
+    use rastersong_engine::{AudioClip, AudioSink, AudioTrack, GraphDesc, Renderer, Severity};
+
+    // A 9 kHz mono track and a 16 kHz stereo one, combined into the audio output: their blocks
+    // differ in length (300 and 533 frames at 30 fps), so the second is stretched to the first.
+    let mono = AudioClip {
+        sample_rate: 9_000,
+        channels: 1,
+        samples: vec![0.25; 9_000 * 3],
+    };
+    let stereo = AudioClip {
+        sample_rate: 16_000,
+        channels: 2,
+        samples: [0.5, -0.5].repeat(16_000 * 3),
+    };
+    let track = |name: &str, clip: &AudioClip| AudioTrack {
+        name: name.into(),
+        modulator: Arc::new(Modulator::new(clip)),
+        offset: 0.0,
+    };
+    let graph = r#"{ "version": 2,
+      "nodes": [
+        { "id": "video", "type": "video_input" },
+        { "id": "a", "type": "audio_input", "params": { "source": "low" } },
+        { "id": "b", "type": "audio_input", "params": { "source": "high" } },
+        { "id": "mix", "type": "combine" }, { "id": "sound", "type": "audio_output" },
+        { "id": "out", "type": "output" }
+      ],
+      "connections": [
+        { "from": "video", "to": "out" }, { "from": "a", "to": "mix.c1" }, { "from": "b", "to": "mix.c2" },
+        { "from": "mix", "to": "sound" }
+      ] }"#;
+    let mut r = Renderer::new(
+        &common::backend(),
+        Path::new(common::VIDEO),
+        &[track("low", &mono), track("high", &stereo)],
+        &GraphDesc::from_json(graph).unwrap(),
+        Default::default(),
+        &Registry::default(),
+        OutputSize::Native,
+    )
+    .unwrap();
+    let stats = r.node_stats();
+    let of = |id: &str| stats.iter().find(|s| &*s.node == id).unwrap();
+    assert_eq!(of("a").outputs[0].len(), 300);
+    assert_eq!(of("b").outputs[0].len(), 533 * 2);
+    // The stretch is a note, not a problem.
+    let mix = of("mix");
+    assert_eq!(mix.diagnostics.len(), 1);
+    assert_eq!(mix.diagnostics[0].severity, Severity::Note);
+    assert!(matches!(
+        r.audio_sink(),
+        AudioSink::Rendered { channels: 2, .. }
+    ));
+    r.render(5, &|| false).unwrap();
+    let block = r.audio().unwrap();
+    // Left is the 9 kHz track; right is the stereo track squeezed in, its L and R alternating.
+    let left: Vec<f32> = block.samples.iter().step_by(2).copied().collect();
+    assert!(
+        left[100..].iter().all(|&x| (x - 0.25).abs() < 1e-3),
+        "{:?}",
+        &left[100..110]
+    );
+}

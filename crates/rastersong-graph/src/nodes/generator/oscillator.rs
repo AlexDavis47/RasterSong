@@ -158,8 +158,13 @@ impl NodeKind for Oscillator {
 
 impl Node for Oscillator {
     fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
-        self.layout
-            .output_layouts(ctx, Range::from_bounds(f64::from(self.offset - self.amplitude.abs()), f64::from(self.offset + self.amplitude.abs())))
+        self.layout.output_layouts(
+            ctx,
+            Range::from_bounds(
+                f64::from(self.offset - self.amplitude.abs()),
+                f64::from(self.offset + self.amplitude.abs()),
+            ),
+        )
     }
 
     fn prepare(&mut self, ctx: &PrepareContext) {
@@ -304,7 +309,10 @@ mod tests {
             let out = beat_ramp(tempo, 0);
             assert!(out[0].abs() < 1e-6, "{bpm} bpm");
             // Each sample advances 1/beat of a cycle.
-            assert!((f64::from(out[500]) - 500.0 / beat).abs() < 1e-4, "{bpm} bpm");
+            assert!(
+                (f64::from(out[500]) - 500.0 / beat).abs() < 1e-4,
+                "{bpm} bpm"
+            );
         }
     }
 

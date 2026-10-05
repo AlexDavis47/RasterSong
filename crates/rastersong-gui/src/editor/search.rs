@@ -72,7 +72,7 @@ pub(super) fn matches<'a>(
     };
     let mut found: Vec<(u8, &NodeType)> = types
         .iter()
-        .filter(|t| GraphEditor::user_addable(t.spec.category))
+        .filter(|t| GraphEditor::user_addable(t))
         .filter(|t| fits(t))
         .filter_map(|&t| {
             let label = t.spec.label.to_lowercase();

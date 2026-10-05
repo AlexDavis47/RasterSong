@@ -8,7 +8,7 @@
 use std::collections::BTreeSet;
 
 use eframe::egui::{Pos2, pos2, vec2};
-use rastersong_engine::{Category, DEFAULT_AUDIO_TRACK, ParamValue};
+use rastersong_engine::{DEFAULT_AUDIO_TRACK, NodeType, ParamValue};
 
 use super::{EditorNode, GraphEditor, NodeKey};
 
@@ -186,9 +186,10 @@ impl GraphEditor {
         }
     }
 
-    /// Whether the user can add a node type themselves: not the project's inputs and output.
-    pub(super) fn user_addable(category: Category) -> bool {
-        category.user_addable()
+    /// Whether the user can add a node type themselves: not the project's inputs and output,
+    /// but the optional audio output.
+    pub(super) fn user_addable(kind: &NodeType) -> bool {
+        kind.spec.addable
     }
 }
 

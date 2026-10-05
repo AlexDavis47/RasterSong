@@ -93,10 +93,11 @@ impl NodeKind for AudioInput {
         .describe("The audio track, one frame's worth per block, -1 to 1, channels interleaved")
         .params(Self::PARAMS)
         .inputs(&[])
-        .outputs(&[
-            OutputSpec::new("out", "The audio, one frame's worth per block, from -1 to 1; stereo comes as L, R, L, R, …")
-                .tag(TagRule::AUDIO),
-        ]);
+        .outputs(&[OutputSpec::new(
+            "out",
+            "The audio, one frame's worth per block, from -1 to 1; stereo comes as L, R, L, R, …",
+        )
+        .tag(TagRule::AUDIO)]);
 
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self(Source {

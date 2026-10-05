@@ -19,6 +19,8 @@ use crate::{InputSpec, Node, OutputSpec, ParamSpec, ParamValue, Params, Range, T
 
 /// The node type name of the graph's output node.
 pub const OUTPUT: &str = "output";
+/// The node type name of the graph's optional audio output.
+pub const AUDIO_OUTPUT: &str = "audio_output";
 /// The node type name of the node that reads the host's video.
 pub const VIDEO_INPUT: &str = "video_input";
 /// The node type name of the node that reads one of the host's audio tracks.
@@ -74,6 +76,7 @@ nodes! {
     },
     output {
         video: [Output],
+        audio: [AudioOutput],
     },
     structure {
         split: [Split],
@@ -162,7 +165,7 @@ impl Category {
 
     /// Whether users add nodes of this category themselves. Inputs and the output come from the
     /// project (one per video, one per audio track, one output).
-    pub fn user_addable(self) -> bool {
+    pub const fn user_addable(self) -> bool {
         !matches!(self, Self::Input | Self::Output)
     }
 }
@@ -192,6 +195,9 @@ pub struct NodeSpec {
     /// The range the node is designed for on its main input (level thresholds in dB assume
     /// audio's `-1..1`). Another known range only produces a compile warning.
     pub expects: Range,
+    /// Whether users add nodes of this type themselves. By default, every category but the
+    /// inputs and the output, which come from the project.
+    pub addable: bool,
 }
 
 impl NodeSpec {
@@ -207,7 +213,14 @@ impl NodeSpec {
             outputs: MAIN_OUTPUT,
             per_channel: false,
             expects: Range::Unknown,
+            addable: category.user_addable(),
         }
+    }
+
+    /// Lets users add the node themselves, whatever its category.
+    pub const fn addable(mut self) -> Self {
+        self.addable = true;
+        self
     }
 
     pub const fn per_channel(mut self) -> Self {

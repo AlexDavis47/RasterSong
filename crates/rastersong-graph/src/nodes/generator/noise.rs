@@ -128,7 +128,10 @@ impl Noise {
             }
             Color::Blue => (w - white(self.seed, index.wrapping_sub(1))) * 0.5,
             Color::Violet => {
-                let (a, b) = (white(self.seed, index.wrapping_sub(1)), white(self.seed, index.wrapping_sub(2)));
+                let (a, b) = (
+                    white(self.seed, index.wrapping_sub(1)),
+                    white(self.seed, index.wrapping_sub(2)),
+                );
                 (w - 2.0 * a + b) * 0.25
             }
         }
@@ -137,8 +140,13 @@ impl Noise {
 
 impl Node for Noise {
     fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
-        self.layout
-            .output_layouts(ctx, Range::from_bounds(f64::from(self.offset - self.amplitude.abs()), f64::from(self.offset + self.amplitude.abs())))
+        self.layout.output_layouts(
+            ctx,
+            Range::from_bounds(
+                f64::from(self.offset - self.amplitude.abs()),
+                f64::from(self.offset + self.amplitude.abs()),
+            ),
+        )
     }
 
     fn process(&mut self, ctx: &ProcessContext, _inputs: &[&Signal], outputs: &mut [Signal]) {
@@ -196,7 +204,10 @@ mod tests {
     /// Mean absolute change between neighbouring samples relative to the signal's own spread:
     /// small for slow noise, large for fast noise.
     fn roughness(color: &str) -> f32 {
-        let out = noise(&format!(r#"{{ "color": "{color}", "amplitude": 1, "offset": 0 }}"#), 20_000);
+        let out = noise(
+            &format!(r#"{{ "color": "{color}", "amplitude": 1, "offset": 0 }}"#),
+            20_000,
+        );
         let rms = (out.iter().map(|x| x * x).sum::<f32>() / out.len() as f32).sqrt();
         let step = out.windows(2).map(|w| (w[1] - w[0]).abs()).sum::<f32>() / out.len() as f32;
         step / rms

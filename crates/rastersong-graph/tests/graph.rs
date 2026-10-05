@@ -397,6 +397,12 @@ fn separate_channels_on_a_node_that_cant_fall_back_to_together_with_a_warning() 
             .any(|d| &*d.node == "s" && d.message.contains("together")),
         "{warnings:?}"
     );
+    // The setting can't be honoured, so this one is a warning.
+    assert!(
+        warnings
+            .iter()
+            .any(|d| d.severity == rastersong_graph::Severity::Warning)
+    );
     let input = sources(|i| i as f32, |_| 0.0);
     assert_eq!(graph.process(0, &input).unwrap().data, input["video"].data);
 }
@@ -481,6 +487,8 @@ fn range_mismatches_are_warnings_not_errors() {
         "{}",
         warnings[0].message
     );
+    // A suggestion, not a mistake: often it's the effect being made.
+    assert_eq!(warnings[0].severity, rastersong_graph::Severity::Note);
     assert!(graph.process(0, &sources(|_| 0.5, |_| 0.0)).is_ok());
     // Audio into the output is shown, with a warning on the output.
     let json = graph_json(
@@ -971,4 +979,118 @@ fn inspect_covers_nodes_that_dont_feed_the_output() {
     assert!(of("out").is_some());
     // Pack can't make pixels of 7 channels, so it and what follows are left out.
     assert!(of("bad").is_none() && of("after").is_none());
+}
+
+#[test]
+fn the_audio_output_carries_its_signal_alongside_the_picture() {
+    // Gain on the audio, written to the audio output; the picture is passed through.
+    let json = graph_json(
+        r#"{ "id": "video", "type": "video_input" }, { "id": "audio", "type": "audio_input" },
+           { "id": "inv", "type": "invert", "params": { "mode": "audio" } },
+           { "id": "sound", "type": "audio_output" }, { "id": "out", "type": "output" }"#,
+        r#"{ "from": "video", "to": "out" }, { "from": "audio", "to": "inv" }, { "from": "inv", "to": "sound" }"#,
+    );
+    let mut graph = compile(&json).unwrap();
+    assert!(
+        graph
+            .audio_layout()
+            .unwrap()
+            .same_shape(&Layout::audio(AUDIO))
+    );
+    assert_eq!(graph.audio_passthrough(), None);
+    graph
+        .process(0, &sources(|_| 0.0, |i| i as f32 / 10.0))
+        .unwrap();
+    let sound = graph.audio_output().unwrap();
+    assert_eq!(sound.data, [0.0, -0.1, -0.2, -0.3, -0.4]);
+}
+
+#[test]
+fn audio_outputs_without_input_or_processing_leave_the_source_audio_alone() {
+    // Nothing connected: as if there were no audio output.
+    let json = graph_json(
+        r#"{ "id": "video", "type": "video_input" }, { "id": "sound", "type": "audio_output" },
+           { "id": "out", "type": "output" }"#,
+        r#"{ "from": "video", "to": "out" }"#,
+    );
+    let graph = compile(&json).unwrap();
+    assert!(graph.audio_layout().is_none());
+    // A track wired straight in is passed through.
+    let json = graph_json(
+        r#"{ "id": "video", "type": "video_input" }, { "id": "audio", "type": "audio_input" },
+           { "id": "sound", "type": "audio_output" }, { "id": "out", "type": "output" }"#,
+        r#"{ "from": "video", "to": "out" }, { "from": "audio", "to": "sound" }"#,
+    );
+    assert_eq!(compile(&json).unwrap().audio_passthrough(), Some("audio"));
+    // Unconnected audio outputs don't change what renders.
+    let with = render_form_of(&json, false);
+    let extra = json.replace(
+        r#"{ "id": "out", "type": "output" }"#,
+        r#"{ "id": "out", "type": "output" }, { "id": "idle", "type": "audio_output" }"#,
+    );
+    assert_eq!(render_form_of(&extra, false), with);
+}
+
+#[test]
+fn only_one_audio_output_and_nothing_reads_an_output() {
+    let two = graph_json(
+        r#"{ "id": "video", "type": "video_input" }, { "id": "audio", "type": "audio_input" },
+           { "id": "a", "type": "audio_output" }, { "id": "b", "type": "audio_output" }, { "id": "out", "type": "output" }"#,
+        r#"{ "from": "video", "to": "out" }, { "from": "audio", "to": "a" }, { "from": "audio", "to": "b" }"#,
+    );
+    assert!(matches!(
+        compile(&two),
+        Err(GraphError::AudioOutputCount(2))
+    ));
+    let reads = graph_json(
+        r#"{ "id": "video", "type": "video_input" }, { "id": "audio", "type": "audio_input" },
+           { "id": "a", "type": "audio_output" }, { "id": "d", "type": "delay" }, { "id": "out", "type": "output" }"#,
+        r#"{ "from": "video", "to": "out" }, { "from": "audio", "to": "a" }, { "from": "a", "to": "d" }"#,
+    );
+    assert!(compile(&reads).is_err());
+}
+
+#[test]
+fn both_outputs_line_up_at_the_later_latency() {
+    // Half a frame of lookahead on the audio only: the picture is held back to match, so frame n
+    // of the picture and of the sound both come from source frame n - 1.
+    let mut registry = Registry::default();
+    rastersong_graph::testing::register_fakes(&mut registry);
+    let json = graph_json(
+        r#"{ "id": "video", "type": "video_input" }, { "id": "audio", "type": "audio_input" },
+           { "id": "look", "type": "lookahead" }, { "id": "sound", "type": "audio_output" },
+           { "id": "out", "type": "output" }"#,
+        r#"{ "from": "video", "to": "out" }, { "from": "audio", "to": "look" }, { "from": "look", "to": "sound" }"#,
+    );
+    let mut graph = compile_with(&json, &registry).unwrap();
+    assert_eq!(graph.latency_frames(), 1);
+    let frame = Layout::rgb(W, H).len();
+    let audio = AUDIO as usize;
+    let mut pictures = Vec::new();
+    let mut sounds = Vec::new();
+    for n in 0..4 {
+        let input = sources(
+            move |i| (n * frame + i) as f32,
+            move |i| (n * audio + i) as f32,
+        );
+        pictures.push(graph.process(n as u64, &input).unwrap().data.clone());
+        sounds.push(graph.audio_output().unwrap().data.clone());
+    }
+    for n in 1..4 {
+        assert_eq!(pictures[n][0], ((n - 1) * frame) as f32, "picture {n}");
+        assert_eq!(sounds[n][0], ((n - 1) * audio) as f32, "sound {n}");
+    }
+}
+
+#[test]
+fn odd_audio_output_layouts_are_written_as_stereo_with_a_warning() {
+    let json = graph_json(
+        r#"{ "id": "video", "type": "video_input" }, { "id": "a", "type": "to_audio" },
+           { "id": "sound", "type": "audio_output" }, { "id": "out", "type": "output" }"#,
+        r#"{ "from": "video", "to": "out" }, { "from": "video", "to": "a" }, { "from": "a", "to": "sound" }"#,
+    );
+    let graph = compile(&json).unwrap();
+    let warnings = graph.diagnostics();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].message.contains("stereo"));
 }

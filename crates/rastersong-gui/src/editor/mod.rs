@@ -12,9 +12,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use eframe::egui::{Pos2, Rect, Vec2, pos2, vec2};
 use rastersong_engine::{
-    COMBINE, ChannelMap, Channels, Connection, FORMAT_VERSION, GraphDesc, Grouping, Interpolation,
-    MAX_CHANNELS, Modulation, NodeDesc, NodeStats, NodeType, OutputLevel, OutputSpec, ParamValue,
-    Registry, SPLIT, Tag,
+    COMBINE, ChannelMap, Channels, Connection, Diagnostic, FORMAT_VERSION, GraphDesc, Grouping,
+    Interpolation, MAX_CHANNELS, Modulation, NodeDesc, NodeStats, NodeType, OutputLevel,
+    OutputSpec, ParamValue, Registry, SPLIT, Tag,
 };
 
 pub use canvas::CanvasContext;
@@ -354,8 +354,8 @@ impl GraphEditor {
         self.compiled.iter().find(|s| *s.node == **id)
     }
 
-    /// The compile warnings about `key`.
-    pub fn diagnostics(&self, key: NodeKey) -> &[String] {
+    /// The compile notes and warnings about `key`.
+    pub fn diagnostics(&self, key: NodeKey) -> &[Diagnostic] {
         self.compiled(key).map_or(&[], |s| &s.diagnostics)
     }
 
@@ -591,7 +591,7 @@ impl GraphEditor {
             let addable = self
                 .registry
                 .get(&desc.kind)
-                .is_some_and(|k| Self::user_addable(k.spec.category));
+                .is_some_and(Self::user_addable);
             if !addable {
                 continue;
             }
@@ -738,7 +738,8 @@ impl GraphEditor {
 /// Output ports the editor shows. The output node's own port is how the graph returns its
 /// result; nothing connects to it.
 pub(crate) fn editor_outputs(kind: &NodeType) -> &'static [OutputSpec] {
-    if kind.kind == linked::OUTPUT {
+    // Nothing reads an output node.
+    if kind.spec.category == rastersong_engine::Category::Output {
         &[]
     } else {
         kind.spec.outputs
@@ -820,14 +821,14 @@ mod tests {
             warmup_truncated: false,
             inputs: vec![stereo],
             outputs: Vec::new(),
-            diagnostics: vec!["a warning".into()],
+            diagnostics: vec![Diagnostic::note("a note")],
         }]);
         // A connected port stays shown even past the channel count.
         let (count, tag) = editor.channel_ports(split, false).unwrap();
         assert_eq!(count, 3);
         assert_eq!(channel_label(tag, 0), "L");
         assert_eq!(channel_label(tag, 2), "3");
-        assert_eq!(editor.diagnostics(split), ["a warning"]);
+        assert_eq!(editor.diagnostics(split), [Diagnostic::note("a note")]);
         assert!(editor.diagnostics(combine).is_empty());
     }
 

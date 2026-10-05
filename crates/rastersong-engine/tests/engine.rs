@@ -316,3 +316,43 @@ fn graph_failures_keep_the_video_info() {
     let info = engine.info().expect("the video's length is still known");
     assert_eq!(info.frames, FRAMES);
 }
+
+#[test]
+fn cached_frames_carry_rendered_sound_that_playback_reads() {
+    use rastersong_engine::AudioSink;
+    use rastersong_engine::playback::Mixer;
+
+    let engine = engine();
+    load(
+        &engine,
+        r#"{ "version": 2,
+          "nodes": [
+            { "id": "video", "type": "video_input" }, { "id": "audio", "type": "audio_input" },
+            { "id": "gain", "type": "gain", "params": { "gain": -6 } },
+            { "id": "sound", "type": "audio_output" }, { "id": "out", "type": "output" }
+          ],
+          "connections": [
+            { "from": "video", "to": "out" }, { "from": "audio", "to": "gain" }, { "from": "gain", "to": "sound" }
+          ] }"#,
+    );
+    wait_until("frames", || engine.buffered_from(0) >= 10);
+    assert_eq!(
+        engine.audio_sink(),
+        AudioSink::Rendered {
+            sample_rate: 48_000,
+            channels: 1
+        }
+    );
+    let block = engine.frame(5).unwrap().audio.clone().unwrap();
+    assert_eq!((block.start, block.frames()), (8_000, 1600));
+
+    // Playback of the rendered sound: frames 2 to 4 at 30 fps, mixed to stereo at 48 kHz.
+    let mixer = Mixer::rendered(engine.rendered_audio(), 1.0);
+    let mut out = vec![0.0; 4800 * 2];
+    mixer.render(2.0 / 30.0, 48_000.0, &mut out);
+    let cached = engine.frame(2).unwrap().audio.clone().unwrap();
+    for (j, pair) in out[..200].chunks(2).enumerate() {
+        assert_eq!(pair[0], pair[1], "mono plays in both channels");
+        assert!((pair[0] - cached.samples[j]).abs() < 1e-6, "sample {j}");
+    }
+}

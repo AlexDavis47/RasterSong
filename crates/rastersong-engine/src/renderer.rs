@@ -11,6 +11,7 @@ use rastersong_graph::{
 use rastersong_media::{MediaBackend, MediaError, Rational, VideoSource};
 
 use crate::EngineError;
+use crate::audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE, SinkResampler};
 use crate::sources::{Modulator, fill_video, to_rgb8};
 
 /// The source name of the video.
@@ -94,6 +95,10 @@ pub struct Renderer {
     /// The next source frame to process, if the graph's state is positioned somewhere.
     next_source: Option<usize>,
     rgb: Vec<u8>,
+    /// Turns the audio output into audio at the project rate, when the graph renders sound.
+    resampler: Option<SinkResampler>,
+    /// The audio of the last rendered frame, when the graph renders sound.
+    audio: Option<AudioBlock>,
 }
 
 impl std::fmt::Debug for Renderer {
@@ -149,8 +154,8 @@ impl Renderer {
             sources: layouts.clone(),
             output: video_layout,
         };
-        let compiled = Graph::compile(graph, registry, &options)?;
-        let graph = compiled;
+        let graph = Graph::compile(graph, registry, &options)?;
+        let resampler = Self::resampler(&graph, fps, DEFAULT_AUDIO_RATE);
 
         Ok(Self {
             video,
@@ -164,7 +169,7 @@ impl Renderer {
             fps,
             options,
             latency: graph.latency_frames() as usize,
-            warmup: graph.warmup_frames() as usize,
+            warmup: Self::warmup(&graph, resampler.is_some()),
             graph,
             sources: layouts
                 .into_iter()
@@ -173,7 +178,62 @@ impl Renderer {
             have_video: false,
             next_source: None,
             rgb: Vec::with_capacity(video_layout.len()),
+            resampler,
+            audio: None,
         })
+    }
+
+    /// A resampler for the graph's audio output, unless there is none or it just passes a track
+    /// through.
+    fn resampler(graph: &Graph, fps: f64, rate: u32) -> Option<SinkResampler> {
+        let layout = graph.audio_layout()?;
+        if graph.audio_passthrough().is_some() {
+            return None;
+        }
+        Some(SinkResampler::new(
+            layout.len(),
+            layout.samples_per_pixel,
+            fps,
+            rate,
+        ))
+    }
+
+    /// Frames to render before a seek: the graph's, and at least one when rendering sound, so
+    /// the resampler has history and a seek gives the same audio as playing through.
+    fn warmup(graph: &Graph, resampling: bool) -> usize {
+        let warmup = graph.warmup_frames() as usize;
+        if resampling { warmup.max(1) } else { warmup }
+    }
+
+    /// Renders the audio output at `rate` samples a second (48 kHz unless set).
+    pub fn set_audio_rate(&mut self, rate: u32) {
+        self.resampler = Self::resampler(&self.graph, self.fps, rate.max(1));
+        self.warmup = Self::warmup(&self.graph, self.resampler.is_some());
+        self.audio = None;
+        self.next_source = None;
+    }
+
+    /// What the render's audio is: the source's, a track passed through, or rendered sound.
+    pub fn audio_sink(&self) -> AudioSink {
+        match (&self.resampler, self.graph.audio_passthrough()) {
+            (Some(r), _) => AudioSink::Rendered {
+                sample_rate: r.sample_rate(),
+                channels: r.channels(),
+            },
+            (None, Some(track)) => AudioSink::Passthrough(track.to_owned()),
+            (None, None) => AudioSink::Source,
+        }
+    }
+
+    /// The rendered audio of the frame [`Self::render`] last returned, when the graph renders
+    /// sound ([`AudioSink::Rendered`]).
+    pub fn audio(&self) -> Option<&AudioBlock> {
+        self.audio.as_ref()
+    }
+
+    /// The picture and sound of the frame [`Self::render`] last returned.
+    pub fn output(&self) -> (&[u8], Option<&AudioBlock>) {
+        (&self.rgb, self.audio.as_ref())
     }
 
     /// The level of every node output in the last rendered frame.
@@ -238,6 +298,9 @@ impl Renderer {
             next_output.is_some_and(|next| next <= index && index - next <= self.warmup);
         if !continue_forward {
             self.graph.reset();
+            if let Some(resampler) = &mut self.resampler {
+                resampler.reset();
+            }
             self.next_source = Some(index.saturating_sub(self.warmup));
         }
 
@@ -291,6 +354,13 @@ impl Renderer {
         match self.graph.process(m as u64, &self.sources) {
             Ok(output) => {
                 to_rgb8(output, &mut self.rgb);
+                // Like the picture, the sound comes out `latency` frames after its source.
+                if let (Some(resampler), Some(sound)) =
+                    (&mut self.resampler, self.graph.audio_output())
+                {
+                    let frame = m as i64 - self.latency as i64;
+                    self.audio = Some(resampler.push(frame, &sound.data));
+                }
                 Ok(())
             }
             Err(e) => {

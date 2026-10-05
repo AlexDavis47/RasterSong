@@ -126,10 +126,7 @@ mod tests {
 
     #[test]
     fn instant_peak_follows_the_magnitude() {
-        let out = envelope(
-            r#"{ "attack": 0, "release": 0 }"#,
-            &[0.5, -1.0, 0.25, 0.0],
-        );
+        let out = envelope(r#"{ "attack": 0, "release": 0 }"#, &[0.5, -1.0, 0.25, 0.0]);
         assert_eq!(out, [0.5, 1.0, 0.25, 0.0]);
     }
 
@@ -147,7 +144,10 @@ mod tests {
 
     #[test]
     fn rms_of_a_constant_is_its_magnitude() {
-        let out = envelope(r#"{ "detector": "rms", "attack": 0, "release": 0 }"#, &[-0.5; 4]);
+        let out = envelope(
+            r#"{ "detector": "rms", "attack": 0, "release": 0 }"#,
+            &[-0.5; 4],
+        );
         assert!(out.iter().all(|&x| (x - 0.5).abs() < 1e-6));
     }
 }

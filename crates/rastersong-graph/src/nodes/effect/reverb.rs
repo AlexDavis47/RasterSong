@@ -139,7 +139,10 @@ impl Node for Reverb {
         let scale = ctx.sample_rate() / 44_100.0;
         let scaled = |len: usize| (len as f64 * scale).round() as usize;
         self.combs = COMBS.iter().map(|&len| Comb::new(scaled(len))).collect();
-        self.allpasses = ALLPASSES.iter().map(|&len| Allpass::new(scaled(len))).collect();
+        self.allpasses = ALLPASSES
+            .iter()
+            .map(|&len| Allpass::new(scaled(len)))
+            .collect();
         self.feedback = (0.7 + 0.28 * self.size) as f32;
         self.predelay_samples = self.predelay * self.unit.samples(ctx);
         self.predelay_line = DelayLine::new(self.predelay_samples.ceil() as usize + 1);

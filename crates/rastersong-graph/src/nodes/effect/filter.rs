@@ -118,8 +118,12 @@ impl Filter {
             Kind::BandPass => [one(BiquadKind::BandPass), Biquad::default()],
             Kind::AllPass => [one(BiquadKind::AllPass), Biquad::default()],
             Kind::Tilt => [
-                one(BiquadKind::LowShelf { gain_db: gain / 2.0 }),
-                one(BiquadKind::HighShelf { gain_db: -gain / 2.0 }),
+                one(BiquadKind::LowShelf {
+                    gain_db: gain / 2.0,
+                }),
+                one(BiquadKind::HighShelf {
+                    gain_db: -gain / 2.0,
+                }),
             ],
             Kind::Comb => [Biquad::default(); 2],
         }

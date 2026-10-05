@@ -60,6 +60,60 @@ impl LosslessWriter {
         frame_rate: Rational,
         audio: Option<&AudioClip>,
     ) -> Result<Self, MediaError> {
+        let mut writer = Self::open(
+            path,
+            width,
+            height,
+            frame_rate,
+            audio
+                .filter(|clip| !clip.samples.is_empty())
+                .map(|clip| (clip.sample_rate, clip.channels)),
+        )?;
+        if let Some(clip) = audio {
+            writer.push_audio(&clip.samples);
+        }
+        Ok(writer)
+    }
+
+    /// Like [`Self::create`], with an audio track of `sample_rate` and `channels` whose samples
+    /// arrive as the render goes, through [`Self::push_audio`]. Push each frame's audio before
+    /// writing the frame: audio is written as far as the video has got.
+    pub fn create_streaming(
+        path: &Path,
+        width: u32,
+        height: u32,
+        frame_rate: Rational,
+        sample_rate: u32,
+        channels: u32,
+    ) -> Result<Self, MediaError> {
+        Self::open(
+            path,
+            width,
+            height,
+            frame_rate,
+            Some((sample_rate, channels)),
+        )
+    }
+
+    /// Adds interleaved samples to the audio track, if there is one. Values are clipped to
+    /// `-1..=1`.
+    pub fn push_audio(&mut self, samples: &[f32]) {
+        if let Some(audio) = &mut self.audio {
+            audio.samples.extend(
+                samples
+                    .iter()
+                    .map(|&s| (s.clamp(-1.0, 1.0) * f32::from(i16::MAX)).round() as i16),
+            );
+        }
+    }
+
+    fn open(
+        path: &Path,
+        width: u32,
+        height: u32,
+        frame_rate: Rational,
+        audio: Option<(u32, u32)>,
+    ) -> Result<Self, MediaError> {
         super::init()?;
         let mut output = format::output_as(path, "matroska").map_err(|e| MediaError::Open {
             path: path.to_owned(),
@@ -98,8 +152,7 @@ impl LosslessWriter {
         };
 
         let audio = audio
-            .filter(|clip| !clip.samples.is_empty())
-            .map(|clip| add_audio(&mut output, clip, global_header))
+            .map(|(rate, channels)| add_audio(&mut output, rate, channels, global_header))
             .transpose()?;
 
         output
@@ -225,7 +278,8 @@ impl LosslessWriter {
 
 fn add_audio(
     output: &mut format::context::Output,
-    clip: &AudioClip,
+    sample_rate: u32,
+    channels: u32,
     global_header: bool,
 ) -> Result<AudioTrack, MediaError> {
     let codec = encoder::find(codec::Id::PCM_S16LE)
@@ -234,10 +288,10 @@ fn add_audio(
         .encoder()
         .audio()
         .map_err(decode_error)?;
-    let time_base = ffmpeg::Rational::new(1, clip.sample_rate as i32);
-    audio.set_rate(clip.sample_rate as i32);
+    let time_base = ffmpeg::Rational::new(1, sample_rate as i32);
+    audio.set_rate(sample_rate as i32);
     audio.set_format(Sample::I16(format::sample::Type::Packed));
-    audio.set_channel_layout(ChannelLayout::default(clip.channels as i32));
+    audio.set_channel_layout(ChannelLayout::default(channels as i32));
     audio.set_time_base(time_base);
     if global_header {
         audio.set_flags(codec::Flags::GLOBAL_HEADER);
@@ -257,13 +311,9 @@ fn add_audio(
             stream,
             time_base,
         },
-        samples: clip
-            .samples
-            .iter()
-            .map(|&s| (s.clamp(-1.0, 1.0) * f32::from(i16::MAX)).round() as i16)
-            .collect(),
-        channels: clip.channels as usize,
-        sample_rate: clip.sample_rate,
+        samples: Vec::new(),
+        channels: channels as usize,
+        sample_rate,
         written: 0,
     })
 }

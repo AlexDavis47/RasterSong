@@ -116,7 +116,13 @@ mod tests {
 
     fn run(params: &str, input: &[f32]) -> Vec<f32> {
         // One row is the whole block, so a period of 0.25 rows is a quarter of the block.
-        let mut n = node("sample_hold", params, input.len(), input.len() as f64, &[true]);
+        let mut n = node(
+            "sample_hold",
+            params,
+            input.len(),
+            input.len() as f64,
+            &[true],
+        );
         process_one(n.as_mut(), &[input.to_vec()])
     }
 

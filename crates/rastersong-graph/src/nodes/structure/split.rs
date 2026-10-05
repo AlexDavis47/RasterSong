@@ -1,7 +1,7 @@
 use crate::nodes::{CHANNEL_PORTS, Category, MAX_CHANNELS, NodeKind, NodeSpec, SPLIT};
 use crate::{
-    InputSpec, Layout, LayoutContext, Node, OutputSpec, Params, Part, ProcessContext, Signal,
-    TagRule,
+    Diagnostic, InputSpec, Layout, LayoutContext, Node, OutputSpec, Params, Part, ProcessContext,
+    Signal, TagRule,
 };
 
 /// An interleaved signal → one signal per channel: R, G and B of video, L and R of stereo, or
@@ -54,13 +54,15 @@ impl Node for Split {
             .collect())
     }
 
-    fn diagnostics(&self, ctx: &LayoutContext) -> Vec<String> {
+    fn diagnostics(&self, ctx: &LayoutContext) -> Vec<Diagnostic> {
         let channels = ctx.inputs[0].samples_per_pixel as usize;
         match channels {
-            1 => vec!["the input has one channel, so only c1 carries it".into()],
-            n if n > MAX_CHANNELS => vec![format!(
-                "the input has {n} channels; only the first {MAX_CHANNELS} are split off"
+            1 => vec![Diagnostic::note(
+                "The input has one channel, so only c1 carries a signal.",
             )],
+            n if n > MAX_CHANNELS => vec![Diagnostic::warning(format!(
+                "The input has {n} channels; only the first {MAX_CHANNELS} are split off."
+            ))],
             _ => Vec::new(),
         }
     }
@@ -92,7 +94,10 @@ mod tests {
     use crate::{Layout, LayoutContext, Part, ProcessContext, Registry, Signal};
 
     fn split(input: &Signal) -> Vec<Signal> {
-        let mut node = Registry::shared().create("split", &Default::default()).unwrap().unwrap();
+        let mut node = Registry::shared()
+            .create("split", &Default::default())
+            .unwrap()
+            .unwrap();
         let sources = HashMap::new();
         let layouts = node
             .output_layouts(&LayoutContext {
@@ -128,7 +133,10 @@ mod tests {
 
     #[test]
     fn splits_stereo_into_left_and_right() {
-        let input = Signal::from_data(Layout::audio_channels(3, 2), vec![1., -1., 2., -2., 3., -3.]);
+        let input = Signal::from_data(
+            Layout::audio_channels(3, 2),
+            vec![1., -1., 2., -2., 3., -3.],
+        );
         let outputs = split(&input);
         assert_eq!(outputs[0].data, [1.0, 2.0, 3.0]);
         assert_eq!(outputs[1].data, [-1.0, -2.0, -3.0]);

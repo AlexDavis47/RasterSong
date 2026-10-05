@@ -3,6 +3,7 @@
 //!
 //! The CLI and GUI talk only to this crate; they never decode or schedule anything themselves.
 
+pub mod audio;
 mod cache;
 mod clock;
 mod error;
@@ -15,6 +16,7 @@ pub mod sources;
 mod thumbnails;
 pub mod waveform;
 
+pub use audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE};
 pub use cache::{CacheKey, Frame, FrameCache};
 pub use clock::PlaybackClock;
 pub use error::EngineError;
@@ -28,8 +30,8 @@ pub use rastersong_graph::nodes::{
 pub use rastersong_graph::{
     Category, ChannelMap, Channels, CompileOptions, Connection, Diagnostic, FORMAT_VERSION, Graph,
     GraphDesc, GraphError, Grouping, Interpolation, Kind, Layout, ModMode, ModScale, Modulation,
-    NodeDesc, NodeStats, NodeType, OutputLevel, OutputSpec, ParamKind, ParamLevel, ParamSpec,
-    ParamValue, Part, Range, Registry, Tag, TagRule, Tempo,
+    NodeDesc, NodeDiagnostic, NodeStats, NodeType, OutputLevel, OutputSpec, ParamKind, ParamLevel,
+    ParamSpec, ParamValue, Part, Range, Registry, Severity, Tag, TagRule, Tempo,
 };
 pub use rastersong_media::{
     AudioClip, AudioOptions, BackendInfo, FakeBackend, FakeVideo, FfmpegBackend, LibraryInfo,

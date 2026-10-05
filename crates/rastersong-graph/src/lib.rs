@@ -21,12 +21,12 @@ pub use desc::{
 };
 pub use error::GraphError;
 pub use graph::{
-    CompileOptions, Diagnostic, Graph, MAX_INPUTS, MAX_PARAMS, NodeStats, OutputLevel, ParamLevel,
-    render_form,
+    CompileOptions, Graph, MAX_INPUTS, MAX_PARAMS, NodeDiagnostic, NodeStats, OutputLevel,
+    ParamLevel, render_form,
 };
 pub use node::{
-    InputSpec, LayoutContext, Node, OutputSpec, PrepareContext, ProcessContext, Sources, Tempo,
-    Value,
+    Diagnostic, InputSpec, LayoutContext, Node, OutputSpec, PrepareContext, ProcessContext,
+    Severity, Sources, Tempo, Value,
 };
 pub use nodes::{Category, Choice, NodeKind, NodeSpec, NodeType, Registry};
 pub use params::{ModScale, ParamKind, ParamSpec, Params};

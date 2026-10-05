@@ -8,14 +8,21 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use eframe::egui::{self, Color32, CornerRadius, Margin, RichText, Ui, UiBuilder};
+use rastersong_engine::LoadedTrack;
 use rastersong_engine::playback::{MixTrack, Mixer};
 use rastersong_engine::{
-    AudioTrackSpec, BackendInfo, CompileOptions, Engine, EngineConfig, EngineStatus, Frame, Graph,
-    GraphDesc, MediaBackend, NodeStats, PROJECT_EXTENSION, PlaybackClock, PreviewScale, Project,
-    ProjectTrack, Registry, Tempo, Thumbnails, TimelineMode,
+    AudioSink, AudioTrackSpec, BackendInfo, CompileOptions, Engine, EngineConfig, EngineStatus,
+    Frame, Graph, GraphDesc, MediaBackend, NodeStats, PROJECT_EXTENSION, PlaybackClock,
+    PreviewScale, Project, ProjectTrack, Registry, Tempo, Thumbnails, TimelineMode,
 };
 
 use crate::audio_out::AudioOut;
+
+/// The sample rates offered for the project's rendered sound.
+const AUDIO_RATES: [u32; 4] = [44_100, 48_000, 88_200, 96_000];
+
+/// One track as playback mixes it: its name, offset in seconds and gain.
+type MixEntry = (String, f64, f32);
 use crate::editor::{CanvasContext, GraphEditor, InspectorContext, LinkedRename, without_layout};
 use crate::history::History;
 use crate::preview::{Feed, PreviewView, clamp_split, split_rects, split_sides};
@@ -80,7 +87,9 @@ pub struct App {
     inspected_for: Option<(GraphDesc, CompileOptions)>,
     inspected: Vec<NodeStats>,
     /// Mix last given to the audio output: (track, offset, gain) per track.
-    sent_mix: Option<Vec<(String, f64, f32)>>,
+    /// What the playback mix was last built from: the render's audio, and the tracks' names,
+    /// offsets and gains.
+    sent_mix: Option<(AudioSink, Vec<MixEntry>)>,
     clock: PlaybackClock,
     /// Frame count and rate the clock was made for.
     clock_shape: Option<(usize, f64)>,
@@ -669,9 +678,11 @@ impl App {
         self.engine.set_audio_tracks(self.project.track_specs());
         self.engine.set_tempo(self.project.tempo);
         self.engine.set_bypass_all(self.project.bypass_graph);
+        self.engine.set_audio_rate(self.project.audio_rate);
         self.sync_source_engine();
 
-        // Rebuild the playback mix when tracks, offsets or levels change, once decoded.
+        // Rebuild the playback mix when tracks, offsets or levels change, once decoded, or when
+        // the graph starts or stops rendering its own sound.
         let mix: Vec<(String, f64, f32)> = self
             .project
             .audio_tracks
@@ -688,21 +699,39 @@ impl App {
         let decoded = mix
             .iter()
             .all(|(name, ..)| loaded.iter().any(|l| &l.name == name));
-        if decoded && self.sent_mix.as_ref() != Some(&mix) {
-            let tracks = mix
-                .iter()
-                .filter_map(|(name, offset, gain)| {
-                    let clip = loaded.iter().find(|l| &l.name == name)?.clip.clone();
-                    Some(MixTrack {
-                        clip,
-                        offset: *offset,
-                        gain: *gain,
-                    })
-                })
-                .collect();
-            self.audio.set_mixer(Mixer::new(tracks));
-            self.sent_mix = Some(mix);
+        let sink = self.engine.audio_sink();
+        let wanted = (sink, mix);
+        if decoded && self.sent_mix.as_ref() != Some(&wanted) {
+            let (sink, mix) = &wanted;
+            let mixer = match sink {
+                // The graph's sound replaces the tracks; their volumes and mutes don't apply.
+                AudioSink::Rendered { .. } => Mixer::rendered(self.engine.rendered_audio(), 1.0),
+                AudioSink::Source | AudioSink::Passthrough(_) => {
+                    Mixer::new(Self::mix_tracks(sink, mix, &loaded))
+                }
+            };
+            self.audio.set_mixer(mixer);
+            self.sent_mix = Some(wanted);
         }
+    }
+
+    /// The tracks playback mixes: every one for the source audio, or just the track an audio
+    /// output passes through.
+    fn mix_tracks(sink: &AudioSink, mix: &[MixEntry], loaded: &[LoadedTrack]) -> Vec<MixTrack> {
+        mix.iter()
+            .filter(|(name, ..)| match sink {
+                AudioSink::Passthrough(track) => name == track,
+                _ => true,
+            })
+            .filter_map(|(name, offset, gain)| {
+                let clip = loaded.iter().find(|l| &l.name == name)?.clip.clone();
+                Some(MixTrack {
+                    clip,
+                    offset: *offset,
+                    gain: *gain,
+                })
+            })
+            .collect()
     }
 
     /// Advances playback and tells the engine and audio output where the playhead is.
@@ -845,6 +874,21 @@ impl App {
                     ui.close();
                     self.pick_audio_tracks();
                 }
+                ui.menu_button("Audio Output Rate", |ui| {
+                    ui.label(
+                        RichText::new("Sample rate of the sound an Audio Output node renders")
+                            .weak(),
+                    );
+                    for rate in AUDIO_RATES {
+                        let label = format!("{:.1} kHz", f64::from(rate) / 1000.0);
+                        if ui
+                            .radio_value(&mut self.project.audio_rate, rate, label)
+                            .clicked()
+                        {
+                            ui.close();
+                        }
+                    }
+                });
                 ui.separator();
                 if ui.button("Import Graph…").clicked() {
                     ui.close();

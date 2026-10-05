@@ -15,7 +15,7 @@ use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontId, Key, PointerButton, Pos2, Rect, Response, Sense,
     Stroke, StrokeKind, Ui, pos2, vec2,
 };
-use rastersong_engine::{Category, Failure, Kind, NodeStats, OutputLevel, SPLIT, Tag};
+use rastersong_engine::{Category, Failure, Kind, NodeStats, OutputLevel, SPLIT, Severity, Tag};
 
 use super::search::{NodeMenu, SearchMenu};
 use super::{GraphEditor, NodeKey};
@@ -399,14 +399,18 @@ impl GraphEditor {
                 &output_colors,
             );
         }
-        // Compile warnings: a badge on the node, the messages in its tooltip.
+        // Compile notes and warnings: a badge on the node, the messages in its tooltip. Notes
+        // (a signal used as something it wasn't made as, often on purpose) get a quiet badge.
         for g in &geometry {
             let warnings = self.diagnostics(g.key);
-            if warnings.is_empty() || self.view.zoom <= 0.35 {
+            let Some(severity) = warnings.iter().map(|d| d.severity).max() else {
+                continue;
+            };
+            if self.view.zoom <= 0.35 {
                 continue;
             }
             let badge = self.badge_rect(g, to_screen);
-            draw_warning_badge(&painter, theme, badge);
+            draw_badge(&painter, theme, badge, severity);
             let response = ui.interact(
                 badge.intersect(rect),
                 ui.id().with(("node-warning", g.key)),
@@ -414,7 +418,11 @@ impl GraphEditor {
             );
             response.on_hover_ui(|ui| {
                 for warning in warnings {
-                    ui.label(format!("⚠ {warning}"));
+                    let mark = match warning.severity {
+                        Severity::Note => "ℹ",
+                        Severity::Warning => "⚠",
+                    };
+                    ui.label(format!("{mark} {}", warning.message));
                 }
             });
         }
@@ -848,6 +856,8 @@ impl GraphEditor {
             }
         }
         let labels = zoom > 0.45;
+        // With several inputs, the main one (which sets the output's length and layout) gets a ring.
+        let several_inputs = g.inputs.iter().filter(|pin| !pin.param).count() > 1;
         for pin in &g.inputs {
             let p = to_screen(pin.pos);
             let hovered = hovered_pin == Some(Pin::In(g.key, pin.port));
@@ -859,6 +869,10 @@ impl GraphEditor {
                 } else {
                     theme.pin_optional
                 };
+                if several_inputs && pin.port == 0 {
+                    let ring = PIN_RADIUS * zoom.clamp(0.7, 1.6) + 2.5 * zoom.min(1.0);
+                    painter.circle_stroke(p, ring, Stroke::new(1.2, theme.pin_required));
+                }
                 draw_pin(painter, theme, p, fill, hovered, zoom);
             }
             if labels {
@@ -1017,20 +1031,25 @@ fn draw_pin(
     painter.circle(p, radius, fill, Stroke::new(1.0, theme.pin_outline));
 }
 
-/// A node's compile-warning badge: an exclamation mark on a warning-coloured disc.
-fn draw_warning_badge(painter: &egui::Painter, theme: &Theme, rect: Rect) {
+/// A node's diagnostic badge: an "i" on a quiet disc for notes, an exclamation mark on a
+/// warning-coloured one for warnings.
+fn draw_badge(painter: &egui::Painter, theme: &Theme, rect: Rect, severity: Severity) {
+    let (fill, stroke, mark, text) = match severity {
+        Severity::Note => (theme.node_body, theme.text_dim, "i", theme.text_dim),
+        Severity::Warning => (theme.warning, theme.pin_outline, "!", theme.block_text),
+    };
     painter.circle(
         rect.center(),
         rect.width() * 0.5,
-        theme.warning,
-        Stroke::new(1.0, theme.pin_outline),
+        fill,
+        Stroke::new(1.0, stroke),
     );
     painter.text(
         rect.center(),
         Align2::CENTER_CENTER,
-        "!",
+        mark,
         FontId::proportional(rect.height() * 0.85),
-        theme.block_text,
+        text,
     );
 }
 

@@ -6,7 +6,7 @@ use eframe::egui::{self, RichText, Ui};
 use rastersong_engine::{AUDIO_INPUT, SOURCE_PARAM};
 use rastersong_engine::{
     Channels, Grouping, Interpolation, Modulation, NodeStats, NodeType, ParamKind, ParamLevel,
-    ParamSpec, ParamValue,
+    ParamSpec, ParamValue, Severity,
 };
 
 use super::param_field::{GUTTER_WIDTH, Modulated, NumberRange, param_field, reset_gesture};
@@ -100,9 +100,18 @@ impl GraphEditor {
         ui.add_space(2.0);
         ui.label(RichText::new(kind.spec.description).small());
         if let Some(compiled) = &compiled {
-            for warning in &compiled.diagnostics {
+            for diagnostic in &compiled.diagnostics {
                 ui.add_space(4.0);
-                ui.colored_label(theme.warning, format!("⚠ {warning}"));
+                match diagnostic.severity {
+                    Severity::Note => ui.label(
+                        RichText::new(format!("ℹ {}", diagnostic.message))
+                            .small()
+                            .color(theme.text_dim),
+                    ),
+                    Severity::Warning => {
+                        ui.colored_label(theme.warning, format!("⚠ {}", diagnostic.message))
+                    }
+                };
             }
             signals(ui, &kind, compiled);
         }

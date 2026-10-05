@@ -85,6 +85,9 @@ mod tests {
         let mut levels: Vec<i32> = out.iter().map(|&x| (x * 7.0).round() as i32).collect();
         levels.dedup();
         assert_eq!(levels.len(), 8, "2^3 levels");
-        assert!(out.iter().all(|&x| ((x * 7.0).round() - x * 7.0).abs() < 1e-5));
+        assert!(
+            out.iter()
+                .all(|&x| ((x * 7.0).round() - x * 7.0).abs() < 1e-5)
+        );
     }
 }

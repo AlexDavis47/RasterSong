@@ -24,8 +24,10 @@ impl NodeKind for Constant {
         .params(Self::PARAMS)
         .inputs(&[])
         .outputs(&[OutputSpec::new("out", "The constant signal")]);
-    const TEST_CONFIGS: &'static [&'static str] =
-        &[r#"{ "value": 0.25 }"#, r#"{ "layout": "audio", "value": -1 }"#];
+    const TEST_CONFIGS: &'static [&'static str] = &[
+        r#"{ "value": 0.25 }"#,
+        r#"{ "layout": "audio", "value": -1 }"#,
+    ];
     const BENCH: Option<&'static str> = Some("{}");
 
     fn new(params: &Params) -> Result<Self, String> {
@@ -40,8 +42,14 @@ impl Node for Constant {
     fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
         let nominal = self.layout.nominal();
         let value = f64::from(self.value);
-        let fits = nominal.bounds().is_some_and(|(lo, hi)| (lo..=hi).contains(&value));
-        let range = if fits { nominal } else { Range::from_bounds(value, value) };
+        let fits = nominal
+            .bounds()
+            .is_some_and(|(lo, hi)| (lo..=hi).contains(&value));
+        let range = if fits {
+            nominal
+        } else {
+            Range::from_bounds(value, value)
+        };
         self.layout.output_layouts(ctx, range)
     }
 

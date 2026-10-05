@@ -49,9 +49,12 @@ impl NodeKind for ThreeBand {
         .describe("Low, mid and high frequency bands that add back up to the input")
         .params(Self::PARAMS)
         .outputs(&[
-            OutputSpec::new("low", "Everything below the low crossover").tag(TagRule::INHERIT.part(Part::Low)),
-            OutputSpec::new("mid", "What is left between the crossovers").tag(TagRule::INHERIT.part(Part::Mid)),
-            OutputSpec::new("high", "Everything above the high crossover").tag(TagRule::INHERIT.part(Part::High)),
+            OutputSpec::new("low", "Everything below the low crossover")
+                .tag(TagRule::INHERIT.part(Part::Low)),
+            OutputSpec::new("mid", "What is left between the crossovers")
+                .tag(TagRule::INHERIT.part(Part::Mid)),
+            OutputSpec::new("high", "Everything above the high crossover")
+                .tag(TagRule::INHERIT.part(Part::High)),
         ])
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[

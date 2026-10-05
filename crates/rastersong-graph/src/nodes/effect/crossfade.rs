@@ -112,7 +112,13 @@ mod tests {
     #[test]
     fn switch_cuts_at_the_middle() {
         let (a, b) = ([0.1], [0.9]);
-        let cut = |p: &str| crossfade(&format!(r#"{{ "curve": "switch", "position": {p} }}"#), &a, &b);
+        let cut = |p: &str| {
+            crossfade(
+                &format!(r#"{{ "curve": "switch", "position": {p} }}"#),
+                &a,
+                &b,
+            )
+        };
         assert_eq!(cut("0.49"), a);
         assert_eq!(cut("0.5"), b);
     }

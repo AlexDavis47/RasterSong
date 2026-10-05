@@ -1,5 +1,7 @@
 use crate::nodes::{Category, NodeKind, NodeSpec};
-use crate::{InputSpec, Layout, LayoutContext, Node, OutputSpec, Params, ProcessContext, Signal};
+use crate::{
+    Diagnostic, InputSpec, Layout, LayoutContext, Node, OutputSpec, Params, ProcessContext, Signal,
+};
 
 /// An interleaved signal (RGB, stereo, …) → one mono carrier with the channels in sequence
 /// (R, G, B, R, G, B, …), as many times as wide as there are channels. The samples don't change,
@@ -33,9 +35,11 @@ impl Node for Interleave {
         )])
     }
 
-    fn diagnostics(&self, ctx: &LayoutContext) -> Vec<String> {
+    fn diagnostics(&self, ctx: &LayoutContext) -> Vec<Diagnostic> {
         if ctx.inputs[0].samples_per_pixel == 1 {
-            vec!["the input is already mono, so nothing changes".into()]
+            vec![Diagnostic::note(
+                "The input already has one channel, so it passes through unchanged.",
+            )]
         } else {
             Vec::new()
         }

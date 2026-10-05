@@ -21,6 +21,9 @@ pub enum GraphError {
     #[error("the graph must have exactly one `output` node, found {0}")]
     OutputCount(usize),
 
+    #[error("the graph can have at most one `audio_output` node, found {0}")]
+    AudioOutputCount(usize),
+
     #[error("node `{node}`: {message}")]
     Node { node: String, message: String },
 
@@ -38,6 +41,7 @@ impl GraphError {
             Self::Parse(_)
             | Self::Connection { .. }
             | Self::OutputCount(_)
+            | Self::AudioOutputCount(_)
             | Self::Source { .. } => None,
         }
     }

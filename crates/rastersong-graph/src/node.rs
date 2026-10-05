@@ -59,6 +59,39 @@ impl OutputSpec {
     }
 }
 
+/// How much a [`Diagnostic`] matters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Severity {
+    /// Something worth knowing, not a mistake: a signal used as something it wasn't made as
+    /// (often the point, in a glitch), or a setting that has no effect here.
+    Note,
+    /// Something is lost or a setting can't be honoured: channels dropped, a setting ignored.
+    Warning,
+}
+
+/// A remark about a node found while compiling. Never stops processing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Diagnostic {
+    pub severity: Severity,
+    pub message: String,
+}
+
+impl Diagnostic {
+    pub fn note(message: impl Into<String>) -> Self {
+        Self {
+            severity: Severity::Note,
+            message: message.into(),
+        }
+    }
+
+    pub fn warning(message: impl Into<String>) -> Self {
+        Self {
+            severity: Severity::Warning,
+            message: message.into(),
+        }
+    }
+}
+
 /// Named per-frame inputs the host supplies to the graph (decoded video, audio blocks).
 pub trait Sources {
     fn get(&self, name: &str) -> Option<&Signal>;
@@ -306,9 +339,9 @@ pub trait Node: Send {
         Ok(vec![ctx.inputs[0]; ctx.output_count])
     }
 
-    /// Warnings about the inputs that don't stop processing, such as a signal whose tag doesn't
-    /// match what the node is meant for.
-    fn diagnostics(&self, ctx: &LayoutContext) -> Vec<String> {
+    /// Remarks about the inputs that don't stop processing. Mostly [`Severity::Note`]s: a signal
+    /// whose tag doesn't match what the node is meant for is often a deliberate glitch.
+    fn diagnostics(&self, ctx: &LayoutContext) -> Vec<Diagnostic> {
         let _ = ctx;
         Vec::new()
     }

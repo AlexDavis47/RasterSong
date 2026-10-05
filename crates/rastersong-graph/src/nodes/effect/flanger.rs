@@ -52,7 +52,9 @@ params! { Flanger {
 impl NodeKind for Flanger {
     const KIND: &'static str = "flanger";
     const SPEC: NodeSpec = NodeSpec::new("Flanger", Category::Effect)
-        .describe("A short delay with feedback that combs the signal; modulate the time to sweep it")
+        .describe(
+            "A short delay with feedback that combs the signal; modulate the time to sweep it",
+        )
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
@@ -83,8 +85,10 @@ impl Node for Flanger {
         self.max_feedback = ctx
             .param_max(Self::FEEDBACK, f64::from(self.feedback))
             .abs()
-            .max(ctx.param_min(Self::FEEDBACK, f64::from(self.feedback)).abs())
-            as f32;
+            .max(
+                ctx.param_min(Self::FEEDBACK, f64::from(self.feedback))
+                    .abs(),
+            ) as f32;
         self.line = DelayLine::new(self.max_delay.ceil() as usize + 1);
     }
 
