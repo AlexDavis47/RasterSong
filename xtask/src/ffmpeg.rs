@@ -7,7 +7,7 @@
 //! The FFmpeg major version must match the `ffmpeg-next` major version in the workspace Cargo.toml.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
@@ -15,7 +15,7 @@ use anyhow::{Context, Result, bail};
 use crate::util::{download, extract, run, single_subdir, workspace_root};
 
 /// Official source release. Used for macOS builds, and the version all platforms are based on.
-const SOURCE_VERSION: &str = "9.0.2";
+pub const SOURCE_VERSION: &str = "9.0.2";
 const SOURCE_SHA256: &str = "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e";
 
 const BTBN_RELEASE: &str = "autobuild-2026-09-30-13-08";
@@ -121,18 +121,24 @@ fn install_prebuilt(p: &Prebuilt, work_dir: &Path, install_dir: &Path) -> Result
     Ok(())
 }
 
-fn build_from_source(work_dir: &Path, install_dir: &Path) -> Result<()> {
-    let file = format!("ffmpeg-{SOURCE_VERSION}.tar.xz");
-    let archive = work_dir.join(&file);
-    download(
-        &format!("https://ffmpeg.org/releases/{file}"),
-        &archive,
-        SOURCE_SHA256,
-    )?;
+/// The official source release's URL.
+pub fn source_url() -> String {
+    format!("https://ffmpeg.org/releases/ffmpeg-{SOURCE_VERSION}.tar.xz")
+}
 
+/// Downloads and verifies the official source release into `work_dir` and unpacks it. Returns the
+/// archive and the unpacked source directory.
+pub fn fetch_source(work_dir: &Path) -> Result<(PathBuf, PathBuf)> {
+    let archive = work_dir.join(format!("ffmpeg-{SOURCE_VERSION}.tar.xz"));
+    download(&source_url(), &archive, SOURCE_SHA256)?;
     let unpacked = work_dir.join("unpacked");
     extract(&archive, &unpacked)?;
     let source = single_subdir(&unpacked)?;
+    Ok((archive, source))
+}
+
+fn build_from_source(work_dir: &Path, install_dir: &Path) -> Result<()> {
+    let (_, source) = fetch_source(work_dir)?;
 
     // LGPL configuration: never add --enable-gpl or --enable-nonfree here.
     let mut configure = Command::new("./configure");

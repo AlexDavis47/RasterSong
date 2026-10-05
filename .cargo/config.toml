@@ -9,3 +9,8 @@ FFMPEG_DIR = { value = "third_party/ffmpeg", relative = true }
 # build script copies next to them.
 [target.'cfg(target_os = "linux")']
 rustflags = ["-C", "link-arg=-Wl,-rpath,$ORIGIN"]
+
+# On macOS, the same for test executables, and Contents/Frameworks for the app bundle
+# (`cargo xtask dist`). Only the release FFmpeg's `@rpath` install names use these.
+[target.'cfg(target_os = "macos")']
+rustflags = ["-C", "link-arg=-Wl,-rpath,@executable_path", "-C", "link-arg=-Wl,-rpath,@executable_path/../Frameworks"]

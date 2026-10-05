@@ -1,0 +1,146 @@
+name: Release
+
+# Builds the tester packages (`cargo xtask dist`) on Windows, macOS and Linux and publishes them as
+# a GitHub pre-release, with the FFmpeg source the packages were built from.
+#
+# Run it by pushing a tag (`git tag v0.1.0-test.1 && git push origin v0.1.0-test.1`), or from the
+# Actions tab once this file is on the default branch.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  package:
+    name: package (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            os: windows-latest
+          # Builds a universal app: arm64 natively, x86_64 cross-compiled.
+          - platform: macos
+            os: macos-latest
+          # The oldest supported Ubuntu, so the AppImage runs on distributions with an older glibc.
+          - platform: linux
+            os: ubuntu-22.04
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libasound2-dev nasm zlib1g-dev
+          curl --fail --location --output appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          echo "APPIMAGETOOL=$PWD/appimagetool" >> "$GITHUB_ENV"
+          # Runners have no FUSE, so appimagetool (itself an AppImage) extracts itself instead.
+          echo "APPIMAGE_EXTRACT_AND_RUN=1" >> "$GITHUB_ENV"
+
+      - name: Install macOS build dependencies
+        if: runner.os == 'macOS'
+        run: |
+          brew install nasm
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      # The release FFmpeg is built with the preinstalled MSYS2 (C:\msys64) and its UCRT64 toolchain.
+      - name: Install MSYS2 build dependencies
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          release: false
+          update: false
+          install: >-
+            make
+            diffutils
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-nasm
+            mingw-w64-ucrt-x86_64-zlib
+
+      - uses: Swatinem/rust-cache@v2
+
+      # The development FFmpeg, for generating the fixtures (same cache as CI).
+      - name: Cache FFmpeg
+        uses: actions/cache@v4
+        with:
+          path: third_party/ffmpeg
+          key: ffmpeg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('xtask/src/ffmpeg.rs') }}
+
+      - name: Cache release FFmpeg
+        uses: actions/cache@v4
+        with:
+          path: third_party/ffmpeg-release
+          key: ffmpeg-release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('xtask/src/ffmpeg.rs', 'xtask/src/release_ffmpeg.rs') }}
+
+      - run: cargo xtask fetch-ffmpeg
+      - run: cargo xtask fixtures
+      - run: cargo xtask build-ffmpeg
+
+      # The media tests, including the LGPL guards, against the FFmpeg the package ships.
+      - name: Test against the release FFmpeg
+        run: cargo test -p rastersong-media
+        env:
+          FFMPEG_DIR: ${{ github.workspace }}/third_party/ffmpeg-release
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about
+
+      - run: cargo xtask dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.platform }}
+          path: |
+            target/dist/*.zip
+            target/dist/*.AppImage
+          if-no-files-found: error
+
+      # Every platform builds from the same source tarball; publish it once.
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: ffmpeg-source
+          path: target/dist/*.tar.xz
+          if-no-files-found: error
+
+  release:
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="build-$(date -u +%Y%m%d)-${GITHUB_SHA::7}"
+          fi
+          gh release create "$tag" dist/* \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "RasterSong $tag (test build)" \
+            --notes-file .github/release-notes.md

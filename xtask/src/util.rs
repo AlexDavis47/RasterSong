@@ -85,6 +85,22 @@ pub fn extract(archive: &Path, dest: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Copies the directory `src` to `dest` recursively.
+pub fn copy_dir(src: &Path, dest: &Path) -> Result<()> {
+    fs::create_dir_all(dest)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let target = dest.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&entry.path(), &target)?;
+        } else {
+            fs::copy(entry.path(), &target)
+                .with_context(|| format!("copying {}", entry.path().display()))?;
+        }
+    }
+    Ok(())
+}
+
 /// Returns the single directory an archive extracted into.
 pub fn single_subdir(dir: &Path) -> Result<PathBuf> {
     let mut dirs = fs::read_dir(dir)?

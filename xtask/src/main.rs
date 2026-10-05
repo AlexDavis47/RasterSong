@@ -4,6 +4,7 @@ mod dist;
 mod docs;
 mod ffmpeg;
 mod fixtures;
+mod release_ffmpeg;
 mod util;
 
 use anyhow::Result;
@@ -23,6 +24,12 @@ enum Task {
         #[arg(long)]
         force: bool,
     },
+    /// Build the minimal LGPL FFmpeg that release packages ship into third_party/ffmpeg-release.
+    BuildFfmpeg {
+        /// Rebuild even if the configuration hasn't changed.
+        #[arg(long)]
+        force: bool,
+    },
     /// Generate the media test fixtures into fixtures/ using the fetched FFmpeg.
     Fixtures,
     /// Render the node reference (docs/nodes.md) from the node definitions.
@@ -31,13 +38,15 @@ enum Task {
         #[arg(long)]
         check: bool,
     },
-    /// Build the app in release mode and package it as a zip for testers, in target/dist.
+    /// Build the app in release mode with the release FFmpeg and package it for testers in
+    /// target/dist: a zip on Windows, a universal app bundle zip on macOS, an AppImage on Linux.
     Dist,
 }
 
 fn main() -> Result<()> {
     match Xtask::parse().task {
         Task::FetchFfmpeg { force } => ffmpeg::fetch(force),
+        Task::BuildFfmpeg { force } => release_ffmpeg::build(force).map(drop),
         Task::Fixtures => fixtures::generate(),
         Task::Docs { check } => docs::generate(check),
         Task::Dist => dist::package(),
