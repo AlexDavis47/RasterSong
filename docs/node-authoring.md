@@ -121,6 +121,8 @@ change while rendering", which in practice covers three different reasons (not w
    shows how: it recomputes its coefficient per sample.
 
 The inspector doesn't say which reason applies, which is the bug in the [roadmap](roadmap.md#node-settings-and-parameters).
+The policy going forward is the opposite of protecting the user: a parameter is locked only when modulating it is
+truly infeasible, and the lock carries a reason ([Decisions](decisions.md#modulation-is-allowed-unless-infeasible-october-2026)).
 
 > **Under revision.** Hands-on testing found that "min + max + base + amount" is hard to dial in, that some
 > parameters are unmodulatable with no explanation, and that logarithmic/exponential sliders are confusing. The

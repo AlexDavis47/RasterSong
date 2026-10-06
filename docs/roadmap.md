@@ -92,11 +92,21 @@ Every change that renames or reshapes a parameter, or merges, splits or removes 
   width, Filter slope, Distortion character, and any node whose mode changes which controls matter.*
 - [ ] **bug** Unmodulatable parameters have no explanation. It is not about warmup. `.fixed()` covers three
   different reasons (structural, precomputed in `prepare`, or simply not implemented; the breakdown is in
-  [Node authoring](node-authoring.md#parameters)). Replace `.fixed()` with `.fixed("reason")` so the inspector shows
-  a disabled pin with a tooltip. Then fix the third group, which can be modulated today with a per-sample
-  coefficient like the Phaser's: Envelope attack/release, Slew rise/fall, Limiter release, Beat width and
-  division, Oscillator phase, Chorus spread. Voices, stages, steps, Pack channels and seed stay fixed (structural).
-  Reverb and Three-Band Split stay fixed until their internals are redesigned.
+  [Node authoring](node-authoring.md#parameters)). **Policy ([Decisions](decisions.md#modulation-is-allowed-unless-infeasible-october-2026)):
+  this is datamoshing software, so a parameter is locked only when modulating it is truly infeasible or
+  unreasonably hard.** Steps:
+  1. Replace `.fixed()` with `.fixed("reason")`, shown in the inspector as a disabled pin with a tooltip. A
+     reason that is only "nobody wrote it" is not accepted.
+  2. Make the "not implemented" group modulatable, with a per-sample coefficient like the Phaser's: Envelope
+     attack/release, Slew rise/fall, Limiter release, Beat width and division, Oscillator phase, Chorus spread,
+     Reverb pre-delay, Three-Band Split crossovers (recompute the filter per sample or per small block).
+  3. Make the "structural" group modulatable by allocating the maximum and rounding the value per sample: Chorus
+     voices, Phaser stages, Beat steps, noise seed. Integer parameters round, not truncate, and the modulation
+     range snaps to whole values.
+  4. Reverb size and damping: attempt it (crossfading between delay-line lengths); lock with a reason only if it
+     cannot be made to sound reasonable.
+  5. What stays locked, with its reason: Pack channels and anything else that changes the output *layout* (the
+     graph is compiled for a fixed layout, so it can't change per sample).
 
 ### Modulation
 
@@ -124,9 +134,10 @@ Every change that renames or reshapes a parameter, or merges, splits or removes 
   parameters multiply, frequency parameters divide and their label says "cycles per". `Hertz` becomes `second`.
   Migration maps every old option name.
 - [ ] **feature** New **pixel** and **sample** units (the "users never see samples" principle is dropped).
-  *Needs one call, in [Decisions](decisions.md#open-what-pixel-and-sample-mean-under-preview-scaling):
-  recommended pixel = project-resolution pixel scaled with the preview, sample = the literal sample at the current
-  render size.*
+  *Decided ([Decisions](decisions.md#pixel-is-a-project-pixel-sample-is-the-renders-sample-october-2026)):
+  a pixel is a project-resolution pixel, scaled with the preview so downscaled previews match the full render as
+  closely as possible; a sample is the literal sample at the current render size, and its help text says it changes
+  with preview scale.*
 - [ ] **chore** Keep the optional per-node `mix`, but build it once: one shared `MIX` parameter definition and one
   dry/wet helper in `dsp.rs`, used by every node that has it. No removal or migration.
 
@@ -160,7 +171,8 @@ Every change that renames or reshapes a parameter, or merges, splits or removes 
 - [ ] **feature** **Settings page.** A real Settings window (File → Settings, and a toolbar button) so hidden
   settings can be exposed. Two scopes, clearly separated:
   - *Application* (remembered between sessions, not in project files): theme, wire style, language, default
-    preview resolution, cache budget (1 GiB today), render-ahead window (10 s today), default tool.
+    preview resolution, cache budget (1 GiB today), render-ahead window (10 s today), default tool, keep input
+    connections when duplicating and pasting.
   - *Project* (saved in the `.rastersong` file): tempo, beats per bar, first-beat offset, audio rate (48 kHz
     today), **max warmup frames**, and later export defaults.
   Each setting has help text. Anything currently only changeable by editing a file or a constant should appear here
@@ -187,11 +199,17 @@ Every change that renames or reshapes a parameter, or merges, splits or removes 
   (`editor/mod.rs`) keeps only connections whose *both* ends are in the selection, and drops linked nodes
   (Video, Audio) from the fragment entirely. Duplicate and paste share that path, so a lone node, or a node fed
   from outside the selection, comes back with no inputs. The existing test is not failing silently: it copies two
-  nodes wired to each other and asserts that one wire, so it never covers external inputs. Fix: **duplicate** also
-  reconnects each copy's inputs to the same sources as the original (including the linked Video and Audio nodes and
-  `@param` modulation wires; outputs are not duplicated, since an input takes one connection). **Paste** keeps
-  internal wires only, except that a paste into the same graph may offer the same input reconnection. Add tests for
-  a lone node, a node fed by a linked input, a modulated parameter, and a mixed selection.
+  nodes wired to each other and asserts that one wire, so it never covers external inputs. Fix: keeping the *input* connections (the copy's inputs wired to the same sources as the original, including
+  the linked Video and Audio nodes and `@param` modulation wires; outputs are not duplicated, since an input takes
+  one connection) is **both a setting and a keybind**:
+  - Setting *Keep input connections when duplicating and pasting* (Settings page, application scope), which sets
+    the default for Ctrl+D, the context menu and Ctrl+V.
+  - Keybind that does the opposite for one action: Ctrl+Shift+V pastes with connections (or without, if the
+    setting is on); Ctrl+Shift+D likewise for duplicate. Both are listed in the Edit menu and rebindable.
+  - Internal wires (between the copied nodes) are always kept.
+  Add tests for a lone node, a node fed by a linked input, a modulated parameter, a mixed selection, and each
+  keybind and setting combination. Paste from another project can only keep connections to inputs that exist; the
+  rest are skipped without an error.
 - [ ] **bug** Typing a long number into a value box makes the inspector grow wider, repeatedly. This is a sustained
   problem and points to messy layout code, so do not patch it again. Root-cause it (a text edit sizing itself to
   its content and feeding the width back into the panel), then fix it once, permanently: one shared value-box

@@ -101,7 +101,8 @@ only affect playback, never rendering.
 
 Space plays/pauses, ←/→ step one frame, Home jumps to the start, R turns looping on and off, Ctrl+S saves, Ctrl+Z
 undoes, Ctrl+Shift+Z (or Ctrl+Y) redoes. In the graph, Ctrl+C, Ctrl+X and Ctrl+V copy, cut and paste nodes with
-the connections between them; pasted nodes land at the pointer. The **Edit** menu has the same commands.
+the connections between them; pasted nodes land at the pointer. The **Edit** menu has the same commands. *Planned:* Ctrl+Shift+V and Ctrl+Shift+D paste and duplicate with the
+original's input connections (or without, depending on a setting); see the [roadmap](roadmap.md#node-graph-editor).
 
 ## Undo
 

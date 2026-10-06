@@ -99,15 +99,27 @@ where it is meaningless.
 
 A Constant's *value* has no modulation pin exposed by default: nobody modulates a constant.
 
+### Pixel is a project pixel; sample is the render's sample (October 2026)
+
+A **pixel** is a pixel of the project (full) resolution and is scaled with the preview scale, so a downscaled
+preview is as consistent with the full render as possible. A **sample** is the literal sample at the render in front
+of you, so it changes with preview scale, and its help text says so.
+
+### Modulation is allowed unless infeasible (October 2026)
+
+RasterSong is datamoshing software, so the user is not protected from parameters they might want to modulate.
+A parameter is `fixed` only when modulating it is truly infeasible or unreasonably hard, and every `fixed` carries a
+reason shown in the inspector. "Nobody asked for it yet" and "it's structural" are not reasons by themselves: a
+structural parameter such as voices or steps can usually be modulated by allocating the maximum and rounding the
+value per sample.
+
+### Duplicate and paste keep connections by default, with an option (October 2026)
+
+Keeping the input connections of duplicated and pasted nodes is controlled by both a setting and a keybind. The
+setting sets the default; the keybind does the opposite for one action. See the
+[roadmap](roadmap.md#node-graph-editor).
+
 ## Open
-
-### Open: what "pixel" and "sample" mean under preview scaling
-
-The "users never see samples" principle is dropped (see above), so showing samples is fine. One real question
-remains, and it is about correctness rather than hiding: at half-resolution preview, does "10 pixels" mean 10 preview
-pixels or 10 project pixels? Recommendation: **pixel** is a project-resolution pixel, scaled with the preview, so a
-preview still matches the export; **sample** is the literal sample at the render in front of you, and is documented
-as changing with preview scale.
 
 ### Open: multi-track export
 
