@@ -315,3 +315,33 @@ fn tracks_at_different_rates_meet_in_one_graph() {
         &left[100..110]
     );
 }
+
+#[test]
+fn the_warmup_cap_limits_only_the_pre_render_never_the_effect() {
+    let expected = sequential(INFINITE, OutputSize::Native);
+
+    // Played from the start, the graph renders the same whatever the cap is.
+    for cap in [0, 3, 120, 9999] {
+        let mut r = renderer(INFINITE);
+        r.set_max_warmup_frames(cap);
+        assert!(r.warmup_frames() <= cap as usize);
+        for (i, want) in expected.iter().enumerate() {
+            let frame = r.render(i, &|| false).unwrap().unwrap();
+            assert_eq!(frame, *want, "cap {cap}, frame {i}");
+        }
+    }
+
+    // Only a seek is affected: a smaller cap pre-renders less, so it is further from exact.
+    let seek_error = |cap: u32| {
+        let mut r = renderer(INFINITE);
+        r.set_max_warmup_frames(cap);
+        let frame = r.render(40, &|| false).unwrap().unwrap();
+        frame
+            .iter()
+            .zip(&expected[40])
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap()
+    };
+    assert!(seek_error(0) > seek_error(9999));
+}

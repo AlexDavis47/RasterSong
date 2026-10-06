@@ -15,7 +15,9 @@ use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontId, Key, PointerButton, Pos2, Rect, Response, Sense,
     Stroke, StrokeKind, Ui, pos2, vec2,
 };
-use rastersong_engine::{Category, Failure, Kind, NodeStats, OutputLevel, SPLIT, Severity, Tag};
+use rastersong_engine::{
+    Category, Failure, Kind, NodeStats, OutputLevel, SPLIT, Severity, Tag, UNBOUNDED_WARMUP,
+};
 
 use super::search::{NodeMenu, SearchMenu};
 use super::{GraphEditor, NodeKey};
@@ -940,11 +942,15 @@ impl GraphEditor {
             ));
         }
         if stats.warmup_frames > 0 {
-            parts.push(format!("warmup {} fr", stats.warmup_frames));
+            parts.push(if stats.warmup_frames == UNBOUNDED_WARMUP {
+                "warmup never settles".to_owned()
+            } else {
+                format!("warmup {} fr", stats.warmup_frames)
+            });
         }
         let mut text = parts.join(" · ");
-        let color = if stats.warmup_truncated {
-            text = format!("⚠ {text} (limit)");
+        let color = if stats.warmup_frames > self.max_warmup_frames {
+            text = format!("⚠ {text} (above the {} fr limit)", self.max_warmup_frames);
             theme.warning
         } else {
             visuals.weak_text_color()

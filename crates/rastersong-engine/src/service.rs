@@ -14,6 +14,7 @@ use rastersong_media::{AudioClip, AudioOptions, MediaBackend};
 use crate::audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE};
 use crate::cache::{CacheKey, Frame, FrameCache};
 use crate::playback::RenderedSource;
+use crate::project::{DEFAULT_MAX_WARMUP_FRAMES, MAX_WARMUP_FRAMES_LIMIT};
 use crate::renderer;
 use crate::sources::Modulator;
 use crate::waveform::Waveform;
@@ -214,6 +215,8 @@ struct State {
     compile_options: Option<CompileOptions>,
     /// The rate the graph's sound is rendered at.
     audio_rate: u32,
+    /// The most frames pre-rendered after a seek.
+    max_warmup_frames: u32,
     /// What the current render's audio is, once it has compiled.
     audio_sink: AudioSink,
     /// Bumped on every change, so the worker knows when to look again.
@@ -228,6 +231,7 @@ struct Snapshot {
     graph: GraphDesc,
     tempo: Tempo,
     audio_rate: u32,
+    max_warmup_frames: u32,
 }
 
 /// A renderer built for one version of the project.
@@ -261,6 +265,7 @@ impl Engine {
                 node_stats: Vec::new(),
                 compile_options: None,
                 audio_rate: DEFAULT_AUDIO_RATE,
+                max_warmup_frames: DEFAULT_MAX_WARMUP_FRAMES,
                 audio_sink: AudioSink::Source,
                 changes: 0,
                 shutdown: false,
@@ -418,6 +423,17 @@ impl Engine {
             return;
         }
         self.edit(|state| state.audio_rate = rate);
+    }
+
+    /// Limits the frames pre-rendered after a seek, which only affects how exact a seek into
+    /// long-memory nodes is, never what the nodes do. Setting the limit already in use changes
+    /// nothing; changing it re-renders, like an edit.
+    pub fn set_max_warmup_frames(&self, frames: u32) {
+        let frames = frames.min(MAX_WARMUP_FRAMES_LIMIT);
+        if lock(&self.shared.state).max_warmup_frames == frames {
+            return;
+        }
+        self.edit(|state| state.max_warmup_frames = frames);
     }
 
     /// What the current render's audio is: the source tracks (no audio output), one track passed
@@ -608,6 +624,7 @@ impl Worker {
                         graph: render_form(graph, Registry::shared(), state.bypass_all),
                         tempo: state.tempo,
                         audio_rate: state.audio_rate,
+                        max_warmup_frames: state.max_warmup_frames,
                     },
                 };
                 state.status = EngineStatus::Loading;
@@ -659,6 +676,7 @@ impl Worker {
             )
             .map(|mut renderer| {
                 renderer.set_audio_rate(project.audio_rate);
+                renderer.set_max_warmup_frames(project.max_warmup_frames);
                 renderer
             })
             .map_err(|e| Failure::from_error(&e))

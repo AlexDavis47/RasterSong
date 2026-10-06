@@ -571,6 +571,7 @@ impl App {
 
     fn graph(&mut self, ui: &mut Ui) {
         self.editor.keep_connections = self.settings.keep_connections;
+        self.editor.max_warmup_frames = self.project.max_warmup_frames;
         let frame = self.engine.frame(self.clock.frame());
         let failure = match self.engine.status() {
             EngineStatus::Failed(failure) => Some(failure),
@@ -654,7 +655,6 @@ impl App {
                 if let Some(compiled) = stats.iter().find(|s| s.node == node.node) {
                     node.latency_frames = compiled.latency_frames;
                     node.warmup_frames = compiled.warmup_frames;
-                    node.warmup_truncated = compiled.warmup_truncated;
                 }
                 node
             })
@@ -686,6 +686,8 @@ impl App {
         self.engine.set_tempo(self.project.tempo);
         self.engine.set_bypass_all(self.project.bypass_graph);
         self.engine.set_audio_rate(self.project.audio_rate);
+        self.engine
+            .set_max_warmup_frames(self.project.max_warmup_frames);
         self.sync_source_engine();
 
         // Rebuild the playback mix when tracks, offsets or levels change, once decoded, or when

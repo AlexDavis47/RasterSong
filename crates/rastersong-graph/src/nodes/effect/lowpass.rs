@@ -1,6 +1,6 @@
 use std::f64::consts::TAU;
 
-use crate::nodes::support::MAX_WARMUP_FRAMES;
+use crate::nodes::support::UNBOUNDED_WARMUP;
 use crate::nodes::{Category, FreqUnit, NodeKind, NodeSpec};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
@@ -112,11 +112,11 @@ impl Node for Lowpass {
         // Time for the slowest possible cutoff to settle to within 0.1% (about 7 time constants).
         let slowest = self.slowest;
         if slowest <= 0.0 {
-            return MAX_WARMUP_FRAMES;
+            return UNBOUNDED_WARMUP;
         }
         let settle_samples = 7.0 / (TAU * slowest);
         ((settle_samples / ctx.samples_per_frame() as f64).ceil() as u32)
-            .clamp(1, MAX_WARMUP_FRAMES)
+            .max(1)
     }
 }
 

@@ -798,3 +798,13 @@ fn ctrl_comma_opens_the_settings_window_with_both_pages() {
     harness.run_steps(3);
     harness.get_by_label("Audio output rate");
 }
+
+#[test]
+fn the_warmup_limit_is_a_project_setting_that_reaches_the_project() {
+    let mut harness = loaded();
+    shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Comma);
+    harness.get_by_label("Project").click();
+    harness.run_steps(3);
+    harness.get_by_label("Max warmup frames");
+    assert_eq!(harness.state().project().max_warmup_frames, 120);
+}

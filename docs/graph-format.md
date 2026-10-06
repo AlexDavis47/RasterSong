@@ -37,8 +37,8 @@ removing `mix`, splitting nodes, or changing modulation amounts to percentages).
 Projects are JSON files with the `.rastersong` extension holding the video, the audio tracks (file, name, offset,
 volume, mute), the graph, the tempo and the loop region. Media paths inside the project's folder are saved
 relative to it, so a project folder can be moved or shared. Version 1 projects (one audio file) are upgraded on
-load. Graphs can also be imported and exported on their own. *Planned:* project-level settings such as max warmup
-frames (see the [roadmap](roadmap.md#project-and-settings)).
+load. Graphs can also be imported and exported on their own. The project also keeps the Audio Output rate and the
+*max warmup frames* limit (omitted from the file while at their defaults).
 
 ## Examples
 

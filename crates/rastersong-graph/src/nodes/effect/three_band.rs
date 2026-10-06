@@ -1,5 +1,4 @@
 use crate::dsp::Biquad;
-use crate::nodes::support::MAX_WARMUP_FRAMES;
 use crate::nodes::{Category, FreqUnit, NodeKind, NodeSpec};
 use crate::{
     Node, OutputSpec, ParamSpec, Params, Part, PrepareContext, ProcessContext, Signal, TagRule,
@@ -112,7 +111,7 @@ impl Node for ThreeBand {
         // The low band settles slowest: allow ten periods of the low crossover.
         let settle_samples = 10.0 / self.low_cycles.max(f64::MIN_POSITIVE);
         ((settle_samples / ctx.samples_per_frame() as f64).ceil() as u32)
-            .clamp(1, MAX_WARMUP_FRAMES)
+            .max(1)
     }
 }
 

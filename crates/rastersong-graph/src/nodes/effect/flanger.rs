@@ -1,5 +1,4 @@
 use crate::dsp::{DelayLine, mix};
-use crate::nodes::support::MAX_WARMUP_FRAMES;
 use crate::nodes::{Category, NodeKind, NodeSpec, TimeUnit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
@@ -117,7 +116,7 @@ impl Node for Flanger {
         } else {
             1.0
         };
-        ((delay_frames * repeats).ceil() as u32).clamp(1, MAX_WARMUP_FRAMES)
+        ((delay_frames * repeats).ceil() as u32).max(1)
     }
 }
 

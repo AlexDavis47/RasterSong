@@ -364,7 +364,9 @@ pub trait Node: Send {
         0
     }
 
-    /// Frames of history this node needs before its output is valid after a reset.
+    /// Frames of history this node needs before its output is valid after a reset: its real
+    /// length, never shortened to what the host is willing to pre-render (the host applies its
+    /// own limit). `UNBOUNDED_WARMUP` if it never settles.
     fn warmup_frames(&self, ctx: &PrepareContext) -> u32 {
         let _ = ctx;
         0

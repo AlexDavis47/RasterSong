@@ -142,15 +142,17 @@ impl SampleClock {
     }
 }
 
-/// Most frames a node with long or infinite memory asks the host to render before a seek.
-pub const MAX_WARMUP_FRAMES: u32 = 120;
+/// What [`Node::warmup_frames`](crate::Node::warmup_frames) reports for a node that never settles
+/// (feedback at or above unity, say). The host decides how many frames it will pre-render.
+pub const UNBOUNDED_WARMUP: u32 = u32::MAX;
 
-/// Frames for `samples` of settling time, at least one and at most [`MAX_WARMUP_FRAMES`].
+/// Frames for `samples` of settling time, at least one. A node reports its real length: the
+/// host, not the node, limits how much of it is pre-rendered after a seek.
 pub fn settle_frames(samples: f64, ctx: &PrepareContext) -> u32 {
     if !samples.is_finite() {
-        return MAX_WARMUP_FRAMES;
+        return UNBOUNDED_WARMUP;
     }
-    ((samples / ctx.samples_per_frame().max(1) as f64).ceil() as u32).clamp(1, MAX_WARMUP_FRAMES)
+    ((samples / ctx.samples_per_frame().max(1) as f64).ceil() as u32).max(1)
 }
 
 /// Samples of the main signal in `ms` milliseconds of its own time.

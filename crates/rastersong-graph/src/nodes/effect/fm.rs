@@ -1,5 +1,4 @@
 use crate::dsp::{DelayLine, mix};
-use crate::nodes::support::MAX_WARMUP_FRAMES;
 use crate::nodes::{Category, NodeKind, NodeSpec, TimeUnit};
 use crate::{InputSpec, Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
@@ -92,7 +91,7 @@ impl Node for Fm {
     }
 
     fn warmup_frames(&self, ctx: &PrepareContext) -> u32 {
-        ((self.max_delay / ctx.samples_per_frame() as f64).ceil() as u32).min(MAX_WARMUP_FRAMES)
+        (self.max_delay / ctx.samples_per_frame() as f64).ceil() as u32
     }
 }
 

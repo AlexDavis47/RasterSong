@@ -1,7 +1,7 @@
 use std::f64::consts::{PI, TAU};
 
 use crate::dsp::mix;
-use crate::nodes::support::MAX_WARMUP_FRAMES;
+use crate::nodes::support::UNBOUNDED_WARMUP;
 use crate::nodes::{Category, FreqUnit, NodeKind, NodeSpec};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
@@ -140,11 +140,11 @@ impl Node for Phaser {
     fn warmup_frames(&self, ctx: &PrepareContext) -> u32 {
         // The chain settles about as slowly as a one-pole low pass at the lowest frequency.
         if self.slowest <= 0.0 {
-            return MAX_WARMUP_FRAMES;
+            return UNBOUNDED_WARMUP;
         }
         let settle_samples = 7.0 / (TAU * self.slowest);
         ((settle_samples / ctx.samples_per_frame() as f64).ceil() as u32)
-            .clamp(1, MAX_WARMUP_FRAMES)
+            .max(1)
     }
 }
 

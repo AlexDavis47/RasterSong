@@ -1,5 +1,5 @@
 use crate::dsp::{DelayLine, mix};
-use crate::nodes::support::{MAX_WARMUP_FRAMES, settle_frames};
+use crate::nodes::support::{UNBOUNDED_WARMUP, settle_frames};
 use crate::nodes::{Category, NodeKind, NodeSpec, TimeUnit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
@@ -184,7 +184,7 @@ impl Node for Reverb {
         if self.tail_samples.is_finite() {
             settle_frames(self.tail_samples, ctx)
         } else {
-            MAX_WARMUP_FRAMES
+            UNBOUNDED_WARMUP
         }
     }
 }

@@ -171,26 +171,21 @@ Every change that renames or reshapes a parameter, or merges, splits or removes 
 - [ ] **feature** **Settings page.** A real Settings window (File → Settings, and a toolbar button) so hidden
   settings can be exposed. *Partly done:* the window (File → Settings…, Ctrl+,), its Application and Project pages
   and the settings that already existed (theme, wire style, node stats, keep connections, tempo, audio rate) are in;
-  what is left is language, cache budget, render-ahead, default tool, max warmup frames, the toolbar button and
+  what is left is language, cache budget, render-ahead, default tool, the toolbar button and
   the per-setting reset. Two scopes, clearly separated:
   - *Application* (remembered between sessions, not in project files): theme, wire style, language, default
     preview resolution, cache budget (1 GiB today), render-ahead window (10 s today), default tool, keep input
     connections when duplicating and pasting.
   - *Project* (saved in the `.rastersong` file): tempo, beats per bar, first-beat offset, audio rate (48 kHz
-    today), **max warmup frames**, and later export defaults.
+    today), **max warmup frames** (done), and later export defaults.
   Each setting has help text. Anything currently only changeable by editing a file or a constant should appear here
   or be consciously left out.
-- [ ] **feature** **Max warmup frames as a project setting** (default stays 120). It replaces the `MAX_WARMUP_FRAMES`
-  constant in `nodes/support.rs`.
-- [ ] **bug** **The cap must limit only the warmup pre-render, never the effect.** Separate two things that are
-  one constant today: how long a node's effect truly lasts (a delay buffer, a feedback tail, a filter's settling)
-  and how many frames the engine is willing to pre-render after a seek. Nodes report their true length from
-  `warmup_frames`; the engine applies the project's cap when it decides how far to pre-render. A small cap
-  therefore makes seeks less accurate for long-memory nodes, but never shortens or alters what a node does. Test:
-  a feedback delay with a long tail renders the same from frame 0 whatever the cap is; only the post-seek
-  approximation changes. See [Seeking and warmup](engine.md#seeking-and-warmup).
-- [ ] **feature** Warn in the UI when the cap is below a node's real length ("this graph needs 400 frames of
-  warmup; seeks are approximate").
+- [x] **feature** **Max warmup frames as a project setting** (default 120, range 0–9999). Nodes now report their
+  real length and the engine applies the project's limit, so a small limit makes seeks less accurate for
+  long-memory nodes but never shortens or alters what a node does. A test renders a feedback graph from the start
+  with several limits and gets identical frames; only a seek differs. The Project page of Settings says when the
+  graph needs more than the limit and which node needs it, and node stats flag it. See
+  [Seeking and warmup](engine.md#seeking-and-warmup).
 
 ---
 

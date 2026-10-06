@@ -2,7 +2,7 @@
 //! in the project file), each with a line of help.
 
 use eframe::egui::{self, RichText, Ui};
-use rastersong_engine::Tempo;
+use rastersong_engine::{MAX_WARMUP_FRAMES_LIMIT, Tempo, UNBOUNDED_WARMUP};
 
 use super::{AUDIO_RATES, App};
 use crate::theme::{ThemeChoice, WireStyle};
@@ -126,6 +126,30 @@ impl App {
         );
     }
 
+    /// Says so when the graph needs more warmup than the limit allows, and which node needs it.
+    fn warmup_warning(&self, ui: &mut Ui) {
+        let stats = self.engine.node_stats();
+        let Some(worst) = stats.iter().max_by_key(|s| s.warmup_frames) else {
+            return;
+        };
+        let limit = self.project.max_warmup_frames;
+        if worst.warmup_frames <= limit {
+            return;
+        }
+        let needs = if worst.warmup_frames == UNBOUNDED_WARMUP {
+            "never fully settles".to_owned()
+        } else {
+            format!("needs {} frames of warmup", worst.warmup_frames)
+        };
+        ui.colored_label(
+            ui.visuals().warn_fg_color,
+            format!(
+                "⚠ {} {needs}, above the limit of {limit}: jumping into it is approximate.",
+                worst.node
+            ),
+        );
+    }
+
     fn project_settings(&mut self, ui: &mut Ui) {
         section(ui, "Tempo");
         ui.horizontal_wrapped(|ui| tempo_fields(ui, &mut self.project.tempo));
@@ -133,6 +157,28 @@ impl App {
             ui,
             "The tempo of the music. Beat and bar units in nodes, and the tempo ruler, follow it.",
         );
+
+        section(ui, "Seeking");
+        ui.horizontal(|ui| {
+            ui.label("Max warmup frames");
+            let mut frames = f64::from(self.project.max_warmup_frames);
+            if ui
+                .add(
+                    ValueBox::new(&mut frames)
+                        .range(0.0..=f64::from(MAX_WARMUP_FRAMES_LIMIT))
+                        .max_decimals(0)
+                        .speed(1.0),
+                )
+                .changed()
+            {
+                self.project.max_warmup_frames = frames.round() as u32;
+            }
+        });
+        help(
+            ui,
+            "After a jump in the timeline, this many earlier frames are rendered and thrown away so effects with memory (delays, feedback, filters) have history. Lower is faster, but jumping into a long echo or reverb tail is only approximate. Playing from the start and exporting are always exact, and effects themselves are never shortened.",
+        );
+        self.warmup_warning(ui);
 
         section(ui, "Audio");
         ui.horizontal(|ui| {

@@ -38,7 +38,8 @@ pub trait Node: Send {
     /// Samples of delay this node adds (non-zero for nodes that need lookahead).
     fn latency(&self, ctx: &PrepareContext) -> usize { 0 }
 
-    /// How many frames of history this node needs before its output is valid (stateful nodes).
+    /// How many frames of history this node needs before its output is valid (stateful nodes): its real
+    /// length, never clamped (`UNBOUNDED_WARMUP` if it never settles). The engine applies the project's limit.
     fn warmup_frames(&self, ctx: &PrepareContext) -> u32 { 0 }
 }
 ```

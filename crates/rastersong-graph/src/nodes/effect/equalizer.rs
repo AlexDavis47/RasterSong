@@ -1,7 +1,7 @@
 use std::f64::consts::PI;
 
 use crate::dsp::{Biquad, BiquadKind};
-use crate::nodes::support::MAX_WARMUP_FRAMES;
+use crate::nodes::support::UNBOUNDED_WARMUP;
 use crate::nodes::{Category, FreqUnit, NodeKind, NodeSpec};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
@@ -163,9 +163,9 @@ impl Node for Equalizer {
     fn warmup_frames(&self, ctx: &PrepareContext) -> u32 {
         let samples = 7.0 * self.mid_q.max(1.0) / (PI * self.slowest.max(1e-9));
         if samples.is_finite() {
-            ((samples / ctx.samples_per_frame() as f64).ceil() as u32).clamp(1, MAX_WARMUP_FRAMES)
+            ((samples / ctx.samples_per_frame() as f64).ceil() as u32).max(1)
         } else {
-            MAX_WARMUP_FRAMES
+            UNBOUNDED_WARMUP
         }
     }
 }

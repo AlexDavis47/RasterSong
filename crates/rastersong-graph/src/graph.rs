@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 use crate::desc::{Channels, Connection, GraphDesc, Grouping, Interpolation, Modulation, NodeDesc};
 use crate::dsp::{DelayLine, resample};
-use crate::nodes::support::MAX_WARMUP_FRAMES;
 use crate::nodes::{AUDIO_INPUT, AUDIO_OUTPUT, OUTPUT, Registry, VIDEO_INPUT};
 
 use crate::{
@@ -66,11 +65,10 @@ pub struct NodeStats {
     pub node: Arc<str>,
     /// Frames the node itself delays its output by (not counting its inputs' latency).
     pub latency_frames: f64,
-    /// Frames the node needs rendered before a seek for its output to be right.
+    /// Frames the node needs rendered before a seek for its output to be right: its real length,
+    /// whatever the host will actually pre-render. [`crate::nodes::support::UNBOUNDED_WARMUP`]
+    /// for a node that never settles.
     pub warmup_frames: u32,
-    /// Whether the warmup reached [`MAX_WARMUP_FRAMES`], the most the host will render before a
-    /// seek, so the node's output right after a seek may not match a render from the start.
-    pub warmup_truncated: bool,
     /// The layouts (and tags) of the node's inputs as they arrive, before rate matching.
     pub inputs: Vec<Layout>,
     /// The layouts (and tags) of the node's outputs.
@@ -444,7 +442,6 @@ impl Graph {
                 node: p.id.as_str().into(),
                 latency_frames: 0.0,
                 warmup_frames: 0,
-                warmup_truncated: false,
                 inputs: shape.input_layouts,
                 outputs: shape.output_layouts.clone(),
                 diagnostics: shape.diagnostics,
@@ -922,7 +919,6 @@ impl<'a> Compiler<'a> {
             node: self.pending[n].id.as_str().into(),
             latency_frames: own_latency,
             warmup_frames: warmup,
-            warmup_truncated: warmup >= MAX_WARMUP_FRAMES,
             inputs: shape.input_layouts.clone(),
             outputs: shape.output_layouts.clone(),
             diagnostics: shape.diagnostics.clone(),

@@ -39,17 +39,15 @@ The graph reports `K = max(warmup_frames)` over all nodes. When rendering starts
 2. Render frames `N-K .. N-1` and discard the output
 3. Render from frame N onward, keeping the output
 
-Nodes with infinite memory (feedback, IIR) declare a practical warmup length (the time to decay or settle to
-about 0.1%, currently capped at 120 frames by `MAX_WARMUP_FRAMES` in `nodes/support.rs`). Preview after a seek is
-therefore exact for finite-memory nodes and a close approximation for infinite-memory ones. Requests that continue
-forward from where the renderer already is, within the warmup length, skip the reset and just keep rendering.
-**Export always renders from the first frame** (or later, from a saved state snapshot), so export is exact.
-
-> **Planned:** the cap becomes a **project setting** (*Max warmup frames*), and it limits **only the background
-> pre-render** after a seek. It must never shorten a node's real memory: a delay's buffer, a feedback tail or a
-> filter's state keep their true length whatever the cap is. Today the same constant clamps what nodes report; the
-> work is to separate "how long the effect really is" from "how much of it we are willing to pre-render". See the
-> [roadmap](roadmap.md#project-and-settings).
+Nodes report their real settling length (the time to decay or settle to about 0.1%; `UNBOUNDED_WARMUP` for a node
+that never settles) and never shorten it. The **Max warmup frames** project setting (default 120, at most 9999;
+**File → Settings → Project**) limits only how many frames the renderer pre-renders after a seek: the effect itself,
+such as a delay's buffer or a feedback tail, is untouched. Preview after a seek is therefore exact for nodes whose
+memory fits within the limit and a close approximation otherwise. Requests that continue forward from where the
+renderer already is, within the warmup length, skip the reset and just keep rendering. **Export always renders from
+the first frame** (or later, from a saved state snapshot), so export is exact whatever the limit. When the graph
+needs more than the limit, the Settings page names the node and node stats show it in the warning colour. Changing
+the limit re-renders, like an edit.
 
 ## Always rendering ahead
 

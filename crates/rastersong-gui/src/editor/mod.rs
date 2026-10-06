@@ -98,6 +98,8 @@ pub struct GraphEditor {
     /// Whether Duplicate and Paste keep a node's input connections (the user's setting; the
     /// Shift variants of the shortcuts do the opposite for one action).
     pub keep_connections: bool,
+    /// The project's limit on pre-rendered warmup frames, to flag nodes that need more.
+    pub max_warmup_frames: u32,
     /// The project's video file name and audio track names, for the nodes linked to them.
     project_video: Option<String>,
     project_tracks: Vec<String>,
@@ -141,6 +143,7 @@ impl GraphEditor {
             last_geometry: Vec::new(),
             clipboard: None,
             keep_connections: true,
+            max_warmup_frames: rastersong_engine::DEFAULT_MAX_WARMUP_FRAMES,
             project_video: None,
             project_tracks: Vec::new(),
             renames: Vec::new(),
@@ -844,7 +847,6 @@ mod tests {
             node: "split".into(),
             latency_frames: 0.0,
             warmup_frames: 0,
-            warmup_truncated: false,
             inputs: vec![stereo],
             outputs: Vec::new(),
             diagnostics: vec![Diagnostic::note("a note")],
