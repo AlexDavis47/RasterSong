@@ -169,7 +169,10 @@ Every change that renames or reshapes a parameter, or merges, splits or removes 
 ## Project and settings
 
 - [ ] **feature** **Settings page.** A real Settings window (File → Settings, and a toolbar button) so hidden
-  settings can be exposed. Two scopes, clearly separated:
+  settings can be exposed. *Partly done:* the window (File → Settings…, Ctrl+,), its Application and Project pages
+  and the settings that already existed (theme, wire style, node stats, keep connections, tempo, audio rate) are in;
+  what is left is language, cache budget, render-ahead, default tool, max warmup frames, the toolbar button and
+  the per-setting reset. Two scopes, clearly separated:
   - *Application* (remembered between sessions, not in project files): theme, wire style, language, default
     preview resolution, cache budget (1 GiB today), render-ahead window (10 s today), default tool, keep input
     connections when duplicating and pasting.

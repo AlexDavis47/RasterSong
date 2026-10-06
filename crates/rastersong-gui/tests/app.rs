@@ -785,3 +785,16 @@ fn opening_a_video_with_sound_adds_its_audio_track() {
     app.open_video(PathBuf::from("movie.mp4"));
     assert_eq!(app.project().audio_tracks.len(), 1);
 }
+
+#[test]
+fn ctrl_comma_opens_the_settings_window_with_both_pages() {
+    let mut harness = loaded();
+    assert!(harness.query_by_label("Application").is_none());
+    shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Comma);
+    harness.run_steps(2);
+    harness.get_by_label("Application");
+    harness.get_by_label("Keep input connections when duplicating and pasting");
+    harness.get_by_label("Project").click();
+    harness.run_steps(3);
+    harness.get_by_label("Audio output rate");
+}

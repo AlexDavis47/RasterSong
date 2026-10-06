@@ -96,12 +96,20 @@ plays as it is. When playback slows because rendering can't keep up, the audio i
 without lowering the pitch) to stay with the picture, and fades out when playback all but stops. Volume and mute
 only affect playback, never rendering.
 
+## Settings
+
+**File → Settings…** (Ctrl+,) opens a window with two pages. **Application** is remembered on this computer: theme,
+wire style, the node latency and warmup display, and keeping input connections when duplicating and pasting.
+**Project** is saved in the project file: tempo (bpm, beats per bar, first beat) and the Audio Output rate. Each
+setting has a line of help. The tempo bar in the timeline edits the same tempo fields. The preview resolution and
+volume stay on the transport bar, where they are used while playing.
+
 ## Keys
 
 Space plays/pauses, ←/→ step one frame, Home jumps to the start, R turns looping on and off, Ctrl+S saves, Ctrl+Z
 undoes, Ctrl+Shift+Z (or Ctrl+Y) redoes. In the graph, Ctrl+C, Ctrl+X and Ctrl+V copy, cut and paste nodes with
 the connections between them; pasted nodes land at the pointer. The **Edit** menu has the same commands. Duplicate
-and Paste also keep the node's input connections, unless **Edit → Keep input connections** is off. Holding Shift
+and Paste also keep the node's input connections, unless **File → Settings → Keep input connections when duplicating and pasting** is off. Holding Shift
 (Ctrl+Shift+D, Ctrl+Shift+V) does the opposite for one action. Connections to nodes that don't exist in the target
 project are skipped.
 
