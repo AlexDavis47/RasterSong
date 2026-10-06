@@ -1,4 +1,4 @@
-# RasterSong Plan
+# RasterSong Design
 
 RasterSong is a unique video editing tool that allows video and audio to merge,
 creating interesting or glitchy video effects that are directly tied to audio.

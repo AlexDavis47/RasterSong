@@ -1,7 +1,7 @@
 # cargo-deny policy. Run locally with `cargo deny check`; CI runs it on every push.
 # RasterSong is distributed as a source-available product, so every dependency must use a
 # permissive license. Copyleft licenses (GPL, LGPL, AGPL) are never allowed in Rust dependencies;
-# FFmpeg is the only LGPL component and is dynamically linked (see docs/readme.md).
+# FFmpeg is the only LGPL component and is dynamically linked (see docs/design.md).
 
 [graph]
 all-features = true
