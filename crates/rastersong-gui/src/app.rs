@@ -564,6 +564,7 @@ impl App {
     }
 
     fn graph(&mut self, ui: &mut Ui) {
+        self.editor.keep_connections = self.settings.keep_connections;
         let frame = self.engine.frame(self.clock.frame());
         let failure = match self.engine.status() {
             EngineStatus::Failed(failure) => Some(failure),
@@ -964,11 +965,19 @@ impl App {
             && let Some(text) = clipboard
         {
             let at = self.editor.view_center();
-            self.editor.paste(&text, at);
+            self.editor.paste(&text, at, self.settings.keep_connections);
         }
         if item(ui, selected, "Duplicate", "Ctrl+D") {
-            self.editor.duplicate_selection();
+            self.editor.duplicate_selection(false);
         }
+        ui.checkbox(
+            &mut self.settings.keep_connections,
+            "Keep input connections",
+        )
+        .on_hover_text(
+            "Duplicate and Paste connect the new nodes to the same sources as the originals. \
+             Hold Shift (Ctrl+Shift+D, Ctrl+Shift+V) to do the opposite once.",
+        );
         if item(ui, selected, "Delete", "Del") {
             self.editor.delete_selection();
         }

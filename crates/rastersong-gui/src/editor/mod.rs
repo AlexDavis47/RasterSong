@@ -95,6 +95,9 @@ pub struct GraphEditor {
     last_geometry: Vec<canvas::Geometry>,
     /// Text last copied, for the Edit menu's Paste (keyboard paste reads the system clipboard).
     clipboard: Option<String>,
+    /// Whether Duplicate and Paste keep a node's input connections (the user's setting; the
+    /// Shift variants of the shortcuts do the opposite for one action).
+    pub keep_connections: bool,
     /// The project's video file name and audio track names, for the nodes linked to them.
     project_video: Option<String>,
     project_tracks: Vec<String>,
@@ -137,6 +140,7 @@ impl GraphEditor {
             last_canvas: Rect::NOTHING,
             last_geometry: Vec::new(),
             clipboard: None,
+            keep_connections: true,
             project_video: None,
             project_tracks: Vec::new(),
             renames: Vec::new(),
@@ -557,14 +561,16 @@ impl GraphEditor {
     }
 
     /// Copies the given nodes (and the wires between them) next to the originals, and selects
-    /// the copies.
-    pub fn duplicate(&mut self, keys: &BTreeSet<NodeKey>) {
+    /// the copies. With `keep_inputs`, the copies are fed by the same sources as the originals.
+    pub fn duplicate(&mut self, keys: &BTreeSet<NodeKey>, keep_inputs: bool) {
         let fragment = self.fragment(keys);
-        self.insert(&fragment, DUPLICATE_OFFSET);
+        self.insert(&fragment, DUPLICATE_OFFSET, keep_inputs);
     }
 
     /// The given nodes and the connections between them, as a graph of their own: what Copy
-    /// puts on the clipboard.
+    /// puts on the clipboard. Also holds the connections into them from nodes outside the
+    /// selection, which [`Self::insert`] reconnects only when asked to; they name nodes the
+    /// fragment doesn't contain.
     pub fn fragment(&self, keys: &BTreeSet<NodeKey>) -> GraphDesc {
         let mut graph = self.to_desc();
         let ids: BTreeSet<String> = keys
@@ -574,16 +580,26 @@ impl GraphEditor {
             .collect();
         let node_of = |endpoint: &str| endpoint.split('.').next().unwrap_or("").to_owned();
         graph.nodes.retain(|n| ids.contains(&n.id));
-        graph
-            .connections
-            .retain(|c| ids.contains(&node_of(&c.from)) && ids.contains(&node_of(&c.to)));
+        graph.connections.retain(|c| ids.contains(&node_of(&c.to)));
         graph
     }
 
     /// Adds the nodes of `fragment` (with fresh ids) and its connections, moved by `offset`, and
     /// selects them. Nodes of unknown types and connections that don't resolve are skipped.
-    /// Returns the keys of the new nodes.
-    pub fn insert(&mut self, fragment: &GraphDesc, offset: Vec2) -> Vec<NodeKey> {
+    /// Connections into the fragment from nodes outside it are made only if `keep_inputs` is set
+    /// and the source still exists here. Returns the keys of the new nodes.
+    pub fn insert(
+        &mut self,
+        fragment: &GraphDesc,
+        offset: Vec2,
+        keep_inputs: bool,
+    ) -> Vec<NodeKey> {
+        let existing: Vec<(String, NodeKey)> =
+            self.nodes.iter().map(|n| (n.id.clone(), n.key)).collect();
+        let existing: HashMap<&str, NodeKey> = existing
+            .iter()
+            .map(|(id, key)| (id.as_str(), *key))
+            .collect();
         let positions = auto_layout(fragment);
         let mut keys = HashMap::new();
         for (i, desc) in fragment.nodes.iter().enumerate() {
@@ -612,8 +628,16 @@ impl GraphEditor {
             keys.insert(desc.id.as_str(), key);
         }
         for c in &fragment.connections {
+            let source = c.from.split('.').next().unwrap_or("");
+            let sources = if keys.contains_key(source) {
+                &keys
+            } else if keep_inputs {
+                &existing
+            } else {
+                continue;
+            };
             if let (Some(from), Some(to)) = (
-                self.endpoint(&keys, &c.from, false),
+                self.endpoint(sources, &c.from, false),
                 self.endpoint(&keys, &c.to, true),
             ) {
                 self.connect(from, to);
@@ -640,8 +664,9 @@ impl GraphEditor {
     }
 
     /// Pastes clipboard text (from [`Self::copy_selection`]) with its top-left node at `at`
-    /// (graph space). Text that isn't a graph is ignored.
-    pub fn paste(&mut self, text: &str, at: Pos2) -> bool {
+    /// (graph space). Text that isn't a graph is ignored. With `keep_inputs`, pasted nodes are
+    /// fed by the nodes they were copied from, where those still exist.
+    pub fn paste(&mut self, text: &str, at: Pos2, keep_inputs: bool) -> bool {
         let Ok(fragment) = GraphDesc::from_json(text) else {
             return false;
         };
@@ -652,7 +677,7 @@ impl GraphEditor {
             .map(|[x, y]| pos2(x, y))
             .reduce(|a, b| a.min(b))
             .unwrap_or(Pos2::ZERO);
-        !self.insert(&fragment, at - corner).is_empty()
+        !self.insert(&fragment, at - corner, keep_inputs).is_empty()
     }
 
     /// The text last copied from this editor, for pasting from the Edit menu.
@@ -702,10 +727,11 @@ impl GraphEditor {
         }
     }
 
-    /// Duplicates the selected nodes.
-    pub fn duplicate_selection(&mut self) {
+    /// Duplicates the selected nodes, keeping their input connections as the setting says;
+    /// `invert` does the opposite for this one duplicate.
+    pub fn duplicate_selection(&mut self, invert: bool) {
         let selected = self.selected.clone();
-        self.duplicate(&selected);
+        self.duplicate(&selected, self.keep_connections != invert);
     }
 
     /// Points audio inputs that read track `old` at `new` (after a track is renamed).
@@ -974,7 +1000,7 @@ mod tests {
         let split = editor.key_of("split").unwrap();
         let red = editor.key_of("am_red").unwrap();
         let wires_before = editor.wires().len();
-        editor.duplicate(&BTreeSet::from([split, red]));
+        editor.duplicate(&BTreeSet::from([split, red]), false);
         assert_eq!(editor.node_count(), 11);
         // split.r -> am_red.carrier is duplicated between the copies.
         assert_eq!(editor.wires().len(), wires_before + 1);
@@ -998,7 +1024,7 @@ mod tests {
         let text = editor.copy_selection().unwrap();
 
         let target = pos2(1000.0, 500.0);
-        assert!(editor.paste(&text, target));
+        assert!(editor.paste(&text, target, false));
         assert_eq!(editor.node_count(), 11);
         assert_eq!(
             editor.wires().len(),
@@ -1022,8 +1048,45 @@ mod tests {
             .unwrap();
         assert_eq!(corner, target);
 
-        assert!(!editor.paste("not a graph", target));
+        assert!(!editor.paste("not a graph", target, true));
         assert_eq!(editor.node_count(), 11);
+    }
+
+    #[test]
+    fn duplicate_and_paste_can_keep_input_connections() {
+        let mut editor = GraphEditor::new(&graph());
+        let red = editor.key_of("am_red").unwrap();
+        let inputs =
+            |editor: &GraphEditor, key| editor.wires().iter().filter(|w| w.to.0 == key).count();
+        let original = inputs(&editor, red);
+        assert!(original > 0, "am_red has inputs to keep");
+
+        let before: BTreeSet<NodeKey> = editor.nodes.iter().map(|n| n.key).collect();
+        editor.duplicate(&BTreeSet::from([red]), false);
+        let copy = *editor.selected().iter().next().unwrap();
+        assert!(!before.contains(&copy));
+        assert_eq!(inputs(&editor, copy), 0, "disconnected copy");
+
+        editor.selected = BTreeSet::from([red]);
+        editor.duplicate_selection(false);
+        let copy = *editor.selected().iter().next().unwrap();
+        assert_eq!(inputs(&editor, copy), original, "setting on keeps inputs");
+        editor.selected = BTreeSet::from([red]);
+        editor.duplicate_selection(true);
+        let copy = *editor.selected().iter().next().unwrap();
+        assert_eq!(inputs(&editor, copy), 0, "Shift inverts");
+
+        editor.selected = BTreeSet::from([red]);
+        let text = editor.copy_selection().unwrap();
+        assert!(editor.paste(&text, pos2(0.0, 0.0), true));
+        let pasted = *editor.selected().iter().next().unwrap();
+        assert_eq!(inputs(&editor, pasted), original);
+
+        // Pasting where the sources don't exist skips the connections without failing.
+        let mut other =
+            GraphEditor::new(&GraphDesc::from_json(r#"{ "version": 1, "nodes": [] }"#).unwrap());
+        assert!(other.paste(&text, pos2(0.0, 0.0), true));
+        assert_eq!(other.wires().len(), 0);
     }
 
     #[test]

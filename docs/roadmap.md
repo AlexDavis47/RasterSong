@@ -195,7 +195,7 @@ Every change that renames or reshapes a parameter, or merges, splits or removes 
 
 ### Fixes
 
-- [ ] **bug** Duplicating a node loses the connections that feed it. Root cause found: `GraphEditor::fragment`
+- [x] **bug** Duplicating a node lost the connections that feed it. Root cause found: `GraphEditor::fragment`
   (`editor/mod.rs`) keeps only connections whose *both* ends are in the selection, and drops linked nodes
   (Video, Audio) from the fragment entirely. Duplicate and paste share that path, so a lone node, or a node fed
   from outside the selection, comes back with no inputs. The existing test is not failing silently: it copies two
@@ -210,6 +210,10 @@ Every change that renames or reshapes a parameter, or merges, splits or removes 
   Add tests for a lone node, a node fed by a linked input, a modulated parameter, a mixed selection, and each
   keybind and setting combination. Paste from another project can only keep connections to inputs that exist; the
   rest are skipped without an error.
+  Done: the setting is a checkbox in the Edit menu until the Settings page exists (it then moves there), and
+  Shift inverts it for one Ctrl+D or Ctrl+V. Not done: rebinding the keys, and tests for a node fed by a linked
+  input and a modulated parameter (the test covers a lone node, the setting both ways, Shift and pasting into
+  a project without the sources).
 - [ ] **bug** Typing a long number into a value box makes the inspector grow wider, repeatedly. This is a sustained
   problem and points to messy layout code, so do not patch it again. Root-cause it (a text edit sizing itself to
   its content and feeding the width back into the panel), then fix it once, permanently: one shared value-box

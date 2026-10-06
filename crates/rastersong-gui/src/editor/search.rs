@@ -231,7 +231,7 @@ impl GraphEditor {
                         close = true;
                     }
                     if ui.button(format!("Duplicate{plural}")).clicked() {
-                        self.duplicate(&selection);
+                        self.duplicate(&selection, self.keep_connections);
                         close = true;
                     }
                     let bypassable = selection

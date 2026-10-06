@@ -18,6 +18,8 @@ pub struct Settings {
     pub volume: f32,
     /// Click on every beat during playback, to check the tempo by ear.
     pub metronome: bool,
+    /// Duplicate and Paste connect the new nodes to the sources of the originals.
+    pub keep_connections: bool,
 }
 
 impl Default for Settings {
@@ -29,6 +31,7 @@ impl Default for Settings {
             preview_divisor: 2,
             volume: 0.8,
             metronome: false,
+            keep_connections: true,
         }
     }
 }

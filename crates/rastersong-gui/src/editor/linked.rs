@@ -267,7 +267,7 @@ mod tests {
             1,
             "only split is copied"
         );
-        editor.duplicate(&keys);
+        editor.duplicate(&keys, true);
         assert_eq!(editor.node_count(), 10);
         editor.remove_nodes(&keys);
         assert!(linked.iter().all(|&k| editor.node(k).is_some()));
