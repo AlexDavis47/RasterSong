@@ -1,5 +1,5 @@
 use crate::nodes::support::settle_frames;
-use crate::nodes::{Category, GeneratorLayout, NodeKind, NodeSpec, SampleClock};
+use crate::nodes::{Category, NodeKind, NodeSpec, SampleClock};
 use crate::{Layout, LayoutContext, Node, OutputSpec, ParamSpec, Params, PrepareContext};
 use crate::{ProcessContext, Range, Signal};
 
@@ -37,7 +37,6 @@ fn white(seed: u64, index: u64) -> f32 {
 #[derive(Debug)]
 pub struct Noise {
     color: Color,
-    layout: GeneratorLayout,
     seed: u64,
     amplitude: f32,
     offset: f32,
@@ -55,7 +54,6 @@ params! { Noise {
         "white",
         "How the noise is spread over frequencies: white is sharp grain, brown is slow drift, violet is the finest grain",
     ),
-    LAYOUT: GeneratorLayout::PARAM,
     SEED: ParamSpec::number("seed", "Seed", 0.0, 0.0, 999.0, "Picks which noise; the same seed always gives the same noise").integer()
         .fixed()
         .limits(0.0, 4_000_000_000.0),
@@ -85,6 +83,7 @@ impl NodeKind for Noise {
     const SPEC: NodeSpec = NodeSpec::new("Noise", Category::Generator)
         .describe("Random values in a chosen colour: grain in video, hiss in audio")
         .params(Self::PARAMS)
+        .takes_layout()
         .inputs(&[])
         .outputs(&[OutputSpec::new("out", "The noise")]);
     const TEST_CONFIGS: &'static [&'static str] = &[
@@ -98,7 +97,6 @@ impl NodeKind for Noise {
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
             color: params.choice_as(Self::COLOR)?,
-            layout: params.choice_as(Self::LAYOUT)?,
             seed: params.number_at(Self::SEED)? as u64,
             amplitude: params.float_at(Self::AMPLITUDE)?,
             offset: params.float_at(Self::OFFSET)?,
@@ -140,7 +138,7 @@ impl Noise {
 
 impl Node for Noise {
     fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
-        self.layout.output_layouts(
+        ctx.layout.output_layouts(
             ctx,
             Range::from_bounds(
                 f64::from(self.offset - self.amplitude.abs()),

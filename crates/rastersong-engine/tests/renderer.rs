@@ -42,6 +42,49 @@ fn seeking_is_close_for_infinite_memory_graphs() {
     }
 }
 
+/// Generators set to the audio layout work whatever the project's audio tracks are called, and
+/// even when it has none.
+#[test]
+fn the_audio_layout_exists_without_a_track_named_audio() {
+    use common::{AUDIO, VIDEO, backend};
+    use rastersong_engine::sources::Modulator;
+    use rastersong_engine::{AudioTrack, GraphDesc};
+    use std::path::Path;
+    use std::sync::Arc;
+    let graph = GraphDesc::from_json(
+        r#"{ "version": 7,
+          "nodes": [
+            { "id": "video", "type": "video_input" },
+            { "id": "beat", "type": "beat", "layout": "audio", "params": { "shape": "phase" } },
+            { "id": "crush", "type": "bitcrush" },
+            { "id": "out", "type": "output" }
+          ],
+          "connections": [
+            { "from": "video", "to": "crush" }, { "from": "beat", "to": "crush.@bits" },
+            { "from": "crush", "to": "out" }
+          ] }"#,
+    )
+    .unwrap();
+    let song = || AudioTrack {
+        name: AUDIO.into(),
+        modulator: Arc::new(Modulator::new(&common::audio())),
+        offset: 0.0,
+    };
+    for tracks in [vec![song()], vec![]] {
+        let mut r = rastersong_engine::Renderer::new(
+            &backend(),
+            Path::new(VIDEO),
+            &tracks,
+            &graph,
+            Default::default(),
+            &Registry::default(),
+            OutputSize::Native,
+        )
+        .expect("compiles with an audio layout");
+        assert!(r.render(3, &|| false).unwrap().is_some());
+    }
+}
+
 #[test]
 fn the_pixel_unit_scales_with_the_preview() {
     let render = |size| renderer_with(FINITE, &Registry::default(), size);

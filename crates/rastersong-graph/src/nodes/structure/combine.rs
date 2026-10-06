@@ -102,6 +102,7 @@ mod tests {
                 connected,
                 sources: &sources,
                 output: Layout::rgb(2, 1),
+                layout: Default::default(),
                 output_count: 1,
             })
             .unwrap();

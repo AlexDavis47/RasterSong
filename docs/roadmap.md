@@ -141,10 +141,10 @@ Every change that renames or reshapes a parameter, or merges, splits or removes 
 
 ### Shared node settings
 
-- [ ] **feature** Move **layout** out of per-node parameters and into the shared node settings (next to
+- [x] **feature** Move **layout** out of per-node parameters and into the shared node settings (next to
   Resampling, Grouping and Channels). Beat, Constant, Noise and Oscillator all carry a `layout` parameter today.
   One shared implementation (`GeneratorLayout`) and one settings control.
-- [ ] **bug** Layout "audio" never works: Beat and Oscillator fail with `⚠ Beat: the host provides no 'audio'
+- [x] **bug** Layout "audio" never works: Beat and Oscillator fail with `⚠ Beat: the host provides no 'audio'
   source to take a layout from`. Fix the host to supply an audio source layout to the compile step (or to fall
   back to a sensible default with a note when there is no audio track), and test it through the engine, not only
   the graph tests.
@@ -313,7 +313,7 @@ a migration where noted, and a regenerated `nodes.md`.
 ### Generators
 
 - **Beat**
-  - [ ] **bug** Audio layout never works (see [Shared node settings](#shared-node-settings)).
+  - [x] **bug** Audio layout never works (see [Shared node settings](#shared-node-settings)).
   - [x] **feature** *Division* defaults to an integer (and is an integer parameter). Slower than the period is the bar period; old fractional divisions are raised to 1.
   - [ ] **feature** *Steps* shows only when the mode is Step (conditional parameter).
   - [ ] **feature** *Width* is conditional on the modes that use it.
@@ -325,7 +325,7 @@ a migration where noted, and a regenerated `nodes.md`.
 - **Oscillator**
   - [ ] **chore** Remove the Ramp wave; it is a Saw followed by a Flip. Migration rewrites old Ramp oscillators to
     Saw + Flip (so *depends on the Flip rename/split below*).
-  - [ ] **bug** Audio layout error, same as Beat.
+  - [x] **bug** Audio layout error, same as Beat.
   - [ ] **feature** *Pulse width* only shows for the pulse wave (conditional parameter).
 
 ### Structure

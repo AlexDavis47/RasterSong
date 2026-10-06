@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use eframe::egui::{self, RichText, Ui};
 use rastersong_engine::{AUDIO_INPUT, SOURCE_PARAM};
 use rastersong_engine::{
-    Channels, Grouping, Interpolation, Modulation, NodeStats, NodeType, ParamKind, ParamLevel,
-    ParamSpec, ParamValue, Severity,
+    Channels, GeneratorLayout, Grouping, Interpolation, Modulation, NodeStats, NodeType, ParamKind,
+    ParamLevel, ParamSpec, ParamValue, Severity,
 };
 
 use super::param_field::{GUTTER_WIDTH, Modulated, NumberRange, param_field, reset_gesture};
@@ -116,7 +116,8 @@ impl GraphEditor {
             signals(ui, &kind, compiled);
         }
 
-        let shared_settings = kind.spec.inputs.len() > 1 || kind.spec.per_channel;
+        let shared_settings =
+            kind.spec.inputs.len() > 1 || kind.spec.per_channel || kind.spec.takes_layout;
         if shared_settings {
             section(ui, "Node settings");
             egui::Grid::new("node-settings")
@@ -145,6 +146,24 @@ impl GraphEditor {
                                 Grouping::Samples,
                                 "Samples",
                                 "Spread over every value, ignoring pixels: a pixel's channels can differ",
+                            ),
+                        ]);
+                        ui.end_row();
+                    }
+                    if kind.spec.takes_layout {
+                        ui.label("Layout").on_hover_text(
+                            "What the generated signal is shaped like: the video's frame, or one block of the audio track",
+                        );
+                        choice(ui, "layout", &mut node.layout, GeneratorLayout::default(), &[
+                            (
+                                GeneratorLayout::Video,
+                                "Video",
+                                "Shaped like the video: RGB pixels in rows",
+                            ),
+                            (
+                                GeneratorLayout::Audio,
+                                "Audio",
+                                "Shaped like one block of the audio track named audio, or of the first track; mono at 48 kHz when the project has none",
                             ),
                         ]);
                         ui.end_row();

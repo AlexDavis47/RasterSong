@@ -332,7 +332,7 @@ fn graph_files_round_trip() {
     let desc = GraphDesc::from_json(PASSTHROUGH).unwrap();
     assert_eq!(GraphDesc::from_json(&desc.to_json()).unwrap(), desc);
     assert!(matches!(
-        GraphDesc::from_json(r#"{ "version": 7, "nodes": [] }"#),
+        GraphDesc::from_json(r#"{ "version": 8, "nodes": [] }"#),
         Err(GraphError::Parse(_))
     ));
 }

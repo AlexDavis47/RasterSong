@@ -3,7 +3,9 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::desc::{Channels, Connection, GraphDesc, Grouping, Interpolation, Modulation, NodeDesc};
+use crate::desc::{
+    Channels, Connection, GeneratorLayout, GraphDesc, Grouping, Interpolation, Modulation, NodeDesc,
+};
 use crate::dsp::{DelayLine, resample};
 use crate::nodes::{AUDIO_INPUT, AUDIO_OUTPUT, OUTPUT, Registry, VIDEO_INPUT};
 
@@ -302,6 +304,7 @@ struct Pending {
     interpolation: Interpolation,
     grouping: Grouping,
     channels: Channels,
+    layout: GeneratorLayout,
     /// Whether the node type can run one copy per channel.
     per_channel: bool,
     /// The range the node type is designed for on its main input.
@@ -771,6 +774,7 @@ impl<'a> Compiler<'a> {
                     connected: &connected,
                     sources: &self.options.sources,
                     output: self.options.output,
+                    layout: p.layout,
                     output_count: p.outputs.len(),
                 })
                 .map_err(|message| self.node_error(n, message))
@@ -849,6 +853,7 @@ impl<'a> Compiler<'a> {
                 connected: &connected,
                 sources: &self.options.sources,
                 output: self.options.output,
+                layout: p.layout,
                 output_count: p.outputs.len(),
             }));
         }
@@ -1149,6 +1154,7 @@ fn create_nodes(desc: &GraphDesc, registry: &Registry) -> Result<Vec<Pending>, G
             interpolation: d.interpolation,
             grouping: d.grouping,
             channels: d.channels,
+            layout: d.layout,
             per_channel: spec.per_channel,
             expects: spec.expects,
         });
@@ -1386,6 +1392,7 @@ fn fill_missing_inputs(desc: &GraphDesc, registry: &Registry) -> Option<GraphDes
                 interpolation: Interpolation::default(),
                 grouping: Grouping::default(),
                 channels: Channels::default(),
+                layout: GeneratorLayout::default(),
                 bypass: false,
                 label: None,
                 position: None,

@@ -58,7 +58,6 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `layout` (Layout) | `video` | `video`, `audio` | no | video makes a signal shaped like the video (RGB, rows); audio makes one shaped like the audio track |
 | `period` (Period) | `beat` | `beat`, `bar` | no | beat restarts the shape on every beat, bar on every bar |
 | `division` (Division) | 1 | 1 to 16 (up to 1 to 1000) | no | Cycles per period: 2 restarts twice as often (half beats). Use the bar period for slower |
 | `shape` (Shape) | `decay` | `phase`, `decay`, `pulse`, `step` | no | phase rises 0 to 1, decay falls 1 to 0, pulse is on for the width, step climbs in stairs |
@@ -77,7 +76,6 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `layout` (Layout) | `video` | `video`, `audio` | no | video makes a signal shaped like the video (RGB, rows); audio makes one shaped like the audio track |
 | `value` (Value) | 0 | -1 to 1 (up to -10 to 10) | yes | The value of every sample |
 
 ### `noise`
@@ -93,7 +91,6 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
 | `color` (Color) | `white` | `white`, `pink`, `brown`, `blue`, `violet` | no | How the noise is spread over frequencies: white is sharp grain, brown is slow drift, violet is the finest grain |
-| `layout` (Layout) | `video` | `video`, `audio` | no | video makes a signal shaped like the video (RGB, rows); audio makes one shaped like the audio track |
 | `seed` (Seed) | 0 | 0 to 999 (up to 0 to 4000000000) | no | Picks which noise; the same seed always gives the same noise |
 | `amplitude` (Amplitude) | 0.5 | 0 to 1 (up to -10 to 10) | yes | Scales the noise, which spans -1 to 1 before the offset is added |
 | `offset` (Offset) | 0.5 | -1 to 1 (up to -10 to 10) | yes | Added to the noise: 0.5 with amplitude 0.5 fills the video range 0 to 1, 0 suits audio |
@@ -111,7 +108,6 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
 | `wave` (Wave) | `sine` | `sine`, `triangle`, `square`, `saw`, `ramp` | no | The shape of one cycle |
-| `layout` (Layout) | `video` | `video`, `audio` | no | video makes a signal shaped like the video (RGB, rows); audio makes one shaped like the audio track |
 | `freq` (Frequency) | 8 | 0.01 to 100 (up to 0 to 1000000) | yes | Cycles per unit of time or space: how many stripes fit in a row, or how high the tone is |
 | `unit` (Cycles per) | `row` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the frequency (cycles per unit): Row keeps the look at any resolution |
 | `phase` (Phase) | 0 | 0 to 1 (up to -1000 to 1000) | no | Where in the cycle the wave starts, as a fraction of a cycle |

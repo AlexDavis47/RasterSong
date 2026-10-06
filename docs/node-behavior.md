@@ -32,7 +32,10 @@ Hover text for the Channels setting (generalized to any channel count):
 - Together: "Runs R, G, B, R, G, B… (or L, R, L, R…) through the node as one stream. Channels bleed into each other, as in a low pass or a modulated delay."
 - Separate: "Runs each channel through its own copy of the node. The same as Split Channels → the node once per channel → Combine Channels."
 
-*Planned:* the generator `layout` parameter joins this list; see the [roadmap](roadmap.md#node-settings-and-parameters).
+- **`layout`** (`video` or `audio`, generators only: Beat, Constant, Noise, Oscillator): what the generated signal is
+  shaped like. `video` is the video's frame (RGB, rows); `audio` is one block of the audio track named `audio`, or of
+  the project's first track, or mono at 48 kHz when the project has no audio. It is a node setting in the file
+  (`"layout": "audio"`, written only when not `video`), not a parameter; graphs from before version 7 are migrated.
 
 ## Conditional parameters
 

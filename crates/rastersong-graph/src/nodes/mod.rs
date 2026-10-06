@@ -12,7 +12,7 @@ pub mod support;
 
 use std::collections::BTreeMap;
 
-pub use support::{GeneratorLayout, SampleClock, Unit};
+pub use support::{SampleClock, Unit};
 
 use crate::graph::{MAX_INPUTS, MAX_PARAMS};
 use crate::{InputSpec, Node, OutputSpec, ParamSpec, ParamValue, Params, Range, TagRule};
@@ -192,6 +192,9 @@ pub struct NodeSpec {
     /// ([`crate::Channels::Separate`]). True for effects, whose output has the same layout as
     /// their main input.
     pub per_channel: bool,
+    /// Whether the node is a generator that takes its shape from the video or the audio, which
+    /// the node's `layout` setting picks.
+    pub takes_layout: bool,
     /// The range the node is designed for on its main input (level thresholds in dB assume
     /// audio's `-1..1`). Another known range only produces a compile warning.
     pub expects: Range,
@@ -212,6 +215,7 @@ impl NodeSpec {
             inputs: MAIN_INPUT,
             outputs: MAIN_OUTPUT,
             per_channel: false,
+            takes_layout: false,
             expects: Range::Unknown,
             addable: category.user_addable(),
         }
@@ -220,6 +224,12 @@ impl NodeSpec {
     /// Lets users add the node themselves, whatever its category.
     pub const fn addable(mut self) -> Self {
         self.addable = true;
+        self
+    }
+
+    /// The node is a generator shaped like the video or the audio (the node's `layout`).
+    pub const fn takes_layout(mut self) -> Self {
+        self.takes_layout = true;
         self
     }
 

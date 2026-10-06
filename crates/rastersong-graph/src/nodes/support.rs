@@ -1,5 +1,6 @@
 //! Helpers shared by several nodes: unit conversion and warmup.
 
+use crate::desc::GeneratorLayout;
 use crate::nodes::{DEFAULT_AUDIO, DEFAULT_VIDEO};
 use crate::{Layout, LayoutContext, PrepareContext, ProcessContext, Range, Tag};
 
@@ -60,26 +61,7 @@ impl Unit {
     }
 }
 
-choice! {
-    /// Which host signal a generator takes its layout (resolution or sample count) from.
-    pub enum GeneratorLayout {
-        /// The video's layout: RGB pixels in rows.
-        Video = "video",
-        /// The audio track's layout.
-        Audio = "audio",
-    }
-}
-
 impl GeneratorLayout {
-    /// The `layout` parameter every generator has.
-    pub const PARAM: crate::ParamSpec = crate::ParamSpec::choice(
-        "layout",
-        "Layout",
-        Self::OPTIONS,
-        "video",
-        "video makes a signal shaped like the video (RGB, rows); audio makes one shaped like the audio track",
-    );
-
     /// The range of the host signal this choice names: what a generator's values usually mean.
     pub fn nominal(self) -> Range {
         match self {

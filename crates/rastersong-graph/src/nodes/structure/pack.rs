@@ -77,6 +77,7 @@ mod tests {
                 connected: &[true],
                 sources: &sources,
                 output: Layout::rgb(2, 2),
+                layout: Default::default(),
                 output_count: 1,
             })
         };

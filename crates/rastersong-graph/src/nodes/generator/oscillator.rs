@@ -1,6 +1,6 @@
 use std::f64::consts::TAU;
 
-use crate::nodes::{Category, Unit, GeneratorLayout, NodeKind, NodeSpec, SampleClock};
+use crate::nodes::{Category, Unit, NodeKind, NodeSpec, SampleClock};
 use crate::{Layout, LayoutContext, Node, OutputSpec, ParamSpec, Params, PrepareContext};
 use crate::{ProcessContext, Range, Signal};
 
@@ -46,7 +46,6 @@ impl Wave {
 #[derive(Debug)]
 pub struct Oscillator {
     wave: Wave,
-    layout: GeneratorLayout,
     freq: f64,
     unit: Unit,
     phase: f64,
@@ -67,7 +66,6 @@ pub struct Oscillator {
 
 params! { Oscillator {
     WAVE: ParamSpec::choice("wave", "Wave", Wave::OPTIONS, "sine", "The shape of one cycle"),
-    LAYOUT: GeneratorLayout::PARAM,
     FREQ: ParamSpec::number(
         "freq",
         "Frequency",
@@ -123,6 +121,7 @@ impl NodeKind for Oscillator {
     const SPEC: NodeSpec = NodeSpec::new("Oscillator", Category::Generator)
         .describe("A sine, triangle, square, saw or ramp wave: stripes in video, a tone in audio")
         .params(Self::PARAMS)
+        .takes_layout()
         .inputs(&[])
         .outputs(&[OutputSpec::new("out", "The wave")]);
     const TEST_CONFIGS: &'static [&'static str] = &[
@@ -138,7 +137,6 @@ impl NodeKind for Oscillator {
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
             wave: params.choice_as(Self::WAVE)?,
-            layout: params.choice_as(Self::LAYOUT)?,
             freq: params.number_at(Self::FREQ)?,
             unit: params.choice_as(Self::UNIT)?,
             phase: params.number_at(Self::PHASE)?,
@@ -157,7 +155,7 @@ impl NodeKind for Oscillator {
 
 impl Node for Oscillator {
     fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
-        self.layout.output_layouts(
+        ctx.layout.output_layouts(
             ctx,
             Range::from_bounds(
                 f64::from(self.offset - self.amplitude.abs()),

@@ -834,3 +834,12 @@ fn whole_number_parameters_round_what_is_typed() {
     let value = harness.state().editor().node(node).unwrap().params["division"].clone();
     assert_eq!(value, ParamValue::Number(3.0));
 }
+
+#[test]
+fn generators_have_a_layout_setting_next_to_the_shared_ones() {
+    let mut harness = loaded();
+    add_node(&mut harness, "beat");
+    select(&mut harness, "beat");
+    harness.run_steps(3);
+    harness.get_by_label("Layout");
+}

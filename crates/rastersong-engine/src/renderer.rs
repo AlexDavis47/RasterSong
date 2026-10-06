@@ -151,6 +151,15 @@ impl Renderer {
         for track in &tracks {
             layouts.insert(track.name.clone(), track.modulator.layout(fps));
         }
+        // A generator set to the audio layout needs one even when no track has the default
+        // name: the first track's shape, or silence at the default rate when there is none.
+        if !layouts.contains_key(DEFAULT_AUDIO) {
+            let layout = tracks.first().map_or_else(
+                || Modulator::silent().layout(fps),
+                |track| track.modulator.layout(fps),
+            );
+            layouts.insert(DEFAULT_AUDIO.to_owned(), layout);
+        }
         let options = CompileOptions {
             frame_rate: fps,
             tempo,

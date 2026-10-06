@@ -12,9 +12,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use eframe::egui::{Pos2, Rect, Vec2, pos2, vec2};
 use rastersong_engine::{
-    COMBINE, ChannelMap, Channels, Connection, Diagnostic, FORMAT_VERSION, GraphDesc, Grouping,
-    Interpolation, MAX_CHANNELS, Modulation, NodeDesc, NodeStats, NodeType, OutputLevel,
-    OutputSpec, ParamValue, Registry, SPLIT, Tag,
+    COMBINE, ChannelMap, Channels, Connection, Diagnostic, FORMAT_VERSION, GeneratorLayout,
+    GraphDesc, Grouping, Interpolation, MAX_CHANNELS, Modulation, NodeDesc, NodeStats, NodeType,
+    OutputLevel, OutputSpec, ParamValue, Registry, SPLIT, Tag,
 };
 
 pub use canvas::CanvasContext;
@@ -37,6 +37,7 @@ pub struct EditorNode {
     pub interpolation: Interpolation,
     pub grouping: Grouping,
     pub channels: Channels,
+    pub layout: GeneratorLayout,
     /// Whether the node is skipped: its input passes straight to its output.
     pub bypass: bool,
     /// Top-left corner in graph space.
@@ -202,6 +203,7 @@ impl GraphEditor {
                 interpolation: node.interpolation,
                 grouping: node.grouping,
                 channels: node.channels,
+                layout: node.layout,
                 bypass: node.bypass,
                 pos: node.position.map_or(positions[i], |[x, y]| pos2(x, y)),
                 modulation: node.modulation.clone(),
@@ -309,6 +311,7 @@ impl GraphEditor {
                     interpolation: n.interpolation,
                     grouping: n.grouping,
                     channels: n.channels,
+                    layout: n.layout,
                     bypass: n.bypass,
                     label: n.label.clone(),
                     position: Some([n.pos.x.round(), n.pos.y.round()]),
@@ -495,6 +498,7 @@ impl GraphEditor {
             interpolation: Interpolation::Hold,
             grouping: Grouping::Pixels,
             channels: Channels::Together,
+            layout: GeneratorLayout::default(),
             bypass: false,
             pos,
             modulation: BTreeMap::new(),
@@ -623,6 +627,7 @@ impl GraphEditor {
             node.interpolation = desc.interpolation;
             node.grouping = desc.grouping;
             node.channels = desc.channels;
+            node.layout = desc.layout;
             node.bypass = desc.bypass;
             node.label = desc.label.clone();
             node.modulation = desc.modulation.clone();

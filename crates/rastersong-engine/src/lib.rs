@@ -30,10 +30,10 @@ pub use rastersong_graph::nodes::{
     AUDIO_INPUT, CHANNEL_PORTS, COMBINE, MAX_CHANNELS, OUTPUT, SOURCE_PARAM, SPLIT, VIDEO_INPUT,
 };
 pub use rastersong_graph::{
-    Category, ChannelMap, Channels, CompileOptions, Connection, Diagnostic, FORMAT_VERSION, Graph,
-    GraphDesc, GraphError, Grouping, Interpolation, Kind, Layout, ModMode, Modulation, NodeDesc,
-    NodeDiagnostic, NodeStats, NodeType, OutputLevel, OutputSpec, ParamKind, ParamLevel, ParamSpec,
-    ParamValue, Part, Range, Registry, Severity, Tag, TagRule, Tempo,
+    Category, ChannelMap, Channels, CompileOptions, Connection, Diagnostic, FORMAT_VERSION,
+    GeneratorLayout, Graph, GraphDesc, GraphError, Grouping, Interpolation, Kind, Layout, ModMode,
+    Modulation, NodeDesc, NodeDiagnostic, NodeStats, NodeType, OutputLevel, OutputSpec, ParamKind,
+    ParamLevel, ParamSpec, ParamValue, Part, Range, Registry, Severity, Tag, TagRule, Tempo,
 };
 pub use rastersong_media::{
     AudioClip, AudioOptions, BackendInfo, FakeBackend, FakeVideo, FfmpegBackend, LibraryInfo,

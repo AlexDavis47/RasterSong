@@ -12,8 +12,9 @@ use crate::GraphError;
 /// entry sets `overshoot`; older graphs are rewritten on load, with explicit entries that
 /// overshoot as they always did. Version 5 narrowed the usual range of some frequencies. Version
 /// 6 made frequency modulation linear like every other parameter (it was in octaves), so those
-/// amounts are converted to the equivalent linear amount at the parameter's base value.
-pub const FORMAT_VERSION: u32 = 6;
+/// amounts are converted to the equivalent linear amount at the parameter's base value. Version 7
+/// made a generator's `layout` a node setting instead of a parameter.
+pub const FORMAT_VERSION: u32 = 7;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -42,6 +43,10 @@ pub struct NodeDesc {
     /// per channel.
     #[serde(default, skip_serializing_if = "is_default")]
     pub channels: Channels,
+    /// Which host signal a generator takes its shape (resolution or sample count) from. Only
+    /// written when it isn't the video.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub layout: GeneratorLayout,
     /// Passes the main input straight through to the first output, skipping the node's processing.
     #[serde(default, skip_serializing_if = "is_default")]
     pub bypass: bool,
@@ -150,6 +155,17 @@ pub enum Grouping {
     Pixels,
     /// Spread over every sample value, ignoring pixels: a pixel's channels can differ.
     Samples,
+}
+
+/// Which host signal a generator takes its layout (resolution or sample count) from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GeneratorLayout {
+    /// The video's layout: RGB pixels in rows.
+    #[default]
+    Video,
+    /// The audio track's layout.
+    Audio,
 }
 
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {

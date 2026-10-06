@@ -5,7 +5,7 @@ or its main input. Unknown parameters are rejected, which catches typos.
 
 ```json
 {
-  "version": 6,
+  "version": 7,
   "nodes": [
     { "id": "video", "type": "video_input" },
     { "id": "audio", "type": "audio_input" },
@@ -33,7 +33,7 @@ not overshooting. How modulation is applied is in
 [Node authoring](node-authoring.md#parameter-modulation).
 
 Format version 3 introduced percentage amounts, version 4 the range limit and version 5 narrower usual ranges for
-some frequencies, and version 6 linear frequency modulation (octave amounts are converted at the base value). Older graphs (amounts in the
+some frequencies, version 6 linear frequency modulation (octave amounts are converted at the base value) and version 7 the generator `layout` setting. Older graphs (amounts in the
 parameter's own unit, the default amount that depended on the base value, and values that could pass the slider's
 ends) are rewritten on load, with `"overshoot": true`, so they move parameters exactly as before.
 

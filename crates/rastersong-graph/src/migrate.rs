@@ -1,6 +1,6 @@
 //! Bringing graphs written for older versions of the nodes up to date.
 
-use crate::desc::{FORMAT_VERSION, GraphDesc, ModMode, Modulation};
+use crate::desc::{FORMAT_VERSION, GeneratorLayout, GraphDesc, ModMode, Modulation};
 use crate::{ParamKind, ParamSpec, ParamValue, Registry};
 
 // Migrations are idempotent rewrites that recognise old graphs by their shape, so a graph that
@@ -278,6 +278,7 @@ impl GraphDesc {
         self.rename_choices(RENAMED_CHOICES);
         self.rename_units(Registry::shared());
         self.round_whole_parameters(Registry::shared());
+        self.move_layout_to_settings(Registry::shared());
         self.convert_modulation_inputs(MODULATION_INPUTS);
         self.upgrade_modulation(Registry::shared());
     }
@@ -455,6 +456,23 @@ impl GraphDesc {
         }
     }
 
+    /// Generators once had a `layout` parameter; it is a setting of the node now.
+    fn move_layout_to_settings(&mut self, registry: &Registry) {
+        for node in &mut self.nodes {
+            if !registry
+                .get(&node.kind)
+                .is_some_and(|t| t.spec.takes_layout)
+            {
+                continue;
+            }
+            if let Some(ParamValue::Text(layout)) = node.params.remove("layout")
+                && layout == "audio"
+            {
+                node.layout = GeneratorLayout::Audio;
+            }
+        }
+    }
+
     fn rename_units(&mut self, registry: &Registry) {
         for node in &mut self.nodes {
             let has_unit = registry
@@ -573,8 +591,10 @@ mod tests {
         assert!((sweep(&v2, "d", "time") - 2.0).abs() < 1e-9);
 
         // Current graphs without an entry stay unentried and get the default amount.
-        let current =
-            GraphDesc::from_json(&json.replace("\"version\": 1", "\"version\": 6")).unwrap();
+        let current = GraphDesc::from_json(
+            &json.replace("\"version\": 1", &format!("\"version\": {FORMAT_VERSION}")),
+        )
+        .unwrap();
         assert!(
             current
                 .nodes
@@ -696,6 +716,37 @@ mod tests {
         let once = graph.clone();
         graph.upgrade();
         assert_eq!(graph, once);
+    }
+
+    #[test]
+    fn a_generators_layout_moves_from_its_parameters_to_its_settings() {
+        let mut graph = GraphDesc::from_json(
+            r#"{ "version": 6,
+                "nodes": [
+                    { "id": "a", "type": "beat", "params": { "layout": "audio", "shape": "phase" } },
+                    { "id": "v", "type": "oscillator", "params": { "layout": "video" } },
+                    { "id": "n", "type": "noise", "layout": "audio" }
+                ] }"#,
+        )
+        .unwrap();
+        let node =
+            |graph: &GraphDesc, id: &str| graph.nodes.iter().find(|n| n.id == id).unwrap().clone();
+        assert_eq!(node(&graph, "a").layout, GeneratorLayout::Audio);
+        assert!(!node(&graph, "a").params.contains_key("layout"));
+        assert!(node(&graph, "a").params.contains_key("shape"));
+        assert_eq!(node(&graph, "v").layout, GeneratorLayout::Video);
+        assert!(node(&graph, "v").params.is_empty());
+        assert_eq!(node(&graph, "n").layout, GeneratorLayout::Audio);
+        let once = graph.clone();
+        graph.upgrade();
+        assert_eq!(graph, once);
+        assert!(graph.to_json().contains(r#""layout": "audio""#));
+        assert!(
+            !GraphDesc::from_json(&graph.to_json())
+                .unwrap()
+                .to_json()
+                .contains("video")
+        );
     }
 
     #[test]

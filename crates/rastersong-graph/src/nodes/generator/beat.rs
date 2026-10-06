@@ -1,4 +1,4 @@
-use crate::nodes::{Category, GeneratorLayout, NodeKind, NodeSpec, SampleClock};
+use crate::nodes::{Category, NodeKind, NodeSpec, SampleClock};
 use crate::{Layout, LayoutContext, Node, OutputSpec, ParamSpec, Params, PrepareContext};
 use crate::{ProcessContext, Range, Signal};
 
@@ -32,7 +32,6 @@ choice! {
 /// offset set on the timeline move the grid.
 #[derive(Debug)]
 pub struct Beat {
-    layout: GeneratorLayout,
     period: Period,
     shape: Shape,
     /// Cycles of the shape per period.
@@ -48,7 +47,6 @@ pub struct Beat {
 }
 
 params! { Beat {
-    LAYOUT: GeneratorLayout::PARAM,
     PERIOD: ParamSpec::choice(
         "period",
         "Period",
@@ -102,6 +100,7 @@ impl NodeKind for Beat {
             "A 0 to 1 signal locked to the project's beats or bars: phase, decay, pulse or steps",
         )
         .params(Self::PARAMS)
+        .takes_layout()
         .inputs(&[])
         .outputs(&[OutputSpec::new("out", "The beat-locked signal")]);
     const TEST_CONFIGS: &'static [&'static str] = &[
@@ -114,7 +113,6 @@ impl NodeKind for Beat {
 
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
-            layout: params.choice_as(Self::LAYOUT)?,
             period: params.choice_as(Self::PERIOD)?,
             shape: params.choice_as(Self::SHAPE)?,
             division: params.number_at(Self::DIVISION)?.max(1e-6),
@@ -143,7 +141,7 @@ impl Beat {
 
 impl Node for Beat {
     fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
-        self.layout.output_layouts(ctx, Range::Unipolar)
+        ctx.layout.output_layouts(ctx, Range::Unipolar)
     }
 
     fn prepare(&mut self, ctx: &PrepareContext) {

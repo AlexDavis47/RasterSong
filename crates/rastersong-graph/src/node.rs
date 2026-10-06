@@ -115,6 +115,8 @@ pub struct LayoutContext<'a> {
     pub sources: &'a HashMap<String, Layout>,
     /// The layout the graph's output must have.
     pub output: Layout,
+    /// The node's `layout` setting: which host signal a generator is shaped like.
+    pub layout: crate::GeneratorLayout,
     /// How many outputs the node has.
     pub output_count: usize,
 }
