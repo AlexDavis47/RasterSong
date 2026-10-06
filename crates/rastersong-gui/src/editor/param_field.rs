@@ -13,7 +13,7 @@
 //! Every control can be reset to its default with Alt+click or from its right-click menu.
 
 use eframe::egui::{self, Color32, CornerRadius, Rect, Response, Sense, Stroke, Ui, pos2, vec2};
-use rastersong_engine::{ModMode, ModScale, Modulation, ParamSpec};
+use rastersong_engine::{ModMode, Modulation, ParamSpec};
 
 use crate::theme::Theme;
 use crate::value_box::ValueBox;
@@ -287,18 +287,11 @@ pub fn amount_text(modulation: Modulation) -> String {
 }
 
 /// What the amount comes to in the parameter's own terms, for a tooltip: how far a full signal
-/// moves the value, `±3.3 oct` or `+2.5 Hz`. Both ways, that is either side of the value.
+/// moves the value, `±3.3 bits` or `+2.5 Hz`. Both ways, that is either side of the value.
 pub fn amount_effect(spec: &ParamSpec, modulation: Modulation) -> String {
     let sweep = spec.modulation_sweep(modulation);
-    let unit = match spec.scale {
-        ModScale::Octaves => " oct",
-        ModScale::Linear => spec.unit,
-    };
-    let space = if unit.is_empty() || unit == " oct" {
-        ""
-    } else {
-        " "
-    };
+    let unit = spec.unit;
+    let space = if unit.is_empty() { "" } else { " " };
     let value = format!("{:.2}", sweep.abs()).replace(".00", "");
     let value = value.trim_end_matches('0').trim_end_matches('.');
     let sign = match modulation.mode {
@@ -429,10 +422,10 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated) -> KnobResponse {
                 ModMode::Bipolar => "Either side",
                 ModMode::Unipolar => "Moves by",
             });
-            let unit = match m.spec.scale {
-                ModScale::Octaves => " oct".to_owned(),
-                _ if m.spec.unit.is_empty() => String::new(),
-                _ => format!(" {}", m.spec.unit),
+            let unit = if m.spec.unit.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", m.spec.unit)
             };
             let mut sweep = m.spec.modulation_sweep(*modulation);
             let range = match modulation.mode {
@@ -572,7 +565,6 @@ mod tests {
     fn amounts_read_with_their_direction_and_unit() {
         use rastersong_engine::{ModMode, Modulation, ParamSpec};
         let feedback = ParamSpec::number("feedback", "Feedback", 0.0, 0.0, 1.0, "");
-        let cutoff = ParamSpec::number("cutoff", "Cutoff", 40.0, 1.0, 1e5, "").octaves();
         let bits = ParamSpec::number("bits", "Bits", 4.0, 1.0, 24.0, "").unit("bits");
         let m = |amount, mode| Modulation {
             amount,
@@ -591,11 +583,6 @@ mod tests {
         assert_eq!(
             amount_effect(&bits, m(10.0, ModMode::Unipolar)),
             "+2.3 bits"
-        );
-        // 1..100000 is about 16.6 octaves; a quarter of it one way is 4.15.
-        assert_eq!(
-            amount_effect(&cutoff, m(25.0, ModMode::Unipolar)),
-            "+4.15 oct"
         );
     }
 

@@ -10,9 +10,10 @@ use crate::GraphError;
 /// bipolar. Version 3 made modulation amounts percentages of the parameter's span instead of
 /// numbers in its own unit. Version 4 keeps modulated values within the slider's range unless an
 /// entry sets `overshoot`; older graphs are rewritten on load, with explicit entries that
-/// overshoot as they always did. Version 5 narrowed the usual range of some frequencies (the
-/// span a percentage is of), so their amounts are rescaled to move as far as before.
-pub const FORMAT_VERSION: u32 = 5;
+/// overshoot as they always did. Version 5 narrowed the usual range of some frequencies. Version
+/// 6 made frequency modulation linear like every other parameter (it was in octaves), so those
+/// amounts are converted to the equivalent linear amount at the parameter's base value.
+pub const FORMAT_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -65,8 +66,7 @@ pub struct NodeDesc {
 }
 
 /// How a signal connected to a parameter moves it, clamped to the parameter's limits. The
-/// `amount` is a percentage of the parameter's span (its usual range, in octaves for
-/// frequencies): one way, the value moves `amount` of the span at full signal; both ways,
+/// `amount` is a percentage of the parameter's span (its usual range): one way, the value moves `amount` of the span at full signal; both ways,
 /// `amount` is the whole swing from the lowest point to the highest, so 100% covers the span.
 /// Negative one-way amounts move the value down. The value stays within the parameter's usual
 /// range (widened to include its base value) unless `overshoot` allows it up to the limits.

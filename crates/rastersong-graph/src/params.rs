@@ -21,24 +21,10 @@ pub struct ParamSpec {
     pub modulatable: bool,
     /// Whether the editor shows its modulation pin on the node until the user hides it.
     pub exposed: bool,
-    /// How a modulation amount applies to the value.
-    pub scale: ModScale,
 }
 
 /// How much a newly connected signal moves a parameter, in percent of its span.
 pub const DEFAULT_MODULATION_PERCENT: f64 = 25.0;
-
-/// How a modulation amount, a percentage of the parameter's span, applies to its value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ModScale {
-    /// The span is the usual range in the parameter's own unit: `base + offset × signal`.
-    #[default]
-    Linear,
-    /// The span is the usual range measured in octaves: `base × 2^(offset × signal)`. For
-    /// frequencies and other parameters heard or seen on a logarithmic scale. The usual range
-    /// must be above zero.
-    Octaves,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ParamKind {
@@ -84,7 +70,6 @@ impl ParamSpec {
             },
             modulatable: true,
             exposed: false,
-            scale: ModScale::Linear,
         }
     }
 
@@ -103,7 +88,6 @@ impl ParamSpec {
             kind: ParamKind::Choice { options, default },
             modulatable: false,
             exposed: false,
-            scale: ModScale::Linear,
         }
     }
 
@@ -121,7 +105,6 @@ impl ParamSpec {
             kind: ParamKind::Text { default },
             modulatable: false,
             exposed: false,
-            scale: ModScale::Linear,
         }
     }
 
@@ -139,23 +122,13 @@ impl ParamSpec {
         self
     }
 
-    /// Modulation amounts are in octaves.
-    pub const fn octaves(mut self) -> Self {
-        self.scale = ModScale::Octaves;
-        self
-    }
-
     /// The size of the usual range, which modulation amounts are a percentage of: in the
-    /// parameter's own unit, or in octaves (the octaves between its smallest and largest usual
-    /// value) for [`ModScale::Octaves`]. Zero for anything that isn't a number.
+    /// parameter's own unit. Zero for anything that isn't a number.
     pub fn modulation_span(&self) -> f64 {
         let ParamKind::Number { min, max, .. } = self.kind else {
             return 0.0;
         };
-        let span = match self.scale {
-            ModScale::Linear => max - min,
-            ModScale::Octaves => (max / min).log2(),
-        };
+        let span = max - min;
         if span.is_finite() { span.max(0.0) } else { 0.0 }
     }
 
@@ -174,7 +147,7 @@ impl ParamSpec {
     }
 
     /// The amount (percent of the span) whose sweep is `sweep`, the inverse of
-    /// [`Self::modulation_sweep`]: for typing a distance in the parameter's own unit or octaves.
+    /// [`Self::modulation_sweep`]: for typing a distance in the parameter's own unit.
     pub fn modulation_amount_for_sweep(&self, sweep: f64, mode: ModMode) -> f64 {
         let reach = match mode {
             ModMode::Bipolar => 0.5,
@@ -209,7 +182,7 @@ impl ParamSpec {
     }
 
     /// How far a full-scale signal (1, or -1 and 1 for both ways) moves the value, in the
-    /// parameter's unit or in octaves. Both ways, the amount is the whole swing from one end to
+    /// parameter's unit. Both ways, the amount is the whole swing from one end to
     /// the other, so 100% covers the span whichever way the signal moves.
     pub fn modulation_sweep(&self, modulation: Modulation) -> f64 {
         let reach = match modulation.mode {
@@ -223,10 +196,7 @@ impl ParamSpec {
     pub fn modulated(&self, base: f64, modulation: Modulation, signal: f64) -> f64 {
         let offset =
             self.modulation_sweep(modulation) * f64::from(modulation.mode.shape(signal as f32));
-        match self.scale {
-            ModScale::Linear => base + offset,
-            ModScale::Octaves => base * offset.exp2(),
-        }
+        base + offset
     }
 
     /// The range a modulated value moves over for a signal within `-1..=1`, within the limits.
@@ -464,9 +434,8 @@ mod tests {
     }
 
     #[test]
-    fn modulation_moves_values_linearly_or_in_octaves() {
+    fn modulation_moves_values_linearly() {
         let linear = ParamSpec::number("time", "Time", 1.0, 0.0, 10.0, "");
-        let octaves = ParamSpec::number("cutoff", "Cutoff", 40.0, 1.0, 1000.0, "").octaves();
         let both = |amount| Modulation {
             amount,
             mode: ModMode::Bipolar,
@@ -489,20 +458,10 @@ mod tests {
         assert_eq!(linear.modulated(0.0, one_way(100.0), 1.0), 10.0);
         assert_eq!(linear.modulated(5.0, both(100.0), 1.0), 10.0);
         assert_eq!(linear.modulated(5.0, both(100.0), -1.0), 0.0);
-        // The octave span of 1..1000 is log2(1000) octaves: 100% both ways sweeps all of it.
-        let span = octaves.modulation_span();
-        assert!((span - 1000f64.log2()).abs() < 1e-12);
-        let two_octaves_each_way = both(100.0 * 4.0 / span);
-        assert_eq!(octaves.modulated(40.0, two_octaves_each_way, 1.0), 160.0);
-        assert_eq!(octaves.modulated(40.0, two_octaves_each_way, -1.0), 10.0);
         // Ranges are clamped to the limits (here the usual range, 0..10).
         assert_eq!(linear.modulated_range(5.0, both(40.0)), (3.0, 7.0));
         assert_eq!(linear.modulated_range(9.0, both(40.0)), (7.0, 10.0));
         assert_eq!(linear.modulated_range(5.0, one_way(-20.0)), (3.0, 5.0));
-        assert_eq!(
-            octaves.modulated_range(40.0, two_octaves_each_way),
-            (10.0, 160.0)
-        );
         // Kept within the usual range (widened to the base) unless it may overshoot.
         let loud = Modulation {
             overshoot: true,
@@ -515,7 +474,6 @@ mod tests {
         // Typing a number of units back in gives the amount that produces it.
         let amount = linear.modulation_amount_for_sweep(2.0, ModMode::Bipolar);
         assert_eq!(linear.modulation_sweep(both(amount)), 2.0);
-        assert_eq!(octaves.default_modulation_amount(), 25.0);
         assert_eq!(linear.default_modulation_amount(), 25.0);
         assert_eq!(linear.default_modulation().mode, ModMode::Unipolar);
     }

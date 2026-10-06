@@ -1,7 +1,7 @@
 //! Bringing graphs written for older versions of the nodes up to date.
 
 use crate::desc::{FORMAT_VERSION, GraphDesc, ModMode, Modulation};
-use crate::{ModScale, ParamKind, ParamSpec, ParamValue, Registry};
+use crate::{ParamKind, ParamSpec, ParamValue, Registry};
 
 // Migrations are idempotent rewrites that recognise old graphs by their shape, so a graph that
 // is already up to date passes through unchanged. Bump `FORMAT_VERSION` only for a change to the
@@ -14,9 +14,9 @@ use crate::{ModScale, ParamKind, ParamSpec, ParamValue, Registry};
 
 /// What a newly connected signal's amount used to be, in the parameter's own unit: one octave, or
 /// half the base value, or a tenth of the usual range when the base is zero.
-fn legacy_default_amount(spec: &ParamSpec, base: f64) -> f64 {
+fn legacy_default_amount(spec: &ParamSpec, octaves: bool, base: f64) -> f64 {
     match spec.kind {
-        ParamKind::Number { .. } if spec.scale == ModScale::Octaves => 1.0,
+        ParamKind::Number { .. } if octaves => 1.0,
         ParamKind::Number { min, max, .. } if base == 0.0 => (max - min) / 10.0,
         ParamKind::Number { .. } => base.abs() / 2.0,
         _ => 0.0,
@@ -61,47 +61,70 @@ const MODULATION_INPUTS: &[ModulationInput] = &[
     },
 ];
 
-/// A frequency whose usual range was narrowed in version 5 (sliders became linear). Its
-/// modulation amount is a percentage of the range in octaves, so it is rescaled to keep the
-/// same distance.
-struct NarrowedRange {
+/// A frequency that modulated in octaves until version 6. Its amount was a percentage of its
+/// usual range measured in octaves, which was `old` (the range before version 5) in graphs before
+/// version 5.
+struct OctaveParam {
     kind: &'static str,
     param: &'static str,
     old: (f64, f64),
 }
 
-const NARROWED_RANGES: &[NarrowedRange] = &[
-    NarrowedRange {
+const OCTAVE_PARAMS: &[OctaveParam] = &[
+    OctaveParam {
+        kind: "oscillator",
+        param: "freq",
+        old: (0.01, 100.0),
+    },
+    OctaveParam {
         kind: "filter",
         param: "cutoff",
         old: (0.01, 1000.0),
     },
-    NarrowedRange {
+    OctaveParam {
         kind: "lowpass",
         param: "cutoff",
         old: (0.01, 100_000.0),
     },
-    NarrowedRange {
+    OctaveParam {
         kind: "equalizer",
         param: "low_freq",
         old: (0.01, 1000.0),
     },
-    NarrowedRange {
+    OctaveParam {
         kind: "equalizer",
         param: "mid_freq",
         old: (0.01, 1000.0),
     },
-    NarrowedRange {
+    OctaveParam {
         kind: "equalizer",
         param: "high_freq",
         old: (0.01, 1000.0),
     },
-    NarrowedRange {
+    OctaveParam {
         kind: "phaser",
         param: "freq",
         old: (20.0, 20_000.0),
     },
 ];
+
+/// The linear amount (percent of the span) that moves a value from `base` as far as an octave
+/// modulation did: a sweep of `octaves` each way at full signal. Both ways the value moved up by
+/// `base × 2^o` and down by `base / 2^o`, which are averaged. Exact at the base, an
+/// approximation elsewhere, since an octave sweep is not even in the parameter's own unit.
+fn octaves_to_percent(spec: &ParamSpec, mode: ModMode, base: f64, octaves: f64) -> f64 {
+    let (up, down) = (octaves.exp2(), (-octaves).exp2());
+    let (distance, reach) = match mode {
+        ModMode::Bipolar => (base * (up - down) / 2.0, 0.5),
+        ModMode::Unipolar => (base * (up - 1.0), 1.0),
+    };
+    let span = spec.modulation_span();
+    if span > 0.0 {
+        distance * 100.0 / (span * reach)
+    } else {
+        0.0
+    }
+}
 
 /// A node type that changed its name.
 struct RenamedKind {
@@ -254,6 +277,12 @@ impl GraphDesc {
             return;
         }
         let legacy_amounts = self.version < 3;
+        let version = self.version;
+        let octave = |kind: &str, param: &str| {
+            OCTAVE_PARAMS
+                .iter()
+                .find(|o| o.kind == kind && o.param == param)
+        };
         let old_default_mode = if self.version < 2 {
             ModMode::Bipolar
         } else {
@@ -280,7 +309,11 @@ impl GraphDesc {
             if let Some(base) = spec.number_value(&node.params) {
                 let entry = if legacy_amounts {
                     Modulation {
-                        amount: legacy_default_amount(spec, base),
+                        amount: legacy_default_amount(
+                            spec,
+                            octave(&node.kind, param).is_some(),
+                            base,
+                        ),
                         mode: old_default_mode,
                         overshoot: false,
                     }
@@ -293,29 +326,34 @@ impl GraphDesc {
         for node in &mut self.nodes {
             let kind = registry.get(&node.kind);
             for (name, modulation) in &mut node.modulation {
-                if legacy_amounts
-                    && let Some(spec) =
-                        kind.and_then(|k| k.spec.params.iter().find(|s| s.name == *name))
-                {
+                let spec = kind.and_then(|k| k.spec.params.iter().find(|s| s.name == *name));
+                if let (Some(spec), Some(o)) = (spec, octave(&node.kind, name)) {
+                    // How far it moved in octaves, from whatever the amount meant then.
+                    let reach = match modulation.mode {
+                        ModMode::Bipolar => 0.5,
+                        ModMode::Unipolar => 1.0,
+                    };
+                    let octaves = if version < 3 {
+                        modulation.amount
+                    } else {
+                        let range = if version < 5 {
+                            o.old
+                        } else {
+                            let ParamKind::Number { min, max, .. } = spec.kind else {
+                                continue;
+                            };
+                            (min, max)
+                        };
+                        modulation.amount / 100.0 * (range.1 / range.0).log2() * reach
+                    };
+                    let base = spec.number_value(&node.params).unwrap_or(1.0);
+                    modulation.amount = octaves_to_percent(spec, modulation.mode, base, octaves);
+                } else if legacy_amounts && let Some(spec) = spec {
                     modulation.amount = percent_of_span(spec, *modulation);
                 }
                 // Before version 4 nothing kept modulated values to the slider's range.
-                if self.version < 4 {
+                if version < 4 {
                     modulation.overshoot = true;
-                }
-                // Versions 3 and 4 took percentages of the wider ranges.
-                if (3..5).contains(&self.version)
-                    && let Some(r) = NARROWED_RANGES
-                        .iter()
-                        .find(|r| r.kind == node.kind && r.param == name)
-                    && let Some(spec) =
-                        kind.and_then(|k| k.spec.params.iter().find(|s| s.name == *name))
-                {
-                    let old = (r.old.1 / r.old.0).log2();
-                    let new = spec.modulation_span();
-                    if new > 0.0 {
-                        modulation.amount *= old / new;
-                    }
                 }
             }
         }
@@ -442,7 +480,8 @@ mod tests {
         let node = |id: &str| graph.nodes.iter().find(|n| n.id == id).unwrap();
         // The old depths are what a full-scale signal still moves the parameter by.
         assert!((sweep(&graph, "wave", "time") - 1.5).abs() < 1e-9);
-        assert!((sweep(&graph, "smear", "cutoff") + 3.0).abs() < 1e-9);
+        // Three octaves either way from the default of 40, averaged, in linear terms.
+        assert!((sweep(&graph, "smear", "cutoff") + 157.5).abs() < 1e-9);
         // Depth without a connected signal did nothing, and is simply dropped.
         assert!(node("crush").params.is_empty() && node("crush").modulation.is_empty());
         let targets: Vec<&str> = graph.connections.iter().map(|c| c.to.as_str()).collect();
@@ -485,7 +524,7 @@ mod tests {
 
         // Current graphs without an entry stay unentried and get the default amount.
         let current =
-            GraphDesc::from_json(&json.replace("\"version\": 1", "\"version\": 5")).unwrap();
+            GraphDesc::from_json(&json.replace("\"version\": 1", "\"version\": 6")).unwrap();
         assert!(
             current
                 .nodes
@@ -538,8 +577,8 @@ mod tests {
             "connections": [ { "from": "a", "to": "f.@cutoff" } ] }"#;
         let graph = GraphDesc::from_json(json).unwrap();
         assert_eq!(graph.version, FORMAT_VERSION);
-        // Two octaves one way, whatever the span is.
-        assert!((sweep(&graph, "f", "cutoff") - 2.0).abs() < 1e-9);
+        // Two octaves either way from the default of 40 (160 up, 10 down), in linear terms.
+        assert!((sweep(&graph, "f", "cutoff") - 75.0).abs() < 1e-9);
         let mut again = graph.clone();
         again.upgrade();
         assert_eq!(again, graph, "upgrading a current graph changes nothing");
@@ -548,7 +587,7 @@ mod tests {
     }
 
     #[test]
-    fn narrowed_frequency_ranges_keep_the_distance_amounts_move() {
+    fn octave_amounts_become_linear_amounts_at_the_base_value() {
         let json = r#"{ "version": 4,
             "nodes": [
                 { "id": "a", "type": "audio_input" },
@@ -563,21 +602,25 @@ mod tests {
             ] }"#;
         let graph = GraphDesc::from_json(json).unwrap();
         assert_eq!(graph.version, FORMAT_VERSION);
-        // 25% of the old (0.01..100000) span was this many octaves.
+        // 25% of the old (0.01..100000) octave span, from the default 40: 40 x 2^oct - 40.
         let octaves = 0.25 * (100_000.0f64 / 0.01).log2();
-        assert!((sweep(&graph, "f", "cutoff") - octaves).abs() < 1e-6);
+        let hertz = 40.0 * (octaves.exp2() - 1.0);
+        assert!((sweep(&graph, "f", "cutoff") - hertz).abs() < 1e-6);
         // Other parameters, and version 4's overshoot setting, are untouched.
         let node = |id: &str| graph.nodes.iter().find(|n| n.id == id).unwrap();
         assert_eq!(node("g").modulation["threshold"].amount, 25.0);
         assert!(!node("f").modulation["cutoff"].overshoot);
-        // Graphs from before version 3 are converted against the current range, so no rescale.
+        // Before version 3 the amount was in octaves already.
         let v2 = GraphDesc::from_json(
             &json
                 .replace("\"version\": 4", "\"version\": 2")
                 .replace("\"amount\": 25", "\"amount\": 3"),
         )
         .unwrap();
-        assert!((sweep(&v2, "f", "cutoff") - 3.0).abs() < 1e-9);
+        assert!((sweep(&v2, "f", "cutoff") - 40.0 * 7.0).abs() < 1e-6);
+        let mut again = v2.clone();
+        again.upgrade();
+        assert_eq!(again, v2);
     }
 
     #[test]

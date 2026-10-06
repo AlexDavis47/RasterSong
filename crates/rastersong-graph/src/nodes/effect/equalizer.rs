@@ -29,15 +29,13 @@ pub struct Equalizer {
 params! { Equalizer {
     UNIT: FreqUnit::param("Row", "Unit for the three frequencies"),
     LOW_FREQ: ParamSpec::number("low_freq", "Low freq", 5.0, 0.01, 500.0, "Corner of the low shelf")
-        .limits(1e-06, 1e9)
-        .octaves(),
+        .limits(1e-06, 1e9),
     LOW_GAIN: ParamSpec::number("low_gain", "Low gain", 0.0, -24.0, 24.0, "Boost or cut of everything below the low corner")
         .unit("dB")
         .exposed()
         .limits(-48.0, 48.0),
     MID_FREQ: ParamSpec::number("mid_freq", "Mid freq", 30.0, 0.01, 500.0, "Centre of the mid band")
-        .limits(1e-06, 1e9)
-        .octaves(),
+        .limits(1e-06, 1e9),
     MID_GAIN: ParamSpec::number("mid_gain", "Mid gain", 0.0, -24.0, 24.0, "Boost or cut around the mid frequency")
         .unit("dB")
         .exposed()
@@ -45,8 +43,7 @@ params! { Equalizer {
     MID_Q: ParamSpec::number("mid_q", "Mid Q", 1.0, 0.1, 20.0, "Width of the mid band: higher is narrower")
         .limits(0.05, 100.0),
     HIGH_FREQ: ParamSpec::number("high_freq", "High freq", 150.0, 0.01, 500.0, "Corner of the high shelf")
-        .limits(1e-06, 1e9)
-        .octaves(),
+        .limits(1e-06, 1e9),
     HIGH_GAIN: ParamSpec::number("high_gain", "High gain", 0.0, -24.0, 24.0, "Boost or cut of everything above the high corner")
         .unit("dB")
         .exposed()

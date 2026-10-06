@@ -66,9 +66,8 @@ parameter's own units is unruly. The amount becomes a percentage of the paramete
 number means the same swing on any parameter. The roadmap holds the details and the migration of existing graphs.
 
 Decided with it: *both ways*, the amount is the peak-to-peak swing, so 100% covers the span in either mode (an
-older "±2" becomes the percentage that gives the same ±2). *Octave* parameters take a percentage of their span
-measured in octaves (the octaves between min and max), so the amount reads the same on every parameter, and the
-inspector shows the octaves it comes to. A new connection starts at 25%, one way, whatever the parameter and its
+older "±2" becomes the percentage that gives the same ±2). *Octave* scaling was dropped (see below): every parameter, frequencies included, takes a percentage of its linear
+span. A new connection starts at 25%, one way, whatever the parameter and its
 base value.
 
 Also decided: modulation keeps the value between the slider's ends by default (widened to include a base value
@@ -79,10 +78,13 @@ a distance in the parameter's unit, kept in step.
 ### Logarithmic and exponential sliders are removed (October 2026)
 
 They confuse users. Sliders are linear. Parameters that are naturally multiplicative (frequencies) get that
-behavior from their units and from modulating in octaves, not from a warped slider; the roadmap's modulation work
-decides how octave modulation is presented. To keep linear sliders usable, the usual ranges of the frequency
-parameters were narrowed (Cutoff to 0.01–200, Phaser frequency to 20–5000 Hz, Equalizer corners to 0.01–500); graph
-format 5 rescales their saved amounts so old graphs modulate exactly as far as before.
+behavior from their units, not from a warped slider. To keep linear sliders usable, the usual ranges of the frequency
+parameters were narrowed (Cutoff to 0.01–200, Phaser frequency to 20–5000 Hz, Equalizer corners to 0.01–500); 
+
+Octave modulation is dropped too (also October 2026): with a linear slider, a percentage of a 14-octave span made the
+last few percent of the knob cover the whole slider. Frequencies modulate linearly. Graph format 6 converts saved
+octave amounts to the linear amount that moves the value as far at its base value (exact there, approximate
+elsewhere), so old graphs sound and look close to, but not identical with, what they did.
 
 ### Integer parameters are a real type (October 2026)
 

@@ -5,7 +5,7 @@ or its main input. Unknown parameters are rejected, which catches typos.
 
 ```json
 {
-  "version": 5,
+  "version": 6,
   "nodes": [
     { "id": "video", "type": "video_input" },
     { "id": "audio", "type": "audio_input" },
@@ -25,7 +25,7 @@ Nodes may also carry `"position": [x, y]` (their place in the editor), `"label"`
 type's) and `"exposed"` (which parameter pins show, when that differs from the type's defaults). None of these
 affect rendering. A signal connected to a parameter (`{ "from": "audio", "to": "wave.@time" }`) modulates it, with
 `"modulation": { "time": { "amount": 25, "mode": "unipolar" } }` on the node saying how far. The amount is a
-**percentage of the parameter's span** (its usual range; in octaves for frequencies): one way, 100% moves the
+**percentage of the parameter's span** (its usual range): one way, 100% moves the
 value across the whole span; both ways (`"mode": "bipolar"`), 100% is the swing from the lowest point to the
 highest. The value stays between the slider's ends (widened to include the base value) unless the entry says
 `"overshoot": true`, which allows it up to the parameter's limits. Without an entry the amount is 25%, one way,
@@ -33,7 +33,7 @@ not overshooting. How modulation is applied is in
 [Node authoring](node-authoring.md#parameter-modulation).
 
 Format version 3 introduced percentage amounts, version 4 the range limit and version 5 narrower usual ranges for
-some frequencies (their amounts are rescaled so they move as far as before). Older graphs (amounts in the
+some frequencies, and version 6 linear frequency modulation (octave amounts are converted at the base value). Older graphs (amounts in the
 parameter's own unit, the default amount that depended on the base value, and values that could pass the slider's
 ends) are rewritten on load, with `"overshoot": true`, so they move parameters exactly as before.
 

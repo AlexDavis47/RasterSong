@@ -77,8 +77,7 @@ params! { Oscillator {
         "Cycles per unit of time or space: how many stripes fit in a row, or how high the tone is",
     )
     .exposed()
-    .limits(0.0, 1_000_000.0)
-    .octaves(),
+    .limits(0.0, 1_000_000.0),
     UNIT: FreqUnit::param("Row", "Unit for the frequency (cycles per unit): Row keeps the look at any resolution"),
     PHASE: ParamSpec::number(
         "phase",

@@ -53,8 +53,7 @@ params! { Filter {
     ),
     CUTOFF: ParamSpec::number("cutoff", "Cutoff", 40.0, 0.01, 200.0, "Frequency of the filter's corner or centre")
         .exposed()
-        .limits(1e-06, 1e9)
-        .octaves(),
+        .limits(1e-06, 1e9),
     UNIT: FreqUnit::param("Row", "Unit for the cutoff"),
     Q: ParamSpec::number(
         "q",

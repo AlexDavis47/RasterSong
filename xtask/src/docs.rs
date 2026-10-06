@@ -6,9 +6,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{Result, bail};
-use rastersong_graph::{
-    Category, ModScale, NodeType, ParamKind, ParamSpec, Range, Registry, TagRule,
-};
+use rastersong_graph::{Category, NodeType, ParamKind, ParamSpec, Range, Registry, TagRule};
 
 use crate::util::workspace_root;
 
@@ -186,11 +184,7 @@ fn range(p: &ParamSpec) -> String {
 }
 
 fn modulation(p: &ParamSpec) -> &'static str {
-    match (p.modulatable, p.scale) {
-        (false, _) => "no",
-        (true, ModScale::Linear) => "yes",
-        (true, ModScale::Octaves) => "yes, in octaves",
-    }
+    if p.modulatable { "yes" } else { "no" }
 }
 
 #[cfg(test)]

@@ -104,10 +104,8 @@ Any number parameter a spec doesn't mark `fixed` can be driven by a signal, conn
 `base + sweep × signal` (bipolar) or `base + sweep × |signal|` (unipolar, one way), clamped to the parameter's
 limits. The modulation *amount* the user sets is a **percentage of the parameter's span** (`max − min` of its
 usual range): `sweep = amount / 100 × span`, halved both ways so that 100% is the whole swing from the lowest
-point to the highest (`ParamSpec::modulation_sweep`). A negative one-way amount turns the value down. Parameters
-that are heard or seen on a logarithmic scale (frequencies such as Low Pass's cutoff) are marked `octaves`: their span is the number of
-octaves between `min` and `max` (so `min` must be above zero, which a test checks), and the value moves as
-`base × 2^(sweep × signal)`, so a sweep moves evenly by ear and eye. A newly connected signal starts at 25%, one
+point to the highest (`ParamSpec::modulation_sweep`). A negative one-way amount turns the value down. Every parameter is
+linear, frequencies included. A newly connected signal starts at 25%, one
 way. Modulated values are kept within the usual range (widened to include the base value) unless the modulation
 sets `overshoot`, when only the parameter's limits apply (`ParamSpec::modulation_bounds`). The compiler resamples the signal to the main input's length (with the node's interpolation
 and latency compensation, like any secondary input) and hands the node the values through `ctx.param(i)`;

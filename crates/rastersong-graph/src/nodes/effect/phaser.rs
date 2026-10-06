@@ -47,8 +47,7 @@ params! { Phaser {
         "Where the notches sit; wire an oscillator in here to sweep them",
     )
     .exposed()
-    .limits(1e-06, 1e9)
-    .octaves(),
+    .limits(1e-06, 1e9),
     UNIT: FreqUnit::param("Hertz", "Unit for the frequency"),
     FEEDBACK: ParamSpec::number(
         "feedback",

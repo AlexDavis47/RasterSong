@@ -113,15 +113,13 @@ Every change that renames or reshapes a parameter, or merges, splits or removes 
 - [x] **feature** Modulation amount is a **percentage of the parameter's span** (done): 100% sweeps the whole
   usual range, both ways as the swing from lowest to highest. The inspector's knob and number show percent, the
   tooltip shows what it comes to in the parameter's unit, the outlined range is computed from it, and a new
-  connection starts at 25%, one way. Octave (`octaves`) parameters take a percentage of their span in octaves,
-  so their usual range must stay above zero (Oscillator frequency's minimum moved from 0 to 0.01; a test checks
-  every modulatable parameter). Graph format version 3 migrates older graphs, writing out the old base-dependent
+  connection starts at 25%, one way. Graph format version 3 migrates older graphs, writing out the old base-dependent
   default amount, so they move parameters exactly as before. *Interacts with
   [Later: custom response curves and minimum/maximum](#later).*
-- [x] How octave modulation reads as a percentage: a percentage of the span measured in octaves, on every frequency
-  parameter.
+- [x] Octave modulation was dropped: frequencies modulate linearly like every other parameter (a percentage of their
+  linear span), which keeps the knob, the amount boxes and the slider's shaded range in agreement.
 - [x] **feature** Remove exponential and logarithmic parameter sliders entirely. All sliders are linear. Frequency
-  parameters keep their units (Hz, Row, …) and octave-based modulation, but the control itself is not warped.
+  parameters keep their units (Hz, Row, …); neither the control nor the modulation is warped.
   Drops the "logarithmic for wide ranges" behavior in the [inspector](app.md#inspector).
 
 ### Units and parameter semantics

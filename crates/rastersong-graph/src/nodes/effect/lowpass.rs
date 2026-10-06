@@ -34,8 +34,7 @@ params! { Lowpass {
         "Cutoff; lower is smoother",
     )
     .exposed()
-    .limits(1e-06, 1e9)
-    .octaves(),
+    .limits(1e-06, 1e9),
     UNIT: FreqUnit::param("Row", "Unit for the cutoff"),
 } }
 
