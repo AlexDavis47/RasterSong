@@ -578,6 +578,44 @@ fn the_inspector_keeps_its_width() {
 }
 
 #[test]
+fn typing_a_very_long_number_keeps_the_inspector_width() {
+    let mut harness = loaded();
+    add_node(&mut harness, "low pass");
+    select(&mut harness, "lowpass");
+    harness.run_steps(3);
+    let panel = harness.state().inspector_rect();
+    let before = panel.width();
+    let center = harness
+        .query_all_by_role(egui::accesskit::Role::SpinButton)
+        .map(|n| n.rect())
+        .find(|r| r.min.x >= panel.left())
+        .expect("a numeric value box in the inspector")
+        .center();
+    // A click turns the value into a text field.
+    press(&mut harness, center, PointerButton::Primary, true);
+    press(&mut harness, center, PointerButton::Primary, false);
+    harness.event(Event::Text(
+        "1234567890123456789012345678901234567890".into(),
+    ));
+    harness.run_steps(3);
+    let field = harness
+        .query_all_by_role(egui::accesskit::Role::TextInput)
+        .find(|n| n.value().is_some_and(|v| v.contains("1234567890")))
+        .expect("the value box is being edited");
+    let (chars, width) = (field.value().unwrap().chars().count(), field.rect().width());
+    assert!(
+        chars <= rastersong_gui::value_box::MAX_CHARS,
+        "{chars} characters"
+    );
+    assert!(width <= 60.0, "the box is {width} wide while typing");
+    for _ in 0..4 {
+        harness.run_steps(5);
+        let width = harness.state().inspector_rect().width();
+        assert!(width <= before + 1.0, "grew from {before} to {width}");
+    }
+}
+
+#[test]
 fn the_wheel_zooms_over_an_audio_block_too() {
     let mut harness = loaded();
     let fitted = harness.state().timeline_view().px_per_sec;

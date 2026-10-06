@@ -1487,21 +1487,28 @@ impl App {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             ui.add(
-                egui::DragValue::new(&mut tempo.bpm)
+                crate::value_box::ValueBox::new(&mut tempo.bpm)
                     .range(Tempo::MIN_BPM..=Tempo::MAX_BPM)
                     .speed(0.2)
                     .max_decimals(2)
                     .suffix(" bpm"),
             )
             .on_hover_text("Beats per minute. Beat and bar units in nodes follow it.");
+            let mut beats = f64::from(tempo.beats_per_bar);
+            if ui
+                .add(
+                    crate::value_box::ValueBox::new(&mut beats)
+                        .range(1.0..=64.0)
+                        .max_decimals(0)
+                        .suffix(" beats/bar"),
+                )
+                .on_hover_text("Beats in a bar (the time signature's top number)")
+                .changed()
+            {
+                tempo.beats_per_bar = beats.round() as u32;
+            }
             ui.add(
-                egui::DragValue::new(&mut tempo.beats_per_bar)
-                    .range(1..=64)
-                    .suffix(" beats/bar"),
-            )
-            .on_hover_text("Beats in a bar (the time signature's top number)");
-            ui.add(
-                egui::DragValue::new(&mut tempo.offset_secs)
+                crate::value_box::ValueBox::new(&mut tempo.offset_secs)
                     .speed(0.005)
                     .max_decimals(3)
                     .prefix("first beat ")

@@ -16,6 +16,7 @@ use eframe::egui::{self, Color32, CornerRadius, Rect, Response, Sense, Stroke, U
 use rastersong_engine::{ModMode, ModScale, Modulation, ParamKind, ParamSpec};
 
 use crate::theme::Theme;
+use crate::value_box::ValueBox;
 
 /// A number parameter as the field shows it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -192,14 +193,14 @@ pub fn param_field(
             ui.horizontal(|ui| {
                 ui.label("Min");
                 ui.add(
-                    egui::DragValue::new(&mut new_range.0)
+                    ValueBox::new(&mut new_range.0)
                         .range(range.limits.0..=range.limits.1)
                         .speed(((shown.1 - shown.0) / 300.0).max(1e-6))
                         .max_decimals(3),
                 );
                 ui.label("Max");
                 ui.add(
-                    egui::DragValue::new(&mut new_range.1)
+                    ValueBox::new(&mut new_range.1)
                         .range(range.limits.0..=range.limits.1)
                         .speed(((shown.1 - shown.0) / 300.0).max(1e-6))
                         .max_decimals(3),
@@ -268,15 +269,15 @@ pub fn param_field(
         (shown.1 - shown.0) / 300.0
     };
     let value_box = ui
-        .add_sized(
-            vec2(value_width, height),
-            egui::DragValue::new(value)
+        .add(
+            ValueBox::new(value)
                 .range(range.limits.0..=range.limits.1)
                 .speed(speed)
-                .max_decimals(3),
+                .max_decimals(3)
+                .size(vec2(value_width, height)),
         )
         .on_hover_text(
-            "Drag, or double-click to type. Values beyond the slider are allowed. \
+            "Drag, or click to type. Values beyond the slider are allowed. \
              Alt+click or right-click to reset.",
         );
     if reset_gesture(ui, &value_box, *value != range.default) {
@@ -432,10 +433,10 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated, base: f64, track: (f64, f64)) -> 
                 ModMode::Unipolar => f64::NEG_INFINITY..=f64::INFINITY,
             };
             ui.add(
-                egui::DragValue::new(&mut modulation.amount)
+                ValueBox::new(&mut modulation.amount)
                     .range(range)
                     .speed(span / 300.0)
-                    .suffix(unit)
+                    .suffix(&unit)
                     .max_decimals(3),
             );
         });

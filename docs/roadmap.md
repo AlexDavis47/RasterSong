@@ -214,12 +214,15 @@ Every change that renames or reshapes a parameter, or merges, splits or removes 
   Shift inverts it for one Ctrl+D or Ctrl+V. Not done: rebinding the keys, and tests for a node fed by a linked
   input and a modulated parameter (the test covers a lone node, the setting both ways, Shift and pasting into
   a project without the sources).
-- [ ] **bug** Typing a long number into a value box makes the inspector grow wider, repeatedly. This is a sustained
+- [x] **bug** Typing a long number into a value box makes the inspector grow wider, repeatedly. This is a sustained
   problem and points to messy layout code, so do not patch it again. Root-cause it (a text edit sizing itself to
   its content and feeding the width back into the panel), then fix it once, permanently: one shared value-box
   widget with a fixed width, clipping, and a maximum number of characters, used by every numeric field in the
   inspector and the timeline; the inspector panel width is owned by the panel, not by its contents. Add a
   headless regression test that types a very long number and asserts the panel width does not change.
+  Done: the cause was egui's `DragValue`, whose text field sizes itself to what is typed. All numeric fields now use
+  `value_box::ValueBox` (fixed width, clipped, at most 12 characters, click to type, Escape cancels). The
+  regression test types 40 digits and checks the box stays 58 px wide and the text is capped.
 
 ### Tooltips
 

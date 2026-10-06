@@ -1087,7 +1087,7 @@ fn audio_header(ui: &mut Ui, track: &TrackView, index: usize, response: &mut Tim
             let mut offset = track.offset;
             let edit = ui
                 .add(
-                    egui::DragValue::new(&mut offset)
+                    crate::value_box::ValueBox::new(&mut offset)
                         .speed(0.01)
                         .suffix(" s")
                         .max_decimals(3),
