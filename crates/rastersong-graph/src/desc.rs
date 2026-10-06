@@ -8,8 +8,10 @@ use crate::GraphError;
 
 /// Version 2 made a connected parameter with no `modulation` entry unipolar; version 1 meant
 /// bipolar. Version 3 made modulation amounts percentages of the parameter's span instead of
-/// numbers in its own unit. Older graphs are rewritten on load, with explicit entries.
-pub const FORMAT_VERSION: u32 = 3;
+/// numbers in its own unit. Version 4 keeps modulated values within the slider's range unless an
+/// entry sets `overshoot`; older graphs are rewritten on load, with explicit entries that
+/// overshoot as they always did.
+pub const FORMAT_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -65,13 +67,17 @@ pub struct NodeDesc {
 /// `amount` is a percentage of the parameter's span (its usual range, in octaves for
 /// frequencies): one way, the value moves `amount` of the span at full signal; both ways,
 /// `amount` is the whole swing from the lowest point to the highest, so 100% covers the span.
-/// Negative one-way amounts move the value down.
+/// Negative one-way amounts move the value down. The value stays within the parameter's usual
+/// range (widened to include its base value) unless `overshoot` allows it up to the limits.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Modulation {
     pub amount: f64,
     #[serde(default, skip_serializing_if = "is_default")]
     pub mode: ModMode,
+    /// Lets the modulated value go past the slider's range, up to the parameter's limits.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub overshoot: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

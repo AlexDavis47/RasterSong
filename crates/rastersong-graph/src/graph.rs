@@ -320,13 +320,13 @@ impl Pending {
         self.param_wires[index]?;
         let spec = &self.specs[index];
         let base = spec.number_value(&self.params)?;
-        let limits = spec.number_limits()?;
+        spec.number_limits()?;
         let modulation = self
             .modulation
             .get(spec.name)
             .copied()
             .unwrap_or_else(|| spec.default_modulation());
-        Some((base, modulation, limits))
+        Some((base, modulation, spec.modulation_bounds(base, modulation)))
     }
 }
 

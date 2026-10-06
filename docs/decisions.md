@@ -71,6 +71,11 @@ measured in octaves (the octaves between min and max), so the amount reads the s
 inspector shows the octaves it comes to. A new connection starts at 25%, one way, whatever the parameter and its
 base value.
 
+Also decided: modulation keeps the value between the slider's ends by default (widened to include a base value
+typed beyond them), with a per-modulator toggle to allow overshoot up to the parameter's limits. Graphs from before
+the toggle load with it on, so nothing changes for them. The modulator menu takes the amount as a percentage or as
+a distance in the parameter's unit, kept in step.
+
 ### Logarithmic and exponential sliders are removed (October 2026)
 
 They confuse users. Sliders are linear. Parameters that are naturally multiplicative (frequencies) get that

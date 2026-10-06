@@ -200,6 +200,9 @@ impl GraphDesc {
         self.upgrade_modulation(Registry::shared());
     }
 
+    /// Graphs before version 4 let modulation carry values past the slider's range, so their
+    /// entries (written out for connected parameters that had none) allow it.
+    ///
     /// Graphs before version 3 gave modulation amounts in the parameter's own unit (octaves for
     /// frequencies); they are now percentages of its span. A connected parameter with no
     /// `modulation` entry used to get a default amount that depended on its base value (bipolar in
@@ -208,6 +211,7 @@ impl GraphDesc {
         if self.version >= FORMAT_VERSION {
             return;
         }
+        let legacy_amounts = self.version < 3;
         let old_default_mode = if self.version < 2 {
             ModMode::Bipolar
         } else {
@@ -232,22 +236,29 @@ impl GraphDesc {
                 continue;
             };
             if let Some(base) = spec.number_value(&node.params) {
-                node.modulation
-                    .entry(param.to_owned())
-                    .or_insert(Modulation {
+                let entry = if legacy_amounts {
+                    Modulation {
                         amount: legacy_default_amount(spec, base),
                         mode: old_default_mode,
-                    });
+                        overshoot: false,
+                    }
+                } else {
+                    spec.default_modulation()
+                };
+                node.modulation.entry(param.to_owned()).or_insert(entry);
             }
         }
         for node in &mut self.nodes {
-            let Some(kind) = registry.get(&node.kind) else {
-                continue;
-            };
+            let kind = registry.get(&node.kind);
             for (name, modulation) in &mut node.modulation {
-                if let Some(spec) = kind.spec.params.iter().find(|s| s.name == *name) {
+                if legacy_amounts
+                    && let Some(spec) =
+                        kind.and_then(|k| k.spec.params.iter().find(|s| s.name == *name))
+                {
                     modulation.amount = percent_of_span(spec, *modulation);
                 }
+                // Before version 4 nothing kept modulated values to the slider's range.
+                modulation.overshoot = true;
             }
         }
         self.version = FORMAT_VERSION;
@@ -333,6 +344,7 @@ impl GraphDesc {
                         .or_insert(Modulation {
                             amount: depth,
                             mode: ModMode::Bipolar,
+                            overshoot: false,
                         });
                 }
             }
@@ -415,7 +427,7 @@ mod tests {
 
         // Current graphs without an entry stay unentried and get the default amount.
         let current =
-            GraphDesc::from_json(&json.replace("\"version\": 1", "\"version\": 3")).unwrap();
+            GraphDesc::from_json(&json.replace("\"version\": 1", "\"version\": 4")).unwrap();
         assert!(
             current
                 .nodes
@@ -424,6 +436,37 @@ mod tests {
                 .unwrap()
                 .modulation
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn older_graphs_keep_overshooting_the_slider_range() {
+        let json = r#"{ "version": 3,
+            "nodes": [
+                { "id": "a", "type": "audio_input" },
+                { "id": "f", "type": "lowpass", "modulation": { "cutoff": { "amount": 50 } } },
+                { "id": "d", "type": "delay" }
+            ],
+            "connections": [ { "from": "a", "to": "f.@cutoff" }, { "from": "a", "to": "d.@time" } ] }"#;
+        let graph = GraphDesc::from_json(json).unwrap();
+        let node = |id: &str| graph.nodes.iter().find(|n| n.id == id).unwrap();
+        assert!(node("f").modulation["cutoff"].overshoot);
+        // A connected parameter without an entry gets the default, written out so it overshoots.
+        let d = node("d").modulation["time"];
+        assert!(d.overshoot && d.amount == 25.0);
+        assert_eq!(graph.version, FORMAT_VERSION);
+
+        // Current graphs say so themselves: clamped unless the entry allows it.
+        let current =
+            GraphDesc::from_json(&json.replace("\"version\": 3", "\"version\": 4")).unwrap();
+        assert!(
+            !current
+                .nodes
+                .iter()
+                .find(|n| n.id == "f")
+                .unwrap()
+                .modulation["cutoff"]
+                .overshoot
         );
     }
 

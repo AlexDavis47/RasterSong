@@ -68,7 +68,9 @@ A connected (modulated) parameter shows, in the wire's colour:
   reset, right-click for the modulator's settings: both ways or one way, the amount, and disconnecting the signal.
   The amount is a percentage of the parameter's range: 100% sweeps all of it (both ways, from the lowest point to
   the highest). The tooltip and the settings show what that comes to in the parameter's own unit, in octaves for
-  frequencies. A new connection starts at 25%, one way.
+  frequencies, and the settings can be typed in either way: as a percentage, or as the distance in the parameter's
+  unit or octaves (for example 5 oct either side). A new connection starts at 25%, one way, and keeps the value
+  between the slider's ends unless **Allow past the slider's range** is ticked.
 
 ## Timeline
 

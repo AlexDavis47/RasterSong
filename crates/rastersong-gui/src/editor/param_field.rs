@@ -444,7 +444,43 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated) -> KnobResponse {
             )
             .on_hover_text("Percent of the parameter's range. Both ways, 100% sweeps all of it.");
         });
-        ui.weak(format!("About {}", amount_effect(m.spec, *modulation)));
+        // The same amount in the parameter's own terms, for when you know the distance you want.
+        ui.horizontal(|ui| {
+            ui.label(match modulation.mode {
+                ModMode::Bipolar => "Either side",
+                ModMode::Unipolar => "Moves by",
+            });
+            let unit = match m.spec.scale {
+                ModScale::Octaves => " oct".to_owned(),
+                _ if m.spec.unit.is_empty() => String::new(),
+                _ => format!(" {}", m.spec.unit),
+            };
+            let mut sweep = m.spec.modulation_sweep(*modulation);
+            let range = match modulation.mode {
+                ModMode::Bipolar => 0.0..=f64::INFINITY,
+                ModMode::Unipolar => f64::NEG_INFINITY..=f64::INFINITY,
+            };
+            if ui
+                .add(
+                    ValueBox::new(&mut sweep)
+                        .range(range)
+                        .speed(m.spec.modulation_span() / 300.0)
+                        .suffix(&unit)
+                        .max_decimals(3),
+                )
+                .on_hover_text(
+                    "How far a full signal moves the value, in the parameter's own unit. \
+                     Both ways, this is the distance either side of the value.",
+                )
+                .changed()
+            {
+                modulation.amount = m.spec.modulation_amount_for_sweep(sweep, modulation.mode);
+            }
+        });
+        ui.checkbox(&mut modulation.overshoot, "Allow past the slider's range")
+            .on_hover_text(
+                "Off: the modulated value stays between the slider's ends. On: it can go as far as the node can work with.",
+            );
         if ui
             .add_enabled(
                 modulation.amount != default_amount,
@@ -560,7 +596,11 @@ mod tests {
         let feedback = ParamSpec::number("feedback", "Feedback", 0.0, 0.0, 1.0, "");
         let cutoff = ParamSpec::number("cutoff", "Cutoff", 40.0, 1.0, 1e5, "").octaves();
         let bits = ParamSpec::number("bits", "Bits", 4.0, 1.0, 24.0, "").unit("bits");
-        let m = |amount, mode| Modulation { amount, mode };
+        let m = |amount, mode| Modulation {
+            amount,
+            mode,
+            overshoot: false,
+        };
         assert_eq!(amount_text(m(25.0, ModMode::Bipolar)), "±25%");
         assert_eq!(amount_text(m(-12.5, ModMode::Unipolar)), "-12.5%");
         assert_eq!(amount_text(m(100.0, ModMode::Unipolar)), "+100%");

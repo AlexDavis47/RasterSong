@@ -108,7 +108,8 @@ point to the highest (`ParamSpec::modulation_sweep`). A negative one-way amount 
 on a logarithmic scale (frequencies such as Low Pass's cutoff) are marked `octaves`: their span is the number of
 octaves between `min` and `max` (so `min` must be above zero, which a test checks), and the value moves as
 `base × 2^(sweep × signal)`, so a sweep moves evenly by ear and eye. A newly connected signal starts at 25%, one
-way. The compiler resamples the signal to the main input's length (with the node's interpolation
+way. Modulated values are kept within the usual range (widened to include the base value) unless the modulation
+sets `overshoot`, when only the parameter's limits apply (`ParamSpec::modulation_bounds`). The compiler resamples the signal to the main input's length (with the node's interpolation
 and latency compensation, like any secondary input) and hands the node the values through `ctx.param(i)`;
 unmodulated parameters stay constants the node reads from its own fields, so they cost nothing.
 `PrepareContext::modulation(i)` gives the range a modulated parameter can move over, for sizing buffers and warmup.

@@ -183,6 +183,7 @@ mod tests {
             Modulation {
                 amount: 0.4,
                 mode: ModMode::Unipolar,
+                overshoot: false,
             },
         );
         let desc = editor.to_desc();

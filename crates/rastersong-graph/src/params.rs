@@ -169,6 +169,42 @@ impl ParamSpec {
         Modulation {
             amount: self.default_modulation_amount(),
             mode: ModMode::Unipolar,
+            overshoot: false,
+        }
+    }
+
+    /// The amount (percent of the span) whose sweep is `sweep`, the inverse of
+    /// [`Self::modulation_sweep`]: for typing a distance in the parameter's own unit or octaves.
+    pub fn modulation_amount_for_sweep(&self, sweep: f64, mode: ModMode) -> f64 {
+        let reach = match mode {
+            ModMode::Bipolar => 0.5,
+            ModMode::Unipolar => 1.0,
+        };
+        let span = self.modulation_span();
+        if span > 0.0 {
+            sweep * 100.0 / (span * reach)
+        } else {
+            0.0
+        }
+    }
+
+    /// Where a modulated value is kept: the usual range, widened to include `base`, or the
+    /// parameter's limits if the modulation may overshoot.
+    pub fn modulation_bounds(&self, base: f64, modulation: Modulation) -> (f64, f64) {
+        let ParamKind::Number {
+            min,
+            max,
+            limit_min,
+            limit_max,
+            ..
+        } = self.kind
+        else {
+            return (f64::MIN, f64::MAX);
+        };
+        if modulation.overshoot {
+            (limit_min, limit_max)
+        } else {
+            (min.min(base).max(limit_min), max.max(base).min(limit_max))
         }
     }
 
@@ -200,7 +236,7 @@ impl ParamSpec {
             ModMode::Unipolar => [0.0, 1.0],
         };
         let [a, b] = ends.map(|s| self.modulated(base, modulation, s));
-        let (lo, hi) = self.number_limits().unwrap_or((f64::MIN, f64::MAX));
+        let (lo, hi) = self.modulation_bounds(base, modulation);
         (a.min(b).clamp(lo, hi), a.max(b).clamp(lo, hi))
     }
 
@@ -434,10 +470,12 @@ mod tests {
         let both = |amount| Modulation {
             amount,
             mode: ModMode::Bipolar,
+            overshoot: false,
         };
         let one_way = |amount| Modulation {
             amount,
             mode: ModMode::Unipolar,
+            overshoot: false,
         };
         // Amounts are percentages of the span (10 here): both ways, 40% swings the value 4 from end
         // to end, 2 either side of where it is.
@@ -465,6 +503,18 @@ mod tests {
             octaves.modulated_range(40.0, two_octaves_each_way),
             (10.0, 160.0)
         );
+        // Kept within the usual range (widened to the base) unless it may overshoot.
+        let loud = Modulation {
+            overshoot: true,
+            ..both(400.0)
+        };
+        let wide = ParamSpec::number("t", "T", 1.0, 0.0, 10.0, "").limits(-100.0, 100.0);
+        assert_eq!(wide.modulated_range(5.0, both(400.0)), (0.0, 10.0));
+        assert_eq!(wide.modulated_range(50.0, both(40.0)), (48.0, 50.0));
+        assert_eq!(wide.modulated_range(5.0, loud), (-15.0, 25.0));
+        // Typing a number of units back in gives the amount that produces it.
+        let amount = linear.modulation_amount_for_sweep(2.0, ModMode::Bipolar);
+        assert_eq!(linear.modulation_sweep(both(amount)), 2.0);
         assert_eq!(octaves.default_modulation_amount(), 25.0);
         assert_eq!(linear.default_modulation_amount(), 25.0);
         assert_eq!(linear.default_modulation().mode, ModMode::Unipolar);
