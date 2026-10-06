@@ -33,7 +33,7 @@ use crate::timeline::{
 };
 use crate::track_ops::{SoloState, move_track, toggle_solo};
 
-/// The graph a new project starts with: the basic workflow from docs/design.md.
+/// The graph a new project starts with: the basic workflow from docs/concepts.md.
 pub const STARTER_GRAPH: &str = include_str!("../../../examples/graphs/am_bands.json");
 
 /// What the source engine renders: the video, untouched.

@@ -8,7 +8,7 @@
 //!
 //! Next to the package goes the FFmpeg source tarball the libraries were built from, which releases
 //! publish alongside the packages. These are unsigned stopgaps for testing until real installers
-//! (see "Packaging" in docs/design.md).
+//! (see "Packaging" in docs/development.md).
 
 use std::fs::{self, File};
 use std::io::{self, BufWriter};

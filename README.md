@@ -28,11 +28,13 @@ Render without the app:
 cargo run --release -p rastersong-cli -- render video.mp4 song.wav examples/graphs/am_bands.json out.mkv
 ```
 
-More setup, testing and packaging details are in the [design document](docs/design.md).
+More setup, testing and packaging details are in [Development](docs/development.md).
 
 ## Documentation
 
-- [Design document](docs/design.md): original concepts, architecture, node contract, testing, licensing and roadmap
+- [Documentation index](docs/README.md): start here
+- [Concepts](docs/concepts.md): the idea and how a graph is built
+- [Roadmap](docs/roadmap.md): what is done and what is planned
 - [Node reference](docs/nodes.md): every node's ports and parameters
 - [Benchmarks](docs/benchmarks.md)
 - [Example graphs](examples/graphs/)
