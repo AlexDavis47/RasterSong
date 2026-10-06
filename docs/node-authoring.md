@@ -101,10 +101,14 @@ match, as in Substance Designer.
 
 Any number parameter a spec doesn't mark `fixed` can be driven by a signal, connected like an input as
 `"node.@param"`. The parameter's value is the base, and the signal moves it per sample:
-`base + amount × signal` (bipolar) or `base + amount × |signal|` (unipolar, one way: a negative amount turns it
-down), clamped to the parameter's limits. Parameters on a logarithmic scale (frequencies such as Low Pass's
-cutoff) are marked `octaves` and modulate in octaves instead: `base × 2^(amount × signal)`, so a sweep moves
-evenly by ear and eye. The compiler resamples the signal to the main input's length (with the node's interpolation
+`base + sweep × signal` (bipolar) or `base + sweep × |signal|` (unipolar, one way), clamped to the parameter's
+limits. The modulation *amount* the user sets is a **percentage of the parameter's span** (`max − min` of its
+usual range): `sweep = amount / 100 × span`, halved both ways so that 100% is the whole swing from the lowest
+point to the highest (`ParamSpec::modulation_sweep`). A negative one-way amount turns the value down. Parameters
+on a logarithmic scale (frequencies such as Low Pass's cutoff) are marked `octaves`: their span is the number of
+octaves between `min` and `max` (so `min` must be above zero, which a test checks), and the value moves as
+`base × 2^(sweep × signal)`, so a sweep moves evenly by ear and eye. A newly connected signal starts at 25%, one
+way. The compiler resamples the signal to the main input's length (with the node's interpolation
 and latency compensation, like any secondary input) and hands the node the values through `ctx.param(i)`;
 unmodulated parameters stay constants the node reads from its own fields, so they cost nothing.
 `PrepareContext::modulation(i)` gives the range a modulated parameter can move over, for sizing buffers and warmup.
@@ -125,11 +129,10 @@ The inspector doesn't say which reason applies, which is the bug in the [roadmap
 The policy going forward is the opposite of protecting the user: a parameter is locked only when modulating it is
 truly infeasible, and the lock carries a reason ([Decisions](decisions.md#modulation-is-allowed-unless-infeasible-october-2026)).
 
-> **Under revision.** Hands-on testing found that "min + max + base + amount" is hard to dial in, that some
-> parameters are unmodulatable with no explanation, and that logarithmic/exponential sliders are confusing. The
-> planned changes (amount as a percentage of the parameter's span, a visible reason on locked parameters, removing
-> the log/exponential sliders) are in the [roadmap](roadmap.md#node-settings-and-parameters). Until they land, the
-> description above is current behavior.
+> **Under revision.** Hands-on testing found that some parameters are unmodulatable with no explanation, and that
+> logarithmic/exponential sliders are confusing. The planned changes (a visible reason on locked parameters,
+> removing the log/exponential sliders) are in the [roadmap](roadmap.md#node-settings-and-parameters). Percentage
+> amounts have landed; the rest is still planned.
 
 Nodes only have their own inputs for signals that are part of what they do: Amplitude Modulation's modulator and
 the compressor's and gate's sidechain. Delay, Bit Crush and Low Pass used to have a `modulation` input and a

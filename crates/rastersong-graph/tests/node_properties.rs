@@ -278,3 +278,21 @@ fn bitcrush_quantizes_to_levels() {
     let out = harness.run(&[1], &signal, &[0.0; 6]);
     assert_eq!(out[0], [0.0, 0.0, 0.0, 1.0, 1.0, 1.0]);
 }
+
+/// Modulation amounts are percentages of a parameter's span, so every modulatable number needs a
+/// span to take a percentage of; octave parameters need a positive usual range, for its logarithm.
+#[test]
+fn modulatable_numbers_have_a_span_to_take_a_percentage_of() {
+    let mut problems = Vec::new();
+    for t in Registry::shared().types() {
+        for spec in t.spec.params.iter().filter(|s| s.modulatable) {
+            let ParamKind::Number { min, max, .. } = spec.kind else {
+                continue;
+            };
+            if spec.modulation_span() <= 0.0 {
+                problems.push(format!("{}.{} ({min}..{max})", t.kind, spec.name));
+            }
+        }
+    }
+    assert!(problems.is_empty(), "no span to modulate: {problems:?}");
+}

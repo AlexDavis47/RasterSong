@@ -65,6 +65,12 @@ Hands-on testing showed that dialling in modulation with *minimum, maximum, base
 parameter's own units is unruly. The amount becomes a percentage of the parameter's min..max span, so the same
 number means the same swing on any parameter. The roadmap holds the details and the migration of existing graphs.
 
+Decided with it: *both ways*, the amount is the peak-to-peak swing, so 100% covers the span in either mode (an
+older "±2" becomes the percentage that gives the same ±2). *Octave* parameters take a percentage of their span
+measured in octaves (the octaves between min and max), so the amount reads the same on every parameter, and the
+inspector shows the octaves it comes to. A new connection starts at 25%, one way, whatever the parameter and its
+base value.
+
 ### Logarithmic and exponential sliders are removed (October 2026)
 
 They confuse users. Sliders are linear. Parameters that are naturally multiplicative (frequencies) get that

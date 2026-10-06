@@ -72,7 +72,7 @@ params! { Oscillator {
         "freq",
         "Frequency",
         8.0,
-        0.0,
+        0.01,
         100.0,
         "Cycles per unit of time or space: how many stripes fit in a row, or how high the tone is",
     )

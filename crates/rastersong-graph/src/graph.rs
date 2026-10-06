@@ -325,7 +325,7 @@ impl Pending {
             .modulation
             .get(spec.name)
             .copied()
-            .unwrap_or_else(|| spec.default_modulation(base));
+            .unwrap_or_else(|| spec.default_modulation());
         Some((base, modulation, limits))
     }
 }

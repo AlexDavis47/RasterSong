@@ -207,8 +207,7 @@ impl GraphEditor {
                     let (exposed, wire) = pins[index];
                     let mut modulation = wire.map(|color| {
                         let current = node.modulation.get(spec.name).copied();
-                        let base = spec.number_value(&node.params).unwrap_or(0.0);
-                        let value = current.unwrap_or_else(|| spec.default_modulation(base));
+                        let value = current.unwrap_or_else(|| spec.default_modulation());
                         (value, current, color)
                     });
                     let mut expose = spec.modulatable.then_some(exposed);

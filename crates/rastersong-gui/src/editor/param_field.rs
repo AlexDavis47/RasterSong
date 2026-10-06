@@ -13,7 +13,7 @@
 //! Every control can be reset to its default with Alt+click or from its right-click menu.
 
 use eframe::egui::{self, Color32, CornerRadius, Rect, Response, Sense, Stroke, Ui, pos2, vec2};
-use rastersong_engine::{ModMode, ModScale, Modulation, ParamKind, ParamSpec};
+use rastersong_engine::{ModMode, ModScale, Modulation, ParamSpec};
 
 use crate::theme::Theme;
 use crate::value_box::ValueBox;
@@ -159,7 +159,7 @@ pub fn param_field(
 
     match modulated.as_mut() {
         Some(m) => {
-            let knob = amount_knob(ui, m, *value, shown);
+            let knob = amount_knob(ui, m);
             response.disconnect = knob.disconnect;
         }
         None => {
@@ -288,38 +288,46 @@ pub fn param_field(
     response
 }
 
-/// How far the knob turns for a full amount: the usual range for linear parameters, this many
-/// octaves for octave-scaled ones.
-const KNOB_OCTAVES: f64 = 4.0;
+/// The amount a full turn of the knob stands for, in percent: the whole span.
+const KNOB_PERCENT: f64 = 100.0;
 
-/// The amount a full turn of the knob stands for: the field's slider range, so the knob is as
-/// fine or coarse as the slider.
-fn knob_span(spec: &ParamSpec, track: (f64, f64)) -> f64 {
-    match (spec.scale, spec.kind) {
-        (ModScale::Octaves, _) => KNOB_OCTAVES,
-        (_, ParamKind::Number { .. }) => (track.1 - track.0).max(1e-9),
-        _ => 1.0,
-    }
-}
-
-/// The amount as text: `±0.5` both ways, `+0.5` or `-0.5` one way, in octaves where they apply.
-pub fn amount_text(spec: &ParamSpec, modulation: Modulation) -> String {
-    let unit = match spec.scale {
-        ModScale::Octaves => " oct",
-        ModScale::Linear if spec.unit.is_empty() => "",
-        ModScale::Linear => spec.unit,
-    };
-    let sign = match modulation.mode {
+/// The sign a modulation's amount is shown with: `±` both ways, `+` one way up, nothing for a
+/// negative amount, which carries its own minus.
+fn amount_sign(modulation: Modulation) -> &'static str {
+    match modulation.mode {
         ModMode::Bipolar => "±",
         ModMode::Unipolar if modulation.amount >= 0.0 => "+",
         ModMode::Unipolar => "",
+    }
+}
+
+/// The amount as text: a percentage of the parameter's span, `±25%` both ways, `+25%` or `-25%`
+/// one way.
+pub fn amount_text(modulation: Modulation) -> String {
+    format!("{}{:.1}%", amount_sign(modulation), modulation.amount).replace(".0%", "%")
+}
+
+/// What the amount comes to in the parameter's own terms, for a tooltip: how far a full signal
+/// moves the value, `±3.3 oct` or `+2.5 Hz`. Both ways, that is either side of the value.
+pub fn amount_effect(spec: &ParamSpec, modulation: Modulation) -> String {
+    let sweep = spec.modulation_sweep(modulation);
+    let unit = match spec.scale {
+        ModScale::Octaves => " oct",
+        ModScale::Linear => spec.unit,
     };
     let space = if unit.is_empty() || unit == " oct" {
         ""
     } else {
         " "
     };
-    format!("{sign}{:.3}{space}{unit}", modulation.amount).replace(".000", "")
+    let value = format!("{:.2}", sweep.abs()).replace(".00", "");
+    let value = value.trim_end_matches('0').trim_end_matches('.');
+    let sign = match modulation.mode {
+        ModMode::Bipolar => "±",
+        ModMode::Unipolar if sweep >= 0.0 => "+",
+        ModMode::Unipolar => "-",
+    };
+    format!("{sign}{value}{space}{unit}")
 }
 
 #[derive(Debug, Default)]
@@ -329,11 +337,10 @@ struct KnobResponse {
 
 /// The amount knob: an arc showing the amount in the wire's colour. Drag to change it,
 /// double-click to reset it, right-click for the modulator's settings.
-fn amount_knob(ui: &mut Ui, m: &mut Modulated, base: f64, track: (f64, f64)) -> KnobResponse {
+fn amount_knob(ui: &mut Ui, m: &mut Modulated) -> KnobResponse {
     let mut result = KnobResponse::default();
     let size = vec2(GUTTER_WIDTH, ui.spacing().interact_size.y);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
-    let span = knob_span(m.spec, track);
     let modulation = &mut *m.modulation;
     if response.dragged_by(egui::PointerButton::Primary) {
         // Right and up turn it up. Shift for fine control.
@@ -343,12 +350,12 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated, base: f64, track: (f64, f64)) -> 
         } else {
             1.0
         };
-        modulation.amount += f64::from(delta.x - delta.y) / 150.0 * span * fine;
+        modulation.amount += f64::from(delta.x - delta.y) / 150.0 * KNOB_PERCENT * fine;
         if modulation.mode == ModMode::Bipolar {
             modulation.amount = modulation.amount.max(0.0);
         }
     }
-    let default_amount = m.spec.default_modulation_amount(base);
+    let default_amount = m.spec.default_modulation_amount();
     if response.double_clicked() || alt_clicked(ui, &response) {
         modulation.amount = default_amount;
     }
@@ -367,7 +374,7 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated, base: f64, track: (f64, f64)) -> 
         ui.visuals().widgets.inactive.bg_fill,
         Stroke::new(1.0, visuals.bg_stroke.color),
     );
-    let turn = (modulation.amount / span).clamp(-1.0, 1.0) as f32 * KNOB_SWEEP;
+    let turn = (modulation.amount / KNOB_PERCENT).clamp(-1.0, 1.0) as f32 * KNOB_SWEEP;
     let arc = |from: f32, to: f32| {
         let steps = 16;
         (0..=steps)
@@ -393,8 +400,9 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated, base: f64, track: (f64, f64)) -> 
     );
 
     let response = response.on_hover_text(format!(
-        "Modulation {}. Drag to change, double-click or Alt+click to reset, right-click for options.",
-        amount_text(m.spec, *modulation)
+        "Modulation {} of the range, about {}. Drag to change, double-click or Alt+click to reset, right-click for options.",
+        amount_text(*modulation),
+        amount_effect(m.spec, *modulation)
     ));
     // Clicks inside don't close it, so its fields can be typed into.
     let menu = egui::Popup::context_menu(&response)
@@ -423,11 +431,6 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated, base: f64, track: (f64, f64)) -> 
         }
         ui.horizontal(|ui| {
             ui.label("Amount");
-            let unit = match m.spec.scale {
-                ModScale::Octaves => " oct".to_owned(),
-                ModScale::Linear if m.spec.unit.is_empty() => String::new(),
-                ModScale::Linear => format!(" {}", m.spec.unit),
-            };
             let range = match modulation.mode {
                 ModMode::Bipolar => 0.0..=f64::INFINITY,
                 ModMode::Unipolar => f64::NEG_INFINITY..=f64::INFINITY,
@@ -435,11 +438,13 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated, base: f64, track: (f64, f64)) -> 
             ui.add(
                 ValueBox::new(&mut modulation.amount)
                     .range(range)
-                    .speed(span / 300.0)
-                    .suffix(&unit)
-                    .max_decimals(3),
-            );
+                    .speed(0.3)
+                    .suffix("%")
+                    .max_decimals(1),
+            )
+            .on_hover_text("Percent of the parameter's range. Both ways, 100% sweeps all of it.");
         });
+        ui.weak(format!("About {}", amount_effect(m.spec, *modulation)));
         if ui
             .add_enabled(
                 modulation.amount != default_amount,
@@ -556,10 +561,24 @@ mod tests {
         let cutoff = ParamSpec::number("cutoff", "Cutoff", 40.0, 1.0, 1e5, "").octaves();
         let bits = ParamSpec::number("bits", "Bits", 4.0, 1.0, 24.0, "").unit("bits");
         let m = |amount, mode| Modulation { amount, mode };
-        assert_eq!(amount_text(&feedback, m(0.25, ModMode::Bipolar)), "±0.250");
-        assert_eq!(amount_text(&feedback, m(-0.5, ModMode::Unipolar)), "-0.500");
-        assert_eq!(amount_text(&cutoff, m(1.0, ModMode::Bipolar)), "±1 oct");
-        assert_eq!(amount_text(&bits, m(2.0, ModMode::Unipolar)), "+2 bits");
+        assert_eq!(amount_text(m(25.0, ModMode::Bipolar)), "±25%");
+        assert_eq!(amount_text(m(-12.5, ModMode::Unipolar)), "-12.5%");
+        assert_eq!(amount_text(m(100.0, ModMode::Unipolar)), "+100%");
+        // Both ways, 100% of a 0..1 span is 0.5 either side; one way it is the whole span.
+        assert_eq!(amount_effect(&feedback, m(100.0, ModMode::Bipolar)), "±0.5");
+        assert_eq!(
+            amount_effect(&feedback, m(-50.0, ModMode::Unipolar)),
+            "-0.5"
+        );
+        assert_eq!(
+            amount_effect(&bits, m(10.0, ModMode::Unipolar)),
+            "+2.3 bits"
+        );
+        // 1..100000 is about 16.6 octaves; a quarter of it one way is 4.15.
+        assert_eq!(
+            amount_effect(&cutoff, m(25.0, ModMode::Unipolar)),
+            "+4.15 oct"
+        );
     }
 
     #[test]

@@ -110,16 +110,16 @@ Every change that renames or reshapes a parameter, or merges, splits or removes 
 
 ### Modulation
 
-- [ ] **feature** Modulation amount becomes a **percentage of the parameter's min..max span**. Today min, max,
-  base value and amount are all in the parameter's own units, which makes it hard to dial in. As a percentage,
-  100% means the signal sweeps the whole span, 25% a quarter of it, on every parameter alike. Includes: the
-  inspector's amount knob and number show percent; the outlined range on the slider is computed from it; a
-  migration converts existing `amount`s to the equivalent percentage; the default amount rule in
-  [Graph files](graph-format.md) is restated as a percentage; octave parameters (see next item) are handled.
-  *Interacts with [Later: custom response curves and minimum/maximum](#later).*
-- [ ] **feature** Decide how octave (`octaves`) modulation reads as a percentage: either a percentage of the
-  parameter's span measured in octaves (so "50%" sweeps half the octaves between min and max), or per-parameter
-  octave amounts shown as a number of octaves. Pick one and apply to every frequency parameter.
+- [x] **feature** Modulation amount is a **percentage of the parameter's span** (done): 100% sweeps the whole
+  usual range, both ways as the swing from lowest to highest. The inspector's knob and number show percent, the
+  tooltip shows what it comes to in the parameter's unit, the outlined range is computed from it, and a new
+  connection starts at 25%, one way. Octave (`octaves`) parameters take a percentage of their span in octaves,
+  so their usual range must stay above zero (Oscillator frequency's minimum moved from 0 to 0.01; a test checks
+  every modulatable parameter). Graph format version 3 migrates older graphs, writing out the old base-dependent
+  default amount, so they move parameters exactly as before. *Interacts with
+  [Later: custom response curves and minimum/maximum](#later).*
+- [x] How octave modulation reads as a percentage: a percentage of the span measured in octaves, on every frequency
+  parameter.
 - [ ] **feature** Remove exponential and logarithmic parameter sliders entirely. All sliders are linear. Frequency
   parameters keep their units (Hz, Row, …) and octave-based modulation, but the control itself is not warped.
   Drops the "logarithmic for wide ranges" behavior in the [inspector](app.md#inspector).

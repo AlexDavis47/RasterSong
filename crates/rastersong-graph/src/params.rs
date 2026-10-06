@@ -25,14 +25,18 @@ pub struct ParamSpec {
     pub scale: ModScale,
 }
 
-/// How a modulation amount applies to a parameter's value.
+/// How much a newly connected signal moves a parameter, in percent of its span.
+pub const DEFAULT_MODULATION_PERCENT: f64 = 25.0;
+
+/// How a modulation amount, a percentage of the parameter's span, applies to its value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ModScale {
-    /// The amount is in the parameter's own unit: `base + amount × signal`.
+    /// The span is the usual range in the parameter's own unit: `base + offset × signal`.
     #[default]
     Linear,
-    /// The amount is in octaves: `base × 2^(amount × signal)`. For frequencies and other
-    /// parameters heard or seen on a logarithmic scale.
+    /// The span is the usual range measured in octaves: `base × 2^(offset × signal)`. For
+    /// frequencies and other parameters heard or seen on a logarithmic scale. The usual range
+    /// must be above zero.
     Octaves,
 }
 
@@ -141,28 +145,48 @@ impl ParamSpec {
         self
     }
 
-    /// The modulation amount a newly connected signal starts with, around a base value of
-    /// `base`: one octave, or half the base, or a tenth of the usual range when the base is zero.
-    pub fn default_modulation_amount(&self, base: f64) -> f64 {
-        match self.kind {
-            ParamKind::Number { .. } if self.scale == ModScale::Octaves => 1.0,
-            ParamKind::Number { min, max, .. } if base == 0.0 => (max - min) / 10.0,
-            ParamKind::Number { .. } => base.abs() / 2.0,
-            _ => 0.0,
-        }
+    /// The size of the usual range, which modulation amounts are a percentage of: in the
+    /// parameter's own unit, or in octaves (the octaves between its smallest and largest usual
+    /// value) for [`ModScale::Octaves`]. Zero for anything that isn't a number.
+    pub fn modulation_span(&self) -> f64 {
+        let ParamKind::Number { min, max, .. } = self.kind else {
+            return 0.0;
+        };
+        let span = match self.scale {
+            ModScale::Linear => max - min,
+            ModScale::Octaves => (max / min).log2(),
+        };
+        if span.is_finite() { span.max(0.0) } else { 0.0 }
+    }
+
+    /// The modulation amount a newly connected signal starts with, in percent of the span.
+    pub fn default_modulation_amount(&self) -> f64 {
+        DEFAULT_MODULATION_PERCENT
     }
 
     /// The modulation a newly connected signal gets: the default amount, one way.
-    pub fn default_modulation(&self, base: f64) -> Modulation {
+    pub fn default_modulation(&self) -> Modulation {
         Modulation {
-            amount: self.default_modulation_amount(base),
+            amount: self.default_modulation_amount(),
             mode: ModMode::Unipolar,
         }
     }
 
+    /// How far a full-scale signal (1, or -1 and 1 for both ways) moves the value, in the
+    /// parameter's unit or in octaves. Both ways, the amount is the whole swing from one end to
+    /// the other, so 100% covers the span whichever way the signal moves.
+    pub fn modulation_sweep(&self, modulation: Modulation) -> f64 {
+        let reach = match modulation.mode {
+            ModMode::Bipolar => 0.5,
+            ModMode::Unipolar => 1.0,
+        };
+        modulation.amount / 100.0 * self.modulation_span() * reach
+    }
+
     /// The value for one sample `signal` of a modulating signal, before clamping to the limits.
     pub fn modulated(&self, base: f64, modulation: Modulation, signal: f64) -> f64 {
-        let offset = modulation.amount * f64::from(modulation.mode.shape(signal as f32));
+        let offset =
+            self.modulation_sweep(modulation) * f64::from(modulation.mode.shape(signal as f32));
         match self.scale {
             ModScale::Linear => base + offset,
             ModScale::Octaves => base * offset.exp2(),
@@ -415,22 +439,35 @@ mod tests {
             amount,
             mode: ModMode::Unipolar,
         };
-        assert_eq!(linear.modulated(5.0, both(2.0), -0.5), 4.0);
+        // Amounts are percentages of the span (10 here): both ways, 40% swings the value 4 from end
+        // to end, 2 either side of where it is.
+        assert_eq!(linear.modulated(5.0, both(40.0), -0.5), 4.0);
         assert_eq!(
-            linear.modulated(5.0, one_way(-2.0), -0.5),
+            linear.modulated(5.0, one_way(-20.0), -0.5),
             4.0,
             "one way uses |signal|"
         );
-        assert_eq!(octaves.modulated(40.0, both(1.0), 1.0), 80.0);
-        assert_eq!(octaves.modulated(40.0, both(1.0), -1.0), 20.0);
+        // 100% covers the span whichever way the signal moves.
+        assert_eq!(linear.modulated(0.0, one_way(100.0), 1.0), 10.0);
+        assert_eq!(linear.modulated(5.0, both(100.0), 1.0), 10.0);
+        assert_eq!(linear.modulated(5.0, both(100.0), -1.0), 0.0);
+        // The octave span of 1..1000 is log2(1000) octaves: 100% both ways sweeps all of it.
+        let span = octaves.modulation_span();
+        assert!((span - 1000f64.log2()).abs() < 1e-12);
+        let two_octaves_each_way = both(100.0 * 4.0 / span);
+        assert_eq!(octaves.modulated(40.0, two_octaves_each_way, 1.0), 160.0);
+        assert_eq!(octaves.modulated(40.0, two_octaves_each_way, -1.0), 10.0);
         // Ranges are clamped to the limits (here the usual range, 0..10).
-        assert_eq!(linear.modulated_range(5.0, both(2.0)), (3.0, 7.0));
-        assert_eq!(linear.modulated_range(9.0, both(2.0)), (7.0, 10.0));
-        assert_eq!(linear.modulated_range(5.0, one_way(-2.0)), (3.0, 5.0));
-        assert_eq!(octaves.modulated_range(40.0, both(2.0)), (10.0, 160.0));
-        assert_eq!(octaves.default_modulation_amount(40.0), 1.0);
-        assert_eq!(linear.default_modulation_amount(4.0), 2.0);
-        assert_eq!(linear.default_modulation_amount(0.0), 1.0);
+        assert_eq!(linear.modulated_range(5.0, both(40.0)), (3.0, 7.0));
+        assert_eq!(linear.modulated_range(9.0, both(40.0)), (7.0, 10.0));
+        assert_eq!(linear.modulated_range(5.0, one_way(-20.0)), (3.0, 5.0));
+        assert_eq!(
+            octaves.modulated_range(40.0, two_octaves_each_way),
+            (10.0, 160.0)
+        );
+        assert_eq!(octaves.default_modulation_amount(), 25.0);
+        assert_eq!(linear.default_modulation_amount(), 25.0);
+        assert_eq!(linear.default_modulation().mode, ModMode::Unipolar);
     }
 
     #[test]

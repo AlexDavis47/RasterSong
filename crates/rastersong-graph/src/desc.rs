@@ -7,8 +7,9 @@ use serde::{Deserialize, Serialize};
 use crate::GraphError;
 
 /// Version 2 made a connected parameter with no `modulation` entry unipolar; version 1 meant
-/// bipolar. Version 1 graphs are rewritten with explicit entries on load.
-pub const FORMAT_VERSION: u32 = 2;
+/// bipolar. Version 3 made modulation amounts percentages of the parameter's span instead of
+/// numbers in its own unit. Older graphs are rewritten on load, with explicit entries.
+pub const FORMAT_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -60,8 +61,11 @@ pub struct NodeDesc {
     pub exposed: Option<Vec<String>>,
 }
 
-/// How a signal connected to a parameter moves it: `base + amount × signal` (bipolar) or
-/// `base + amount × |signal|` (unipolar), clamped to the parameter's limits.
+/// How a signal connected to a parameter moves it, clamped to the parameter's limits. The
+/// `amount` is a percentage of the parameter's span (its usual range, in octaves for
+/// frequencies): one way, the value moves `amount` of the span at full signal; both ways,
+/// `amount` is the whole swing from the lowest point to the highest, so 100% covers the span.
+/// Negative one-way amounts move the value down.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Modulation {

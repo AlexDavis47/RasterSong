@@ -112,7 +112,7 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 |---|---|---|---|---|
 | `wave` (Wave) | `sine` | `sine`, `triangle`, `square`, `saw`, `ramp` | no | The shape of one cycle |
 | `layout` (Layout) | `video` | `video`, `audio` | no | video makes a signal shaped like the video (RGB, rows); audio makes one shaped like the audio track |
-| `freq` (Frequency) | 8 | 0 to 100 (up to 0 to 1000000) | yes, in octaves | Cycles per unit of time or space: how many stripes fit in a row, or how high the tone is |
+| `freq` (Frequency) | 8 | 0.01 to 100 (up to 0 to 1000000) | yes, in octaves | Cycles per unit of time or space: how many stripes fit in a row, or how high the tone is |
 | `unit` (Unit) | `Row` | `Row`, `Frame`, `Hertz`, `Beat`, `Bar` | no | Unit for the frequency (cycles per unit): Row keeps the look at any resolution |
 | `phase` (Phase) | 0 | 0 to 1 (up to -1000 to 1000) | no | Where in the cycle the wave starts, as a fraction of a cycle |
 | `amplitude` (Amplitude) | 0.5 | 0 to 1 (up to -10 to 10) | yes | Half the peak-to-peak height; with the offset it places the wave in the signal's range |

@@ -1,7 +1,7 @@
 //! Bringing graphs written for older versions of the nodes up to date.
 
 use crate::desc::{FORMAT_VERSION, GraphDesc, ModMode, Modulation};
-use crate::{ParamValue, Registry};
+use crate::{ModScale, ParamKind, ParamSpec, ParamValue, Registry};
 
 // Migrations are idempotent rewrites that recognise old graphs by their shape, so a graph that
 // is already up to date passes through unchanged. Bump `FORMAT_VERSION` only for a change to the
@@ -11,6 +11,32 @@ use crate::{ParamValue, Registry};
 //
 // To rename or move something, add a row to one of the tables below and a test; never edit or
 // remove an existing row, since files written long ago may still use it.
+
+/// What a newly connected signal's amount used to be, in the parameter's own unit: one octave, or
+/// half the base value, or a tenth of the usual range when the base is zero.
+fn legacy_default_amount(spec: &ParamSpec, base: f64) -> f64 {
+    match spec.kind {
+        ParamKind::Number { .. } if spec.scale == ModScale::Octaves => 1.0,
+        ParamKind::Number { min, max, .. } if base == 0.0 => (max - min) / 10.0,
+        ParamKind::Number { .. } => base.abs() / 2.0,
+        _ => 0.0,
+    }
+}
+
+/// An amount given in the parameter's own unit (octaves for frequencies), as the percentage of
+/// its span that moves the value just as far.
+fn percent_of_span(spec: &ParamSpec, modulation: Modulation) -> f64 {
+    let reach = match modulation.mode {
+        ModMode::Bipolar => 0.5,
+        ModMode::Unipolar => 1.0,
+    };
+    let span = spec.modulation_span();
+    if span > 0.0 {
+        modulation.amount * 100.0 / (span * reach)
+    } else {
+        modulation.amount
+    }
+}
 
 /// A node that used to have a `modulation` input and a `depth` parameter. Parameter modulation
 /// does the same job now: a signal connected to `node.@param` with the old depth as its amount.
@@ -174,12 +200,19 @@ impl GraphDesc {
         self.upgrade_modulation(Registry::shared());
     }
 
-    /// Version 1 graphs: a connected parameter with no `modulation` entry was bipolar, and is now
-    /// written out as such so it keeps its meaning.
+    /// Graphs before version 3 gave modulation amounts in the parameter's own unit (octaves for
+    /// frequencies); they are now percentages of its span. A connected parameter with no
+    /// `modulation` entry used to get a default amount that depended on its base value (bipolar in
+    /// version 1, unipolar in version 2); that is written out first so it keeps its meaning.
     fn upgrade_modulation(&mut self, registry: &Registry) {
         if self.version >= FORMAT_VERSION {
             return;
         }
+        let old_default_mode = if self.version < 2 {
+            ModMode::Bipolar
+        } else {
+            ModMode::Unipolar
+        };
         for c in &self.connections {
             let Some((id, port)) = c.to.split_once('.') else {
                 continue;
@@ -202,9 +235,19 @@ impl GraphDesc {
                 node.modulation
                     .entry(param.to_owned())
                     .or_insert(Modulation {
-                        amount: spec.default_modulation_amount(base),
-                        mode: ModMode::Bipolar,
+                        amount: legacy_default_amount(spec, base),
+                        mode: old_default_mode,
                     });
+            }
+        }
+        for node in &mut self.nodes {
+            let Some(kind) = registry.get(&node.kind) else {
+                continue;
+            };
+            for (name, modulation) in &mut node.modulation {
+                if let Some(spec) = kind.spec.params.iter().find(|s| s.name == *name) {
+                    modulation.amount = percent_of_span(spec, *modulation);
+                }
             }
         }
         self.version = FORMAT_VERSION;
@@ -301,6 +344,15 @@ impl GraphDesc {
 mod tests {
     use super::*;
 
+    /// How far a full-scale signal moves `param` of node `id`, in its unit (octaves for
+    /// frequencies): what the amount used to be before amounts became percentages.
+    fn sweep(graph: &GraphDesc, id: &str, param: &str) -> f64 {
+        let node = graph.nodes.iter().find(|n| n.id == id).unwrap();
+        let kind = Registry::shared().get(&node.kind).unwrap();
+        let spec = kind.spec.params.iter().find(|s| s.name == param).unwrap();
+        spec.modulation_sweep(node.modulation[param])
+    }
+
     #[test]
     fn modulation_inputs_become_parameter_modulation() {
         let graph = GraphDesc::from_json(
@@ -318,8 +370,9 @@ mod tests {
         )
         .unwrap();
         let node = |id: &str| graph.nodes.iter().find(|n| n.id == id).unwrap();
-        assert_eq!(node("wave").modulation["time"].amount, 1.5);
-        assert_eq!(node("smear").modulation["cutoff"].amount, -3.0);
+        // The old depths are what a full-scale signal still moves the parameter by.
+        assert!((sweep(&graph, "wave", "time") - 1.5).abs() < 1e-9);
+        assert!((sweep(&graph, "smear", "cutoff") + 3.0).abs() < 1e-9);
         // Depth without a connected signal did nothing, and is simply dropped.
         assert!(node("crush").params.is_empty() && node("crush").modulation.is_empty());
         let targets: Vec<&str> = graph.connections.iter().map(|c| c.to.as_str()).collect();
@@ -350,9 +403,19 @@ mod tests {
         // An entry that was already there is left alone.
         assert_eq!(node("g").modulation["threshold"].mode, ModMode::Unipolar);
 
-        // Current-version graphs without an entry stay unentried (unipolar by default).
+        // The old default amount (half the base) is still what it moves by, in percent now.
+        assert!((sweep(&graph, "d", "time") - 2.0).abs() < 1e-9);
+        assert!((sweep(&graph, "g", "threshold") - 1.0).abs() < 1e-9);
+
+        // Version 2 had the same default amount, one way. It is written out too.
+        let v2 = GraphDesc::from_json(&json.replace("\"version\": 1", "\"version\": 2")).unwrap();
+        let d = v2.nodes.iter().find(|n| n.id == "d").unwrap();
+        assert_eq!(d.modulation["time"].mode, ModMode::Unipolar);
+        assert!((sweep(&v2, "d", "time") - 2.0).abs() < 1e-9);
+
+        // Current graphs without an entry stay unentried and get the default amount.
         let current =
-            GraphDesc::from_json(&json.replace("\"version\": 1", "\"version\": 2")).unwrap();
+            GraphDesc::from_json(&json.replace("\"version\": 1", "\"version\": 3")).unwrap();
         assert!(
             current
                 .nodes
@@ -362,6 +425,25 @@ mod tests {
                 .modulation
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn modulation_amounts_are_converted_once() {
+        let json = r#"{ "version": 2,
+            "nodes": [
+                { "id": "a", "type": "audio_input" },
+                { "id": "f", "type": "lowpass", "modulation": { "cutoff": { "amount": 2 } } }
+            ],
+            "connections": [ { "from": "a", "to": "f.@cutoff" } ] }"#;
+        let graph = GraphDesc::from_json(json).unwrap();
+        assert_eq!(graph.version, FORMAT_VERSION);
+        // Two octaves one way, whatever the span is.
+        assert!((sweep(&graph, "f", "cutoff") - 2.0).abs() < 1e-9);
+        let mut again = graph.clone();
+        again.upgrade();
+        assert_eq!(again, graph, "upgrading a current graph changes nothing");
+        let reloaded = GraphDesc::from_json(&graph.to_json()).unwrap();
+        assert_eq!(reloaded, graph);
     }
 
     #[test]

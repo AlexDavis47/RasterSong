@@ -5,11 +5,11 @@ or its main input. Unknown parameters are rejected, which catches typos.
 
 ```json
 {
-  "version": 1,
+  "version": 3,
   "nodes": [
     { "id": "video", "type": "video_input" },
     { "id": "audio", "type": "audio_input" },
-    { "id": "wave", "type": "delay", "params": { "time": 1 }, "modulation": { "time": { "amount": 1.5 } },
+    { "id": "wave", "type": "delay", "params": { "time": 1 }, "modulation": { "time": { "amount": 25 } },
       "interpolation": "linear" },
     { "id": "out", "type": "output" }
   ],
@@ -24,13 +24,19 @@ or its main input. Unknown parameters are rejected, which catches typos.
 Nodes may also carry `"position": [x, y]` (their place in the editor), `"label"` (a name shown instead of the node
 type's) and `"exposed"` (which parameter pins show, when that differs from the type's defaults). None of these
 affect rendering. A signal connected to a parameter (`{ "from": "audio", "to": "wave.@time" }`) modulates it, with
-`"modulation": { "time": { "amount": 0.5, "mode": "unipolar" } }` on the node saying how far; without an entry,
-the amount is half the base value (or a tenth of the usual range if the base is 0), bipolar. How modulation is
-applied is in [Node authoring](node-authoring.md#parameter-modulation).
+`"modulation": { "time": { "amount": 25, "mode": "unipolar" } }` on the node saying how far. The amount is a
+**percentage of the parameter's span** (its usual range; in octaves for frequencies): one way, 100% moves the
+value across the whole span; both ways (`"mode": "bipolar"`), 100% is the swing from the lowest point to the
+highest. Without an entry the amount is 25%, one way. How modulation is applied is in
+[Node authoring](node-authoring.md#parameter-modulation).
+
+Format version 3 introduced percentage amounts. Older graphs (amounts in the parameter's own unit, and the
+default amount that depended on the base value) are rewritten on load so they move parameters exactly as before.
 
 Renamed nodes, ports, parameters and options are upgraded on load by `migrate.rs` and `GraphDesc::upgrade`, so old
 files keep loading. **Any roadmap change that renames or reshapes a parameter must add a migration** (for example
-removing `mix`, splitting nodes, or changing modulation amounts to percentages).
+removing `mix` or splitting nodes; the move to percentage modulation amounts is the worked example in
+`migrate.rs`).
 
 ## Projects
 
