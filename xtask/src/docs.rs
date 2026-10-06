@@ -183,8 +183,14 @@ fn range(p: &ParamSpec) -> String {
     }
 }
 
-fn modulation(p: &ParamSpec) -> &'static str {
-    if p.modulatable { "yes" } else { "no" }
+fn modulation(p: &ParamSpec) -> String {
+    if p.modulatable {
+        "yes".to_owned()
+    } else if p.locked.is_empty() {
+        "no".to_owned()
+    } else {
+        format!("no: {}", p.locked)
+    }
 }
 
 #[cfg(test)]

@@ -280,6 +280,32 @@ fn bitcrush_quantizes_to_levels() {
     assert_eq!(out[0], [0.0, 0.0, 0.0, 1.0, 1.0, 1.0]);
 }
 
+/// A number that can't be modulated says why, and the reason is a real one: this is datamoshing
+/// software, so modulation is allowed unless it is infeasible.
+#[test]
+fn locked_numbers_state_a_reason() {
+    let mut locked = Vec::new();
+    for t in Registry::shared().types() {
+        for spec in t.spec.params.iter().filter(|s| !s.modulatable) {
+            if !matches!(spec.kind, ParamKind::Number { .. }) {
+                continue;
+            }
+            assert!(
+                spec.locked.len() > 20 && !spec.locked.contains("TODO"),
+                "{}.{} is locked without a reason",
+                t.kind,
+                spec.name
+            );
+            locked.push(format!("{}.{}", t.kind, spec.name));
+        }
+    }
+    // Only what changes the signal's layout stays locked.
+    assert_eq!(
+        locked,
+        ["pack.channels", "resample.width", "resample.height"]
+    );
+}
+
 /// Whole-number parameters have whole defaults, usual ranges and limits, so nothing between two
 /// integers is ever offered.
 #[test]

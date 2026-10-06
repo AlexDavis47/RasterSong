@@ -36,8 +36,8 @@ params! { Phaser {
         1.0,
         12.0,
         "How many allpass filters are chained; every two add a notch",
-    ).integer()
-    .fixed(),
+    )
+    .integer(),
     FREQ: ParamSpec::number(
         "freq",
         "Frequency",
@@ -113,6 +113,7 @@ impl Node for Phaser {
         let freq = ctx.value(Self::FREQ, self.freq);
         let feedback = ctx.value(Self::FEEDBACK, f64::from(self.feedback));
         let amount = ctx.value(Self::MIX, f64::from(self.mix));
+        let stages = ctx.value(Self::STAGES, self.stages as f64);
         // Without modulation the coefficient is the same for every sample.
         let fixed = ctx
             .param(Self::FREQ)
@@ -121,7 +122,8 @@ impl Node for Phaser {
         for (i, (out, &x)) in outputs[0].data.iter_mut().zip(&inputs[0].data).enumerate() {
             let a = fixed.unwrap_or_else(|| Self::coefficient(freq.at64(i) * self.scale));
             let mut v = x + feedback.at(i) * self.last;
-            for z in &mut self.state[..self.stages] {
+            let stages = (stages.at64(i).round() as usize).clamp(1, MAX_STAGES);
+            for z in &mut self.state[..stages] {
                 let y = a * v + *z;
                 *z = v - a * y;
                 v = y;

@@ -12,7 +12,9 @@ pub struct Limiter {
     ceiling: f32,
     release: f64,
     unit: Unit,
-    /// Release smoothing coefficient, set in `prepare`.
+    /// Samples in one unit, and the release smoothing coefficient of the constant time: set in
+    /// `prepare`.
+    unit_samples: f64,
     coefficient: f32,
     slowest: f64,
     gain: f32,
@@ -38,7 +40,6 @@ params! { Limiter {
         1000.0,
         "How slowly the gain recovers after a peak; longer is smoother",
     )
-    .fixed()
     .limits(0.0, 1e6),
     UNIT: Unit::time_param("ms", "Unit for the release"),
 } }
@@ -62,6 +63,7 @@ impl NodeKind for Limiter {
             ceiling: db_to_gain(params.number_at(Self::CEILING)?) as f32,
             release: params.number_at(Self::RELEASE)?,
             unit: params.choice_as(Self::UNIT)?,
+            unit_samples: 1.0,
             coefficient: 0.0,
             slowest: 0.0,
             gain: 1.0,
@@ -71,21 +73,25 @@ impl NodeKind for Limiter {
 
 impl Node for Limiter {
     fn prepare(&mut self, ctx: &PrepareContext) {
-        let release = self.release * self.unit.samples(ctx);
-        self.coefficient = smoothing_coefficient(release) as f32;
-        // About 7 time constants to recover to within 0.1%.
-        self.slowest = 7.0 * release;
+        self.unit_samples = self.unit.samples(ctx);
+        self.coefficient = smoothing_coefficient(self.release * self.unit_samples) as f32;
+        // About 7 time constants to recover to within 0.1%, at the slowest the release gets.
+        self.slowest = 7.0 * ctx.param_max(Self::RELEASE, self.release) * self.unit_samples;
     }
 
     fn process(&mut self, ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
         let ceiling = ctx.value(Self::CEILING, f64::from(self.ceiling));
+        let release = ctx.param(Self::RELEASE);
         let mut gain = self.gain;
         for (i, (out, &x)) in outputs[0].data.iter_mut().zip(&inputs[0].data).enumerate() {
             let ceiling = ceiling.at_with(i, |db| db_to_gain(f64::from(db)) as f32);
             let peak = x.abs();
             let allowed = if peak > ceiling { ceiling / peak } else { 1.0 };
             // Recover toward 1, but never above what this sample allows.
-            let recovered = 1.0 + (gain - 1.0) * self.coefficient;
+            let coefficient = release.map_or(self.coefficient, |r| {
+                smoothing_coefficient(f64::from(r[i]).max(0.0) * self.unit_samples) as f32
+            });
+            let recovered = 1.0 + (gain - 1.0) * coefficient;
             gain = recovered.min(allowed);
             *out = x * gain;
         }

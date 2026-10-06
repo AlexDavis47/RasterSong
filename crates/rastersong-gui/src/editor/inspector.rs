@@ -425,6 +425,12 @@ fn param_row(row: ParamRow) -> bool {
                     *exposed = !*exposed;
                 }
             }
+            None if !spec.locked.is_empty() => {
+                locked_diamond(ui).on_hover_text(format!(
+                    "This parameter can't be modulated. {}.",
+                    spec.locked.trim_end_matches('.')
+                ));
+            }
             None => {
                 ui.allocate_space(egui::vec2(GUTTER_WIDTH, 14.0));
             }
@@ -555,6 +561,30 @@ fn param_row(row: ParamRow) -> bool {
         params.insert(spec.name.to_owned(), value);
     }
     disconnect
+}
+
+/// The mark in place of the expose toggle on a parameter that can't be modulated: the diamond
+/// crossed out and dim, with the reason on hover.
+fn locked_diamond(ui: &mut Ui) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(GUTTER_WIDTH, 14.0), egui::Sense::hover());
+    let c = rect.center();
+    let r = 4.5;
+    let color = ui.visuals().weak_text_color().gamma_multiply(0.6);
+    let stroke = egui::Stroke::new(1.0, color);
+    ui.painter().add(egui::Shape::convex_polygon(
+        vec![
+            c + egui::vec2(0.0, -r),
+            c + egui::vec2(r, 0.0),
+            c + egui::vec2(0.0, r),
+            c + egui::vec2(-r, 0.0),
+        ],
+        egui::Color32::TRANSPARENT,
+        stroke,
+    ));
+    ui.painter()
+        .line_segment([c + egui::vec2(-r, r), c + egui::vec2(r, -r)], stroke);
+    response
 }
 
 /// The expose toggle: a diamond like the parameter pins, filled when the pin is shown. It

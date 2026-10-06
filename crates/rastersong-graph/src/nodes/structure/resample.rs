@@ -31,7 +31,9 @@ params! { Resample {
         4096.0,
         "New width in pixels; 0 keeps the input's width",
     ).integer()
-    .fixed()
+    .fixed(
+        "The size changes the signal's layout, which the graph is compiled for and can't change per sample",
+    )
     .limits(0.0, 16_384.0),
     HEIGHT: ParamSpec::number(
         "height",
@@ -41,7 +43,9 @@ params! { Resample {
         4096.0,
         "New height in pixels; 0 keeps the input's height",
     ).integer()
-    .fixed()
+    .fixed(
+        "The size changes the signal's layout, which the graph is compiled for and can't change per sample",
+    )
     .limits(0.0, 16_384.0),
     METHOD: ParamSpec::choice(
         "method",

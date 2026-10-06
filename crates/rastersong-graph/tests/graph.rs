@@ -713,7 +713,20 @@ fn parameter_connections_are_checked() {
     };
     let error = |json: String| compile(&json).unwrap_err().to_string();
     assert!(error(graph("am.@nope", "{}")).contains("no parameter `nope`"));
-    assert!(error(graph("bands.@low_hz", "{}")).contains("no parameter `low_hz`"));
+    assert!(
+        compile(&graph("bands.@low_hz", "{}")).is_ok(),
+        "crossovers can be modulated"
+    );
+    // What still can't be modulated is rejected, as a parameter that isn't there.
+    let resize = compile(&graph_json(
+        r#"{ "id": "video", "type": "video_input" }, { "id": "audio", "type": "audio_input" },
+           { "id": "r", "type": "resample" }, { "id": "out", "type": "output" }"#,
+        r#"{ "from": "video", "to": "r" }, { "from": "audio", "to": "r.@width" },
+           { "from": "r", "to": "out" }"#,
+    ))
+    .unwrap_err()
+    .to_string();
+    assert!(resize.contains("no parameter `width`"), "{resize}");
     assert!(error(graph("am.@depth", r#"{ "nope": { "amount": 1 } }"#)).contains("`nope`"));
     assert!(compile(&graph("am.@depth", "{}")).is_ok());
 }
@@ -1095,4 +1108,89 @@ fn odd_audio_output_layouts_are_written_as_stereo_with_a_warning() {
     let warnings = graph.diagnostics();
     assert_eq!(warnings.len(), 1, "{warnings:?}");
     assert!(warnings[0].message.contains("stereo"));
+}
+
+/// A generator's parameter driven by a constant signal gives what the same value set by hand does.
+fn modulated_matches_set(kind: &str, set: &str, base: &str, param: &str, amount: f64) {
+    let render = |node: String, extra: &str, wire: &str| {
+        let json = format!(
+            r#"{{ "version": 7, "nodes": [
+                {{ "id": "video", "type": "video_input" }}, {node}{extra},
+                {{ "id": "out", "type": "output" }} ],
+              "connections": [ {wire}{{ "from": "g", "to": "out" }} ] }}"#
+        );
+        let mut graph = compile(&json).unwrap();
+        graph
+            .process(0, &sources(|_| 0.0, |_| 0.0))
+            .unwrap()
+            .data
+            .clone()
+    };
+    let by_hand = render(
+        format!(r#"{{ "id": "g", "type": "{kind}", "params": {set} }}"#),
+        "",
+        "",
+    );
+    let driven = render(
+        format!(
+            r#"{{ "id": "g", "type": "{kind}", "params": {base},
+                "modulation": {{ "{param}": {{ "amount": {amount}, "mode": "unipolar", "overshoot": true }} }} }}"#
+        ),
+        r#", { "id": "one", "type": "constant", "params": { "value": 1 } }"#,
+        &format!(r#"{{ "from": "one", "to": "g.@{param}" }}, "#),
+    );
+    assert!(
+        by_hand
+            .iter()
+            .zip(&driven)
+            .all(|(a, b)| (a - b).abs() < 1e-5)
+    );
+    // And the modulation did something: the base value alone gives other output.
+    let untouched = render(
+        format!(r#"{{ "id": "g", "type": "{kind}", "params": {base} }}"#),
+        "",
+        "",
+    );
+    assert!(
+        untouched
+            .iter()
+            .zip(&driven)
+            .any(|(a, b)| (a - b).abs() > 1e-3)
+    );
+}
+
+#[test]
+fn generators_take_modulation_of_their_timing_and_shape() {
+    // Beat division: 1 + 20% of its 15 wide span is 4.
+    modulated_matches_set(
+        "beat",
+        r#"{ "shape": "phase", "division": 4 }"#,
+        r#"{ "shape": "phase", "division": 1 }"#,
+        "division",
+        20.0,
+    );
+    // Beat steps: 4 + 3 more.
+    modulated_matches_set(
+        "beat",
+        r#"{ "shape": "step", "steps": 7, "division": 8 }"#,
+        r#"{ "shape": "step", "steps": 4, "division": 8 }"#,
+        "steps",
+        3.0 / 31.0 * 100.0,
+    );
+    // Oscillator phase: a quarter cycle.
+    modulated_matches_set(
+        "oscillator",
+        r#"{ "freq": 3, "phase": 0.25 }"#,
+        r#"{ "freq": 3, "phase": 0 }"#,
+        "phase",
+        25.0,
+    );
+    // Noise seed: seed 5 is 5 of its 999 wide span.
+    modulated_matches_set(
+        "noise",
+        r#"{ "seed": 5 }"#,
+        r#"{ "seed": 0 }"#,
+        "seed",
+        5.0 / 999.0 * 100.0,
+    );
 }

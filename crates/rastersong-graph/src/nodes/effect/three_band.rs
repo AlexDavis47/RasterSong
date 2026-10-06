@@ -12,8 +12,10 @@ pub struct ThreeBand {
     low_hz: f64,
     high_hz: f64,
     unit: Unit,
-    /// The low crossover in cycles per sample, set in `prepare`.
+    /// The slowest the low crossover can get, in cycles per sample, for warmup: set in `prepare`.
     low_cycles: f64,
+    /// Cycles per sample of one unit, set in `prepare`.
+    scale: f64,
     low: Biquad,
     high: Biquad,
 }
@@ -27,7 +29,6 @@ params! { ThreeBand {
         100_000.0,
         "Crossover between the low and mid bands",
     )
-    .fixed()
     .limits(0.001, 1e9),
     HIGH_HZ: ParamSpec::number(
         "high_hz",
@@ -37,7 +38,6 @@ params! { ThreeBand {
         100_000.0,
         "Crossover between the mid and high bands",
     )
-    .fixed()
     .limits(0.001, 1e9),
     UNIT: Unit::freq_param("second", "Unit for the crossovers"),
 } }
@@ -75,6 +75,7 @@ impl NodeKind for ThreeBand {
             high_hz,
             unit: params.choice_as(Self::UNIT)?,
             low_cycles: 0.0,
+            scale: 1.0,
             low: Biquad::default(),
             high: Biquad::default(),
         })
@@ -83,16 +84,29 @@ impl NodeKind for ThreeBand {
 
 impl Node for ThreeBand {
     fn prepare(&mut self, ctx: &PrepareContext) {
-        self.low_cycles = self.unit.per_sample(self.low_hz, ctx);
-        self.low = Biquad::butterworth(self.low_cycles, false);
-        self.high = Biquad::butterworth(self.unit.per_sample(self.high_hz, ctx), true);
+        self.low_cycles = self
+            .unit
+            .per_sample(ctx.param_min(Self::LOW_HZ, self.low_hz), ctx);
+        self.scale = self.unit.per_sample(1.0, ctx);
+        self.low = Biquad::butterworth(self.low_hz * self.scale, false);
+        self.high = Biquad::butterworth(self.high_hz * self.scale, true);
     }
 
-    fn process(&mut self, _ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
+    fn process(&mut self, ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
         let [low, mid, high] = outputs else {
             unreachable!()
         };
+        let (low_hz, high_hz) = (ctx.param(Self::LOW_HZ), ctx.param(Self::HIGH_HZ));
         for (i, &x) in inputs[0].data.iter().enumerate() {
+            // A moved crossover retunes its filter without losing the filter's state.
+            if let Some(hz) = low_hz {
+                self.low
+                    .retune(Biquad::butterworth(f64::from(hz[i]) * self.scale, false));
+            }
+            if let Some(hz) = high_hz {
+                self.high
+                    .retune(Biquad::butterworth(f64::from(hz[i]) * self.scale, true));
+            }
             let x = f64::from(x);
             let l = self.low.process(x);
             let h = self.high.process(x);

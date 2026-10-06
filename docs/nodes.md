@@ -59,10 +59,10 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
 | `period` (Period) | `beat` | `beat`, `bar` | no | beat restarts the shape on every beat, bar on every bar |
-| `division` (Division) | 1 | 1 to 16 (up to 1 to 1000) | no | Cycles per period: 2 restarts twice as often (half beats). Use the bar period for slower |
+| `division` (Division) | 1 | 1 to 16 (up to 1 to 1000) | yes | Cycles per period: 2 restarts twice as often (half beats). Use the bar period for slower |
 | `shape` (Shape) | `decay` | `phase`, `decay`, `pulse`, `step` | no | phase rises 0 to 1, decay falls 1 to 0, pulse is on for the width, step climbs in stairs |
-| `width` (Width) | 0.25 | 0 to 1 | no | For the pulse shape, the fraction of each cycle it stays on |
-| `steps` (Steps) | 4 | 1 to 32 (up to 1 to 1024) | no | For the step shape, how many stairs each cycle climbs |
+| `width` (Width) | 0.25 | 0 to 1 | yes | For the pulse shape, the fraction of each cycle it stays on |
+| `steps` (Steps) | 4 | 1 to 32 (up to 1 to 1024) | yes | For the step shape, how many stairs each cycle climbs |
 
 ### `constant`
 
@@ -91,7 +91,7 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
 | `color` (Color) | `white` | `white`, `pink`, `brown`, `blue`, `violet` | no | How the noise is spread over frequencies: white is sharp grain, brown is slow drift, violet is the finest grain |
-| `seed` (Seed) | 0 | 0 to 999 (up to 0 to 4000000000) | no | Picks which noise; the same seed always gives the same noise |
+| `seed` (Seed) | 0 | 0 to 999 (up to 0 to 4000000000) | yes | Picks which noise; the same seed always gives the same noise |
 | `amplitude` (Amplitude) | 0.5 | 0 to 1 (up to -10 to 10) | yes | Scales the noise, which spans -1 to 1 before the offset is added |
 | `offset` (Offset) | 0.5 | -1 to 1 (up to -10 to 10) | yes | Added to the noise: 0.5 with amplitude 0.5 fills the video range 0 to 1, 0 suits audio |
 
@@ -110,7 +110,7 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 | `wave` (Wave) | `sine` | `sine`, `triangle`, `square`, `saw`, `ramp` | no | The shape of one cycle |
 | `freq` (Frequency) | 8 | 0.01 to 100 (up to 0 to 1000000) | yes | Cycles per unit of time or space: how many stripes fit in a row, or how high the tone is |
 | `unit` (Cycles per) | `row` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the frequency (cycles per unit): Row keeps the look at any resolution |
-| `phase` (Phase) | 0 | 0 to 1 (up to -1000 to 1000) | no | Where in the cycle the wave starts, as a fraction of a cycle |
+| `phase` (Phase) | 0 | 0 to 1 (up to -1000 to 1000) | yes | Where in the cycle the wave starts, as a fraction of a cycle |
 | `amplitude` (Amplitude) | 0.5 | 0 to 1 (up to -10 to 10) | yes | Half the peak-to-peak height; with the offset it places the wave in the signal's range |
 | `offset` (Offset) | 0.5 | -1 to 1 (up to -10 to 10) | yes | Added to the wave: 0.5 with amplitude 0.5 fills the video range 0 to 1, 0 suits audio |
 | `pulse_width` (Pulse width) | 0.5 | 0 to 1 | yes | For the square wave, the fraction of the cycle it stays high |
@@ -194,7 +194,7 @@ Each connected input becomes one channel of the output, in order. The first inpu
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `channels` (Channels) | 3 | 1 to 8 (up to 1 to 64) | no | How many channels each pixel gets: 3 for RGB, 2 for stereo |
+| `channels` (Channels) | 3 | 1 to 8 (up to 1 to 64) | no: The number of channels changes the signal's layout, which the graph is compiled for and can't change per sample | How many channels each pixel gets: 3 for RGB, 2 for stereo |
 
 ### `resample`
 
@@ -212,8 +212,8 @@ Each connected input becomes one channel of the output, in order. The first inpu
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `width` (Width) | 0 | 0 to 4096 (up to 0 to 16384) | no | New width in pixels; 0 keeps the input's width |
-| `height` (Height) | 0 | 0 to 4096 (up to 0 to 16384) | no | New height in pixels; 0 keeps the input's height |
+| `width` (Width) | 0 | 0 to 4096 (up to 0 to 16384) | no: The size changes the signal's layout, which the graph is compiled for and can't change per sample | New width in pixels; 0 keeps the input's width |
+| `height` (Height) | 0 | 0 to 4096 (up to 0 to 16384) | no: The size changes the signal's layout, which the graph is compiled for and can't change per sample | New height in pixels; 0 keeps the input's height |
 | `method` (Method) | `linear` | `nearest`, `linear` | no | nearest picks the closest pixel, linear blends the four closest |
 
 ### `split`
@@ -437,8 +437,8 @@ Can process R, G and B separately.
 |---|---|---|---|---|
 | `time` (Time) | 20 | 0 to 50 (up to 0 to 1000) | yes | Delay of the copies; wire an oscillator in here to make them drift |
 | `unit` (Unit) | `ms` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the time |
-| `voices` (Voices) | 2 | 1 to 4 | no | How many delayed copies are mixed in |
-| `spread` (Spread) | 0.3 | 0 to 0.6 | no | How far apart the copies' delays are, as a fraction of the time |
+| `voices` (Voices) | 2 | 1 to 4 | yes | How many delayed copies are mixed in |
+| `spread` (Spread) | 0.3 | 0 to 0.6 | yes | How far apart the copies' delays are, as a fraction of the time |
 | `mix` (Mix) | 0.5 | 0 to 1 | yes | 0 is the dry input, 1 is only the copies |
 
 ### `clamp`
@@ -576,8 +576,8 @@ Can process R, G and B separately.
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
 | `detector` (Detector) | `peak` | `peak`, `rms` | no | peak follows each sample's magnitude, rms follows average power and is smoother |
-| `attack` (Attack) | 5 | 0 to 1000 (up to 0 to 1000000) | no | How quickly the output rises when the input gets stronger |
-| `release` (Release) | 50 | 0 to 5000 (up to 0 to 1000000) | no | How quickly the output falls when the input gets weaker |
+| `attack` (Attack) | 5 | 0 to 1000 (up to 0 to 1000000) | yes | How quickly the output rises when the input gets stronger |
+| `release` (Release) | 50 | 0 to 5000 (up to 0 to 1000000) | yes | How quickly the output falls when the input gets weaker |
 | `unit` (Unit) | `ms` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for attack and release |
 
 ### `equalizer`
@@ -785,7 +785,7 @@ Can process R, G and B separately.
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
 | `ceiling` (Ceiling) | -6 dB | -48 to 0 (up to -120 to 24) | yes | The loudest any sample may get: 0 dB is full scale, 1.0 |
-| `release` (Release) | 50 | 0 to 1000 (up to 0 to 1000000) | no | How slowly the gain recovers after a peak; longer is smoother |
+| `release` (Release) | 50 | 0 to 1000 (up to 0 to 1000000) | yes | How slowly the gain recovers after a peak; longer is smoother |
 | `unit` (Unit) | `ms` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the release |
 
 ### `lowpass`
@@ -847,7 +847,7 @@ Can process R, G and B separately.
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `stages` (Stages) | 4 | 1 to 12 | no | How many allpass filters are chained; every two add a notch |
+| `stages` (Stages) | 4 | 1 to 12 | yes | How many allpass filters are chained; every two add a notch |
 | `freq` (Frequency) | 1000 | 20 to 5000 (up to 0.000001 to 1000000000) | yes | Where the notches sit; wire an oscillator in here to sweep them |
 | `unit` (Cycles per) | `second` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the frequency |
 | `feedback` (Feedback) | 0.3 | -0.95 to 0.95 | yes | How much of the chain's output is fed back in, which sharpens the notches |
@@ -941,9 +941,9 @@ Can process R, G and B separately.
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `size` (Size) | 0.5 | 0 to 1 | no | How long the tail rings: higher is longer |
-| `damping` (Damping) | 0.5 | 0 to 1 | no | How quickly the tail loses its fast detail: higher is duller |
-| `predelay` (Pre-delay) | 0 | 0 to 100 (up to 0 to 10000) | no | Gap before the reverb starts |
+| `size` (Size) | 0.5 | 0 to 1 | yes | How long the tail rings: higher is longer |
+| `damping` (Damping) | 0.5 | 0 to 1 | yes | How quickly the tail loses its fast detail: higher is duller |
+| `predelay` (Pre-delay) | 0 | 0 to 100 (up to 0 to 10000) | yes | Gap before the reverb starts |
 | `unit` (Unit) | `ms` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the pre-delay |
 | `mix` (Mix) | 0.3 | 0 to 1 | yes | 0 is the dry input, 1 is only the reverb |
 
@@ -986,7 +986,7 @@ Can process R, G and B separately.
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `period` (Period) | 0.25 | 0 to 4 (up to 0 to 1000000) | no | How long each sampled value is held; 0 samples every sample (no hold) |
+| `period` (Period) | 0.25 | 0 to 4 (up to 0 to 1000000) | yes | How long each sampled value is held; 0 samples every sample (no hold) |
 | `unit` (Unit) | `row` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the period |
 | `levels` (Levels) | 0 | 0 to 32 (up to 0 to 65536) | yes | Rounds each value to this many evenly spaced levels between 0 and 1; 0 or 1 leaves values alone |
 
@@ -1008,8 +1008,8 @@ Can process R, G and B separately.
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `rise` (Rise) | 0.25 | 0 to 4 (up to 0 to 1000000) | no | Time to climb a full 0 to 1 when the input jumps up; 0 is instant |
-| `fall` (Fall) | 0.25 | 0 to 4 (up to 0 to 1000000) | no | Time to fall a full 1 to 0 when the input jumps down; 0 is instant |
+| `rise` (Rise) | 0.25 | 0 to 4 (up to 0 to 1000000) | yes | Time to climb a full 0 to 1 when the input jumps up; 0 is instant |
+| `fall` (Fall) | 0.25 | 0 to 4 (up to 0 to 1000000) | yes | Time to fall a full 1 to 0 when the input jumps down; 0 is instant |
 | `unit` (Unit) | `row` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for rise and fall |
 
 ### `three_band`
@@ -1032,8 +1032,8 @@ Can process R, G and B separately.
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `low_hz` (Low / mid) | 250 | 1 to 100000 (up to 0.001 to 1000000000) | no | Crossover between the low and mid bands |
-| `high_hz` (Mid / high) | 4000 | 1 to 100000 (up to 0.001 to 1000000000) | no | Crossover between the mid and high bands |
+| `low_hz` (Low / mid) | 250 | 1 to 100000 (up to 0.001 to 1000000000) | yes | Crossover between the low and mid bands |
+| `high_hz` (Mid / high) | 4000 | 1 to 100000 (up to 0.001 to 1000000000) | yes | Crossover between the mid and high bands |
 | `unit` (Cycles per) | `second` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the crossovers |
 
 ## Output

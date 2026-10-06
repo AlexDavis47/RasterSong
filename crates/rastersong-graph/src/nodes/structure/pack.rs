@@ -19,7 +19,9 @@ params! { Pack {
         MAX_CHANNELS as f64,
         "How many channels each pixel gets: 3 for RGB, 2 for stereo",
     ).integer()
-    .fixed()
+    .fixed(
+        "The number of channels changes the signal's layout, which the graph is compiled for and can't change per sample",
+    )
     .limits(1.0, 64.0),
 } }
 

@@ -85,7 +85,6 @@ params! { Oscillator {
         1.0,
         "Where in the cycle the wave starts, as a fraction of a cycle",
     )
-    .fixed()
     .limits(-1000.0, 1000.0),
     AMPLITUDE: ParamSpec::number(
         "amplitude",
@@ -180,9 +179,11 @@ impl Node for Oscillator {
         let start = self.clock.begin(ctx, data.len());
         let amplitude = ctx.value(Self::AMPLITUDE, f64::from(self.amplitude));
         let offset = ctx.value(Self::OFFSET, f64::from(self.offset));
-        let (wave, width, group) = (self.wave, self.width, self.group);
+        let phase = ctx.value(Self::PHASE, self.phase);
+        let width = ctx.value(Self::PULSE_WIDTH, self.width);
+        let (wave, group) = (self.wave, self.group);
         let emit = |phase: f64, i: usize| {
-            let v = wave.at(phase.rem_euclid(1.0), width);
+            let v = wave.at(phase.rem_euclid(1.0), width.at64(i));
             (v * amplitude.at64(i) + offset.at64(i)) as f32
         };
         match ctx.param(Self::FREQ).filter(|_| self.modulated) {
@@ -190,7 +191,9 @@ impl Node for Oscillator {
                 // Phase accumulates once per pixel, at the frequency in force at its first sample.
                 for (pixel, chunk) in data.chunks_mut(group).enumerate() {
                     let i = pixel * group;
-                    chunk.fill(emit(self.accumulated, i));
+                    // The accumulated phase started at the constant phase; a modulated phase
+                    // moves the wave from there.
+                    chunk.fill(emit(self.accumulated + phase.at64(i) - self.phase, i));
                     self.accumulated =
                         (self.accumulated + f64::from(freq[i]) * self.unit_step).rem_euclid(1.0);
                 }
@@ -200,7 +203,8 @@ impl Node for Oscillator {
                 let first_pixel = start / group as u64;
                 for (pixel, chunk) in data.chunks_mut(group).enumerate() {
                     let cycles = ((first_pixel + pixel as u64) as f64 - self.origin) * step;
-                    chunk.fill(emit(self.phase + cycles.fract(), pixel * group));
+                    let i = pixel * group;
+                    chunk.fill(emit(phase.at64(i) + cycles.fract(), i));
                 }
             }
         }

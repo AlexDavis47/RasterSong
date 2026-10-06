@@ -115,25 +115,25 @@ Specs also say which parameters show a pin on new nodes (`exposed`).
 
 **Whole-number parameters** (counts, divisions, steps, seeds, pixel sizes) are declared `.integer()`. The usual range, default and limits must be whole (a test checks), the slider and value box snap to whole values, loaded fractional values are rounded by `migrate.rs`, and a modulated value is rounded at every sample. Parameters that merely accept fractions (Bit Crush bits) are not integers; the per-node `int` toggle covers those.
 
-**Parameters marked `fixed`** can't be modulated. The spec's comment says they are "too costly or meaningless to
-change while rendering", which in practice covers three different reasons (not warmup time):
+**Locked parameters.** Modulation is the default and a parameter is locked with `.fixed("reason")` only when modulating
+it is infeasible ([Decisions](decisions.md#modulation-is-allowed-unless-infeasible-october-2026)). The reason is
+shown in the inspector (a crossed-out pin; hover for the text) and in [nodes.md](nodes.md), and a test rejects a
+missing one. Today only what changes the signal's *layout* is locked: Pack channels and Resample width and height,
+because the graph is compiled for a fixed layout. Everything else reads its value per sample through
+`ctx.value(Self::PARAM, constant)` (or `ctx.param(..)` for a stream), sizing its buffers from `ctx.param_max(..)` in
+`prepare` so the largest value fits, and reports warmup for the slowest the value can get. A whole-number parameter
+modulated gets whole values at every sample (rounded by the graph before the node sees them), and a node that is
+modulated per sample must give the same output however the stream is cut into blocks (the property tests sweep
+every modulatable parameter of every effect).
 
-1. *Structural:* changing the value changes what is allocated or how many things exist (chorus voices, phaser
-   stages, Beat steps, Pack channels, Resample sizes, noise seed). These can never be modulated.
-2. *Precomputed state:* the node builds buffers or coefficients once in `prepare` from the value (Three-Band Split
-   crossovers, Reverb size, damping and pre-delay). Modulating them means redesigning the node's internals.
-3. *Not done yet:* the node could take a per-sample value but nobody wrote it (Envelope attack and release, Slew
-   rise and fall, Limiter release, Beat width and division, Oscillator phase, Chorus spread). The Phaser already
-   shows how: it recomputes its coefficient per sample.
-
-The inspector doesn't say which reason applies, which is the bug in the [roadmap](roadmap.md#node-settings-and-parameters).
-The policy going forward is the opposite of protecting the user: a parameter is locked only when modulating it is
-truly infeasible, and the lock carries a reason ([Decisions](decisions.md#modulation-is-allowed-unless-infeasible-october-2026)).
-
-> **Under revision.** Hands-on testing found that some parameters are unmodulatable with no explanation, (a visible
-> reason on locked parameters is [planned](roadmap.md#node-settings-and-parameters)). Percentage amounts and linear
-> sliders have landed. Give frequency parameters a usual range that suits a linear slider (Cutoff is 0.01–200), since
-> the range also sets the span modulation percentages are of.
+How each previously locked parameter is modulated: times (Envelope attack and release, Slew rise and fall, Limiter
+release) recompute their coefficient per sample; Three-Band crossovers retune their filters per sample, keeping the
+filter's state; Reverb size and damping are the comb filters' feedback and damping, and the pre-delay reads its
+delay line at a moving position; Chorus voices (up to four) and spread and Phaser stages (up to twelve) allocate the
+most and use as many per sample as the value says; Beat's division, width and steps and Oscillator's phase and pulse
+width read their value at each pixel (Beat and the unmodulated oscillator are functions of position, so seeking
+stays exact; a changing division moves the shape against the beat grid instead of restarting it); a Noise seed
+picks a different noise at every sample; Sample & Hold's period reads the hold grid with each sample's own length.
 
 Nodes only have their own inputs for signals that are part of what they do: Amplitude Modulation's modulator and
 the compressor's and gate's sidechain. Delay, Bit Crush and Low Pass used to have a `modulation` input and a

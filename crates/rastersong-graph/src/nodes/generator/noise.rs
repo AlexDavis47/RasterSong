@@ -55,7 +55,6 @@ params! { Noise {
         "How the noise is spread over frequencies: white is sharp grain, brown is slow drift, violet is the finest grain",
     ),
     SEED: ParamSpec::number("seed", "Seed", 0.0, 0.0, 999.0, "Picks which noise; the same seed always gives the same noise").integer()
-        .fixed()
         .limits(0.0, 4_000_000_000.0),
     AMPLITUDE: ParamSpec::number(
         "amplitude",
@@ -108,9 +107,9 @@ impl NodeKind for Noise {
 }
 
 impl Noise {
-    /// The next noise value in `-1..1` for sample `index`, advancing any filter state.
-    fn next(&mut self, index: u64) -> f32 {
-        let w = white(self.seed, index);
+    /// The next noise value in `-1..1` for sample `index` of the noise picked by `seed`, advancing any filter state.
+    fn next(&mut self, seed: u64, index: u64) -> f32 {
+        let w = white(seed, index);
         match self.color {
             Color::White => w,
             Color::Pink => {
@@ -124,11 +123,11 @@ impl Noise {
                 self.brown = (self.brown + 0.02 * w) / 1.02;
                 (self.brown * 3.5).clamp(-1.0, 1.0)
             }
-            Color::Blue => (w - white(self.seed, index.wrapping_sub(1))) * 0.5,
+            Color::Blue => (w - white(seed, index.wrapping_sub(1))) * 0.5,
             Color::Violet => {
                 let (a, b) = (
-                    white(self.seed, index.wrapping_sub(1)),
-                    white(self.seed, index.wrapping_sub(2)),
+                    white(seed, index.wrapping_sub(1)),
+                    white(seed, index.wrapping_sub(2)),
                 );
                 (w - 2.0 * a + b) * 0.25
             }
@@ -152,8 +151,10 @@ impl Node for Noise {
         let start = self.clock.begin(ctx, data.len());
         let amplitude = ctx.value(Self::AMPLITUDE, f64::from(self.amplitude));
         let offset = ctx.value(Self::OFFSET, f64::from(self.offset));
+        // A seed moved by a signal picks a different noise at every sample.
+        let seed = ctx.value(Self::SEED, self.seed as f64);
         for (i, out) in data.iter_mut().enumerate() {
-            let noise = self.next(start + i as u64);
+            let noise = self.next(seed.at64(i).round().max(0.0) as u64, start + i as u64);
             *out = noise * amplitude.at(i) + offset.at(i);
         }
     }

@@ -90,7 +90,7 @@ Every change that renames or reshapes a parameter, or merges, splits or removes 
   (`.shown_when(Self::MODE, Mode::Step)`). The inspector and the generated docs hide the parameter when the rule
   fails; a hidden parameter keeps its value and still saves. *Needed by: Beat steps and width, Oscillator pulse
   width, Filter slope, Distortion character, and any node whose mode changes which controls matter.*
-- [ ] **bug** Unmodulatable parameters have no explanation. It is not about warmup. `.fixed()` covers three
+- [x] **bug** Unmodulatable parameters have no explanation. *Done: see [Node authoring](node-authoring.md#parameters); only Pack channels and Resample width and height stay locked, with their reason shown in the inspector.* It is not about warmup. `.fixed()` covers three
   different reasons (structural, precomputed in `prepare`, or simply not implemented; the breakdown is in
   [Node authoring](node-authoring.md#parameters)). **Policy ([Decisions](decisions.md#modulation-is-allowed-unless-infeasible-october-2026)):
   this is datamoshing software, so a parameter is locked only when modulating it is truly infeasible or

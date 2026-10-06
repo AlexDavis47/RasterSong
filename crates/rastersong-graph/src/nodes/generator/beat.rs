@@ -40,8 +40,8 @@ pub struct Beat {
     steps: f64,
     /// Set in `prepare`.
     group: usize,
-    /// Pixels per cycle, and pixels from the start of the render to the first beat.
-    cycle_pixels: f64,
+    /// Pixels per period, and pixels from the start of the render to the first beat.
+    period_pixels: f64,
     origin: f64,
     clock: SampleClock,
 }
@@ -63,7 +63,6 @@ params! { Beat {
         "Cycles per period: 2 restarts twice as often (half beats). Use the bar period for slower",
     )
     .integer()
-    .fixed()
     .limits(1.0, 1000.0),
     SHAPE: ParamSpec::choice(
         "shape",
@@ -79,8 +78,7 @@ params! { Beat {
         0.0,
         1.0,
         "For the pulse shape, the fraction of each cycle it stays on",
-    )
-    .fixed(),
+    ),
     STEPS: ParamSpec::number(
         "steps",
         "Steps",
@@ -89,7 +87,6 @@ params! { Beat {
         32.0,
         "For the step shape, how many stairs each cycle climbs",
     ).integer()
-    .fixed()
     .limits(1.0, 1024.0),
 } }
 
@@ -117,9 +114,9 @@ impl NodeKind for Beat {
             shape: params.choice_as(Self::SHAPE)?,
             division: params.number_at(Self::DIVISION)?.max(1e-6),
             width: params.number_at(Self::WIDTH)?,
-            steps: params.number_at(Self::STEPS)?.max(1.0).floor(),
+            steps: params.number_at(Self::STEPS)?.max(1.0),
             group: 1,
-            cycle_pixels: 1.0,
+            period_pixels: 1.0,
             origin: 0.0,
             clock: SampleClock::default(),
         })
@@ -127,13 +124,16 @@ impl NodeKind for Beat {
 }
 
 impl Beat {
-    /// The shape at `phase` in `0..1`.
-    fn at(&self, phase: f64) -> f32 {
+    /// The shape at `phase` in `0..1`, for a pulse of `width` or a stair of `steps`.
+    fn at(&self, phase: f64, width: f64, steps: f64) -> f32 {
         let v = match self.shape {
             Shape::Phase => phase,
             Shape::Decay => 1.0 - phase,
-            Shape::Pulse => f64::from(phase < self.width),
-            Shape::Step => (phase * self.steps).floor() / self.steps,
+            Shape::Pulse => f64::from(phase < width),
+            Shape::Step => {
+                let steps = steps.round().max(1.0);
+                (phase * steps).floor() / steps
+            }
         };
         v as f32
     }
@@ -150,7 +150,7 @@ impl Node for Beat {
             Period::Beat => ctx.samples_per_beat(),
             Period::Bar => ctx.samples_per_bar(),
         };
-        self.cycle_pixels = (period_samples / self.group as f64 / self.division).max(1e-9);
+        self.period_pixels = (period_samples / self.group as f64).max(1e-9);
         self.origin = ctx.beat_offset_samples() / self.group as f64;
     }
 
@@ -158,9 +158,17 @@ impl Node for Beat {
         let data = &mut outputs[0].data;
         let start = self.clock.begin(ctx, data.len());
         let first_pixel = (start / self.group as u64) as f64;
+        // Each value is read at the pixel's first sample. The shape is a function of position
+        // alone, also with a moving division, so seeking stays exact; a changing division moves
+        // the shape against the grid rather than restarting it.
+        let division = ctx.value(Self::DIVISION, self.division);
+        let width = ctx.value(Self::WIDTH, self.width);
+        let steps = ctx.value(Self::STEPS, self.steps);
         for (pixel, chunk) in data.chunks_mut(self.group).enumerate() {
-            let position = (first_pixel + pixel as f64 - self.origin) / self.cycle_pixels;
-            chunk.fill(self.at(position.rem_euclid(1.0)));
+            let i = pixel * self.group;
+            let periods = (first_pixel + pixel as f64 - self.origin) / self.period_pixels;
+            let phase = (periods * division.at64(i).max(1e-6)).rem_euclid(1.0);
+            chunk.fill(self.at(phase, width.at64(i), steps.at64(i)));
         }
     }
 

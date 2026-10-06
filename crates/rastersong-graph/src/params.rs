@@ -24,6 +24,8 @@ pub struct ParamSpec {
     /// Whether only whole numbers make sense (counts, divisions, steps): the slider and value box
     /// snap to them, loaded values are rounded, and a modulated value is rounded at every sample.
     pub integer: bool,
+    /// Why a signal can't modulate it (set by [`Self::fixed`]); empty when it can.
+    pub locked: &'static str,
 }
 
 /// How much a newly connected signal moves a parameter, in percent of its span.
@@ -74,6 +76,7 @@ impl ParamSpec {
             modulatable: true,
             exposed: false,
             integer: false,
+            locked: "",
         }
     }
 
@@ -93,6 +96,7 @@ impl ParamSpec {
             modulatable: false,
             exposed: false,
             integer: false,
+            locked: "",
         }
     }
 
@@ -111,6 +115,7 @@ impl ParamSpec {
             modulatable: false,
             exposed: false,
             integer: false,
+            locked: "",
         }
     }
 
@@ -126,11 +131,13 @@ impl ParamSpec {
         self
     }
 
-    /// Can't be modulated: for parameters that are too costly or meaningless to change while
-    /// rendering, such as filter crossovers.
-    pub const fn fixed(mut self) -> Self {
+    /// Can't be modulated, for the stated reason, which the editor shows on the parameter.
+    /// Modulation is the default and a lock needs a real reason: the value changes the shape of
+    /// what the graph is compiled for, say, not "nobody wrote it".
+    pub const fn fixed(mut self, reason: &'static str) -> Self {
         self.modulatable = false;
         self.exposed = false;
+        self.locked = reason;
         self
     }
 
