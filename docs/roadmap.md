@@ -290,8 +290,7 @@ Reusable widgets, built once in `rastersong-gui` (a `widgets/` module) and used 
 ## Timeline
 
 - [x] Reaper-style track headers, grab-scroll, scroll-zoom, tick lines, tempo ruler, thumbnails and waveforms
-- [ ] **chore** **Remove the Fit button.** Its tooltip still says "Show the whole video (F)" and it is clutter; F
-  already does the same. Remove the button and update the [Timeline](app.md#timeline) text.
+- [x] **chore** Removed the Fit button (its tooltip was wrong and F already fits the view).
 - [ ] **feature** **Automation clips:** signals drawn as tracks in the playlist to time effects to specific
   moments. The graph sees one more input signal, keeping the processing graph unified.
 - [ ] **feature** Multi-clip timeline (see [Later](#later)).

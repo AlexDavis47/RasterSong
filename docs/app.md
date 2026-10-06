@@ -79,8 +79,7 @@ small decoder so they never slow rendering and survive graph edits, with rendere
 bottom. Audio tracks show their waveform.
 
 - The scroll wheel zooms time around the pointer, from half the whole video down to a few frames (over the
-  headers it scrolls the tracks); middle- or right-drag pans in both directions; F shows the whole video. (A
-  separate Fit button exists today and is slated for removal; see the [roadmap](roadmap.md#timeline).)
+  headers it scrolls the tracks); middle- or right-drag pans in both directions; F shows the whole video.
 - Tick lines run behind the lanes, labelled on the ruler, down to single frames when zoomed in.
 - Click or drag on the ruler or empty lane space to seek; drag a track's block to move it against the video.
 - **Loop region** (as in Reaper): drag along the ruler to make one, snapped to whole frames; drag its edges to
