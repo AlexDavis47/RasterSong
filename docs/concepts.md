@@ -104,10 +104,9 @@ While there are many programs that can make interesting visuals reacting to audi
 
 1. **Correctness is testable.** Every layer can be tested without the layers above it, and most of the system can be tested without FFmpeg at all.
 2. **The graph never sees media formats, and the media layer never sees the graph.** Frames go in, frames come out.
-3. **Users never see samples.** Every user-facing parameter is in normalized units (frames, rows, fractions of a row), so results look the same at any preview resolution. *(Under review: the roadmap adds explicit "pixel" and "sample" units; see [Units](roadmap.md#units-and-parameter-semantics) and [Decisions](decisions.md#open-pixel-and-sample-units-vs-the-no-samples-principle).)*
-4. **Simple over clever.** One signal type, one processing order (sequential), one cache rule.
-5. **CPU only.** No GPU compute. Real time is a goal for preview, not a requirement.
-6. **Nothing for the user to install.** All media dependencies ship with the app.
-7. **One implementation per idea.** A behavior that more than one node, panel or tool needs (a unit list, a meter, a
+3. **Simple over clever.** One signal type, one processing order (sequential), one cache rule.
+4. **CPU only.** No GPU compute. Real time is a goal for preview, not a requirement.
+5. **Nothing for the user to install.** All media dependencies ship with the app.
+6. **One implementation per idea.** A behavior that more than one node, panel or tool needs (a unit list, a meter, a
    tooltip, a filter design) lives in one shared place. See [Shared building blocks](node-authoring.md#shared-building-blocks)
    and the [DRY workstream](roadmap.md#code-health-and-dry).

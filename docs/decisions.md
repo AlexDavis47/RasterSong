@@ -76,25 +76,38 @@ decides how octave modulation is presented.
 A parameter that can only be a whole number (channel counts, divisions, steps, voices) is declared as an integer in
 its spec, and the slider and value box always snap to whole values. A float is never allowed for these.
 
+### One unit type for time and frequency (October 2026)
+
+Time and frequency are the same domain, and both are "samples per unit" converted by multiplying or dividing. They
+become one `Unit` enum (pixel, sample, row, frame, ms, second, beat, bar) with one label set. A time parameter
+multiplies by the unit's sample count; a frequency parameter divides, and its label says "cycles per". The old
+`Hertz` option is `second` read as a frequency. Old graphs are migrated.
+
+### The "users never see samples" principle is dropped (October 2026)
+
+It was outdated and hid a useful thing from the user. Pixels and samples become ordinary units. Resolution-
+independent units (rows, frames, time, beats) stay the default because they make a preview match the export, not
+because samples are forbidden.
+
+### Per-node `mix` stays (October 2026)
+
+A small optional `mix` on a node is fine. Blend modes exist as the Blend node and are not a reason to strip `mix`.
+What changes is that `mix` is one shared parameter definition and one dry/wet helper, and a node omits it only
+where it is meaningless.
+
+### Modulation toggle off by default for constants (October 2026)
+
+A Constant's *value* has no modulation pin exposed by default: nobody modulates a constant.
+
 ## Open
 
-### Open: "pixel" and "sample" units vs the no-samples principle
+### Open: what "pixel" and "sample" mean under preview scaling
 
-[Design principle 3](concepts.md#design-principles) says users never see samples, so results look the same at any
-preview resolution. The notes ask for explicit "pixel" and "sample" units. They are compatible only if these units
-are defined against the **project** (full) resolution and scaled by the preview scale, so a half-resolution preview
-still looks like a scaled-down render. The alternative, raw units at preview resolution, would break that guarantee.
-Recommendation: define both against full resolution and scale in the engine; update principle 3 to say users may
-choose to think in pixels or samples, but never in preview-scaled ones.
-
-### Open: what replaces the "mix" parameter
-
-Many effects have a dry/wet `mix`. The notes call it redundant "with blend modes being available". Today blend
-exists as the Blend node. Options: (a) remove `mix` from effects and rely on a Blend node (more wiring, but one
-implementation); (b) add a shared per-node *output blend* setting (mode + amount) alongside Resampling and Channels,
-so every effect gets blend modes for free with no extra node. Recommendation: (b), because it removes the per-node
-`mix` code and doesn't add wiring. Nodes where mix is intrinsic to the algorithm (a reverb's wet level, a delay's
-feedback) keep their own controls.
+The "users never see samples" principle is dropped (see above), so showing samples is fine. One real question
+remains, and it is about correctness rather than hiding: at half-resolution preview, does "10 pixels" mean 10 preview
+pixels or 10 project pixels? Recommendation: **pixel** is a project-resolution pixel, scaled with the preview, so a
+preview still matches the export; **sample** is the literal sample at the render in front of you, and is documented
+as changing with preview scale.
 
 ### Open: multi-track export
 

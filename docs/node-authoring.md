@@ -109,6 +109,19 @@ unmodulated parameters stay constants the node reads from its own fields, so the
 `PrepareContext::modulation(i)` gives the range a modulated parameter can move over, for sizing buffers and warmup.
 Specs also say which parameters show a pin on new nodes (`exposed`).
 
+**Parameters marked `fixed`** can't be modulated. The spec's comment says they are "too costly or meaningless to
+change while rendering", which in practice covers three different reasons (not warmup time):
+
+1. *Structural:* changing the value changes what is allocated or how many things exist (chorus voices, phaser
+   stages, Beat steps, Pack channels, Resample sizes, noise seed). These can never be modulated.
+2. *Precomputed state:* the node builds buffers or coefficients once in `prepare` from the value (Three-Band Split
+   crossovers, Reverb size, damping and pre-delay). Modulating them means redesigning the node's internals.
+3. *Not done yet:* the node could take a per-sample value but nobody wrote it (Envelope attack and release, Slew
+   rise and fall, Limiter release, Beat width and division, Oscillator phase, Chorus spread). The Phaser already
+   shows how: it recomputes its coefficient per sample.
+
+The inspector doesn't say which reason applies, which is the bug in the [roadmap](roadmap.md#node-settings-and-parameters).
+
 > **Under revision.** Hands-on testing found that "min + max + base + amount" is hard to dial in, that some
 > parameters are unmodulatable with no explanation, and that logarithmic/exponential sliders are confusing. The
 > planned changes (amount as a percentage of the parameter's span, a visible reason on locked parameters, removing

@@ -12,7 +12,9 @@ Seconds only exist at the edges (display, audio alignment).
 Because every signal is aligned frame-to-frame, signals with different sample counts (a carrier with 43,200
 samples per frame and a modulator with 1,470) can never drift out of sync.
 
-**User-facing units** are normalized and converted to samples internally by the engine:
+**User-facing units** are converted to samples internally by the engine. Rows, frames, time and beats are
+resolution-independent, so a half-resolution preview looks like a scaled-down version of the full render. Samples
+and pixels are also available (see below), because they are a legitimate thing to want to think in:
 
 | Unit | Meaning | Example use |
 |---|---|---|
@@ -25,17 +27,18 @@ samples per frame and a modulator with 1,470) can never drift out of sync.
 | Hertz | Frequencies of audio-domain nodes, relative to the input signal's own sample rate | Three-band crossovers |
 | Beat, Bar (as frequencies) | Cycles per beat or bar, locked to the beat grid | A wobble on every beat |
 
-All of these can be fractional. Because none of them are in samples, a half-resolution preview looks like a
-scaled-down version of the full render rather than a different effect.
+All of these can be fractional.
 
 Every node that takes a time or a frequency has one `unit` parameter built with `TimeUnit::param` or
-`FreqUnit::param` (`nodes/support.rs`), so the list of units is the same everywhere. Frequency units are the
-inverses of the time units and are written `Row`, `Frame`, `Hertz`, `Beat` and `Bar` (the parameter's meaning
-already says cycles). Renamed options are upgraded by `migrate.rs`, so old graph files keep loading.
+`FreqUnit::param` (`nodes/support.rs`). Renamed options are upgraded by `migrate.rs`, so old graph files keep
+loading.
 
-> **Known inconsistency.** Time-unit parameters currently list `rows`, `frames`, `ms`, `seconds`, `beats`, `bars`,
-> while frequency-unit parameters list `Row`, `Frame`, `Hertz`, `Beat`, `Bar`. The two should read as one coherent
-> set. Tracked in the roadmap under [Units](roadmap.md#units-and-parameter-semantics).
+> **Known inconsistency, and why.** `TimeUnit` and `FreqUnit` are two enums that do the same job. Both just say
+> "how many samples is one of these": a time parameter multiplies by it (`value × samples_per_unit`), a frequency
+> divides (`value ÷ samples_per_unit`, cycles per unit). A frequency is a time inverted, so the split buys nothing.
+> It also leaks to the user as two label sets (`rows, frames, ms, seconds, beats, bars` against
+> `Row, Frame, Hertz, Beat, Bar`). The roadmap merges them into one `Unit` with one label set; see
+> [Units](roadmap.md#units-and-parameter-semantics) and [Decisions](decisions.md#one-unit-type-for-time-and-frequency-october-2026).
 
 ### Tempo
 

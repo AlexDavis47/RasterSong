@@ -90,10 +90,13 @@ Every change that renames or reshapes a parameter, or merges, splits or removes 
   (`.shown_when(Self::MODE, Mode::Step)`). The inspector and the generated docs hide the parameter when the rule
   fails; a hidden parameter keeps its value and still saves. *Needed by: Beat steps and width, Oscillator pulse
   width, Filter slope, Distortion character, and any node whose mode changes which controls matter.*
-- [ ] **bug** Unmodulatable parameters have no explanation (chorus voices, spread, and others). Mark them `fixed`
-  with a reason (`fixed("changing voices mid-render would reallocate state")`) that shows in the inspector as a
-  disabled pin with a tooltip. Then review each: if it can be modulated safely, make it so (spread can; voice
-  count cannot).
+- [ ] **bug** Unmodulatable parameters have no explanation. It is not about warmup. `.fixed()` covers three
+  different reasons (structural, precomputed in `prepare`, or simply not implemented; the breakdown is in
+  [Node authoring](node-authoring.md#parameters)). Replace `.fixed()` with `.fixed("reason")` so the inspector shows
+  a disabled pin with a tooltip. Then fix the third group, which can be modulated today with a per-sample
+  coefficient like the Phaser's: Envelope attack/release, Slew rise/fall, Limiter release, Beat width and
+  division, Oscillator phase, Chorus spread. Voices, stages, steps, Pack channels and seed stay fixed (structural).
+  Reverb and Three-Band Split stay fixed until their internals are redesigned.
 
 ### Modulation
 
@@ -113,18 +116,19 @@ Every change that renames or reshapes a parameter, or merges, splits or removes 
 
 ### Units and parameter semantics
 
-- [ ] **bug** Unit options are shown two ways: `Row, Frame, Hertz, Beat, Bar` on frequency parameters and
-  `rows, frames, ms, seconds, beats, bars` on time parameters (Envelope, Slew, and others). It looks like an
-  incomplete implementation. Make `TimeUnit` and `FreqUnit` one consistent, explicitly labelled set: same
-  capitalization, same singular/plural rule, labels that say "cycles per" for frequency. Migration for old values
-  already exists in `migrate.rs`; extend it.
-- [ ] **feature** New **pixel** and **sample** units, for time and frequency parameters. *Blocked on the decision
-  in [Decisions](decisions.md#open-pixel-and-sample-units-vs-the-no-samples-principle): define them against the
-  project resolution and scale with the preview, so the "results look the same at any preview resolution" rule
-  survives.*
-- [ ] **feature** Replace the redundant `mix` parameter on effects. *Blocked on the decision in
-  [Decisions](decisions.md#open-what-replaces-the-mix-parameter) (recommended: a shared per-node output blend
-  setting).* Includes migration of existing `mix` values and removing the per-node dry/wet code.
+- [ ] **chore** **Merge `TimeUnit` and `FreqUnit` into one `Unit`** (see
+  [Decisions](decisions.md#one-unit-type-for-time-and-frequency-october-2026)). They are the same domain: both
+  answer "how many samples is one of these", and a frequency is a time inverted. Today they are two enums with two
+  label sets (`rows, frames, ms, seconds, beats, bars` against `Row, Frame, Hertz, Beat, Bar`), which is the
+  inconsistency users see. One enum with `samples_per_unit(ctx)`, one `Unit::param`, one label set; time
+  parameters multiply, frequency parameters divide and their label says "cycles per". `Hertz` becomes `second`.
+  Migration maps every old option name.
+- [ ] **feature** New **pixel** and **sample** units (the "users never see samples" principle is dropped).
+  *Needs one call, in [Decisions](decisions.md#open-what-pixel-and-sample-mean-under-preview-scaling):
+  recommended pixel = project-resolution pixel scaled with the preview, sample = the literal sample at the current
+  render size.*
+- [ ] **chore** Keep the optional per-node `mix`, but build it once: one shared `MIX` parameter definition and one
+  dry/wet helper in `dsp.rs`, used by every node that has it. No removal or migration.
 
 ### Shared node settings
 
@@ -135,7 +139,6 @@ Every change that renames or reshapes a parameter, or merges, splits or removes 
   source to take a layout from`. Fix the host to supply an audio source layout to the compile step (or to fall
   back to a sensible default with a note when there is no audio track), and test it through the engine, not only
   the graph tests.
-- [ ] **feature** Shared output blend setting (if chosen in the `mix` decision above).
 
 ### Text and localization
 
@@ -180,12 +183,15 @@ Every change that renames or reshapes a parameter, or merges, splits or removes 
 
 ### Fixes
 
-- [ ] **bug** Copying and pasting or duplicating nodes does not retain connections. The design says paste keeps
-  the connections between the copied nodes and the code has a test for that, so find the case that fails
-  (candidates: parameter-modulation wires `node.@param`, duplicate via Ctrl+D or the context menu using a
-  different path from copy/paste, connections to linked input nodes). Decide and document what should be kept:
-  at minimum all connections *between* the selected nodes, including modulation wires; and for duplicate, also the
-  *inputs* feeding the originals (so a duplicated effect stays wired to its source). Add tests for each path.
+- [ ] **bug** Duplicating a node loses the connections that feed it. Root cause found: `GraphEditor::fragment`
+  (`editor/mod.rs`) keeps only connections whose *both* ends are in the selection, and drops linked nodes
+  (Video, Audio) from the fragment entirely. Duplicate and paste share that path, so a lone node, or a node fed
+  from outside the selection, comes back with no inputs. The existing test is not failing silently: it copies two
+  nodes wired to each other and asserts that one wire, so it never covers external inputs. Fix: **duplicate** also
+  reconnects each copy's inputs to the same sources as the original (including the linked Video and Audio nodes and
+  `@param` modulation wires; outputs are not duplicated, since an input takes one connection). **Paste** keeps
+  internal wires only, except that a paste into the same graph may offer the same input reconnection. Add tests for
+  a lone node, a node fed by a linked input, a modulated parameter, and a mixed selection.
 - [ ] **bug** Typing a long number into a value box makes the inspector grow wider, repeatedly. This is a sustained
   problem and points to messy layout code, so do not patch it again. Root-cause it (a text edit sizing itself to
   its content and feeding the width back into the panel), then fix it once, permanently: one shared value-box
@@ -292,7 +298,7 @@ a migration where noted, and a regenerated `nodes.md`.
   - [ ] **feature** *Steps* shows only when the mode is Step (conditional parameter).
   - [ ] **feature** *Width* is conditional on the modes that use it.
 - **Constant**
-  - [ ] **feature** Default modulation of *value* to off (no pin exposed by default).
+  - [ ] **feature** *Value*'s modulation toggle is off by default (no pin exposed): nobody modulates a constant.
 - **Noise**
   - [ ] **feature** Add Gaussian noise and a smooth noise (Perlin or similar) as new types. Smooth noise takes a
     scale in the usual units and is deterministic across seeks.
@@ -357,8 +363,8 @@ a migration where noted, and a regenerated `nodes.md`.
 
 ### Cross-cutting node items
 
-- [ ] **chore** Every node's unit parameter uses the one consistent unit set ([Units](#units-and-parameter-semantics)).
-- [ ] **chore** Every node with a dry/wet `mix` goes through the same replacement
+- [ ] **chore** Every node's unit parameter uses the one `Unit` ([Units](#units-and-parameter-semantics)).
+- [ ] **chore** Every node with a dry/wet `mix` uses the one shared definition
   ([Units and parameter semantics](#units-and-parameter-semantics)).
 - [ ] **feature** Add nodes only after the foundations are in, so new nodes use integer and conditional parameters
   from the start.
@@ -371,14 +377,13 @@ a migration where noted, and a regenerated `nodes.md`.
 
 The aim: one implementation per idea, so fixes and features land in one place. Known candidates to consolidate:
 
-- [ ] **chore** **Units.** One time-unit list and one frequency-unit list, built in `nodes/support.rs`, used by every
-  node (already the intent; the inconsistent labels show the implementation is incomplete).
+- [ ] **chore** **Units.** One `Unit` enum and one label set in `nodes/support.rs`, used by every node.
 - [ ] **chore** **Filters.** Filter, Three-Band Split, Equalizer, DC Filter, the Chorus/Flanger/Phaser filtering and
   Low Pass share one biquad / cascaded-stage implementation in `dsp.rs`, with slope and Q designs in one place.
 - [ ] **chore** **Level detectors and smoothers.** Envelope, Slew, Compressor, Gate, Limiter and the sidechain
   share one detector (peak/RMS, attack/release) and one smoother in `dsp.rs`.
 - [ ] **chore** **Layout and generators.** One shared generator layout setting (see above).
-- [ ] **chore** **Dry/wet and blend.** One implementation, not a `mix` per node.
+- [ ] **chore** **Dry/wet.** One shared `mix` definition and helper, not a copy per node.
 - [ ] **chore** **Inspector widgets.** One slider+value-box, one integer field, one choice control, one tooltip
   helper, one meter, one number formatter. No widget re-implements these. The inspector, the timeline and the
   editor use the same ones.
