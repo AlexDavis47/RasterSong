@@ -2,7 +2,7 @@ use std::f64::consts::PI;
 
 use crate::dsp::{Biquad, BiquadKind, DelayLine};
 use crate::nodes::support::UNBOUNDED_WARMUP;
-use crate::nodes::{Category, FreqUnit, NodeKind, NodeSpec};
+use crate::nodes::{Category, Unit, NodeKind, NodeSpec};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 choice! {
@@ -29,7 +29,7 @@ choice! {
 pub struct Filter {
     kind: Kind,
     cutoff: f64,
-    unit: FreqUnit,
+    unit: Unit,
     q: f64,
     gain: f64,
     /// Set in `prepare`.
@@ -54,7 +54,7 @@ params! { Filter {
     CUTOFF: ParamSpec::number("cutoff", "Cutoff", 40.0, 0.01, 200.0, "Frequency of the filter's corner or centre")
         .exposed()
         .limits(1e-06, 1e9),
-    UNIT: FreqUnit::param("Row", "Unit for the cutoff"),
+    UNIT: Unit::freq_param("row", "Unit for the cutoff"),
     Q: ParamSpec::number(
         "q",
         "Resonance",

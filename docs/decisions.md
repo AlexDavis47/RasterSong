@@ -98,6 +98,11 @@ become one `Unit` enum (pixel, sample, row, frame, ms, second, beat, bar) with o
 multiplies by the unit's sample count; a frequency parameter divides, and its label says "cycles per". The old
 `Hertz` option is `second` read as a frequency. Old graphs are migrated.
 
+Done (October 2026), with the pixel and sample units from the next decision. Names are singular and lowercase
+(`pixel, sample, row, frame, ms, second, beat, bar`); a frequency parameter's dropdown is labelled **Cycles per**
+instead of **Unit**. Old graphs are upgraded by `migrate.rs` (`rows`/`Row` → `row`, `Hertz`/`seconds` → `second`, and
+so on, on every node with a `unit` parameter).
+
 ### The "users never see samples" principle is dropped (October 2026)
 
 It was outdated and hid a useful thing from the user. Pixels and samples become ordinary units. Resolution-

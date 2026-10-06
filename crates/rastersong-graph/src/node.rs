@@ -187,6 +187,9 @@ pub struct PrepareContext<'a> {
     /// For each parameter (in the order of the node's specs), the range its value can move over
     /// when a signal modulates it, or `None` when it's constant. Empty means none are modulated.
     pub modulated: &'a [Option<(f64, f64)>],
+    /// How big a render pixel is next to a project pixel's width: 0.5 for a half-resolution
+    /// preview, 1 at full size. Only video signals scale; see [`Self::samples_per_pixel`].
+    pub pixel_scale: f64,
 }
 
 impl PrepareContext<'_> {
@@ -201,6 +204,19 @@ impl PrepareContext<'_> {
 
     pub fn samples_per_row(&self) -> usize {
         self.main().samples_per_row()
+    }
+
+    /// Samples in one pixel of the project's own resolution: the pixel's channels, scaled down
+    /// with the preview for video so a small preview matches the full render. Anything that
+    /// isn't video (audio) has no preview scale, and a pixel is one frame of its channels.
+    pub fn samples_per_pixel(&self) -> f64 {
+        let main = self.main();
+        let scale = if main.tag.kind == crate::Kind::Video {
+            self.pixel_scale
+        } else {
+            1.0
+        };
+        f64::from(main.samples_per_pixel) * scale
     }
 
     pub fn samples_per_frame(&self) -> usize {

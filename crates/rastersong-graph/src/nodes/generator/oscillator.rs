@@ -1,6 +1,6 @@
 use std::f64::consts::TAU;
 
-use crate::nodes::{Category, FreqUnit, GeneratorLayout, NodeKind, NodeSpec, SampleClock};
+use crate::nodes::{Category, Unit, GeneratorLayout, NodeKind, NodeSpec, SampleClock};
 use crate::{Layout, LayoutContext, Node, OutputSpec, ParamSpec, Params, PrepareContext};
 use crate::{ProcessContext, Range, Signal};
 
@@ -48,7 +48,7 @@ pub struct Oscillator {
     wave: Wave,
     layout: GeneratorLayout,
     freq: f64,
-    unit: FreqUnit,
+    unit: Unit,
     phase: f64,
     amplitude: f32,
     offset: f32,
@@ -78,7 +78,7 @@ params! { Oscillator {
     )
     .exposed()
     .limits(0.0, 1_000_000.0),
-    UNIT: FreqUnit::param("Row", "Unit for the frequency (cycles per unit): Row keeps the look at any resolution"),
+    UNIT: Unit::freq_param("row", "Unit for the frequency (cycles per unit): Row keeps the look at any resolution"),
     PHASE: ParamSpec::number(
         "phase",
         "Phase",
@@ -128,10 +128,10 @@ impl NodeKind for Oscillator {
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "wave": "triangle", "freq": 2.5 }"#,
         r#"{ "wave": "square", "pulse_width": 0.25, "phase": 0.3 }"#,
-        r#"{ "wave": "saw", "freq": 1, "unit": "Frame" }"#,
-        r#"{ "wave": "ramp", "freq": 3000, "unit": "Hertz", "amplitude": 1, "offset": 0 }"#,
-        r#"{ "wave": "saw", "freq": 2, "unit": "Beat" }"#,
-        r#"{ "wave": "square", "freq": 0.25, "unit": "Bar" }"#,
+        r#"{ "wave": "saw", "freq": 1, "unit": "frame" }"#,
+        r#"{ "wave": "ramp", "freq": 3000, "unit": "second", "amplitude": 1, "offset": 0 }"#,
+        r#"{ "wave": "saw", "freq": 2, "unit": "beat" }"#,
+        r#"{ "wave": "square", "freq": 0.25, "unit": "bar" }"#,
     ];
     const BENCH: Option<&'static str> = Some(r#"{ "wave": "sine", "freq": 12 }"#);
 
@@ -170,7 +170,7 @@ impl Node for Oscillator {
         self.group = ctx.main().samples_per_pixel.max(1) as usize;
         self.unit_step = self.unit.per_sample(1.0, ctx) * self.group as f64;
         self.origin = match self.unit {
-            FreqUnit::Beat | FreqUnit::Bar => ctx.beat_offset_samples() / self.group as f64,
+            Unit::Beat | Unit::Bar => ctx.beat_offset_samples() / self.group as f64,
             _ => 0.0,
         };
         self.modulated = ctx.modulation(Self::FREQ).is_some();
@@ -275,7 +275,7 @@ mod tests {
     fn beat_ramp(tempo: Tempo, frame: u64) -> Vec<f32> {
         let mut node = node_with_tempo(
             "oscillator",
-            r#"{ "wave": "ramp", "freq": 1, "unit": "Beat", "amplitude": 0.5, "offset": 0.5 }"#,
+            r#"{ "wave": "ramp", "freq": 1, "unit": "beat", "amplitude": 0.5, "offset": 0.5 }"#,
             1000,
             30_000.0,
             &[],

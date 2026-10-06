@@ -1,6 +1,6 @@
 use crate::dsp::{db_to_gain, smoothing_coefficient};
 use crate::nodes::support::settle_frames;
-use crate::nodes::{Category, NodeKind, NodeSpec, TimeUnit};
+use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{InputSpec, Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Range at or below which a closed gate is fully silent.
@@ -16,7 +16,7 @@ pub struct Gate {
     attack_time: f64,
     hold_time: f64,
     release_time: f64,
-    unit: TimeUnit,
+    unit: Unit,
     range: f64,
     /// Set in `prepare`.
     threshold_gain: f32,
@@ -73,7 +73,7 @@ params! { Gate {
         "How quickly the gate closes",
     )
     .limits(0.0, 1e6),
-    UNIT: TimeUnit::param("ms", "Unit for attack, hold and release"),
+    UNIT: Unit::time_param("ms", "Unit for attack, hold and release"),
     RANGE: ParamSpec::number(
         "range",
         "Range",
@@ -102,7 +102,7 @@ impl NodeKind for Gate {
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "threshold": -12, "hold": 5, "release": 10 }"#,
         r#"{ "threshold": -6, "range": -20, "attack": 3 }"#,
-        r#"{ "threshold": -12, "unit": "beats", "attack": 0.001, "hold": 0.01, "release": 0.05 }"#,
+        r#"{ "threshold": -12, "unit": "beat", "attack": 0.001, "hold": 0.01, "release": 0.05 }"#,
     ];
     const BENCH: Option<&'static str> = Some("{}");
 

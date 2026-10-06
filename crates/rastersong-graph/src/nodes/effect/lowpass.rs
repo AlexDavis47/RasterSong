@@ -1,7 +1,7 @@
 use std::f64::consts::TAU;
 
 use crate::nodes::support::UNBOUNDED_WARMUP;
-use crate::nodes::{Category, FreqUnit, NodeKind, NodeSpec};
+use crate::nodes::{Category, Unit, NodeKind, NodeSpec};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// One-pole low pass filter. The cutoff is in cycles per row by default, so the blur looks the same
@@ -10,7 +10,7 @@ use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 #[derive(Debug)]
 pub struct Lowpass {
     cutoff: f64,
-    unit: FreqUnit,
+    unit: Unit,
     /// Cutoff in cycles per sample, set in `prepare`.
     base: f64,
     /// Cycles per sample of one unit of cutoff, set in `prepare`.
@@ -35,7 +35,7 @@ params! { Lowpass {
     )
     .exposed()
     .limits(1e-06, 1e9),
-    UNIT: FreqUnit::param("Row", "Unit for the cutoff"),
+    UNIT: Unit::freq_param("row", "Unit for the cutoff"),
 } }
 
 impl NodeKind for Lowpass {
@@ -47,7 +47,7 @@ impl NodeKind for Lowpass {
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "cutoff": 0.7 }"#,
         r#"{ "cutoff": 1.5 }"#,
-        r#"{ "cutoff": 3, "unit": "Beat" }"#,
+        r#"{ "cutoff": 3, "unit": "beat" }"#,
     ];
     const BENCH: Option<&'static str> = Some(r#"{ "cutoff": 40 }"#);
 

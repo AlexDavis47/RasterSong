@@ -1,5 +1,5 @@
 use crate::nodes::support::settle_frames;
-use crate::nodes::{Category, NodeKind, NodeSpec, TimeUnit};
+use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Slew limiter: the output follows the input but can only rise and fall at a set speed, which
@@ -8,7 +8,7 @@ use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 pub struct Slew {
     rise: f64,
     fall: f64,
-    unit: TimeUnit,
+    unit: Unit,
     /// Largest change per sample, up and down, set in `prepare`. Infinite when the time is 0.
     up: f32,
     down: f32,
@@ -38,7 +38,7 @@ params! { Slew {
     )
     .fixed()
     .limits(0.0, 1e6),
-    UNIT: TimeUnit::param("rows", "Unit for rise and fall"),
+    UNIT: Unit::time_param("row", "Unit for rise and fall"),
 } }
 
 impl NodeKind for Slew {
@@ -50,7 +50,7 @@ impl NodeKind for Slew {
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "rise": 0.5, "fall": 0.1 }"#,
         r#"{ "rise": 0, "fall": 2 }"#,
-        r#"{ "rise": 3, "fall": 0, "unit": "frames" }"#,
+        r#"{ "rise": 3, "fall": 0, "unit": "frame" }"#,
     ];
     const BENCH: Option<&'static str> = Some("{}");
 

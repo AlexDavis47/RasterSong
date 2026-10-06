@@ -1,6 +1,6 @@
 use crate::dsp::{db_to_gain, smoothing_coefficient};
 use crate::nodes::support::settle_frames;
-use crate::nodes::{Category, NodeKind, NodeSpec, TimeUnit};
+use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// A peak limiter: the gain drops at once so no sample passes the ceiling, then recovers over the
@@ -11,7 +11,7 @@ pub struct Limiter {
     /// The ceiling as a gain.
     ceiling: f32,
     release: f64,
-    unit: TimeUnit,
+    unit: Unit,
     /// Release smoothing coefficient, set in `prepare`.
     coefficient: f32,
     slowest: f64,
@@ -40,7 +40,7 @@ params! { Limiter {
     )
     .fixed()
     .limits(0.0, 1e6),
-    UNIT: TimeUnit::param("ms", "Unit for the release"),
+    UNIT: Unit::time_param("ms", "Unit for the release"),
 } }
 
 impl NodeKind for Limiter {
@@ -53,7 +53,7 @@ impl NodeKind for Limiter {
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "ceiling": -12, "release": 10 }"#,
         r#"{ "ceiling": 0, "release": 0 }"#,
-        r#"{ "ceiling": -3, "release": 0.5, "unit": "rows" }"#,
+        r#"{ "ceiling": -3, "release": 0.5, "unit": "row" }"#,
     ];
     const BENCH: Option<&'static str> = Some("{}");
 
@@ -128,7 +128,7 @@ mod tests {
     fn the_gain_recovers_after_a_peak() {
         // Release of 2 samples: after the peak the quiet tail climbs back toward full level.
         let out = limit(
-            r#"{ "ceiling": -6, "release": 2, "unit": "rows" }"#,
+            r#"{ "ceiling": -6, "release": 2, "unit": "row" }"#,
             &[1.0, 0.1, 0.1, 0.1],
         );
         // One row is the whole 4 sample block here, so the release is 8 samples.

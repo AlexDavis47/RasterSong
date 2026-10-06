@@ -38,6 +38,9 @@ pub struct CompileOptions {
     pub sources: HashMap<String, Layout>,
     /// The layout the output node must produce (the project's RGB frame).
     pub output: Layout,
+    /// The size of a render pixel against a project pixel: 1 at full size, 0.5 for a
+    /// half-resolution preview. The `pixel` unit follows it.
+    pub pixel_scale: f64,
 }
 
 /// The level of one node output in the last processed frame.
@@ -894,6 +897,7 @@ impl<'a> Compiler<'a> {
             outputs: &shape.node_outputs,
             connected: &connected,
             modulated: &modulated,
+            pixel_scale: self.options.pixel_scale,
         };
 
         let mut nodes = vec![std::mem::replace(

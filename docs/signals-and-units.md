@@ -12,33 +12,29 @@ Seconds only exist at the edges (display, audio alignment).
 Because every signal is aligned frame-to-frame, signals with different sample counts (a carrier with 43,200
 samples per frame and a modulator with 1,470) can never drift out of sync.
 
-**User-facing units** are converted to samples internally by the engine. Rows, frames, time and beats are
-resolution-independent, so a half-resolution preview looks like a scaled-down version of the full render. Samples
-and pixels are also available (see below), because they are a legitimate thing to want to think in:
+**User-facing units** are converted to samples internally by the engine. Rows, frames, pixels, time and beats are
+resolution-independent, so a half-resolution preview looks like a scaled-down version of the full render. There is
+one list of units for both times and frequencies; a time multiplies by the unit's sample count, a frequency
+(labelled **Cycles per**) divides by it:
 
 | Unit | Meaning | Example use |
 |---|---|---|
-| Frames | One full frame of the signal (block length) | Delay by 1 frame, feedback length |
-| Rows | One row of the signal (`width × samples_per_pixel`) | Delay by 1 row for wave effects |
-| Fraction of a row | Horizontal offsets | Shift by 0.1 row |
-| Milliseconds, seconds | Time of the signal's own clock | Gate hold, reverb pre-delay |
-| Beats, bars | Musical time at the project tempo | Compressor release of half a beat |
-| Row, Frame (as frequencies) | Cycles per row or per frame, for filters and oscillators | Low pass cutoff |
-| Hertz | Frequencies of audio-domain nodes, relative to the input signal's own sample rate | Three-band crossovers |
-| Beat, Bar (as frequencies) | Cycles per beat or bar, locked to the beat grid | A wobble on every beat |
+| pixel | One pixel of the **project's** resolution; a downscaled preview scales it with the image (`3 × scale` samples for RGB video, one frame of channels for audio) | Delay by 3 pixels, a cutoff in cycles per pixel |
+| sample | One literal sample of the render in front of you; it means something different at another preview scale | Low-level experiments |
+| row | One row of the signal (`width × samples_per_pixel`) | Delay by 1 row for wave effects |
+| frame | One full frame of the signal (block length) | Delay by 1 frame, feedback length |
+| ms | Milliseconds of the signal's own clock | Gate hold, reverb pre-delay |
+| second | Seconds of the signal's own clock; as a frequency, Hertz | Three-band crossovers |
+| beat, bar | Musical time at the project tempo | Compressor release of half a beat; a wobble on every beat |
 
 All of these can be fractional.
 
-Every node that takes a time or a frequency has one `unit` parameter built with `TimeUnit::param` or
-`FreqUnit::param` (`nodes/support.rs`). Renamed options are upgraded by `migrate.rs`, so old graph files keep
-loading.
-
-> **Known inconsistency, and why.** `TimeUnit` and `FreqUnit` are two enums that do the same job. Both just say
-> "how many samples is one of these": a time parameter multiplies by it (`value × samples_per_unit`), a frequency
-> divides (`value ÷ samples_per_unit`, cycles per unit). A frequency is a time inverted, so the split buys nothing.
-> It also leaks to the user as two label sets (`rows, frames, ms, seconds, beats, bars` against
-> `Row, Frame, Hertz, Beat, Bar`). The roadmap merges them into one `Unit` with one label set; see
-> [Units](roadmap.md#units-and-parameter-semantics) and [Decisions](decisions.md#one-unit-type-for-time-and-frequency-october-2026).
+Every node that takes a time or a frequency has one `unit` parameter built with `Unit::time_param` or
+`Unit::freq_param` (`nodes/support.rs`; the second is labelled "Cycles per"). A node calls `unit.samples(ctx)` to
+multiply or `unit.per_sample(value, ctx)` to divide. The `pixel` unit scales with the preview through
+`CompileOptions::pixel_scale`, which the renderer sets to render width over project width. Option names that
+used to differ between the two lists (`rows`, `Row`, `Hertz`, …) are upgraded by `migrate.rs`, so old graph
+files keep loading.
 
 ### Tempo
 

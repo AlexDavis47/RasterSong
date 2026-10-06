@@ -1,6 +1,6 @@
 use crate::dsp::{DelayLine, mix};
 use crate::nodes::support::{UNBOUNDED_WARMUP, settle_frames};
-use crate::nodes::{Category, NodeKind, NodeSpec, TimeUnit};
+use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Delay lengths of Freeverb's eight parallel comb filters and four series all-pass filters, in
@@ -80,7 +80,7 @@ pub struct Reverb {
     size: f64,
     damping: f32,
     predelay: f64,
-    unit: TimeUnit,
+    unit: Unit,
     mix: f32,
     /// Set in `prepare`.
     feedback: f32,
@@ -99,7 +99,7 @@ params! { Reverb {
     PREDELAY: ParamSpec::number("predelay", "Pre-delay", 0.0, 0.0, 100.0, "Gap before the reverb starts")
         .fixed()
         .limits(0.0, 10_000.0),
-    UNIT: TimeUnit::param("ms", "Unit for the pre-delay"),
+    UNIT: Unit::time_param("ms", "Unit for the pre-delay"),
     MIX: ParamSpec::number("mix", "Mix", 0.3, 0.0, 1.0, "0 is the dry input, 1 is only the reverb")
         .exposed(),
 } }
@@ -113,7 +113,7 @@ impl NodeKind for Reverb {
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "size": 0.8, "damping": 0.2, "mix": 0.5 }"#,
-        r#"{ "size": 0.2, "predelay": 0.5, "unit": "rows", "mix": 1 }"#,
+        r#"{ "size": 0.2, "predelay": 0.5, "unit": "row", "mix": 1 }"#,
     ];
     const BENCH: Option<&'static str> = Some(r#"{ "size": 0.7, "mix": 0.4 }"#);
 

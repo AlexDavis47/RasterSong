@@ -1,6 +1,6 @@
 use crate::dsp::{DelayLine, mix};
 use crate::nodes::support::settle_frames;
-use crate::nodes::{Category, NodeKind, NodeSpec, TimeUnit};
+use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Chorus: the signal mixed with a few slightly delayed copies. It has no oscillator of its own:
@@ -9,7 +9,7 @@ use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 #[derive(Debug)]
 pub struct Chorus {
     time: f64,
-    unit: TimeUnit,
+    unit: Unit,
     voices: usize,
     spread: f64,
     mix: f32,
@@ -30,7 +30,7 @@ params! { Chorus {
     )
     .exposed()
     .limits(0.0, 1000.0),
-    UNIT: TimeUnit::param("ms", "Unit for the time"),
+    UNIT: Unit::time_param("ms", "Unit for the time"),
     VOICES: ParamSpec::number("voices", "Voices", 2.0, 1.0, 4.0, "How many delayed copies are mixed in")
         .fixed(),
     SPREAD: ParamSpec::number(
@@ -59,9 +59,9 @@ impl NodeKind for Chorus {
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
-        r#"{ "time": 0.5, "unit": "rows", "voices": 3 }"#,
+        r#"{ "time": 0.5, "unit": "row", "voices": 3 }"#,
         r#"{ "time": 12, "voices": 4, "spread": 0.6, "mix": 0.8 }"#,
-        r#"{ "time": 1, "unit": "rows", "voices": 1 }"#,
+        r#"{ "time": 1, "unit": "row", "voices": 1 }"#,
     ];
     const BENCH: Option<&'static str> = Some(r#"{ "voices": 3 }"#);
 
@@ -134,7 +134,7 @@ mod tests {
         // One row is the 8 sample block, so a quarter row is 2 samples.
         let mut n = node(
             "chorus",
-            r#"{ "time": 0.25, "unit": "rows", "voices": 1, "mix": 1 }"#,
+            r#"{ "time": 0.25, "unit": "row", "voices": 1, "mix": 1 }"#,
             8,
             8.0,
             &[true],
@@ -149,7 +149,7 @@ mod tests {
         // Two voices at 1 and 3 samples (time 2, spread 0.5): the average of both delays.
         let mut n = node(
             "chorus",
-            r#"{ "time": 0.25, "unit": "rows", "voices": 2, "spread": 0.5, "mix": 1 }"#,
+            r#"{ "time": 0.25, "unit": "row", "voices": 2, "spread": 0.5, "mix": 1 }"#,
             8,
             8.0,
             &[true],

@@ -1,6 +1,6 @@
 use crate::dsp::smoothing_coefficient;
 use crate::nodes::support::settle_frames;
-use crate::nodes::{Category, NodeKind, NodeSpec, TimeUnit};
+use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 choice! {
@@ -20,7 +20,7 @@ pub struct Envelope {
     detector: Detector,
     attack: f64,
     release: f64,
-    unit: TimeUnit,
+    unit: Unit,
     /// Smoothing coefficients, set in `prepare`.
     attack_coefficient: f32,
     release_coefficient: f32,
@@ -43,7 +43,7 @@ params! { Envelope {
     RELEASE: ParamSpec::number("release", "Release", 50.0, 0.0, 5000.0, "How quickly the output falls when the input gets weaker")
         .fixed()
         .limits(0.0, 1e6),
-    UNIT: TimeUnit::param("ms", "Unit for attack and release"),
+    UNIT: Unit::time_param("ms", "Unit for attack and release"),
 } }
 
 impl NodeKind for Envelope {
@@ -54,7 +54,7 @@ impl NodeKind for Envelope {
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "detector": "rms", "attack": 2, "release": 10 }"#,
-        r#"{ "attack": 0.5, "release": 0.5, "unit": "rows" }"#,
+        r#"{ "attack": 0.5, "release": 0.5, "unit": "row" }"#,
         r#"{ "attack": 0, "release": 0 }"#,
     ];
     const BENCH: Option<&'static str> = Some("{}");

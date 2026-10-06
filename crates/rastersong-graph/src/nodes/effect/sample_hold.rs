@@ -1,5 +1,5 @@
 use crate::nodes::support::{SampleClock, settle_frames};
-use crate::nodes::{Category, NodeKind, NodeSpec, TimeUnit};
+use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Sample and hold with optional quantizing: every `period` the input is sampled and held until
@@ -9,7 +9,7 @@ use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 #[derive(Debug)]
 pub struct SampleHold {
     period: f64,
-    unit: TimeUnit,
+    unit: Unit,
     levels: f32,
     /// Samples per hold, set in `prepare`.
     samples: f64,
@@ -30,7 +30,7 @@ params! { SampleHold {
     )
     .fixed()
     .limits(0.0, 1e6),
-    UNIT: TimeUnit::param("rows", "Unit for the period"),
+    UNIT: Unit::time_param("row", "Unit for the period"),
     LEVELS: ParamSpec::number(
         "levels",
         "Levels",
@@ -51,9 +51,9 @@ impl NodeKind for SampleHold {
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "period": 0.5 }"#,
-        r#"{ "period": 2.5, "unit": "frames" }"#,
+        r#"{ "period": 2.5, "unit": "frame" }"#,
         r#"{ "period": 0, "levels": 4 }"#,
-        r#"{ "period": 1.5, "levels": 8, "unit": "rows" }"#,
+        r#"{ "period": 1.5, "levels": 8, "unit": "row" }"#,
     ];
     const BENCH: Option<&'static str> = Some(r#"{ "period": 0.5, "levels": 8 }"#);
 

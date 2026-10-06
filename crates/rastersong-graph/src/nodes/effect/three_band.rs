@@ -1,5 +1,5 @@
 use crate::dsp::Biquad;
-use crate::nodes::{Category, FreqUnit, NodeKind, NodeSpec};
+use crate::nodes::{Category, Unit, NodeKind, NodeSpec};
 use crate::{
     Node, OutputSpec, ParamSpec, Params, Part, PrepareContext, ProcessContext, Signal, TagRule,
 };
@@ -11,7 +11,7 @@ use crate::{
 pub struct ThreeBand {
     low_hz: f64,
     high_hz: f64,
-    unit: FreqUnit,
+    unit: Unit,
     /// The low crossover in cycles per sample, set in `prepare`.
     low_cycles: f64,
     low: Biquad,
@@ -39,7 +39,7 @@ params! { ThreeBand {
     )
     .fixed()
     .limits(0.001, 1e9),
-    UNIT: FreqUnit::param("Hertz", "Unit for the crossovers"),
+    UNIT: Unit::freq_param("second", "Unit for the crossovers"),
 } }
 
 impl NodeKind for ThreeBand {
@@ -58,7 +58,7 @@ impl NodeKind for ThreeBand {
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "low_hz": 300, "high_hz": 3000 }"#,
-        r#"{ "low_hz": 2, "high_hz": 9, "unit": "Beat" }"#,
+        r#"{ "low_hz": 2, "high_hz": 9, "unit": "beat" }"#,
     ];
     const BENCH: Option<&'static str> = Some("{}");
 

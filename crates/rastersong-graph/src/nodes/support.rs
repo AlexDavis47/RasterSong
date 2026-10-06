@@ -4,73 +4,59 @@ use crate::nodes::{DEFAULT_AUDIO, DEFAULT_VIDEO};
 use crate::{Layout, LayoutContext, PrepareContext, ProcessContext, Range, Tag};
 
 choice! {
-    /// A unit of time for user-facing parameters. Rows and frames look the same at any
-    /// resolution; beats and bars follow the project tempo.
-    pub enum TimeUnit {
+    /// A unit for user-facing time and frequency parameters. Each is "how many samples is one of
+    /// these": a time multiplies by it, a frequency (cycles per unit) divides by it. Rows, frames,
+    /// pixels, beats and bars look the same at any resolution or tempo-locked; seconds and
+    /// milliseconds are the signal's own time.
+    pub enum Unit {
+        /// A pixel of the project's own resolution. A scaled-down preview scales it with the
+        /// image, so it looks like a scaled-down version of the full render.
+        Pixel = "pixel",
+        /// The literal sample of the render in front of you. The same value means something
+        /// different at another preview scale.
+        Sample = "sample",
         /// Rows of the signal (pixel rows of a frame; slices of an audio block).
-        Rows = "rows",
-        Frames = "frames",
+        Row = "row",
+        Frame = "frame",
         /// Milliseconds of the signal's own time.
         Ms = "ms",
-        Seconds = "seconds",
+        Second = "second",
         /// Beats at the project tempo.
-        Beats = "beats",
+        Beat = "beat",
         /// Bars at the project tempo and time signature.
-        Bars = "bars",
+        Bar = "bar",
     }
 }
 
-impl TimeUnit {
+impl Unit {
     /// The `unit` parameter of a node with time parameters.
-    pub const fn param(default: &'static str, help: &'static str) -> crate::ParamSpec {
+    pub const fn time_param(default: &'static str, help: &'static str) -> crate::ParamSpec {
         crate::ParamSpec::choice("unit", "Unit", Self::OPTIONS, default, help)
+    }
+
+    /// The `unit` parameter of a node with frequency parameters: the same units, read as
+    /// "cycles per".
+    pub const fn freq_param(default: &'static str, help: &'static str) -> crate::ParamSpec {
+        crate::ParamSpec::choice("unit", "Cycles per", Self::OPTIONS, default, help)
     }
 
     /// Samples in one of this unit.
     pub fn samples(self, ctx: &PrepareContext) -> f64 {
         match self {
-            Self::Rows => ctx.samples_per_row() as f64,
-            Self::Frames => ctx.samples_per_frame() as f64,
-            Self::Ms => ms_to_samples(1.0, ctx),
-            Self::Seconds => ctx.sample_rate(),
-            Self::Beats => ctx.samples_per_beat(),
-            Self::Bars => ctx.samples_per_bar(),
-        }
-    }
-}
-
-choice! {
-    /// A frequency unit for user-facing parameters: the inverse of a [`TimeUnit`].
-    pub enum FreqUnit {
-        /// Cycles per row: the pattern looks the same at any resolution.
-        Row = "Row",
-        /// Cycles per frame.
-        Frame = "Frame",
-        /// Cycles per second of the signal's own time.
-        Hz = "Hertz",
-        /// Cycles per beat at the project tempo.
-        Beat = "Beat",
-        /// Cycles per bar at the project tempo and time signature.
-        Bar = "Bar",
-    }
-}
-
-impl FreqUnit {
-    /// The `unit` parameter of a node with frequency parameters.
-    pub const fn param(default: &'static str, help: &'static str) -> crate::ParamSpec {
-        crate::ParamSpec::choice("unit", "Unit", Self::OPTIONS, default, help)
-    }
-
-    /// Cycles per sample for `value` of this unit.
-    pub fn per_sample(self, value: f64, ctx: &PrepareContext) -> f64 {
-        let per = match self {
+            Self::Pixel => ctx.samples_per_pixel(),
+            Self::Sample => 1.0,
             Self::Row => ctx.samples_per_row() as f64,
             Self::Frame => ctx.samples_per_frame() as f64,
-            Self::Hz => ctx.sample_rate(),
+            Self::Ms => ms_to_samples(1.0, ctx),
+            Self::Second => ctx.sample_rate(),
             Self::Beat => ctx.samples_per_beat(),
             Self::Bar => ctx.samples_per_bar(),
-        };
-        value / per.max(1.0)
+        }
+    }
+
+    /// Cycles per sample for `value` cycles per this unit.
+    pub fn per_sample(self, value: f64, ctx: &PrepareContext) -> f64 {
+        value / self.samples(ctx).max(1e-9)
     }
 }
 
@@ -214,6 +200,7 @@ mod tests {
             outputs: &[layout],
             connected: &[true],
             modulated: &[],
+            pixel_scale: 1.0,
         })
     }
 
@@ -229,13 +216,13 @@ mod tests {
     fn beats_and_bars_follow_the_tempo() {
         // 30000 samples a second.
         with_context(1000, tempo(120.0, 4), |ctx| {
-            assert_eq!(TimeUnit::Seconds.samples(ctx), 30_000.0);
-            assert_eq!(TimeUnit::Beats.samples(ctx), 15_000.0);
-            assert_eq!(TimeUnit::Bars.samples(ctx), 60_000.0);
+            assert_eq!(Unit::Second.samples(ctx), 30_000.0);
+            assert_eq!(Unit::Beat.samples(ctx), 15_000.0);
+            assert_eq!(Unit::Bar.samples(ctx), 60_000.0);
         });
         with_context(1000, tempo(90.0, 3), |ctx| {
-            assert!((TimeUnit::Beats.samples(ctx) - 20_000.0).abs() < 1e-6);
-            assert!((TimeUnit::Bars.samples(ctx) - 60_000.0).abs() < 1e-6);
+            assert!((Unit::Beat.samples(ctx) - 20_000.0).abs() < 1e-6);
+            assert!((Unit::Bar.samples(ctx) - 60_000.0).abs() < 1e-6);
         });
     }
 
@@ -243,33 +230,33 @@ mod tests {
     fn time_units_agree_with_each_other() {
         for (bpm, len) in [(90.0, 800), (120.0, 1000), (133.0, 1470)] {
             with_context(len, tempo(bpm, 4), |ctx| {
-                let ms = TimeUnit::Ms.samples(ctx);
-                assert!((TimeUnit::Seconds.samples(ctx) - ms * 1000.0).abs() < 1e-6);
+                let ms = Unit::Ms.samples(ctx);
+                assert!((Unit::Second.samples(ctx) - ms * 1000.0).abs() < 1e-6);
                 let beat_ms = 60_000.0 / bpm;
-                assert!((TimeUnit::Beats.samples(ctx) - ms * beat_ms).abs() < 1e-6 * ms * beat_ms);
-                assert!(
-                    (TimeUnit::Bars.samples(ctx) - 4.0 * TimeUnit::Beats.samples(ctx)).abs() < 1e-6
-                );
+                assert!((Unit::Beat.samples(ctx) - ms * beat_ms).abs() < 1e-6 * ms * beat_ms);
+                assert!((Unit::Bar.samples(ctx) - 4.0 * Unit::Beat.samples(ctx)).abs() < 1e-6);
             });
         }
     }
 
     #[test]
-    fn frequency_units_invert_the_time_units() {
-        let pairs = [
-            (FreqUnit::Row, TimeUnit::Rows),
-            (FreqUnit::Frame, TimeUnit::Frames),
-            (FreqUnit::Hz, TimeUnit::Seconds),
-            (FreqUnit::Beat, TimeUnit::Beats),
-            (FreqUnit::Bar, TimeUnit::Bars),
-        ];
+    fn frequencies_are_cycles_per_unit() {
         for bpm in [90.0, 120.0, 133.0] {
             with_context(1000, tempo(bpm, 4), |ctx| {
-                for (freq, time) in pairs {
-                    let per_sample = freq.per_sample(1.0, ctx);
+                for unit in [
+                    Unit::Pixel,
+                    Unit::Sample,
+                    Unit::Row,
+                    Unit::Frame,
+                    Unit::Ms,
+                    Unit::Second,
+                    Unit::Beat,
+                    Unit::Bar,
+                ] {
+                    let per_sample = unit.per_sample(1.0, ctx);
                     assert!(
-                        (per_sample * time.samples(ctx) - 1.0).abs() < 1e-9,
-                        "{freq:?} vs {time:?} at {bpm} bpm"
+                        (per_sample * unit.samples(ctx) - 1.0).abs() < 1e-9,
+                        "{unit:?} at {bpm} bpm"
                     );
                 }
             });
@@ -277,14 +264,42 @@ mod tests {
     }
 
     #[test]
-    fn saved_unit_names_still_parse() {
+    fn pixels_follow_the_preview_scale_and_samples_do_not() {
+        let samples = |layout: Layout, pixel_scale: f64, unit: Unit| {
+            unit.samples(&PrepareContext {
+                frame_rate: 30.0,
+                tempo: Tempo::default(),
+                inputs: &[layout],
+                outputs: &[layout],
+                connected: &[true],
+                modulated: &[],
+                pixel_scale,
+            })
+        };
+        let video = Layout::video(8, 4);
+        // Three samples (R, G, B) make a pixel; at half size, half of that is a project pixel.
+        assert_eq!(samples(video, 1.0, Unit::Pixel), 3.0);
+        assert_eq!(samples(video, 0.5, Unit::Pixel), 1.5);
+        assert_eq!(samples(video, 0.5, Unit::Sample), 1.0);
+        // A row, as a whole, keeps its own meaning.
+        assert_eq!(samples(video, 0.5, Unit::Row), 24.0);
+        // Audio has no preview scale: a pixel is one frame of its channels.
+        assert_eq!(
+            samples(Layout::audio_channels(100, 2), 0.5, Unit::Pixel),
+            2.0
+        );
+    }
+
+    #[test]
+    fn unit_names_are_the_same_for_times_and_frequencies() {
         use crate::nodes::Choice;
-        for name in ["rows", "frames", "ms"] {
-            assert!(TimeUnit::from_option(name).is_some(), "{name}");
+        for name in [
+            "pixel", "sample", "row", "frame", "ms", "second", "beat", "bar",
+        ] {
+            assert!(Unit::from_option(name).is_some(), "{name}");
         }
-        for name in ["Row", "Frame", "Hertz", "Beat", "Bar"] {
-            assert!(FreqUnit::from_option(name).is_some(), "{name}");
-        }
+        assert_eq!(Unit::time_param("row", "").label, "Unit");
+        assert_eq!(Unit::freq_param("row", "").label, "Cycles per");
     }
 
     #[test]

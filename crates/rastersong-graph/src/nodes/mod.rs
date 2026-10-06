@@ -12,7 +12,7 @@ pub mod support;
 
 use std::collections::BTreeMap;
 
-pub use support::{FreqUnit, GeneratorLayout, SampleClock, TimeUnit};
+pub use support::{GeneratorLayout, SampleClock, Unit};
 
 use crate::graph::{MAX_INPUTS, MAX_PARAMS};
 use crate::{InputSpec, Node, OutputSpec, ParamSpec, ParamValue, Params, Range, TagRule};

@@ -43,6 +43,21 @@ fn seeking_is_close_for_infinite_memory_graphs() {
 }
 
 #[test]
+fn the_pixel_unit_scales_with_the_preview() {
+    let render = |size| renderer_with(FINITE, &Registry::default(), size);
+    assert_eq!(
+        render(OutputSize::Native).compile_options().pixel_scale,
+        1.0
+    );
+    assert_eq!(
+        render(OutputSize::Scaled(0.5))
+            .compile_options()
+            .pixel_scale,
+        0.5
+    );
+}
+
+#[test]
 fn scaled_output_is_smaller() {
     let mut r = renderer_with(FINITE, &Registry::default(), OutputSize::Scaled(0.5));
     assert_eq!((r.info().width, r.info().height), (8, 4));

@@ -2,7 +2,7 @@ use std::f64::consts::PI;
 
 use crate::dsp::{Biquad, BiquadKind};
 use crate::nodes::support::UNBOUNDED_WARMUP;
-use crate::nodes::{Category, FreqUnit, NodeKind, NodeSpec};
+use crate::nodes::{Category, Unit, NodeKind, NodeSpec};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// A three-band parametric equaliser: a low shelf, a peaking mid band and a high shelf, each
@@ -10,7 +10,7 @@ use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 /// signal into three outputs.
 #[derive(Debug)]
 pub struct Equalizer {
-    unit: FreqUnit,
+    unit: Unit,
     low_freq: f64,
     low_gain: f64,
     mid_freq: f64,
@@ -27,7 +27,7 @@ pub struct Equalizer {
 }
 
 params! { Equalizer {
-    UNIT: FreqUnit::param("Row", "Unit for the three frequencies"),
+    UNIT: Unit::freq_param("row", "Unit for the three frequencies"),
     LOW_FREQ: ParamSpec::number("low_freq", "Low freq", 5.0, 0.01, 500.0, "Corner of the low shelf")
         .limits(1e-06, 1e9),
     LOW_GAIN: ParamSpec::number("low_gain", "Low gain", 0.0, -24.0, 24.0, "Boost or cut of everything below the low corner")

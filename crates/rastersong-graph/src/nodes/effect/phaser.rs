@@ -2,7 +2,7 @@ use std::f64::consts::{PI, TAU};
 
 use crate::dsp::mix;
 use crate::nodes::support::UNBOUNDED_WARMUP;
-use crate::nodes::{Category, FreqUnit, NodeKind, NodeSpec};
+use crate::nodes::{Category, Unit, NodeKind, NodeSpec};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Most allpass stages a phaser can chain.
@@ -15,7 +15,7 @@ const MAX_STAGES: usize = 12;
 pub struct Phaser {
     stages: usize,
     freq: f64,
-    unit: FreqUnit,
+    unit: Unit,
     feedback: f32,
     mix: f32,
     /// Cycles per sample of one unit of frequency, set in `prepare`.
@@ -48,7 +48,7 @@ params! { Phaser {
     )
     .exposed()
     .limits(1e-06, 1e9),
-    UNIT: FreqUnit::param("Hertz", "Unit for the frequency"),
+    UNIT: Unit::freq_param("second", "Unit for the frequency"),
     FEEDBACK: ParamSpec::number(
         "feedback",
         "Feedback",
@@ -74,7 +74,7 @@ impl NodeKind for Phaser {
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
-        r#"{ "stages": 2, "freq": 3, "unit": "Row" }"#,
+        r#"{ "stages": 2, "freq": 3, "unit": "row" }"#,
         r#"{ "stages": 8, "freq": 400, "feedback": -0.8, "mix": 0.7 }"#,
         r#"{ "stages": 12, "freq": 20000, "feedback": 0.95 }"#,
     ];
@@ -169,7 +169,7 @@ mod tests {
             .map(|n| (std::f64::consts::TAU * 0.02 * f64::from(n)).sin() as f32)
             .collect();
         let out = run(
-            r#"{ "mix": 1, "feedback": 0, "freq": 0.05, "unit": "Row" }"#,
+            r#"{ "mix": 1, "feedback": 0, "freq": 0.05, "unit": "row" }"#,
             &input,
         );
         let peak = out[2000..].iter().fold(0.0f32, |m, x| m.max(x.abs()));

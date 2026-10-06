@@ -86,6 +86,7 @@ impl Harness {
             outputs: &vec![layout; outputs],
             connected: &vec![true; inputs],
             modulated: &modulated,
+            pixel_scale: 1.0,
         });
         Self {
             node,

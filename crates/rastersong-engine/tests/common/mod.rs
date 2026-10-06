@@ -45,7 +45,7 @@ pub const FINITE: &str = r#"{ "version": 1,
   "nodes": [
     { "id": "video", "type": "video_input" },
     { "id": "audio", "type": "audio_input" },
-    { "id": "delay", "type": "delay", "params": { "time": 1.5, "depth": 0.5, "unit": "frames" }, "interpolation": "linear" },
+    { "id": "delay", "type": "delay", "params": { "time": 1.5, "depth": 0.5, "unit": "frame" }, "interpolation": "linear" },
     { "id": "crush", "type": "bitcrush", "params": { "bits": 5, "depth": 1 } },
     { "id": "out", "type": "output" }
   ],
@@ -66,7 +66,7 @@ pub const INFINITE: &str = r#"{ "version": 1,
     { "id": "video", "type": "video_input" },
     { "id": "audio", "type": "audio_input" },
     { "id": "smooth", "type": "lowpass", "params": { "cutoff": 0.5, "depth": 1 } },
-    { "id": "echo", "type": "delay", "params": { "time": 0.5, "unit": "frames", "feedback": 0.5, "mix": 0.5 } },
+    { "id": "echo", "type": "delay", "params": { "time": 0.5, "unit": "frame", "feedback": 0.5, "mix": 0.5 } },
     { "id": "out", "type": "output" }
   ],
   "connections": [

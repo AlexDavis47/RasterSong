@@ -1,6 +1,6 @@
 use crate::dsp::{db_to_gain, gain_to_db, smoothing_coefficient};
 use crate::nodes::support::settle_frames;
-use crate::nodes::{Category, NodeKind, NodeSpec, TimeUnit};
+use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{InputSpec, Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// A feed-forward compressor: turns the signal down by `ratio` above `threshold`, following the
@@ -14,7 +14,7 @@ pub struct Compressor {
     /// Attack and release, in `unit`.
     attack_time: f64,
     release_time: f64,
-    unit: TimeUnit,
+    unit: Unit,
     knee: f64,
     makeup: f64,
     /// Set in `prepare`.
@@ -68,7 +68,7 @@ params! { Compressor {
         "How quickly it lets go once the signal falls back",
     )
     .limits(0.0, 1e6),
-    UNIT: TimeUnit::param("ms", "Unit for attack and release"),
+    UNIT: Unit::time_param("ms", "Unit for attack and release"),
     KNEE: ParamSpec::number(
         "knee",
         "Knee",
@@ -108,7 +108,7 @@ impl NodeKind for Compressor {
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "threshold": -12, "ratio": 6, "attack": 2, "release": 20 }"#,
         r#"{ "threshold": -30, "knee": 0, "makeup": 6 }"#,
-        r#"{ "threshold": -12, "unit": "bars", "attack": 0.001, "release": 0.02 }"#,
+        r#"{ "threshold": -12, "unit": "bar", "attack": 0.001, "release": 0.02 }"#,
     ];
     const BENCH: Option<&'static str> = Some("{}");
 

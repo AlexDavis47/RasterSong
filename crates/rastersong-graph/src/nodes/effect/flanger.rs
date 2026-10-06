@@ -1,5 +1,5 @@
 use crate::dsp::{DelayLine, mix};
-use crate::nodes::{Category, NodeKind, NodeSpec, TimeUnit};
+use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Flanger: a very short delay with feedback, mixed with the dry signal, which carves a comb of
@@ -8,7 +8,7 @@ use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 #[derive(Debug)]
 pub struct Flanger {
     time: f64,
-    unit: TimeUnit,
+    unit: Unit,
     feedback: f32,
     mix: f32,
     /// Set in `prepare`: samples per unit, the longest delay, the strongest feedback.
@@ -29,7 +29,7 @@ params! { Flanger {
     )
     .exposed()
     .limits(0.0, 1000.0),
-    UNIT: TimeUnit::param("ms", "Unit for the time"),
+    UNIT: Unit::time_param("ms", "Unit for the time"),
     FEEDBACK: ParamSpec::number(
         "feedback",
         "Feedback",
@@ -57,8 +57,8 @@ impl NodeKind for Flanger {
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
-        r#"{ "time": 0.25, "unit": "rows" }"#,
-        r#"{ "time": 0.5, "unit": "rows", "feedback": -0.8, "mix": 0.7 }"#,
+        r#"{ "time": 0.25, "unit": "row" }"#,
+        r#"{ "time": 0.5, "unit": "row", "feedback": -0.8, "mix": 0.7 }"#,
         r#"{ "time": 3, "feedback": 0 }"#,
     ];
     const BENCH: Option<&'static str> = Some("{}");
@@ -129,7 +129,7 @@ mod tests {
         // A quarter row of 8 samples is 2 samples.
         let mut n = node(
             "flanger",
-            r#"{ "time": 0.25, "unit": "rows", "feedback": 0, "mix": 1 }"#,
+            r#"{ "time": 0.25, "unit": "row", "feedback": 0, "mix": 1 }"#,
             8,
             8.0,
             &[true],
@@ -143,7 +143,7 @@ mod tests {
     fn negative_feedback_flips_the_echo() {
         let mut n = node(
             "flanger",
-            r#"{ "time": 0.25, "unit": "rows", "feedback": -0.5, "mix": 1 }"#,
+            r#"{ "time": 0.25, "unit": "row", "feedback": -0.5, "mix": 1 }"#,
             8,
             8.0,
             &[true],

@@ -252,6 +252,21 @@ const RENAMED_CHOICES: &[RenamedChoice] = &[
     },
 ];
 
+/// Time units and frequency units were two lists with their own names; they are one now, singular
+/// and lowercase. Every node with a `unit` parameter takes these, whichever list it used.
+const RENAMED_UNITS: &[(&str, &str)] = &[
+    ("rows", "row"),
+    ("frames", "frame"),
+    ("seconds", "second"),
+    ("beats", "beat"),
+    ("bars", "bar"),
+    ("Row", "row"),
+    ("Frame", "frame"),
+    ("Hertz", "second"),
+    ("Beat", "beat"),
+    ("Bar", "bar"),
+];
+
 impl GraphDesc {
     /// Rewrites anything written for older node versions. Graphs already up to date are left
     /// as they are. [`GraphDesc::from_json`] calls it; call it on graphs deserialized any other
@@ -261,6 +276,7 @@ impl GraphDesc {
         self.rename_params(RENAMED_PARAMS);
         self.rename_ports(RENAMED_PORTS);
         self.rename_choices(RENAMED_CHOICES);
+        self.rename_units(Registry::shared());
         self.convert_modulation_inputs(MODULATION_INPUTS);
         self.upgrade_modulation(Registry::shared());
     }
@@ -417,6 +433,22 @@ impl GraphDesc {
                 {
                     *value = r.new.to_owned();
                 }
+            }
+        }
+    }
+
+    fn rename_units(&mut self, registry: &Registry) {
+        for node in &mut self.nodes {
+            let has_unit = registry
+                .get(&node.kind)
+                .is_some_and(|t| t.spec.params.iter().any(|p| p.name == "unit"));
+            if !has_unit {
+                continue;
+            }
+            if let Some(ParamValue::Text(value)) = node.params.get_mut("unit")
+                && let Some((_, new)) = RENAMED_UNITS.iter().find(|(old, _)| old == value)
+            {
+                *value = (*new).to_owned();
             }
         }
     }
@@ -639,10 +671,39 @@ mod tests {
             graph.nodes.iter().find(|n| n.id == id).unwrap().params["unit"].clone()
         };
         let text = |s: &str| ParamValue::Text(s.to_owned());
-        assert_eq!(unit(&graph, "f"), text("Frame"));
-        assert_eq!(unit(&graph, "o"), text("Hertz"));
-        assert_eq!(unit(&graph, "e"), text("Row"));
-        assert_eq!(unit(&graph, "d"), text("rows"));
+        assert_eq!(unit(&graph, "f"), text("frame"));
+        assert_eq!(unit(&graph, "o"), text("second"));
+        assert_eq!(unit(&graph, "e"), text("row"));
+        assert_eq!(unit(&graph, "d"), text("row"));
+        let once = graph.clone();
+        graph.upgrade();
+        assert_eq!(graph, once);
+    }
+
+    #[test]
+    fn time_and_frequency_units_share_one_list_of_names() {
+        let mut graph = GraphDesc::from_json(
+            r#"{ "version": 6,
+                "nodes": [
+                    { "id": "d", "type": "delay", "params": { "unit": "rows" } },
+                    { "id": "g", "type": "gate", "params": { "unit": "beats" } },
+                    { "id": "l", "type": "lowpass", "params": { "unit": "Row" } },
+                    { "id": "p", "type": "phaser", "params": { "unit": "Hertz" } },
+                    { "id": "o", "type": "oscillator", "params": { "unit": "cycles/frame" } },
+                    { "id": "r", "type": "reverb", "params": { "unit": "ms" } }
+                ] }"#,
+        )
+        .unwrap();
+        let unit = |graph: &GraphDesc, id: &str| {
+            graph.nodes.iter().find(|n| n.id == id).unwrap().params["unit"].clone()
+        };
+        let text = |s: &str| ParamValue::Text(s.to_owned());
+        assert_eq!(unit(&graph, "d"), text("row"));
+        assert_eq!(unit(&graph, "g"), text("beat"));
+        assert_eq!(unit(&graph, "l"), text("row"));
+        assert_eq!(unit(&graph, "p"), text("second"));
+        assert_eq!(unit(&graph, "o"), text("frame"));
+        assert_eq!(unit(&graph, "r"), text("ms"));
         let once = graph.clone();
         graph.upgrade();
         assert_eq!(graph, once);

@@ -156,6 +156,7 @@ impl Renderer {
             tempo,
             sources: layouts.clone(),
             output: video_layout,
+            pixel_scale: f64::from(width) / f64::from(source.width.max(1)),
         };
         let graph = Graph::compile(graph, registry, &options)?;
         let resampler = Self::resampler(&graph, fps, DEFAULT_AUDIO_RATE);

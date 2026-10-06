@@ -18,6 +18,7 @@ fn options() -> CompileOptions {
             ("audio".to_owned(), Layout::audio(AUDIO)),
         ]),
         output: Layout::rgb(W, H),
+        pixel_scale: 1.0,
     }
 }
 
@@ -563,7 +564,7 @@ fn separate_channels_work_on_stereo() {
         graph_json(
             &format!(
                 r#"{{ "id": "audio", "type": "audio_input" }},
-                   {{ "id": "d", "type": "delay", "params": {{ "time": 1, "unit": "rows" }}, "channels": "{channels}" }},
+                   {{ "id": "d", "type": "delay", "params": {{ "time": 1, "unit": "row" }}, "channels": "{channels}" }},
                    {{ "id": "v", "type": "video_input" }}, {{ "id": "am", "type": "am" }}, {{ "id": "out", "type": "output" }}"#
             ),
             r#"{ "from": "audio", "to": "d" }, { "from": "v", "to": "am.carrier" },
@@ -932,7 +933,7 @@ fn time_units_mean_the_same_together_and_separate() {
         graph_json(
             &format!(
                 r#"{{ "id": "video", "type": "video_input" }},
-                   {{ "id": "d", "type": "delay", "params": {{ "time": 1, "unit": "rows" }}, "channels": "{channels}" }},
+                   {{ "id": "d", "type": "delay", "params": {{ "time": 1, "unit": "row" }}, "channels": "{channels}" }},
                    {{ "id": "out", "type": "output" }}"#
             ),
             r#"{ "from": "video", "to": "d" }, { "from": "d", "to": "out" }"#,

@@ -79,7 +79,7 @@ Rules every node must satisfy (enforced by tests, see [Testing](testing.md)):
 ### Shared building blocks
 
 Shared code lives in `dsp.rs` (resampling, delay line, `mix`, dB conversion, `Biquad` with RBJ
-low/high/band/all-pass, peak and shelf designs) and `nodes/support.rs` (`TimeUnit`, `FreqUnit`, `ms_to_samples`,
+low/high/band/all-pass, peak and shelf designs) and `nodes/support.rs` (`Unit`, `ms_to_samples`,
 `settle_frames`, the conversion `Mapping`).
 
 **Rule: before writing a helper in a node file, look here; if two nodes need it, it belongs here.** Per-node copies

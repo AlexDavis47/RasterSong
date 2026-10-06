@@ -124,14 +124,14 @@ Every change that renames or reshapes a parameter, or merges, splits or removes 
 
 ### Units and parameter semantics
 
-- [ ] **chore** **Merge `TimeUnit` and `FreqUnit` into one `Unit`** (see
+- [x] **chore** **Merge `TimeUnit` and `FreqUnit` into one `Unit`** (see
   [Decisions](decisions.md#one-unit-type-for-time-and-frequency-october-2026)). They are the same domain: both
   answer "how many samples is one of these", and a frequency is a time inverted. Today they are two enums with two
   label sets (`rows, frames, ms, seconds, beats, bars` against `Row, Frame, Hertz, Beat, Bar`), which is the
   inconsistency users see. One enum with `samples_per_unit(ctx)`, one `Unit::param`, one label set; time
   parameters multiply, frequency parameters divide and their label says "cycles per". `Hertz` becomes `second`.
   Migration maps every old option name.
-- [ ] **feature** New **pixel** and **sample** units (the "users never see samples" principle is dropped).
+- [x] **feature** New **pixel** and **sample** units (the "users never see samples" principle is dropped).
   *Decided ([Decisions](decisions.md#pixel-is-a-project-pixel-sample-is-the-renders-sample-october-2026)):
   a pixel is a project-resolution pixel, scaled with the preview so downscaled previews match the full render as
   closely as possible; a sample is the literal sample at the current render size, and its help text says it changes

@@ -1,5 +1,5 @@
 use crate::dsp::{DelayLine, mix};
-use crate::nodes::{Category, NodeKind, NodeSpec, TimeUnit};
+use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{InputSpec, Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Frequency (phase) modulation: the carrier is read back through a delay whose length follows
@@ -8,7 +8,7 @@ use crate::{InputSpec, Node, ParamSpec, Params, PrepareContext, ProcessContext, 
 #[derive(Debug)]
 pub struct Fm {
     index: f64,
-    unit: TimeUnit,
+    unit: Unit,
     mix: f32,
     /// Set in `prepare`.
     unit_samples: f64,
@@ -27,7 +27,7 @@ params! { Fm {
     )
     .exposed()
     .limits(0.0, 1000.0),
-    UNIT: TimeUnit::param("rows", "Unit for the index"),
+    UNIT: Unit::time_param("row", "Unit for the index"),
     MIX: ParamSpec::number("mix", "Mix", 1.0, 0.0, 1.0, "0 is the dry carrier, 1 is only the modulated carrier"),
 } }
 
@@ -46,7 +46,7 @@ impl NodeKind for Fm {
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "index": 0.7 }"#,
-        r#"{ "index": 0.25, "unit": "frames", "mix": 0.6 }"#,
+        r#"{ "index": 0.25, "unit": "frame", "mix": 0.6 }"#,
     ];
     const BENCH: Option<&'static str> = Some(r#"{ "index": 0.5 }"#);
 
