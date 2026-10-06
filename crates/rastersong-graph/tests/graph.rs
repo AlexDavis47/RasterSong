@@ -331,7 +331,7 @@ fn graph_files_round_trip() {
     let desc = GraphDesc::from_json(PASSTHROUGH).unwrap();
     assert_eq!(GraphDesc::from_json(&desc.to_json()).unwrap(), desc);
     assert!(matches!(
-        GraphDesc::from_json(r#"{ "version": 5, "nodes": [] }"#),
+        GraphDesc::from_json(r#"{ "version": 6, "nodes": [] }"#),
         Err(GraphError::Parse(_))
     ));
 }
@@ -778,7 +778,7 @@ fn nodes_without_inputs_get_their_layout_from_the_host_and_can_be_modulated() {
     // A signal connected to the parameter reaches a node that has no main input to measure it by.
     // (Custom node types aren't known to the upgrade, so this graph is written in the current
     // format: 100% one way moves the level across its whole 0..1 span.)
-    let modulated = r#"{ "version": 4, "nodes": [
+    let modulated = r#"{ "version": 5, "nodes": [
         { "id": "gen", "type": "level", "modulation": { "level": { "amount": 100, "mode": "unipolar" } } },
         { "id": "audio", "type": "audio_input" }, { "id": "out", "type": "output" } ],
         "connections": [ { "from": "audio", "to": "gen.@level" }, { "from": "gen", "to": "out" } ] }"#;

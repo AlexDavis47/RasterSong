@@ -603,12 +603,12 @@ Can process R, G and B separately.
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
 | `unit` (Unit) | `Row` | `Row`, `Frame`, `Hertz`, `Beat`, `Bar` | no | Unit for the three frequencies |
-| `low_freq` (Low freq) | 5 | 0.01 to 1000 (up to 0.000001 to 1000000000) | yes, in octaves | Corner of the low shelf |
+| `low_freq` (Low freq) | 5 | 0.01 to 500 (up to 0.000001 to 1000000000) | yes, in octaves | Corner of the low shelf |
 | `low_gain` (Low gain) | 0 dB | -24 to 24 (up to -48 to 48) | yes | Boost or cut of everything below the low corner |
-| `mid_freq` (Mid freq) | 30 | 0.01 to 1000 (up to 0.000001 to 1000000000) | yes, in octaves | Centre of the mid band |
+| `mid_freq` (Mid freq) | 30 | 0.01 to 500 (up to 0.000001 to 1000000000) | yes, in octaves | Centre of the mid band |
 | `mid_gain` (Mid gain) | 0 dB | -24 to 24 (up to -48 to 48) | yes | Boost or cut around the mid frequency |
 | `mid_q` (Mid Q) | 1 | 0.1 to 20 (up to 0.05 to 100) | yes | Width of the mid band: higher is narrower |
-| `high_freq` (High freq) | 150 | 0.01 to 1000 (up to 0.000001 to 1000000000) | yes, in octaves | Corner of the high shelf |
+| `high_freq` (High freq) | 150 | 0.01 to 500 (up to 0.000001 to 1000000000) | yes, in octaves | Corner of the high shelf |
 | `high_gain` (High gain) | 0 dB | -24 to 24 (up to -48 to 48) | yes | Boost or cut of everything above the high corner |
 
 ### `fm`
@@ -653,7 +653,7 @@ Can process R, G and B separately.
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
 | `response` (Type) | `lowpass` | `lowpass`, `highpass`, `bandpass`, `allpass`, `tilt`, `comb` | no | lowpass, highpass, bandpass, allpass, tilt (gain dB of low-versus-high balance) or comb (echo every cutoff cycle) |
-| `cutoff` (Cutoff) | 40 | 0.01 to 1000 (up to 0.000001 to 1000000000) | yes, in octaves | Frequency of the filter's corner or centre |
+| `cutoff` (Cutoff) | 40 | 0.01 to 200 (up to 0.000001 to 1000000000) | yes, in octaves | Frequency of the filter's corner or centre |
 | `unit` (Unit) | `Row` | `Row`, `Frame`, `Hertz`, `Beat`, `Bar` | no | Unit for the cutoff |
 | `q` (Resonance) | 0.707 | 0.1 to 20 (up to 0.05 to 100) | yes | Sharpness: 0.707 is flat, higher rings or narrows. For a comb, higher repeats more |
 | `gain` (Gain) | 0 dB | -24 to 24 (up to -48 to 48) | yes | For tilt: dB boost of lows and cut of highs (negative reverses) |
@@ -810,7 +810,7 @@ Can process R, G and B separately.
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `cutoff` (Cutoff) | 40 | 0.01 to 100000 (up to 0.000001 to 1000000000) | yes, in octaves | Cutoff; lower is smoother |
+| `cutoff` (Cutoff) | 40 | 0.01 to 200 (up to 0.000001 to 1000000000) | yes, in octaves | Cutoff; lower is smoother |
 | `unit` (Unit) | `Row` | `Row`, `Frame`, `Hertz`, `Beat`, `Bar` | no | Unit for the cutoff |
 
 ### `offset`
@@ -852,7 +852,7 @@ Can process R, G and B separately.
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
 | `stages` (Stages) | 4 | 1 to 12 | no | How many allpass filters are chained; every two add a notch |
-| `freq` (Frequency) | 1000 | 20 to 20000 (up to 0.000001 to 1000000000) | yes, in octaves | Where the notches sit; wire an oscillator in here to sweep them |
+| `freq` (Frequency) | 1000 | 20 to 5000 (up to 0.000001 to 1000000000) | yes, in octaves | Where the notches sit; wire an oscillator in here to sweep them |
 | `unit` (Unit) | `Hertz` | `Row`, `Frame`, `Hertz`, `Beat`, `Bar` | no | Unit for the frequency |
 | `feedback` (Feedback) | 0.3 | -0.95 to 0.95 | yes | How much of the chain's output is fed back in, which sharpens the notches |
 | `mix` (Mix) | 0.5 | 0 to 1 | yes | 0 is the dry input, 1 is only the phased signal; around 0.5 gives the deepest notches |

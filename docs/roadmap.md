@@ -120,7 +120,7 @@ Every change that renames or reshapes a parameter, or merges, splits or removes 
   [Later: custom response curves and minimum/maximum](#later).*
 - [x] How octave modulation reads as a percentage: a percentage of the span measured in octaves, on every frequency
   parameter.
-- [ ] **feature** Remove exponential and logarithmic parameter sliders entirely. All sliders are linear. Frequency
+- [x] **feature** Remove exponential and logarithmic parameter sliders entirely. All sliders are linear. Frequency
   parameters keep their units (Hz, Row, …) and octave-based modulation, but the control itself is not warped.
   Drops the "logarithmic for wide ranges" behavior in the [inspector](app.md#inspector).
 

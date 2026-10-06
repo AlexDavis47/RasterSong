@@ -51,7 +51,7 @@ params! { Filter {
         "lowpass",
         "lowpass, highpass, bandpass, allpass, tilt (gain dB of low-versus-high balance) or comb (echo every cutoff cycle)",
     ),
-    CUTOFF: ParamSpec::number("cutoff", "Cutoff", 40.0, 0.01, 1000.0, "Frequency of the filter's corner or centre")
+    CUTOFF: ParamSpec::number("cutoff", "Cutoff", 40.0, 0.01, 200.0, "Frequency of the filter's corner or centre")
         .exposed()
         .limits(1e-06, 1e9)
         .octaves(),

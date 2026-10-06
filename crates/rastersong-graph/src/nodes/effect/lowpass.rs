@@ -30,7 +30,7 @@ params! { Lowpass {
         "Cutoff",
         40.0,
         0.01,
-        100_000.0,
+        200.0,
         "Cutoff; lower is smoother",
     )
     .exposed()

@@ -105,7 +105,7 @@ Any number parameter a spec doesn't mark `fixed` can be driven by a signal, conn
 limits. The modulation *amount* the user sets is a **percentage of the parameter's span** (`max − min` of its
 usual range): `sweep = amount / 100 × span`, halved both ways so that 100% is the whole swing from the lowest
 point to the highest (`ParamSpec::modulation_sweep`). A negative one-way amount turns the value down. Parameters
-on a logarithmic scale (frequencies such as Low Pass's cutoff) are marked `octaves`: their span is the number of
+that are heard or seen on a logarithmic scale (frequencies such as Low Pass's cutoff) are marked `octaves`: their span is the number of
 octaves between `min` and `max` (so `min` must be above zero, which a test checks), and the value moves as
 `base × 2^(sweep × signal)`, so a sweep moves evenly by ear and eye. A newly connected signal starts at 25%, one
 way. Modulated values are kept within the usual range (widened to include the base value) unless the modulation
@@ -130,10 +130,10 @@ The inspector doesn't say which reason applies, which is the bug in the [roadmap
 The policy going forward is the opposite of protecting the user: a parameter is locked only when modulating it is
 truly infeasible, and the lock carries a reason ([Decisions](decisions.md#modulation-is-allowed-unless-infeasible-october-2026)).
 
-> **Under revision.** Hands-on testing found that some parameters are unmodulatable with no explanation, and that
-> logarithmic/exponential sliders are confusing. The planned changes (a visible reason on locked parameters,
-> removing the log/exponential sliders) are in the [roadmap](roadmap.md#node-settings-and-parameters). Percentage
-> amounts have landed; the rest is still planned.
+> **Under revision.** Hands-on testing found that some parameters are unmodulatable with no explanation, (a visible
+> reason on locked parameters is [planned](roadmap.md#node-settings-and-parameters)). Percentage amounts and linear
+> sliders have landed. Give frequency parameters a usual range that suits a linear slider (Cutoff is 0.01–200), since
+> the range also sets the span modulation percentages are of.
 
 Nodes only have their own inputs for signals that are part of what they do: Amplitude Modulation's modulator and
 the compressor's and gate's sidechain. Delay, Bit Crush and Low Pass used to have a `modulation` input and a

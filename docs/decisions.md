@@ -80,7 +80,9 @@ a distance in the parameter's unit, kept in step.
 
 They confuse users. Sliders are linear. Parameters that are naturally multiplicative (frequencies) get that
 behavior from their units and from modulating in octaves, not from a warped slider; the roadmap's modulation work
-decides how octave modulation is presented.
+decides how octave modulation is presented. To keep linear sliders usable, the usual ranges of the frequency
+parameters were narrowed (Cutoff to 0.01–200, Phaser frequency to 20–5000 Hz, Equalizer corners to 0.01–500); graph
+format 5 rescales their saved amounts so old graphs modulate exactly as far as before.
 
 ### Integer parameters are a real type (October 2026)
 

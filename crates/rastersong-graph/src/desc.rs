@@ -10,8 +10,9 @@ use crate::GraphError;
 /// bipolar. Version 3 made modulation amounts percentages of the parameter's span instead of
 /// numbers in its own unit. Version 4 keeps modulated values within the slider's range unless an
 /// entry sets `overshoot`; older graphs are rewritten on load, with explicit entries that
-/// overshoot as they always did.
-pub const FORMAT_VERSION: u32 = 4;
+/// overshoot as they always did. Version 5 narrowed the usual range of some frequencies (the
+/// span a percentage is of), so their amounts are rescaled to move as far as before.
+pub const FORMAT_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

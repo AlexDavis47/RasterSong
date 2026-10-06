@@ -5,7 +5,7 @@ or its main input. Unknown parameters are rejected, which catches typos.
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "nodes": [
     { "id": "video", "type": "video_input" },
     { "id": "audio", "type": "audio_input" },
@@ -32,7 +32,8 @@ highest. The value stays between the slider's ends (widened to include the base 
 not overshooting. How modulation is applied is in
 [Node authoring](node-authoring.md#parameter-modulation).
 
-Format version 3 introduced percentage amounts and version 4 the range limit. Older graphs (amounts in the
+Format version 3 introduced percentage amounts, version 4 the range limit and version 5 narrower usual ranges for
+some frequencies (their amounts are rescaled so they move as far as before). Older graphs (amounts in the
 parameter's own unit, the default amount that depended on the base value, and values that could pass the slider's
 ends) are rewritten on load, with `"overshoot": true`, so they move parameters exactly as before.
 

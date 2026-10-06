@@ -31,39 +31,23 @@ pub struct NumberRange {
 
 impl NumberRange {}
 
-/// Whether a track showing `range` maps logarithmically.
-fn is_logarithmic(range: (f64, f64)) -> bool {
-    range.0 > 0.0 && range.1 / range.0 >= 1000.0
-}
-
 /// Position `0..=1` of `value` along a track showing `range`.
-pub fn to_fraction(value: f64, range: (f64, f64), logarithmic: bool) -> f64 {
+pub fn to_fraction(value: f64, range: (f64, f64)) -> f64 {
     let (lo, hi) = range;
     if hi <= lo {
         return 0.0;
     }
-    let t = if logarithmic && lo > 0.0 {
-        (value.max(lo) / lo).ln() / (hi / lo).ln()
-    } else {
-        (value - lo) / (hi - lo)
-    };
-    t.clamp(0.0, 1.0)
+    ((value - lo) / (hi - lo)).clamp(0.0, 1.0)
 }
 
 /// The value at position `t` (`0..=1`) along a track showing `range`, rounded to a precision that
 /// suits the range so dragged values come out tidy.
-pub fn from_fraction(t: f64, range: (f64, f64), logarithmic: bool) -> f64 {
+pub fn from_fraction(t: f64, range: (f64, f64)) -> f64 {
     let (lo, hi) = range;
     let t = t.clamp(0.0, 1.0);
-    if logarithmic && lo > 0.0 {
-        let value = lo * (hi / lo).powf(t);
-        // Three significant digits.
-        round_to_power_of_ten(value, value.log10().floor() as i32 - 2)
-    } else {
-        let value = lo + (hi - lo) * t;
-        let exponent = ((hi - lo) / 1000.0).log10().floor() as i32;
-        round_to_power_of_ten(value, exponent).clamp(lo, hi)
-    }
+    let value = lo + (hi - lo) * t;
+    let exponent = ((hi - lo) / 1000.0).log10().floor() as i32;
+    round_to_power_of_ten(value, exponent).clamp(lo, hi)
 }
 
 /// `value` rounded to a multiple of `10^exponent`. Dividing by a whole power of ten for negative
@@ -225,16 +209,15 @@ pub fn param_field(
         *value = value.clamp(shown.0, shown.1);
         ui.data_mut(|d| d.insert_persisted(range_id, shown));
     }
-    let logarithmic = is_logarithmic(shown);
     if (track.clicked() || track.dragged())
         && !ui.input(|i| i.modifiers.alt)
         && let Some(p) = track.interact_pointer_pos()
     {
         let t = f64::from((p.x - rect.left()) / rect.width());
-        *value = from_fraction(t, shown, logarithmic);
+        *value = from_fraction(t, shown);
     }
 
-    let fraction = |v: f64| to_fraction(v, shown, logarithmic) as f32;
+    let fraction = |v: f64| to_fraction(v, shown) as f32;
     let rail = Rect::from_center_size(rect.center(), vec2(rect.width() - 8.0, 4.0));
     let x = |v: f64| rail.left() + rail.width() * fraction(v);
     paint_rail(ui, rail, x(*value));
@@ -263,11 +246,7 @@ pub fn param_field(
         paint_ghost(ui, pos2(x(live.0), rect.center().y), rect.height(), live.1);
     }
 
-    let speed = if logarithmic {
-        value.abs().max(range.soft.0) * 0.01
-    } else {
-        (shown.1 - shown.0) / 300.0
-    };
+    let speed = (shown.1 - shown.0) / 300.0;
     let value_box = ui
         .add(
             ValueBox::new(value)
@@ -579,15 +558,14 @@ mod tests {
     #[test]
     fn positions_and_values_map_both_ways() {
         let range = DEPTH.soft;
-        assert_eq!(to_fraction(0.0, range, false), 0.5);
-        assert_eq!(from_fraction(0.75, range, false), 5.0);
-        assert_eq!(from_fraction(2.0, range, false), 10.0, "clamped");
+        assert_eq!(to_fraction(0.0, range), 0.5);
+        assert_eq!(from_fraction(0.75, range), 5.0);
+        assert_eq!(from_fraction(2.0, range), 10.0, "clamped");
 
-        assert!(is_logarithmic(CUTOFF.soft) && !is_logarithmic(DEPTH.soft));
         let range = CUTOFF.soft;
-        let middle = from_fraction(0.5, range, true);
-        assert!((middle - 31.6).abs() < 0.05, "{middle}");
-        assert!((to_fraction(middle, range, true) - 0.5).abs() < 1e-3);
+        let middle = from_fraction(0.5, range);
+        assert!((middle - 50_000.0).abs() < 50.0, "{middle}");
+        assert!((to_fraction(middle, range) - 0.5).abs() < 1e-3);
     }
 
     #[test]
@@ -623,9 +601,9 @@ mod tests {
 
     #[test]
     fn dragged_values_are_tidy() {
-        let value = from_fraction(0.123_456, (0.0, 1.0), false);
+        let value = from_fraction(0.123_456, (0.0, 1.0));
         assert_eq!(value, 0.123);
-        let value = from_fraction(0.123_456, (0.0, 1000.0), false);
+        let value = from_fraction(0.123_456, (0.0, 1000.0));
         assert_eq!(value, 123.0);
     }
 }

@@ -61,6 +61,48 @@ const MODULATION_INPUTS: &[ModulationInput] = &[
     },
 ];
 
+/// A frequency whose usual range was narrowed in version 5 (sliders became linear). Its
+/// modulation amount is a percentage of the range in octaves, so it is rescaled to keep the
+/// same distance.
+struct NarrowedRange {
+    kind: &'static str,
+    param: &'static str,
+    old: (f64, f64),
+}
+
+const NARROWED_RANGES: &[NarrowedRange] = &[
+    NarrowedRange {
+        kind: "filter",
+        param: "cutoff",
+        old: (0.01, 1000.0),
+    },
+    NarrowedRange {
+        kind: "lowpass",
+        param: "cutoff",
+        old: (0.01, 100_000.0),
+    },
+    NarrowedRange {
+        kind: "equalizer",
+        param: "low_freq",
+        old: (0.01, 1000.0),
+    },
+    NarrowedRange {
+        kind: "equalizer",
+        param: "mid_freq",
+        old: (0.01, 1000.0),
+    },
+    NarrowedRange {
+        kind: "equalizer",
+        param: "high_freq",
+        old: (0.01, 1000.0),
+    },
+    NarrowedRange {
+        kind: "phaser",
+        param: "freq",
+        old: (20.0, 20_000.0),
+    },
+];
+
 /// A node type that changed its name.
 struct RenamedKind {
     old: &'static str,
@@ -258,7 +300,23 @@ impl GraphDesc {
                     modulation.amount = percent_of_span(spec, *modulation);
                 }
                 // Before version 4 nothing kept modulated values to the slider's range.
-                modulation.overshoot = true;
+                if self.version < 4 {
+                    modulation.overshoot = true;
+                }
+                // Versions 3 and 4 took percentages of the wider ranges.
+                if (3..5).contains(&self.version)
+                    && let Some(r) = NARROWED_RANGES
+                        .iter()
+                        .find(|r| r.kind == node.kind && r.param == name)
+                    && let Some(spec) =
+                        kind.and_then(|k| k.spec.params.iter().find(|s| s.name == *name))
+                {
+                    let old = (r.old.1 / r.old.0).log2();
+                    let new = spec.modulation_span();
+                    if new > 0.0 {
+                        modulation.amount *= old / new;
+                    }
+                }
             }
         }
         self.version = FORMAT_VERSION;
@@ -427,7 +485,7 @@ mod tests {
 
         // Current graphs without an entry stay unentried and get the default amount.
         let current =
-            GraphDesc::from_json(&json.replace("\"version\": 1", "\"version\": 4")).unwrap();
+            GraphDesc::from_json(&json.replace("\"version\": 1", "\"version\": 5")).unwrap();
         assert!(
             current
                 .nodes
@@ -487,6 +545,39 @@ mod tests {
         assert_eq!(again, graph, "upgrading a current graph changes nothing");
         let reloaded = GraphDesc::from_json(&graph.to_json()).unwrap();
         assert_eq!(reloaded, graph);
+    }
+
+    #[test]
+    fn narrowed_frequency_ranges_keep_the_distance_amounts_move() {
+        let json = r#"{ "version": 4,
+            "nodes": [
+                { "id": "a", "type": "audio_input" },
+                { "id": "f", "type": "lowpass",
+                  "modulation": { "cutoff": { "amount": 25, "mode": "unipolar" } } },
+                { "id": "g", "type": "gate",
+                  "modulation": { "threshold": { "amount": 25, "mode": "unipolar" } } }
+            ],
+            "connections": [
+                { "from": "a", "to": "f.@cutoff" },
+                { "from": "a", "to": "g.@threshold" }
+            ] }"#;
+        let graph = GraphDesc::from_json(json).unwrap();
+        assert_eq!(graph.version, FORMAT_VERSION);
+        // 25% of the old (0.01..100000) span was this many octaves.
+        let octaves = 0.25 * (100_000.0f64 / 0.01).log2();
+        assert!((sweep(&graph, "f", "cutoff") - octaves).abs() < 1e-6);
+        // Other parameters, and version 4's overshoot setting, are untouched.
+        let node = |id: &str| graph.nodes.iter().find(|n| n.id == id).unwrap();
+        assert_eq!(node("g").modulation["threshold"].amount, 25.0);
+        assert!(!node("f").modulation["cutoff"].overshoot);
+        // Graphs from before version 3 are converted against the current range, so no rescale.
+        let v2 = GraphDesc::from_json(
+            &json
+                .replace("\"version\": 4", "\"version\": 2")
+                .replace("\"amount\": 25", "\"amount\": 3"),
+        )
+        .unwrap();
+        assert!((sweep(&v2, "f", "cutoff") - 3.0).abs() < 1e-9);
     }
 
     #[test]

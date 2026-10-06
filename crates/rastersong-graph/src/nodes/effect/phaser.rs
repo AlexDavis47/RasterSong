@@ -43,7 +43,7 @@ params! { Phaser {
         "Frequency",
         1000.0,
         20.0,
-        20_000.0,
+        5_000.0,
         "Where the notches sit; wire an oscillator in here to sweep them",
     )
     .exposed()
