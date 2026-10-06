@@ -78,12 +78,12 @@ Every change that renames or reshapes a parameter, or merges, splits or removes 
 
 ### Parameter types
 
-- [ ] **feature** Real integer parameters. A parameter that can only be whole (channel counts, divisions, steps,
+- [x] **feature** Real integer parameters. A parameter that can only be whole (channel counts, divisions, steps,
   voices, band counts) is declared as an integer in its spec. The slider and the value box always snap to whole
   values; nothing between integers is ever shown or accepted, and floats are never allowed for these. *Fixes: Beat
   division, Pack channels, chorus voices, and every "int locked" slider that still lets the handle sit between
   values before snapping.*
-- [ ] **chore** Audit every number parameter and mark the integer ones (Beat division and steps, Pack channels,
+- [x] **chore** Audit every number parameter and mark the integer ones (Beat division and steps, Pack channels,
   Chorus voices, Bit Crush bits if whole, Quantize levels, and so on). The property tests sweep them and assert
   only whole values reach `process`.
 - [ ] **feature** Conditional parameters: a declarative "shown when" rule on `ParamSpec`
@@ -314,7 +314,7 @@ a migration where noted, and a regenerated `nodes.md`.
 
 - **Beat**
   - [ ] **bug** Audio layout never works (see [Shared node settings](#shared-node-settings)).
-  - [ ] **feature** *Division* defaults to an integer (and is an integer parameter).
+  - [x] **feature** *Division* defaults to an integer (and is an integer parameter). Slower than the period is the bar period; old fractional divisions are raised to 1.
   - [ ] **feature** *Steps* shows only when the mode is Step (conditional parameter).
   - [ ] **feature** *Width* is conditional on the modes that use it.
 - **Constant**
@@ -331,7 +331,7 @@ a migration where noted, and a regenerated `nodes.md`.
 ### Structure
 
 - **Pack**
-  - [ ] **feature** *Channels* defaults to an integer and is a real integer parameter. Review related structural
+  - [x] **feature** *Channels* defaults to an integer and is a real integer parameter. Review related structural
     nodes for the same.
 - **Flip**
   - [ ] **chore** The node's scope does not match its name. Either rename it to say what it does, or split

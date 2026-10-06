@@ -56,7 +56,7 @@ params! { Noise {
         "How the noise is spread over frequencies: white is sharp grain, brown is slow drift, violet is the finest grain",
     ),
     LAYOUT: GeneratorLayout::PARAM,
-    SEED: ParamSpec::number("seed", "Seed", 0.0, 0.0, 999.0, "Picks which noise; the same seed always gives the same noise")
+    SEED: ParamSpec::number("seed", "Seed", 0.0, 0.0, 999.0, "Picks which noise; the same seed always gives the same noise").integer()
         .fixed()
         .limits(0.0, 4_000_000_000.0),
     AMPLITUDE: ParamSpec::number(

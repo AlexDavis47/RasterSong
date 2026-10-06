@@ -60,7 +60,7 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 |---|---|---|---|---|
 | `layout` (Layout) | `video` | `video`, `audio` | no | video makes a signal shaped like the video (RGB, rows); audio makes one shaped like the audio track |
 | `period` (Period) | `beat` | `beat`, `bar` | no | beat restarts the shape on every beat, bar on every bar |
-| `division` (Division) | 1 | 0.0625 to 16 (up to 0.001 to 1000) | no | Cycles per period: 2 restarts twice as often (half beats), 0.5 once every two periods |
+| `division` (Division) | 1 | 1 to 16 (up to 1 to 1000) | no | Cycles per period: 2 restarts twice as often (half beats). Use the bar period for slower |
 | `shape` (Shape) | `decay` | `phase`, `decay`, `pulse`, `step` | no | phase rises 0 to 1, decay falls 1 to 0, pulse is on for the width, step climbs in stairs |
 | `width` (Width) | 0.25 | 0 to 1 | no | For the pulse shape, the fraction of each cycle it stays on |
 | `steps` (Steps) | 4 | 1 to 32 (up to 1 to 1024) | no | For the step shape, how many stairs each cycle climbs |

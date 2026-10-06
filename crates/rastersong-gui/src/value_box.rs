@@ -34,6 +34,7 @@ pub struct ValueBox<'a> {
     prefix: &'a str,
     suffix: &'a str,
     size: Option<Vec2>,
+    whole: bool,
 }
 
 impl<'a> ValueBox<'a> {
@@ -46,7 +47,14 @@ impl<'a> ValueBox<'a> {
             prefix: "",
             suffix: "",
             size: None,
+            whole: false,
         }
+    }
+
+    /// Only whole numbers: dragging steps through them and typed numbers are rounded.
+    pub fn whole(mut self, whole: bool) -> Self {
+        self.whole = whole;
+        self
     }
 
     /// The values typing and dragging are clamped to.
@@ -100,6 +108,7 @@ impl Widget for ValueBox<'_> {
             prefix,
             suffix,
             size,
+            whole,
         } = self;
         let id = ui.next_auto_id();
         let old = *value;
@@ -165,7 +174,7 @@ impl Widget for ValueBox<'_> {
             if response.changed()
                 && let Some(parsed) = parse(&edit.text)
             {
-                *value = clamp(parsed, &range);
+                *value = clamp(if whole { parsed.round() } else { parsed }, &range);
             }
             if response.lost_focus() && ui.input(|i| i.key_pressed(Key::Escape)) {
                 *value = old;

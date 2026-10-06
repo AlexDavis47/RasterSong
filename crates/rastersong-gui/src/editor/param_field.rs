@@ -27,6 +27,8 @@ pub struct NumberRange {
     pub soft: (f64, f64),
     /// The values the node accepts.
     pub limits: (f64, f64),
+    /// Only whole numbers are offered: the handle jumps between them and typed values round.
+    pub whole: bool,
 }
 
 impl NumberRange {}
@@ -215,6 +217,9 @@ pub fn param_field(
     {
         let t = f64::from((p.x - rect.left()) / rect.width());
         *value = from_fraction(t, shown);
+        if range.whole {
+            *value = value.round().clamp(range.limits.0, range.limits.1);
+        }
     }
 
     let fraction = |v: f64| to_fraction(v, shown) as f32;
@@ -252,7 +257,8 @@ pub fn param_field(
             ValueBox::new(value)
                 .range(range.limits.0..=range.limits.1)
                 .speed(speed)
-                .max_decimals(3)
+                .max_decimals(if range.whole { 0 } else { 3 })
+                .whole(range.whole)
                 .size(vec2(value_width, height)),
         )
         .on_hover_text(
@@ -541,11 +547,13 @@ mod tests {
         default: 40.0,
         soft: (0.01, 100_000.0),
         limits: (1e-6, 1e9),
+        whole: false,
     };
     const DEPTH: NumberRange = NumberRange {
         default: 0.0,
         soft: (-10.0, 10.0),
         limits: (f64::NEG_INFINITY, f64::INFINITY),
+        whole: false,
     };
 
     #[test]

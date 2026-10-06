@@ -277,6 +277,7 @@ impl GraphDesc {
         self.rename_ports(RENAMED_PORTS);
         self.rename_choices(RENAMED_CHOICES);
         self.rename_units(Registry::shared());
+        self.round_whole_parameters(Registry::shared());
         self.convert_modulation_inputs(MODULATION_INPUTS);
         self.upgrade_modulation(Registry::shared());
     }
@@ -433,6 +434,23 @@ impl GraphDesc {
                 {
                     *value = r.new.to_owned();
                 }
+            }
+        }
+    }
+
+    /// Parameters that only make sense whole were once free numbers: their saved values are
+    /// rounded (and kept within the limits, which a node like Beat division may have raised).
+    fn round_whole_parameters(&mut self, registry: &Registry) {
+        for node in &mut self.nodes {
+            let Some(kind) = registry.get(&node.kind) else {
+                continue;
+            };
+            for spec in kind.spec.params.iter().filter(|s| s.integer) {
+                if let Some(ParamValue::Number(n)) = node.params.get_mut(spec.name) {
+                    let (lo, hi) = spec.number_limits().unwrap_or((f64::MIN, f64::MAX));
+                    *n = n.round().clamp(lo, hi);
+                }
+                node.integer.retain(|name| name != spec.name);
             }
         }
     }
@@ -678,6 +696,35 @@ mod tests {
         let once = graph.clone();
         graph.upgrade();
         assert_eq!(graph, once);
+    }
+
+    #[test]
+    fn whole_number_parameters_are_rounded_on_load() {
+        let graph = GraphDesc::from_json(
+            r#"{ "version": 6,
+                "nodes": [
+                    { "id": "b", "type": "beat", "params": { "division": 0.5, "steps": 3.6 } },
+                    { "id": "c", "type": "chorus", "params": { "voices": 2.4 }, "integer": ["voices", "time"] }
+                ] }"#,
+        )
+        .unwrap();
+        let number =
+            |id: &str, name: &str| match graph.nodes.iter().find(|n| n.id == id).unwrap().params
+                [name]
+            {
+                ParamValue::Number(n) => n,
+                _ => unreachable!(),
+            };
+        assert_eq!(
+            number("b", "division"),
+            1.0,
+            "raised to the lowest whole division"
+        );
+        assert_eq!(number("b", "steps"), 4.0);
+        assert_eq!(number("c", "voices"), 2.0);
+        // Only the parameters the user chose to round are listed; the node always rounds voices.
+        let c = graph.nodes.iter().find(|n| n.id == "c").unwrap();
+        assert_eq!(c.integer, ["time"]);
     }
 
     #[test]

@@ -18,7 +18,7 @@ params! { Pack {
         1.0,
         MAX_CHANNELS as f64,
         "How many channels each pixel gets: 3 for RGB, 2 for stereo",
-    )
+    ).integer()
     .fixed()
     .limits(1.0, 64.0),
 } }

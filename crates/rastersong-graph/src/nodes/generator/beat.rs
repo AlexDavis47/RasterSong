@@ -60,12 +60,13 @@ params! { Beat {
         "division",
         "Division",
         1.0,
-        0.0625,
+        1.0,
         16.0,
-        "Cycles per period: 2 restarts twice as often (half beats), 0.5 once every two periods",
+        "Cycles per period: 2 restarts twice as often (half beats). Use the bar period for slower",
     )
+    .integer()
     .fixed()
-    .limits(0.001, 1000.0),
+    .limits(1.0, 1000.0),
     SHAPE: ParamSpec::choice(
         "shape",
         "Shape",
@@ -89,7 +90,7 @@ params! { Beat {
         1.0,
         32.0,
         "For the step shape, how many stairs each cycle climbs",
-    )
+    ).integer()
     .fixed()
     .limits(1.0, 1024.0),
 } }

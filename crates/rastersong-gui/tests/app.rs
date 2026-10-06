@@ -808,3 +808,29 @@ fn the_warmup_limit_is_a_project_setting_that_reaches_the_project() {
     harness.get_by_label("Max warmup frames");
     assert_eq!(harness.state().project().max_warmup_frames, 120);
 }
+
+#[test]
+fn whole_number_parameters_round_what_is_typed() {
+    use rastersong_engine::ParamValue;
+    let mut harness = loaded();
+    add_node(&mut harness, "beat");
+    select(&mut harness, "beat");
+    harness.run_steps(3);
+    let panel = harness.state().inspector_rect();
+    // The first number in a Beat's settings is its division, which only makes sense whole.
+    let center = harness
+        .query_all_by_role(egui::accesskit::Role::SpinButton)
+        .map(|n| n.rect())
+        .find(|r| r.min.x >= panel.left())
+        .expect("a numeric value box in the inspector")
+        .center();
+    press(&mut harness, center, PointerButton::Primary, true);
+    press(&mut harness, center, PointerButton::Primary, false);
+    harness.event(Event::Text("3.4".into()));
+    harness.run_steps(2);
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(3);
+    let node = key(&harness, "beat");
+    let value = harness.state().editor().node(node).unwrap().params["division"].clone();
+    assert_eq!(value, ParamValue::Number(3.0));
+}

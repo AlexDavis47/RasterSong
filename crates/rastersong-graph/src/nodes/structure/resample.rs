@@ -30,7 +30,7 @@ params! { Resample {
         0.0,
         4096.0,
         "New width in pixels; 0 keeps the input's width",
-    )
+    ).integer()
     .fixed()
     .limits(0.0, 16_384.0),
     HEIGHT: ParamSpec::number(
@@ -40,7 +40,7 @@ params! { Resample {
         0.0,
         4096.0,
         "New height in pixels; 0 keeps the input's height",
-    )
+    ).integer()
     .fixed()
     .limits(0.0, 16_384.0),
     METHOD: ParamSpec::choice(

@@ -21,6 +21,9 @@ pub struct ParamSpec {
     pub modulatable: bool,
     /// Whether the editor shows its modulation pin on the node until the user hides it.
     pub exposed: bool,
+    /// Whether only whole numbers make sense (counts, divisions, steps): the slider and value box
+    /// snap to them, loaded values are rounded, and a modulated value is rounded at every sample.
+    pub integer: bool,
 }
 
 /// How much a newly connected signal moves a parameter, in percent of its span.
@@ -70,6 +73,7 @@ impl ParamSpec {
             },
             modulatable: true,
             exposed: false,
+            integer: false,
         }
     }
 
@@ -88,6 +92,7 @@ impl ParamSpec {
             kind: ParamKind::Choice { options, default },
             modulatable: false,
             exposed: false,
+            integer: false,
         }
     }
 
@@ -105,12 +110,19 @@ impl ParamSpec {
             kind: ParamKind::Text { default },
             modulatable: false,
             exposed: false,
+            integer: false,
         }
     }
 
     /// Shows the parameter's modulation pin on new nodes.
     pub const fn exposed(mut self) -> Self {
         self.exposed = true;
+        self
+    }
+
+    /// A number that can only be whole. The usual range and limits should be whole too.
+    pub const fn integer(mut self) -> Self {
+        self.integer = true;
         self
     }
 

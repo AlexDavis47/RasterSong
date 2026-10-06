@@ -113,6 +113,8 @@ unmodulated parameters stay constants the node reads from its own fields, so the
 `PrepareContext::modulation(i)` gives the range a modulated parameter can move over, for sizing buffers and warmup.
 Specs also say which parameters show a pin on new nodes (`exposed`).
 
+**Whole-number parameters** (counts, divisions, steps, seeds, pixel sizes) are declared `.integer()`. The usual range, default and limits must be whole (a test checks), the slider and value box snap to whole values, loaded fractional values are rounded by `migrate.rs`, and a modulated value is rounded at every sample. Parameters that merely accept fractions (Bit Crush bits) are not integers; the per-node `int` toggle covers those.
+
 **Parameters marked `fixed`** can't be modulated. The spec's comment says they are "too costly or meaningless to
 change while rendering", which in practice covers three different reasons (not warmup time):
 

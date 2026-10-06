@@ -38,7 +38,7 @@ params! { SampleHold {
         0.0,
         32.0,
         "Rounds each value to this many evenly spaced levels between 0 and 1; 0 or 1 leaves values alone",
-    )
+    ).integer()
     .exposed()
     .limits(0.0, 65_536.0),
 } }

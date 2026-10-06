@@ -31,7 +31,7 @@ params! { Chorus {
     .exposed()
     .limits(0.0, 1000.0),
     UNIT: Unit::time_param("ms", "Unit for the time"),
-    VOICES: ParamSpec::number("voices", "Voices", 2.0, 1.0, 4.0, "How many delayed copies are mixed in")
+    VOICES: ParamSpec::number("voices", "Voices", 2.0, 1.0, 4.0, "How many delayed copies are mixed in").integer()
         .fixed(),
     SPREAD: ParamSpec::number(
         "spread",

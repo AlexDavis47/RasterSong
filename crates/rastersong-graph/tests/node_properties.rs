@@ -280,8 +280,34 @@ fn bitcrush_quantizes_to_levels() {
     assert_eq!(out[0], [0.0, 0.0, 0.0, 1.0, 1.0, 1.0]);
 }
 
+/// Whole-number parameters have whole defaults, usual ranges and limits, so nothing between two
+/// integers is ever offered.
+#[test]
+fn integer_parameters_are_whole_throughout() {
+    let mut count = 0;
+    for t in Registry::shared().types() {
+        for spec in t.spec.params.iter().filter(|s| s.integer) {
+            count += 1;
+            let ParamKind::Number {
+                default,
+                min,
+                max,
+                limit_min,
+                limit_max,
+            } = spec.kind
+            else {
+                panic!("{}.{} is an integer but not a number", t.kind, spec.name);
+            };
+            for v in [default, min, max, limit_min, limit_max] {
+                assert_eq!(v, v.round(), "{}.{} has {v}", t.kind, spec.name);
+            }
+        }
+    }
+    assert!(count >= 8, "the audit marks the whole-number parameters");
+}
+
 /// Modulation amounts are percentages of a parameter's span, so every modulatable number needs a
-/// span to take a percentage of; octave parameters need a positive usual range, for its logarithm.
+/// span to take a percentage of.
 #[test]
 fn modulatable_numbers_have_a_span_to_take_a_percentage_of() {
     let mut problems = Vec::new();

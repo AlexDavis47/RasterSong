@@ -1106,7 +1106,11 @@ fn create_nodes(desc: &GraphDesc, registry: &Registry) -> Result<Vec<Pending>, G
         // Rounded parameters: the node is created with whole numbers, the default included.
         let mut node_params = d.params.clone();
         let mut integer = vec![false; specs.len()];
-        for name in &d.integer {
+        let always_whole = specs
+            .iter()
+            .filter(|s| s.integer && s.number_limits().is_some())
+            .map(|s| s.name);
+        for name in d.integer.iter().map(String::as_str).chain(always_whole) {
             let Some(index) = specs
                 .iter()
                 .position(|s| s.name == name && s.number_limits().is_some())
@@ -1115,7 +1119,7 @@ fn create_nodes(desc: &GraphDesc, registry: &Registry) -> Result<Vec<Pending>, G
             };
             integer[index] = true;
             if let Some(value) = specs[index].number_value(&d.params) {
-                node_params.insert(name.clone(), ParamValue::Number(value.round()));
+                node_params.insert(name.to_owned(), ParamValue::Number(value.round()));
             }
         }
         let node = registry

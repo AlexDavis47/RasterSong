@@ -211,7 +211,9 @@ impl GraphEditor {
                         (value, current, color)
                     });
                     let mut expose = spec.modulatable.then_some(exposed);
-                    let mut integer = matches!(spec.kind, ParamKind::Number { .. })
+                    // Whole-only parameters are always whole, so they have no toggle.
+                    let mut integer = (matches!(spec.kind, ParamKind::Number { .. })
+                        && !spec.integer)
                         .then(|| node.integer.contains(spec.name));
                     let live = ctx
                         .params
@@ -447,8 +449,9 @@ fn param_row(row: ParamRow) -> bool {
                 },
                 soft: (min, max),
                 limits: (limit_min, limit_max),
+                whole: integer_on || spec.integer,
             };
-            let rounded = integer_on;
+            let rounded = range.whole;
             ui.horizontal(|ui| {
                 let modulated = modulation.as_mut().map(|(m, color)| Modulated {
                     spec,

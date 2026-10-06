@@ -36,7 +36,7 @@ params! { Phaser {
         1.0,
         12.0,
         "How many allpass filters are chained; every two add a notch",
-    )
+    ).integer()
     .fixed(),
     FREQ: ParamSpec::number(
         "freq",
