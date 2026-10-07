@@ -227,11 +227,12 @@ fn scope(ui: &mut Ui, samples: &[f32], channels: usize) {
         );
         let columns = rect.width() as usize;
         let color: Color32 = theme.accent;
+        let y = |v: f32| mid - v.clamp(-1.0, 1.0) * lane * 0.5;
+        let mut line = Vec::with_capacity(columns);
         for (x, (lo, hi)) in envelope(samples, channels, channel, columns)
             .into_iter()
             .enumerate()
         {
-            let y = |v: f32| mid - v.clamp(-1.0, 1.0) * lane * 0.5;
             let px = rect.left() + x as f32 + 0.5;
             painter.line_segment(
                 [
@@ -240,7 +241,10 @@ fn scope(ui: &mut Ui, samples: &[f32], channels: usize) {
                 ],
                 egui::Stroke::new(1.0, color),
             );
+            line.push(egui::pos2(px, y((lo + hi) * 0.5)));
         }
+        // Joined up, so a signal with fewer samples than columns is a line and not dots.
+        painter.add(egui::Shape::line(line, egui::Stroke::new(1.0, color)));
     }
 }
 
