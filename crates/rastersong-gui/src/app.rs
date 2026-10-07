@@ -584,6 +584,7 @@ impl App {
         };
         let levels = frame.as_ref().map_or(&[][..], |f| &f.levels[..]);
         let params = frame.as_ref().map_or(&[][..], |f| &f.params[..]);
+        let costs = frame.as_ref().map_or(&[][..], |f| &f.costs[..]);
         let canvas = self.editor.show(
             ui,
             &CanvasContext {
@@ -592,6 +593,8 @@ impl App {
                 failure: failure.as_ref(),
                 wire_style: self.settings.wire_style,
                 show_stats: self.settings.node_stats,
+                costs,
+                show_performance: self.settings.show_performance,
             },
         );
         self.bypass_all_button(ui, canvas.rect);
@@ -912,6 +915,13 @@ impl App {
                 }
             });
             ui.menu_button(tr("menu.edit"), |ui| self.edit_menu(ui));
+            ui.menu_button(tr("menu.view"), |ui| {
+                ui.checkbox(&mut self.settings.node_stats, tr("menu.view.node_stats"));
+                ui.checkbox(
+                    &mut self.settings.show_performance,
+                    tr("menu.view.performance"),
+                );
+            });
             ui.menu_button(tr("menu.help"), |ui| {
                 if ui.button(tr("menu.help.about")).clicked() {
                     self.show_about = true;

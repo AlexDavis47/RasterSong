@@ -20,6 +20,8 @@ pub struct Settings {
     pub wire_style: WireStyle,
     /// Show each node's latency and warmup under it in the graph editor.
     pub node_stats: bool,
+    /// Show each node's processing time in the graph editor, and tint the slow ones.
+    pub show_performance: bool,
     /// Preview resolution as a divisor of full resolution (1 = full, 2 = half, …).
     pub preview_divisor: u32,
     /// Playback volume, `0..=1`.
@@ -43,6 +45,7 @@ impl Default for Settings {
             theme: ThemeChoice::default(),
             wire_style: WireStyle::default(),
             node_stats: false,
+            show_performance: false,
             preview_divisor: 2,
             volume: 0.8,
             metronome: false,

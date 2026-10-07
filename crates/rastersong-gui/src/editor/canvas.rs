@@ -16,7 +16,7 @@ use eframe::egui::{
     Stroke, StrokeKind, Ui, pos2, vec2,
 };
 use rastersong_engine::{
-    Category, Failure, Kind, NodeStats, OutputLevel, ParamLevel, SPLIT, Severity, Tag,
+    Category, Failure, Kind, NodeCost, NodeStats, OutputLevel, ParamLevel, SPLIT, Severity, Tag,
     UNBOUNDED_WARMUP,
 };
 
@@ -53,6 +53,10 @@ pub struct CanvasContext<'a> {
     pub wire_style: WireStyle,
     /// Whether to draw each node's latency and warmup under it.
     pub show_stats: bool,
+    /// How long each node took to process the frame at the playhead.
+    pub costs: &'a [NodeCost],
+    /// Whether to show node processing times and tint the slow nodes.
+    pub show_performance: bool,
 }
 
 /// How deep [`GraphEditor::output_color`] follows inherited colours upstream.
@@ -341,6 +345,7 @@ impl GraphEditor {
         let pointer = ui.input(|i| i.pointer.hover_pos());
 
         let output_colors = self.output_colors(theme);
+        self.smooth_costs(ctx.costs);
 
         // Wires, behind the nodes.
         let pin_pos = |pin: Pin| -> Option<Pos2> {
@@ -405,6 +410,9 @@ impl GraphEditor {
                 hovered_pin,
                 &output_colors,
             );
+            if ctx.show_performance {
+                self.draw_performance(&painter, theme, g, to_screen, visuals.weak_text_color());
+            }
         }
         // Compile notes and warnings: a badge on the node, the messages in its tooltip. Notes
         // (a signal used as something it wasn't made as, often on purpose) get a quiet badge.

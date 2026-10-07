@@ -6,6 +6,7 @@ mod inspector;
 mod linked;
 mod modulation;
 mod param_field;
+mod performance;
 mod search;
 mod tooltips;
 
@@ -104,6 +105,8 @@ pub struct GraphEditor {
     pub keep_connections: bool,
     /// The project's limit on pre-rendered warmup frames, to flag nodes that need more.
     pub max_warmup_frames: u32,
+    /// Each node's processing time in microseconds, smoothed over recent frames, by node id.
+    costs: HashMap<String, f32>,
     /// The project's video file name and audio track names, for the nodes linked to them.
     project_video: Option<String>,
     project_tracks: Vec<String>,
@@ -148,6 +151,7 @@ impl GraphEditor {
             clipboard: None,
             keep_connections: true,
             max_warmup_frames: rastersong_engine::DEFAULT_MAX_WARMUP_FRAMES,
+            costs: HashMap::new(),
             project_video: None,
             project_tracks: Vec::new(),
             renames: Vec::new(),

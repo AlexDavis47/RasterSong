@@ -214,6 +214,11 @@ impl App {
         ui.checkbox(&mut self.settings.node_stats, tr("settings.node_stats"));
         help(ui, tr("settings.node_stats.help"));
         ui.checkbox(
+            &mut self.settings.show_performance,
+            tr("settings.performance"),
+        );
+        help(ui, tr("settings.performance.help"));
+        ui.checkbox(
             &mut self.settings.keep_connections,
             tr("settings.keep_connections"),
         );
