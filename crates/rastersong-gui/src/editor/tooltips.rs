@@ -109,7 +109,7 @@ impl GraphEditor {
 
     /// Shows a tooltip for the wire or pin under the pointer, if there is one.
     pub(super) fn hover_tooltips(
-        &self,
+        &mut self,
         ui: &mut Ui,
         rect: Rect,
         geometry: &[Geometry],
@@ -117,6 +117,7 @@ impl GraphEditor {
         hovered_pin: Option<Pin>,
         readings: &Readings,
     ) {
+        self.hovered_output = None;
         let Some(pointer) = ui.input(|i| i.pointer.hover_pos()) else {
             return;
         };
@@ -138,6 +139,7 @@ impl GraphEditor {
         if tip.is_empty() {
             return;
         }
+        self.hovered_output = tip.source.clone();
         if let (Some(look), Some((node, output))) = (readings.look, &tip.source) {
             tip.look = Some(super::look::look(ui, node, *output, tip.audio, look));
         }

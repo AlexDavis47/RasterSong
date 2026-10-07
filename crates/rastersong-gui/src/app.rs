@@ -51,6 +51,15 @@ const AUDIO_EXTENSIONS: &[&str] = &[
     "wav", "mp3", "flac", "ogg", "m4a", "aac", "opus", "aiff", "mp4", "mkv", "mov",
 ];
 
+/// The Listen tool playing a connection.
+struct Listening {
+    target: rastersong_engine::ListenTarget,
+    /// Where listening started, in video seconds, and when. With playback stopped, listening
+    /// carries on from there in real time.
+    origin: f64,
+    since: std::time::Instant,
+}
+
 /// Something that would throw away unsaved changes, waiting for the user to decide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Pending {
@@ -93,6 +102,8 @@ pub struct App {
     /// What the playback mix was last built from: the render's audio, and the tracks' names,
     /// offsets and gains.
     sent_mix: Option<(AudioSink, Vec<MixEntry>)>,
+    /// The connection being listened to with the Listen tool, and from when.
+    listening: Option<Listening>,
     clock: PlaybackClock,
     /// Frame count and rate the clock was made for.
     clock_shape: Option<(usize, f64)>,
@@ -166,6 +177,7 @@ impl App {
             inspected_for: None,
             inspected: Vec::new(),
             sent_mix: None,
+            listening: None,
             waiting_since: None,
             selected_track: (!project.audio_tracks.is_empty()).then_some(0),
             solo: None,
@@ -607,7 +619,52 @@ impl App {
             },
         );
         self.tool_bar(ui, canvas.rect, tool);
+        self.update_listening(ui, tool);
         self.bypass_all_button(ui, canvas.rect);
+    }
+
+    /// Where listening is, in video seconds: the playhead while playing, else running on from
+    /// where it started.
+    fn listen_time(&self, fps: f64) -> f64 {
+        match &self.listening {
+            Some(l) if !self.clock.is_playing() => l.origin + l.since.elapsed().as_secs_f64(),
+            _ => self.clock.position() / fps,
+        }
+    }
+
+    /// Starts, moves and stops the Listen tool's sound as the pointer moves over connections.
+    fn update_listening(&mut self, ui: &Ui, tool: crate::editor::Tool) {
+        let fps = self.clock_shape.map_or(30.0, |s| s.1);
+        let wanted = (tool == crate::editor::Tool::Listen)
+            .then(|| self.editor.hovered_output())
+            .flatten()
+            .map(|(node, output)| rastersong_engine::ListenTarget {
+                node: node.to_owned(),
+                output,
+            });
+        let now = self.listen_time(fps);
+        match (self.listening.as_ref().map(|l| &l.target), wanted) {
+            (_, Some(target)) if self.listening.as_ref().is_none_or(|l| l.target != target) => {
+                self.audio
+                    .listen(Mixer::rendered(self.engine.listened_audio(), 1.0), now);
+                self.listening = Some(Listening {
+                    target,
+                    origin: now,
+                    since: std::time::Instant::now(),
+                });
+            }
+            (Some(_), None) => {
+                self.audio.stop_listening();
+                self.engine.listen(None, self.clock.frame());
+                self.listening = None;
+            }
+            _ => {}
+        }
+        if let Some(l) = &self.listening {
+            self.engine
+                .listen(Some(l.target.clone()), (now.max(0.0) * fps) as usize);
+            ui.ctx().request_repaint();
+        }
     }
 
     /// The buttons in the canvas's corner that choose the default tool.

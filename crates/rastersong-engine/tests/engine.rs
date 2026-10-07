@@ -8,7 +8,6 @@ use std::sync::Arc;
 use common::{
     AUDIO, FINITE, FINITE_PASSTHROUGH, FRAMES, VIDEO, backend, crush, sequential, wait_until,
 };
-use rastersong_engine::playback::RenderedSource as _;
 use rastersong_engine::{
     AudioTrackSpec, Engine, EngineConfig, EngineStatus, GraphDesc, OutputSize, PreviewScale,
 };

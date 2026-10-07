@@ -53,7 +53,7 @@ are defects, **feature** is new behavior, **chore** is cleanup or refactoring wi
 - [x] Node parameter inputs (modulation)
 - [ ] Automation clips (see [Timeline](#timeline))
 - [ ] The foundation workstream below (parameter types, units, modulation, text), since most node work depends on it
-- [ ] Look/Listen tools and the settings page
+- [ ] The settings page (the Look/Listen tools are done; their keys are not rebindable yet)
 
 ## Suggested order
 
@@ -242,24 +242,24 @@ Renames, merges, splits and removals need **no migration** while the format is v
 
 This **supersedes the earlier Probe/Inspect tool** (see [Decisions](decisions.md#looklisten-replaces-the-probeinspect-tool-october-2026)).
 
-- [ ] **feature** **Look tool.** While its key is held, hovering a connection opens a tooltip-style popup showing the
+- [x] **feature** **Look tool.** *(done: hold L; a picture or scope above the readings)* While its key is held, hovering a connection opens a tooltip-style popup showing the
   output of that connection at the playhead: a picture for video-like signals, a waveform for audio-like ones.
   Pictures use **implicit stretch to match the project's video size**, exactly as the Video Output node does with
   its stretch toggle (see [Nodes](#nodes)), so any signal is visible whatever its layout. One shared stretch
   implementation serves both. *Needs: a read-only engine tap, shared preview widgets.*
-- [ ] **feature** **Listen tool.** A separate key; while held, hovering a connection plays that connection's output
+- [x] **feature** **Listen tool.** *(done: hold H)* A separate key; while held, hovering a connection plays that connection's output
   as audio. It reuses the Audio Output sink (resampling to the project audio rate, sanitizing, clipping) so what
   you hear is what an Audio Output node would play. Fades in and out so there are no clicks when the pointer
   moves between connections. The master playback is ducked while listening.
-- [ ] **feature** **Tool bar and default tool.** A new toolbar in the graph for choosing the default tool: Select
+- [x] **feature** **Tool bar and default tool.** *(done; the keys are fixed until the Settings page can rebind them)* A new toolbar in the graph for choosing the default tool: Select
   (today's behavior), Look, Listen. Holding the key for another tool temporarily overrides the default. Keys are
   rebindable once the Settings page exists.
-- [ ] **feature** **Engine taps.** The engine can be asked for the output of any connection at one frame without
+- [x] **feature** **Engine taps.** *(done: see [Engine](engine.md#taps-and-listening); a dropped connection answers "not rendered")* The engine can be asked for the output of any connection at one frame without
   changing the render or the cache: the request is read-only, rate-limited, and dropped when the playhead moves or
   the graph is edited. A tap never enters the cache key and never changes deterministic output. The design has to
   say what happens for a tap on a connection the graph dropped (not feeding the output): either compute it on
   demand or show "not rendered".
-- [ ] **chore** Remove the Probe tool item and its distance-based master-fade mixer from the backlog; they are not
+- [x] **chore** Remove the Probe tool item and its distance-based master-fade mixer from the backlog; they are not
   being built.
 
 ---
@@ -276,7 +276,7 @@ Reusable widgets, built once in `rastersong-gui` (a `widgets/` module) and used 
   computed only for visible meters.
 - [x] **feature** **Gain-reduction meter**, so the Compressor, Gate and Limiter show how much reduction is being
   applied right now.
-- [ ] **feature** **Waveform / scope** and a **picture thumbnail** widget (shared by the Look tool and node previews).
+- [ ] **feature** **Waveform / scope** and a **picture thumbnail** widget *(the Look popup draws both itself; the shared widgets and node previews are still to do)* (shared by the Look tool and node previews).
 - [x] **feature** **Node telemetry.** A way for a node to publish a few meter values per frame (gain reduction,
   peak, band energy) without allocation in `process` and without affecting output; the editor reads the last
   rendered frame, the same way it reads modulated values. Declared in the node's `SPEC` so the inspector draws the
@@ -410,7 +410,7 @@ The aim: one implementation per idea, so fixes and features land in one place. K
   string literals in widgets.
 - [ ] **chore** **Stretch.** One "stretch a signal to the project size" implementation, shared by the Stretch node,
   Video Output and the Look tool.
-- [ ] **chore** **Audio sinks.** One resample-sanitize-clip path, shared by Audio Output and the Listen tool.
+- [x] **chore** **Audio sinks.** One resample-sanitize-clip path, shared by Audio Output and the Listen tool.
 - [ ] **chore** Add guard tests where practical (the `mix` one is done): a registry test that fails if a node declares its own `unit` list
   or its own `mix`, so duplicates cannot creep back.
 - [ ] **chore** Codebase organization and code-quality checkup (not started), run after the foundations land and

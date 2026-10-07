@@ -101,6 +101,8 @@ pub struct GraphEditor {
     node_menu: Option<search::NodeMenu>,
     /// The canvas and node layout as last drawn, for hit-testing from outside (tests).
     last_canvas: Rect,
+    /// The node output the pointer is over (a wire or an output pin), for the Listen tool.
+    hovered_output: Option<(String, usize)>,
     last_geometry: Vec<canvas::Geometry>,
     /// Text last copied, for the Edit menu's Paste (keyboard paste reads the system clipboard).
     clipboard: Option<String>,
@@ -151,6 +153,7 @@ impl GraphEditor {
             search: None,
             node_menu: None,
             last_canvas: Rect::NOTHING,
+            hovered_output: None,
             last_geometry: Vec::new(),
             clipboard: None,
             keep_connections: true,
@@ -478,6 +481,13 @@ impl GraphEditor {
 
     /// Where a pin was last drawn, in screen space. For inputs, `port` is the input's index, or
     /// a parameter's port ([`param_port`]).
+    /// The node output the pointer rested on in the last frame: `(node id, output)`.
+    pub fn hovered_output(&self) -> Option<(&str, usize)> {
+        self.hovered_output
+            .as_ref()
+            .map(|(node, output)| (node.as_str(), *output))
+    }
+
     pub fn pin_screen_pos(&self, key: NodeKey, input: bool, port: usize) -> Option<Pos2> {
         let g = self.last_geometry.iter().find(|g| g.key == key)?;
         let p = if input {

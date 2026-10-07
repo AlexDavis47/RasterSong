@@ -33,6 +33,14 @@ Our own editor, drawn on a pannable, zoomable canvas (see [Decisions](decisions.
 - Right-click empty space to add a node there: the search box has focus immediately; type, use ↑/↓, and press
   Enter (or click). Right-click a node to duplicate or delete it; Delete removes the selection, Ctrl+D
   duplicates it.
+- **Tools.** The buttons in the graph's top-left corner choose what hovering a connection does; the choice is
+  kept in Settings as the default tool. **Select** is the editor as usual. **Look** (hold **L**) shows a popup
+  of what the connection carries at the playhead: a picture for video-like signals (stretched to the project's
+  shape, the way Video Output does) or a scope for audio-like ones, above the same readings Select shows.
+  **Listen** (hold **H**) plays what the connection carries through the speakers, turning the playback down
+  while the pointer stays on it; with playback stopped it plays on from the playhead without moving it. Holding a
+  tool's key overrides the default for as long as it is down. Both read through the engine's
+  [taps](engine.md#taps-and-listening), so they never change the render.
 - Wire thickness follows the RMS level of the signal at the playhead, so modulation is visible: a kick drum
   through a band split shows as the bass wire pulsing.
 - Wire colour shows what a wire carries, from the tag the last compile gave each output (before that, from
