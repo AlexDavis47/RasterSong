@@ -7,6 +7,7 @@ mod linked;
 mod modulation;
 mod param_field;
 mod search;
+mod tooltips;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 

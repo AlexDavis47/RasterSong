@@ -16,7 +16,8 @@ use eframe::egui::{
     Stroke, StrokeKind, Ui, pos2, vec2,
 };
 use rastersong_engine::{
-    Category, Failure, Kind, NodeStats, OutputLevel, SPLIT, Severity, Tag, UNBOUNDED_WARMUP,
+    Category, Failure, Kind, NodeStats, OutputLevel, ParamLevel, SPLIT, Severity, Tag,
+    UNBOUNDED_WARMUP,
 };
 
 use super::search::{NodeMenu, SearchMenu};
@@ -45,6 +46,8 @@ const DRAG_THRESHOLD: f32 = 4.0;
 pub struct CanvasContext<'a> {
     /// Output levels at the playhead, for wire widths.
     pub levels: &'a [OutputLevel],
+    /// Values of modulated parameters at the playhead, for pin tooltips.
+    pub params: &'a [ParamLevel],
     /// Why the graph can't render, shown along the bottom of the canvas.
     pub failure: Option<&'a Failure>,
     pub wire_style: WireStyle,
@@ -433,6 +436,12 @@ impl GraphEditor {
                 }
             });
         }
+
+        let readings = super::tooltips::Readings {
+            levels: ctx.levels,
+            params: ctx.params,
+        };
+        self.hover_tooltips(ui, rect, &geometry, &to_screen, hovered_pin, &readings);
 
         // The wire being dragged.
         if let (Interaction::Wire { from }, Some(pointer)) = (self.interaction, pointer)
@@ -1119,6 +1128,12 @@ const GRADIENT_STEPS: usize = 6;
 /// shows its own colour.
 const MIN_CORE: f32 = 2.0;
 
+/// The control points of the curve a wire is drawn along.
+pub(super) fn wire_points(from: Pos2, to: Pos2) -> [Pos2; 4] {
+    let reach = ((to.x - from.x).abs() * 0.5).max(40.0);
+    [from, from + vec2(reach, 0.0), to - vec2(reach, 0.0), to]
+}
+
 fn draw_wire(
     painter: &egui::Painter,
     from: Pos2,
@@ -1127,8 +1142,7 @@ fn draw_wire(
     color: WireColor,
     style: WireStyle,
 ) {
-    let reach = ((to.x - from.x).abs() * 0.5).max(40.0);
-    let points = [from, from + vec2(reach, 0.0), to - vec2(reach, 0.0), to];
+    let points = wire_points(from, to);
     let stroke = |width: f32, color: Color32| {
         painter.add(CubicBezierShape::from_points_stroke(
             points,

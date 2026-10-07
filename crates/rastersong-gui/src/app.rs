@@ -583,10 +583,12 @@ impl App {
             _ => None,
         };
         let levels = frame.as_ref().map_or(&[][..], |f| &f.levels[..]);
+        let params = frame.as_ref().map_or(&[][..], |f| &f.params[..]);
         let canvas = self.editor.show(
             ui,
             &CanvasContext {
                 levels,
+                params,
                 failure: failure.as_ref(),
                 wire_style: self.settings.wire_style,
                 show_stats: self.settings.node_stats,
