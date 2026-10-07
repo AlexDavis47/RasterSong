@@ -91,8 +91,10 @@ mod tests {
     #[test]
     fn costs_are_smoothed_and_forgotten_with_their_node() {
         let mut editor = GraphEditor::new(
-            &rastersong_engine::GraphDesc::from_json(r#"{ "nodes": [], "connections": [] }"#)
-                .unwrap(),
+            &rastersong_engine::GraphDesc::from_json(include_str!(
+                "../../../../examples/graphs/am_bands.json"
+            ))
+            .unwrap(),
         );
         editor.smooth_costs(&[cost("a", 100.0), cost("b", 10.0)]);
         editor.smooth_costs(&[cost("a", 200.0)]);
