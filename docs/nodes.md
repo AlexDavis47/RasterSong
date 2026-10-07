@@ -1092,3 +1092,9 @@ Optional. Without it, or with nothing connected, the source audio is used untouc
 
 - `out` (video, 0 to 1): The rendered picture
 
+**Parameters**
+
+| Name | Default | Range | Modulation | What it does |
+|---|---|---|---|---|
+| `stretch` (Stretch to fit) | `on` | `on`, `off` | no | on stretches a signal of any size or kind to the project size, as if it were wired to the video input, so the output always shows something; off requires an RGB or mono signal of exactly the project size |
+

@@ -250,8 +250,9 @@ fn reports_graph_errors() {
             |e| matches!(e, GraphError::Node { node, .. } if node == "p"),
         ),
         (
-            // Output must match the project size.
-            r#"{ "id": "a", "type": "audio_input" }, { "id": "o", "type": "output" }"#,
+            // Without stretch, the output must match the project size.
+            r#"{ "id": "a", "type": "audio_input" },
+               { "id": "o", "type": "output", "params": { "stretch": "off" } }"#,
             r#"{ "from": "a", "to": "o" }"#,
             |e| matches!(e, GraphError::Node { node, .. } if node == "o"),
         ),

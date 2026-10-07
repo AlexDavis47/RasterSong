@@ -521,3 +521,5 @@ node.video_input.param.source.help = Name of the host-supplied video signal
 
 node.three_band.param.slope.label = Slope (dB/oct)
 node.three_band.param.slope.help = How sharply each crossover separates the bands. The mid band is what remains, so the three bands always add back up to the input at any slope
+node.output.param.stretch.label = Stretch to fit
+node.output.param.stretch.help = on stretches a signal of any size or kind to the project size, as if it were wired to the video input, so the output always shows something; off requires an RGB or mono signal of exactly the project size

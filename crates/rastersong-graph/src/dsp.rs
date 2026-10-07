@@ -38,6 +38,56 @@ pub fn resample(src: &[f32], dst: &mut [f32], group: usize, mode: Interpolation)
     }
 }
 
+/// Stretches a signal of any layout over a picture: the one implementation of "show this signal
+/// at the project's size", shared by the Video Output and anything else that has to draw an
+/// arbitrary signal.
+///
+/// A signal with the same number of samples per pixel as the picture is stretched channel by
+/// channel. Any other signal is read as a flat run of samples, stretched over the pixels and
+/// repeated in every channel (gray).
+#[derive(Debug, Default)]
+pub struct Stretcher {
+    channel: Vec<f32>,
+    stretched: Vec<f32>,
+}
+
+impl Stretcher {
+    /// Fills `dst` (`dst_spp` samples per pixel) from `src` (`src_spp` samples per pixel).
+    pub fn stretch(
+        &mut self,
+        src: &[f32],
+        src_spp: usize,
+        dst: &mut [f32],
+        dst_spp: usize,
+        mode: Interpolation,
+    ) {
+        let pixels = dst.len() / dst_spp.max(1);
+        self.stretched.resize(pixels, 0.0);
+        let per_channel = src_spp == dst_spp && src_spp > 0;
+        let channels = if per_channel { dst_spp } else { 1 };
+        for c in 0..channels {
+            let source: &[f32] = if per_channel {
+                self.channel.clear();
+                self.channel
+                    .extend(src.iter().skip(c).step_by(src_spp.max(1)));
+                &self.channel
+            } else {
+                src
+            };
+            resample(source, &mut self.stretched, 1, mode);
+            if per_channel {
+                for (p, &v) in self.stretched.iter().enumerate() {
+                    dst[p * dst_spp + c] = v;
+                }
+            } else {
+                for (pixel, &v) in dst.chunks_mut(dst_spp.max(1)).zip(&self.stretched) {
+                    pixel.fill(v);
+                }
+            }
+        }
+    }
+}
+
 /// A ring buffer delay line with fractional (linearly interpolated) reads.
 #[derive(Debug, Clone, Default)]
 pub struct DelayLine {
