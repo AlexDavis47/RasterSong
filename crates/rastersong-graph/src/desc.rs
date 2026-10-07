@@ -13,8 +13,9 @@ use crate::GraphError;
 /// overshoot as they always did. Version 5 narrowed the usual range of some frequencies. Version
 /// 6 made frequency modulation linear like every other parameter (it was in octaves), so those
 /// amounts are converted to the equivalent linear amount at the parameter's base value. Version 7
-/// made a generator's `layout` a node setting instead of a parameter.
-pub const FORMAT_VERSION: u32 = 7;
+/// made a generator's `layout` a node setting instead of a parameter. Version 8 saves the
+/// slider ranges the user sets, which limit modulation.
+pub const FORMAT_VERSION: u32 = 8;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -64,6 +65,11 @@ pub struct NodeDesc {
     /// modulated parameter, the value of every sample after modulation (so a signal steps it).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub integer: Vec<String>,
+    /// Slider ranges the user set, by parameter name: what the slider shows and, unless a
+    /// modulation may overshoot, where a signal can take the value. Parameters without an entry
+    /// use the node type's usual range.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub ranges: BTreeMap<String, [f64; 2]>,
     /// Parameters whose modulation pins the editor shows, when they differ from the node type's
     /// defaults. Has no effect on rendering.
     #[serde(default, skip_serializing_if = "Option::is_none")]

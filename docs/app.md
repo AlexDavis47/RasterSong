@@ -54,7 +54,7 @@ Our own editor, drawn on a pannable, zoomable canvas (see [Decisions](decisions.
 
 The node's name (shown on the node instead of its type), its shared settings (Resampling, Channels; see
 [Node behavior](node-behavior.md#shared-node-settings)) and its parameters, with units, sliders (always linear) reset-to-default buttons, and an `int` toggle on numbers that are not whole-only (which rounds the value and, when a signal modulates it, every sample). Parameters that only make sense whole (Beat division and steps, Pack channels, Chorus voices, Phaser stages, Noise seed, Sample & Hold levels, Resample width and height) are declared `.integer()` in their spec: the slider handle jumps between whole values, typed numbers round, and they have no toggle. Each slider covers the parameter's
-usual range; typing (or dragging the value box) past it, up to the node's limits, widens the slider to match. Each
+usual range; typing (or dragging the value box) past it, up to the node's limits, widens the slider to match. Right-click a slider to set its range; the range is saved with the node in the graph (`"ranges"`), and it is also what a modulating signal is held to (unless **Allow past the slider's range** is ticked). Each
 parameter takes two lines: its pin toggle, name and reset button, then the slider and value box. Values left at
 their default aren't written to files.
 

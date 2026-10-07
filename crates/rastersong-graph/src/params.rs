@@ -180,9 +180,15 @@ impl ParamSpec {
         }
     }
 
-    /// Where a modulated value is kept: the usual range, widened to include `base`, or the
-    /// parameter's limits if the modulation may overshoot.
-    pub fn modulation_bounds(&self, base: f64, modulation: Modulation) -> (f64, f64) {
+    /// Where a modulated value is kept: the slider's range (`slider`, or the usual range when the
+    /// user hasn't set one), widened to include `base`, or the parameter's limits if the
+    /// modulation may overshoot.
+    pub fn modulation_bounds(
+        &self,
+        base: f64,
+        modulation: Modulation,
+        slider: Option<(f64, f64)>,
+    ) -> (f64, f64) {
         let ParamKind::Number {
             min,
             max,
@@ -193,6 +199,7 @@ impl ParamSpec {
         else {
             return (f64::MIN, f64::MAX);
         };
+        let (min, max) = slider.unwrap_or((min, max));
         if modulation.overshoot {
             (limit_min, limit_max)
         } else {
@@ -219,13 +226,18 @@ impl ParamSpec {
     }
 
     /// The range a modulated value moves over for a signal within `-1..=1`, within the limits.
-    pub fn modulated_range(&self, base: f64, modulation: Modulation) -> (f64, f64) {
+    pub fn modulated_range(
+        &self,
+        base: f64,
+        modulation: Modulation,
+        slider: Option<(f64, f64)>,
+    ) -> (f64, f64) {
         let ends = match modulation.mode {
             ModMode::Bipolar => [-1.0, 1.0],
             ModMode::Unipolar => [0.0, 1.0],
         };
         let [a, b] = ends.map(|s| self.modulated(base, modulation, s));
-        let (lo, hi) = self.modulation_bounds(base, modulation);
+        let (lo, hi) = self.modulation_bounds(base, modulation, slider);
         (a.min(b).clamp(lo, hi), a.max(b).clamp(lo, hi))
     }
 
@@ -478,18 +490,30 @@ mod tests {
         assert_eq!(linear.modulated(5.0, both(100.0), 1.0), 10.0);
         assert_eq!(linear.modulated(5.0, both(100.0), -1.0), 0.0);
         // Ranges are clamped to the limits (here the usual range, 0..10).
-        assert_eq!(linear.modulated_range(5.0, both(40.0)), (3.0, 7.0));
-        assert_eq!(linear.modulated_range(9.0, both(40.0)), (7.0, 10.0));
-        assert_eq!(linear.modulated_range(5.0, one_way(-20.0)), (3.0, 5.0));
+        assert_eq!(linear.modulated_range(5.0, both(40.0), None), (3.0, 7.0));
+        assert_eq!(linear.modulated_range(9.0, both(40.0), None), (7.0, 10.0));
+        assert_eq!(
+            linear.modulated_range(5.0, one_way(-20.0), None),
+            (3.0, 5.0)
+        );
         // Kept within the usual range (widened to the base) unless it may overshoot.
         let loud = Modulation {
             overshoot: true,
             ..both(400.0)
         };
         let wide = ParamSpec::number("t", "T", 1.0, 0.0, 10.0, "").limits(-100.0, 100.0);
-        assert_eq!(wide.modulated_range(5.0, both(400.0)), (0.0, 10.0));
-        assert_eq!(wide.modulated_range(50.0, both(40.0)), (48.0, 50.0));
-        assert_eq!(wide.modulated_range(5.0, loud), (-15.0, 25.0));
+        assert_eq!(wide.modulated_range(5.0, both(400.0), None), (0.0, 10.0));
+        assert_eq!(wide.modulated_range(50.0, both(40.0), None), (48.0, 50.0));
+        assert_eq!(wide.modulated_range(5.0, loud, None), (-15.0, 25.0));
+        // A slider range the user set replaces the usual range, and overshoot still goes to the limits.
+        assert_eq!(
+            wide.modulated_range(5.0, both(400.0), Some((2.0, 6.0))),
+            (2.0, 6.0)
+        );
+        assert_eq!(
+            wide.modulated_range(5.0, loud, Some((2.0, 6.0))),
+            (-15.0, 25.0)
+        );
         // Typing a number of units back in gives the amount that produces it.
         let amount = linear.modulation_amount_for_sweep(2.0, ModMode::Bipolar);
         assert_eq!(linear.modulation_sweep(both(amount)), 2.0);

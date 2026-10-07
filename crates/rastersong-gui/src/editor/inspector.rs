@@ -242,6 +242,7 @@ impl GraphEditor {
                     // Scoped to the node, so same-named parameters of different nodes (and their
                     // stored slider ranges and open menus) never share ids.
                     let node_id = node.id.clone();
+                    let mut slider = node.ranges.get(spec.name).map(|r| (r[0], r[1]));
                     let disconnected = ui
                         .push_id(node_id, |ui| {
                             param_row(ParamRow {
@@ -254,12 +255,21 @@ impl GraphEditor {
                                 expose: expose.as_mut(),
                                 modulation: modulation.as_mut().map(|(m, _, c)| (m, *c)),
                                 live,
+                                slider: &mut slider,
                             })
                         })
                         .inner;
                     ui.add_space(PARAM_GAP);
                     if disconnected {
                         disconnect = Some(index);
+                    }
+                    match slider {
+                        Some((lo, hi)) => {
+                            node.ranges.insert(spec.name.to_owned(), [lo, hi]);
+                        }
+                        None => {
+                            node.ranges.remove(spec.name);
+                        }
                     }
                     if let Some(on) = integer {
                         if on {
@@ -312,6 +322,8 @@ struct ParamRow<'a, 'u> {
     modulation: Option<(&'a mut Modulation, egui::Color32)>,
     /// A modulated parameter's value at the playhead.
     live: Option<f64>,
+    /// The slider range the user set, if any.
+    slider: &'a mut Option<(f64, f64)>,
 }
 
 /// Width a parameter's control line needs besides the slider: the gutter (under the expose
@@ -394,6 +406,7 @@ fn param_row(row: ParamRow) -> bool {
         expose,
         mut modulation,
         live,
+        slider,
     } = row;
     let mut disconnect = false;
     let integer_on = integer.as_ref().is_some_and(|i| **i);
@@ -484,8 +497,15 @@ fn param_row(row: ParamRow) -> bool {
                     color: *color,
                     live,
                 });
-                let response =
-                    param_field(ui, spec.name, n, range, track_width, VALUE_WIDTH, modulated);
+                let response = param_field(
+                    ui,
+                    spec.name,
+                    n,
+                    range,
+                    (track_width, VALUE_WIDTH),
+                    modulated,
+                    slider,
+                );
                 disconnect = response.disconnect;
                 if rounded {
                     *n = n.round();

@@ -46,6 +46,8 @@ pub struct EditorNode {
     pub modulation: BTreeMap<String, Modulation>,
     /// The number parameters rounded to whole numbers.
     pub integer: BTreeSet<String>,
+    /// Slider ranges the user set, by parameter name.
+    pub ranges: BTreeMap<String, [f64; 2]>,
     /// The parameters showing pins, when the user changed them from the type's defaults.
     pub exposed: Option<BTreeSet<String>>,
 }
@@ -208,6 +210,7 @@ impl GraphEditor {
                 pos: node.position.map_or(positions[i], |[x, y]| pos2(x, y)),
                 modulation: node.modulation.clone(),
                 integer: node.integer.iter().cloned().collect(),
+                ranges: node.ranges.clone(),
                 exposed: node.exposed.as_ref().map(|e| e.iter().cloned().collect()),
             });
         }
@@ -317,6 +320,7 @@ impl GraphEditor {
                     position: Some([n.pos.x.round(), n.pos.y.round()]),
                     modulation: n.modulation.clone(),
                     integer: n.integer.iter().cloned().collect(),
+                    ranges: n.ranges.clone(),
                     exposed: n.exposed.as_ref().map(|e| e.iter().cloned().collect()),
                 })
                 .collect(),
@@ -503,6 +507,7 @@ impl GraphEditor {
             pos,
             modulation: BTreeMap::new(),
             integer: BTreeSet::new(),
+            ranges: BTreeMap::new(),
             exposed: None,
         });
         Some(key)
@@ -632,6 +637,7 @@ impl GraphEditor {
             node.label = desc.label.clone();
             node.modulation = desc.modulation.clone();
             node.integer = desc.integer.iter().cloned().collect();
+            node.ranges = desc.ranges.clone();
             node.exposed = desc.exposed.as_ref().map(|e| e.iter().cloned().collect());
             keys.insert(desc.id.as_str(), key);
         }
@@ -902,6 +908,15 @@ mod tests {
         assert_eq!(canonical(&back), canonical(&graph));
         // Loading the editor's own output gives the same graph again, positions included.
         assert_eq!(GraphEditor::new(&back).to_desc(), back);
+    }
+
+    #[test]
+    fn slider_ranges_survive_the_editor() {
+        let json = r#"{ "version": 8, "nodes": [ { "id": "d", "type": "delay", "ranges": { "time": [0, 3] } } ] }"#;
+        let editor = GraphEditor::new(&GraphDesc::from_json(json).unwrap());
+        let key = editor.key_of("d").unwrap();
+        assert_eq!(editor.node(key).unwrap().ranges["time"], [0.0, 3.0]);
+        assert_eq!(editor.to_desc().nodes[0].ranges["time"], [0.0, 3.0]);
     }
 
     #[test]

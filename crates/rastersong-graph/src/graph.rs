@@ -300,6 +300,8 @@ struct Pending {
     modulation: BTreeMap<String, Modulation>,
     /// For each parameter, whether it is rounded to whole numbers.
     integer: Vec<bool>,
+    /// Slider ranges the user set, by parameter name.
+    ranges: BTreeMap<String, [f64; 2]>,
     node: Box<dyn Node>,
     interpolation: Interpolation,
     grouping: Grouping,
@@ -332,7 +334,12 @@ impl Pending {
             .get(spec.name)
             .copied()
             .unwrap_or_else(|| spec.default_modulation());
-        Some((base, modulation, spec.modulation_bounds(base, modulation)))
+        let slider = self.ranges.get(spec.name).map(|r| (r[0], r[1]));
+        Some((
+            base,
+            modulation,
+            spec.modulation_bounds(base, modulation, slider),
+        ))
     }
 }
 
@@ -886,7 +893,8 @@ impl<'a> Compiler<'a> {
         let modulated: Vec<Option<(f64, f64)>> = (0..p.specs.len())
             .map(|i| {
                 p.modulation_of(i).map(|(base, m, _)| {
-                    let (lo, hi) = p.specs[i].modulated_range(base, m);
+                    let slider = p.ranges.get(p.specs[i].name).map(|r| (r[0], r[1]));
+                    let (lo, hi) = p.specs[i].modulated_range(base, m, slider);
                     if p.integer[i] {
                         (lo.round(), hi.round())
                     } else {
@@ -1147,6 +1155,7 @@ fn create_nodes(desc: &GraphDesc, registry: &Registry) -> Result<Vec<Pending>, G
             inputs: spec.inputs,
             outputs: spec.outputs,
             modulation: d.modulation.clone(),
+            ranges: d.ranges.clone(),
             integer,
             wires: vec![None; spec.inputs.len()],
             param_wires: vec![None; specs.len()],
@@ -1398,6 +1407,7 @@ fn fill_missing_inputs(desc: &GraphDesc, registry: &Registry) -> Option<GraphDes
                 position: None,
                 modulation: BTreeMap::new(),
                 integer: Vec::new(),
+                ranges: BTreeMap::new(),
                 exposed: None,
             });
         }

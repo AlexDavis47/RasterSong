@@ -5,7 +5,7 @@ or its main input. Unknown parameters are rejected, which catches typos.
 
 ```json
 {
-  "version": 7,
+  "version": 8,
   "nodes": [
     { "id": "video", "type": "video_input" },
     { "id": "audio", "type": "audio_input" },
@@ -28,12 +28,12 @@ affect rendering. A signal connected to a parameter (`{ "from": "audio", "to": "
 **percentage of the parameter's span** (its usual range): one way, 100% moves the
 value across the whole span; both ways (`"mode": "bipolar"`), 100% is the swing from the lowest point to the
 highest. The value stays between the slider's ends (widened to include the base value) unless the entry says
-`"overshoot": true`, which allows it up to the parameter's limits. Without an entry the amount is 25%, one way,
+`"overshoot": true`, which allows it up to the parameter's limits. "The slider" is the node's `"ranges": { "param": [min, max] }` entry when the user set one, otherwise the node type's usual range. Without an entry the amount is 25%, one way,
 not overshooting. How modulation is applied is in
 [Node authoring](node-authoring.md#parameter-modulation).
 
 Format version 3 introduced percentage amounts, version 4 the range limit and version 5 narrower usual ranges for
-some frequencies, version 6 linear frequency modulation (octave amounts are converted at the base value) and version 7 the generator `layout` setting. Older graphs (amounts in the
+some frequencies, version 6 linear frequency modulation (octave amounts are converted at the base value) version 7 the generator `layout` setting and version 8 the `ranges` a user sets on sliders. Older graphs (amounts in the
 parameter's own unit, the default amount that depended on the base value, and values that could pass the slider's
 ends) are rewritten on load, with `"overshoot": true`, so they move parameters exactly as before.
 

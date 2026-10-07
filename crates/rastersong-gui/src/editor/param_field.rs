@@ -125,20 +125,19 @@ pub fn param_field(
     id_salt: &str,
     value: &mut f64,
     range: NumberRange,
-    track_width: f32,
-    value_width: f32,
+    (track_width, value_width): (f32, f32),
     mut modulated: Option<Modulated>,
+    custom: &mut Option<(f64, f64)>,
 ) -> FieldResponse {
     let id = ui.make_persistent_id(id_salt);
-    // The track's range is stored per field. It starts as the usual range, grows to include any
-    // value typed beyond it, and can be set or reset from the track's right-click menu.
-    let range_id = id.with("range");
-    let custom: Option<(f64, f64)> = ui.data_mut(|d| d.get_persisted(range_id));
+    // The track's range is the node's to keep (`custom`, saved in the graph, where modulation
+    // is held to it). It starts as the usual range, grows to include any value typed beyond
+    // it, and can be set or reset from the track's right-click menu.
     let mut shown = custom.unwrap_or(range.soft);
     if *value < shown.0 || *value > shown.1 {
         let v = value.clamp(range.limits.0, range.limits.1);
         shown = (shown.0.min(v), shown.1.max(v));
-        ui.data_mut(|d| d.insert_persisted(range_id, shown));
+        *custom = Some(shown);
     }
     let before = (*value, modulated.as_ref().map(|m| *m.modulation));
     let mut response = FieldResponse::default();
@@ -204,12 +203,12 @@ pub fn param_field(
         *value = range.default;
     }
     if reset_range {
-        ui.data_mut(|d| d.remove::<(f64, f64)>(range_id));
+        *custom = None;
         shown = range.soft;
     } else if new_range != shown && new_range.0 < new_range.1 {
         shown = new_range;
         *value = value.clamp(shown.0, shown.1);
-        ui.data_mut(|d| d.insert_persisted(range_id, shown));
+        *custom = Some(shown);
     }
     if (track.clicked() || track.dragged())
         && !ui.input(|i| i.modifiers.alt)
@@ -227,7 +226,7 @@ pub fn param_field(
     let x = |v: f64| rail.left() + rail.width() * fraction(v);
     paint_rail(ui, rail, x(*value));
     if let Some(m) = &modulated {
-        let (lo, hi) = m.spec.modulated_range(*value, *m.modulation);
+        let (lo, hi) = m.spec.modulated_range(*value, *m.modulation, Some(shown));
         paint_range(ui, rail, x(lo), x(hi), m.color);
     }
     paint_handle(ui, &track, pos2(x(*value), rect.center().y), rect.height());

@@ -332,7 +332,7 @@ fn graph_files_round_trip() {
     let desc = GraphDesc::from_json(PASSTHROUGH).unwrap();
     assert_eq!(GraphDesc::from_json(&desc.to_json()).unwrap(), desc);
     assert!(matches!(
-        GraphDesc::from_json(r#"{ "version": 8, "nodes": [] }"#),
+        GraphDesc::from_json(r#"{ "version": 9, "nodes": [] }"#),
         Err(GraphError::Parse(_))
     ));
 }
@@ -1193,4 +1193,28 @@ fn generators_take_modulation_of_their_timing_and_shape() {
         "seed",
         5.0 / 999.0 * 100.0,
     );
+}
+
+#[test]
+fn modulation_stays_within_the_slider_range_the_user_set() {
+    // Bit crush bits go 1 to 24 usually; a signal at full scale with a huge amount would reach
+    // the top, but the user's slider range ends at 6.
+    let render = |ranges: &str| {
+        let json = format!(
+            r#"{{ "version": 8, "nodes": [
+                {{ "id": "video", "type": "video_input" }}, {{ "id": "one", "type": "constant", "params": {{ "value": 1 }} }},
+                {{ "id": "crush", "type": "bitcrush", "params": {{ "bits": 2 }},
+                   "modulation": {{ "bits": {{ "amount": 100, "mode": "unipolar" }} }}{ranges} }},
+                {{ "id": "out", "type": "output" }} ],
+              "connections": [ {{ "from": "video", "to": "crush" }}, {{ "from": "one", "to": "crush.@bits" }},
+                               {{ "from": "crush", "to": "out" }} ] }}"#
+        );
+        let mut graph = compile(&json).unwrap();
+        graph
+            .process(0, &sources(|i| i as f32 / 24.0, |_| 0.0))
+            .unwrap();
+        graph.param_levels().first().map(|p| p.value)
+    };
+    assert_eq!(render(""), Some(24.0), "the usual range, 1 to 24");
+    assert_eq!(render(r#", "ranges": { "bits": [1, 6] }"#), Some(6.0));
 }
