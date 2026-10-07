@@ -161,6 +161,8 @@ pub enum BiquadKind {
     BandPass,
     /// Passes every frequency at full level and shifts phase around the centre frequency.
     AllPass,
+    /// Removes a narrow band around the centre frequency and passes the rest.
+    Notch,
     /// Boosts or cuts by `gain_db` around the centre frequency.
     Peak {
         gain_db: f64,
@@ -250,6 +252,7 @@ impl Biquad {
                 1.0 - alpha,
             ),
             BiquadKind::BandPass => ([alpha, 0.0, -alpha], 1.0 + alpha, -2.0 * cos, 1.0 - alpha),
+            BiquadKind::Notch => ([1.0, -2.0 * cos, 1.0], 1.0 + alpha, -2.0 * cos, 1.0 - alpha),
             BiquadKind::AllPass => (
                 [1.0 - alpha, -2.0 * cos, 1.0 + alpha],
                 1.0 + alpha,
