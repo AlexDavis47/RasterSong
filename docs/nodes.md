@@ -61,8 +61,8 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 | `period` (Period) | `beat` | `beat`, `bar` | no | beat restarts the shape on every beat, bar on every bar |
 | `division` (Division) | 1 | 1 to 16 (up to 1 to 1000) | yes | Cycles per period: 2 restarts twice as often (half beats). Use the bar period for slower |
 | `shape` (Shape) | `decay` | `phase`, `decay`, `pulse`, `step` | no | phase rises 0 to 1, decay falls 1 to 0, pulse is on for the width, step climbs in stairs |
-| `width` (Width) | 0.25 | 0 to 1 | yes | For the pulse shape, the fraction of each cycle it stays on |
-| `steps` (Steps) | 4 | 1 to 32 (up to 1 to 1024) | yes | For the step shape, how many stairs each cycle climbs |
+| `width` (Width) | 0.25 | 0 to 1 | yes | For the pulse shape, the fraction of each cycle it stays on. Used when `shape` is `pulse`. |
+| `steps` (Steps) | 4 | 1 to 32 (up to 1 to 1024) | yes | For the step shape, how many stairs each cycle climbs. Used when `shape` is `step`. |
 
 ### `constant`
 
@@ -113,7 +113,7 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 | `phase` (Phase) | 0 | 0 to 1 (up to -1000 to 1000) | yes | Where in the cycle the wave starts, as a fraction of a cycle |
 | `amplitude` (Amplitude) | 0.5 | 0 to 1 (up to -10 to 10) | yes | Half the peak-to-peak height; with the offset it places the wave in the signal's range |
 | `offset` (Offset) | 0.5 | -1 to 1 (up to -10 to 10) | yes | Added to the wave: 0.5 with amplitude 0.5 fills the video range 0 to 1, 0 suits audio |
-| `pulse_width` (Pulse width) | 0.5 | 0 to 1 | yes | For the square wave, the fraction of the cycle it stays high |
+| `pulse_width` (Pulse width) | 0.5 | 0 to 1 | yes | For the square wave, the fraction of the cycle it stays high. Used when `wave` is `square`. |
 
 ## Channels
 

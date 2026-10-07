@@ -86,7 +86,7 @@ Every change that renames or reshapes a parameter, or merges, splits or removes 
 - [x] **chore** Audit every number parameter and mark the integer ones (Beat division and steps, Pack channels,
   Chorus voices, Bit Crush bits if whole, Quantize levels, and so on). The property tests sweep them and assert
   only whole values reach `process`.
-- [ ] **feature** Conditional parameters: a declarative "shown when" rule on `ParamSpec`
+- [x] **feature** Conditional parameters: a declarative "shown when" rule on `ParamSpec`
   (`.shown_when(Self::MODE, Mode::Step)`). The inspector and the generated docs hide the parameter when the rule
   fails; a hidden parameter keeps its value and still saves. *Needed by: Beat steps and width, Oscillator pulse
   width, Filter slope, Distortion character, and any node whose mode changes which controls matter.*
@@ -315,8 +315,8 @@ a migration where noted, and a regenerated `nodes.md`.
 - **Beat**
   - [x] **bug** Audio layout never works (see [Shared node settings](#shared-node-settings)).
   - [x] **feature** *Division* defaults to an integer (and is an integer parameter). Slower than the period is the bar period; old fractional divisions are raised to 1.
-  - [ ] **feature** *Steps* shows only when the mode is Step (conditional parameter).
-  - [ ] **feature** *Width* is conditional on the modes that use it.
+  - [x] **feature** *Steps* shows only when the mode is Step (conditional parameter).
+  - [x] **feature** *Width* is conditional on the modes that use it.
 - **Constant**
   - [ ] **feature** *Value*'s modulation toggle is off by default (no pin exposed): nobody modulates a constant.
 - **Noise**
@@ -326,7 +326,7 @@ a migration where noted, and a regenerated `nodes.md`.
   - [ ] **chore** Remove the Ramp wave; it is a Saw followed by a Flip. Migration rewrites old Ramp oscillators to
     Saw + Flip (so *depends on the Flip rename/split below*).
   - [x] **bug** Audio layout error, same as Beat.
-  - [ ] **feature** *Pulse width* only shows for the pulse wave (conditional parameter).
+  - [x] **feature** *Pulse width* only shows for the pulse wave (conditional parameter).
 
 ### Structure
 

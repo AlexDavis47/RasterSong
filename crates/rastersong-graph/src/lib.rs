@@ -29,5 +29,5 @@ pub use node::{
     Severity, Sources, Tempo, Value,
 };
 pub use nodes::{Category, Choice, NodeKind, NodeSpec, NodeType, Registry};
-pub use params::{ParamKind, ParamSpec, Params, range_span};
+pub use params::{ParamKind, ParamSpec, Params, ShownWhen, range_span};
 pub use signal::{ChannelMap, Kind, Layout, Part, Range, Signal, Tag, TagRule};

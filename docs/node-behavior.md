@@ -39,10 +39,15 @@ Hover text for the Channels setting (generalized to any channel count):
 
 ## Conditional parameters
 
-*Planned.* Some parameters only mean something for some settings of another (a Beat node's *steps* only in step
-mode, an oscillator's *pulse width* only for the pulse wave). Today they are always shown. The
-[roadmap](roadmap.md#node-settings-and-parameters) adds a declarative "shown when" rule on `ParamSpec` so the
-inspector (and generated docs) hide them.
+Some parameters only mean something for some settings of another: a Beat's *steps* only for the step shape, its
+*width* only for the pulse shape, an oscillator's *pulse width* only for the square wave. A spec says so with
+`.shown_when("shape", &["step"])`: the rule names one choice parameter of the same node and the options for which
+this one is used (the controlling parameter can't itself be conditional, which a registry test checks).
+
+- While the rule fails the inspector hides the parameter. The value is kept and still saves; the node ignores it.
+- If a signal is wired to it, or its pin is shown, it stays in the inspector, greyed, with a line saying why it is
+  unused ("Unused: only applies when Shape is pulse."). A connection is never hidden from view.
+- [nodes.md](nodes.md) adds "Used when `shape` is `pulse`." to the parameter's help.
 
 ## Range conversion and the bugged mapping
 

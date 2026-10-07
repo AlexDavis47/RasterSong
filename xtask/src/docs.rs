@@ -113,7 +113,7 @@ fn node(out: &mut String, t: &NodeType) {
                 default(p),
                 range(p),
                 modulation(p),
-                p.help
+                help(p)
             );
         }
         out.push('\n');
@@ -180,6 +180,26 @@ fn range(p: &ParamSpec) -> String {
             .collect::<Vec<_>>()
             .join(", "),
         ParamKind::Text { .. } => "text".to_owned(),
+    }
+}
+
+/// The help text, with the rule for when the parameter is used, if it has one.
+fn help(p: &ParamSpec) -> String {
+    match p.when {
+        None => p.help.to_owned(),
+        Some(w) => {
+            let values = w
+                .values
+                .iter()
+                .map(|v| format!("`{v}`"))
+                .collect::<Vec<_>>()
+                .join(" or ");
+            format!(
+                "{}. Used when `{}` is {values}.",
+                p.help.trim_end_matches('.'),
+                w.param
+            )
+        }
     }
 }
 

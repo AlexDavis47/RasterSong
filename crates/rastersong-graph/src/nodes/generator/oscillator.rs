@@ -112,7 +112,8 @@ params! { Oscillator {
         0.0,
         1.0,
         "For the square wave, the fraction of the cycle it stays high",
-    ),
+    )
+    .shown_when("wave", &["square"]),
 } }
 
 impl NodeKind for Oscillator {

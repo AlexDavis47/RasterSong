@@ -26,6 +26,18 @@ pub struct ParamSpec {
     pub integer: bool,
     /// Why a signal can't modulate it (set by [`Self::fixed`]); empty when it can.
     pub locked: &'static str,
+    /// When the parameter means something: the editor hides it (and the docs say so) while
+    /// the rule fails. A hidden parameter keeps its value and still saves.
+    pub when: Option<ShownWhen>,
+}
+
+/// A parameter that only matters while another, a choice, has one of some values.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShownWhen {
+    /// Name of the choice parameter that decides.
+    pub param: &'static str,
+    /// The choices of that parameter for which this one is used.
+    pub values: &'static [&'static str],
 }
 
 /// The size of a range, zero for one that isn't finite.
@@ -83,6 +95,7 @@ impl ParamSpec {
             exposed: false,
             integer: false,
             locked: "",
+            when: None,
         }
     }
 
@@ -103,6 +116,7 @@ impl ParamSpec {
             exposed: false,
             integer: false,
             locked: "",
+            when: None,
         }
     }
 
@@ -122,6 +136,7 @@ impl ParamSpec {
             exposed: false,
             integer: false,
             locked: "",
+            when: None,
         }
     }
 
@@ -135,6 +150,24 @@ impl ParamSpec {
     pub const fn integer(mut self) -> Self {
         self.integer = true;
         self
+    }
+
+    /// Only used while the choice parameter `param` is one of `values`. The editor hides it the
+    /// rest of the time, unless a signal is connected to it, and says why it is unused.
+    pub const fn shown_when(
+        mut self,
+        param: &'static str,
+        values: &'static [&'static str],
+    ) -> Self {
+        self.when = Some(ShownWhen { param, values });
+        self
+    }
+
+    /// Whether the parameter is used, given the node's parameters (`value_of` gives a choice
+    /// parameter's current value by name). Always true for one without a rule.
+    pub fn is_used(&self, value_of: impl Fn(&str) -> Option<String>) -> bool {
+        self.when
+            .is_none_or(|w| value_of(w.param).is_some_and(|v| w.values.contains(&v.as_str())))
     }
 
     /// Can't be modulated, for the stated reason, which the editor shows on the parameter.

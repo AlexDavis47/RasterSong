@@ -97,6 +97,10 @@ node can actually work with; unless a spec widens them, the limits are the usual
 Soft bounds: typing (or dragging the value box) past the usual range, up to the node's limits, widens the slider to
 match, as in Substance Designer.
 
+**Conditional parameters.** `.shown_when("shape", &["pulse"])` on a spec hides it in the inspector unless the named
+choice parameter has one of the listed values ([Node behavior](node-behavior.md#conditional-parameters)). It only
+affects display: the node still reads the parameter, so a constructor must not depend on it being relevant.
+
 ### Parameter modulation
 
 Any number parameter a spec doesn't mark `fixed` can be driven by a signal, connected like an input as

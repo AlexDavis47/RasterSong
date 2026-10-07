@@ -34,7 +34,7 @@ pub use rastersong_graph::{
     GeneratorLayout, Graph, GraphDesc, GraphError, Grouping, Interpolation, Kind, Layout,
     MODULATION_AMOUNT_LIMITS, ModMode, Modulation, NodeDesc, NodeDiagnostic, NodeStats, NodeType,
     OutputLevel, OutputSpec, ParamKind, ParamLevel, ParamSpec, ParamValue, Part, Range, Registry,
-    Severity, Tag, TagRule, Tempo, range_span,
+    Severity, ShownWhen, Tag, TagRule, Tempo, range_span,
 };
 pub use rastersong_media::{
     AudioClip, AudioOptions, BackendInfo, FakeBackend, FakeVideo, FfmpegBackend, LibraryInfo,

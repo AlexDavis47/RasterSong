@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 
 use proptest::prelude::*;
 use rastersong_graph::{
-    Category, Layout, MAX_PARAMS, Node, ParamKind, ParamValue, PrepareContext, ProcessContext,
-    Registry, Signal,
+    Category, GraphDesc, Layout, MAX_PARAMS, Node, ParamKind, ParamValue, PrepareContext,
+    ProcessContext, Registry, Signal,
 };
 
 /// Samples per row. Blocks are whole rows, so "rows" units mean the same thing in every block.
@@ -303,6 +303,48 @@ fn locked_numbers_state_a_reason() {
     assert_eq!(
         locked,
         ["pack.channels", "resample.width", "resample.height"]
+    );
+}
+
+/// A "shown when" rule names a choice parameter of the same node and only values it offers, and
+/// the controlling parameter is not itself conditional (one level keeps the rules easy to follow).
+#[test]
+fn shown_when_rules_point_at_real_choices() {
+    for t in Registry::shared().types() {
+        for spec in t.spec.params {
+            let Some(when) = spec.when else { continue };
+            let name = format!("{}.{}", t.kind, spec.name);
+            let control = t
+                .spec
+                .params
+                .iter()
+                .find(|p| p.name == when.param)
+                .unwrap_or_else(|| panic!("{name} depends on a missing {}", when.param));
+            let ParamKind::Choice { options, .. } = control.kind else {
+                panic!("{name} depends on {}, which isn't a choice", when.param);
+            };
+            assert!(control.when.is_none(), "{name} depends on a conditional");
+            assert!(!when.values.is_empty(), "{name} is never used");
+            for v in when.values {
+                assert!(
+                    options.contains(v),
+                    "{name}: {v} isn't an option of {}",
+                    when.param
+                );
+            }
+        }
+    }
+}
+
+/// A hidden parameter keeps its value: the rule changes what is shown, never what is stored.
+#[test]
+fn unused_parameters_are_still_read_and_saved() {
+    let json = r#"{ "version": 9, "nodes": [ { "id": "b", "type": "beat", "params": { "shape": "decay", "steps": 7 } } ] }"#;
+    let desc = GraphDesc::from_json(json).unwrap();
+    assert_eq!(desc.nodes[0].params["steps"], ParamValue::Number(7.0));
+    assert_eq!(
+        GraphDesc::from_json(&desc.to_json()).unwrap().nodes[0].params["steps"],
+        ParamValue::Number(7.0)
     );
 }
 

@@ -14,6 +14,11 @@ use rastersong_engine::{
 use rastersong_gui::{App, AudioOut, STARTER_GRAPH};
 
 fn app() -> App {
+    app_with(|_| {})
+}
+
+/// The app with the starter graph changed by `edit`.
+fn app_with(edit: impl FnOnce(&mut GraphDesc)) -> App {
     let backend = FakeBackend::new()
         .with_video(
             "clip",
@@ -32,7 +37,9 @@ fn app() -> App {
                 samples: (0..16_000).map(|i| (i as f32 * 0.05).sin()).collect(),
             },
         );
-    let mut project = Project::new(GraphDesc::from_json(STARTER_GRAPH).unwrap());
+    let mut graph = GraphDesc::from_json(STARTER_GRAPH).unwrap();
+    edit(&mut graph);
+    let mut project = Project::new(graph);
     project.video = Some(PathBuf::from("clip"));
     project
         .audio_tracks
@@ -842,4 +849,48 @@ fn generators_have_a_layout_setting_next_to_the_shared_ones() {
     select(&mut harness, "beat");
     harness.run_steps(3);
     harness.get_by_label("Layout");
+}
+
+fn beat_with(extra: &str) -> impl FnOnce(&mut GraphDesc) {
+    let node = format!(r#"{{ "id": "beat", "type": "beat" {extra} }}"#);
+    move |graph| graph.nodes.push(serde_json::from_str(&node).unwrap())
+}
+
+#[test]
+fn parameters_a_setting_leaves_unused_are_hidden() {
+    // A Beat defaults to the decay shape, which uses neither width nor steps.
+    let mut harness = harness(app_with(beat_with("")));
+    harness.run_steps(3);
+    select(&mut harness, "beat");
+    harness.run_steps(3);
+    harness.get_by_label("Division");
+    assert!(harness.query_by_label("Width").is_none());
+    assert!(harness.query_by_label("Steps").is_none());
+}
+
+#[test]
+fn a_parameter_appears_when_its_setting_makes_it_matter() {
+    let mut harness = harness(app_with(beat_with(r#", "params": { "shape": "pulse" }"#)));
+    harness.run_steps(3);
+    select(&mut harness, "beat");
+    harness.run_steps(3);
+    harness.get_by_label("Width");
+    assert!(harness.query_by_label("Steps").is_none());
+    assert!(harness.query_by_label_contains("Unused").is_none());
+}
+
+#[test]
+fn an_unused_parameter_with_a_wire_stays_visible_and_says_why() {
+    let graph = |graph: &mut GraphDesc| {
+        beat_with("")(graph);
+        graph
+            .connections
+            .push(serde_json::from_str(r#"{ "from": "audio", "to": "beat.@width" }"#).unwrap());
+    };
+    let mut harness = harness(app_with(graph));
+    harness.run_steps(3);
+    select(&mut harness, "beat");
+    harness.run_steps(3);
+    harness.get_by_label("Width");
+    harness.get_by_label_contains("Unused: only applies when Shape is pulse");
 }

@@ -78,7 +78,8 @@ params! { Beat {
         0.0,
         1.0,
         "For the pulse shape, the fraction of each cycle it stays on",
-    ),
+    )
+    .shown_when("shape", &["pulse"]),
     STEPS: ParamSpec::number(
         "steps",
         "Steps",
@@ -86,8 +87,10 @@ params! { Beat {
         1.0,
         32.0,
         "For the step shape, how many stairs each cycle climbs",
-    ).integer()
-    .limits(1.0, 1024.0),
+    )
+    .integer()
+    .limits(1.0, 1024.0)
+    .shown_when("shape", &["step"]),
 } }
 
 impl NodeKind for Beat {

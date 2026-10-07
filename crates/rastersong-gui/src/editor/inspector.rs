@@ -6,7 +6,7 @@ use eframe::egui::{self, RichText, Ui};
 use rastersong_engine::{AUDIO_INPUT, SOURCE_PARAM};
 use rastersong_engine::{
     Channels, GeneratorLayout, Grouping, Interpolation, Modulation, NodeStats, NodeType, ParamKind,
-    ParamLevel, ParamSpec, ParamValue, Severity,
+    ParamLevel, ParamSpec, ParamValue, Severity, ShownWhen,
 };
 
 use super::param_field::{GUTTER_WIDTH, Modulated, NumberRange, param_field, reset_gesture};
@@ -224,6 +224,13 @@ impl GraphEditor {
                     let tracks = (node.kind == AUDIO_INPUT && spec.name == SOURCE_PARAM)
                         .then_some(ctx.tracks);
                     let (exposed, wire) = pins[index];
+                    // A parameter the node's settings leave unused is hidden, unless a signal is
+                    // wired to it (or its pin shown): that stays in view, greyed, with the reason.
+                    let used =
+                        spec.is_used(|name| choice_value(kind.spec.params, &node.params, name));
+                    if !used && !exposed && wire.is_none() {
+                        continue;
+                    }
                     let mut modulation = wire.map(|color| {
                         let current = node.modulation.get(spec.name).copied();
                         let value = current.unwrap_or_else(|| spec.default_modulation());
@@ -245,7 +252,10 @@ impl GraphEditor {
                     let mut slider = node.ranges.get(spec.name).map(|r| (r[0], r[1]));
                     let disconnected = ui
                         .push_id(node_id, |ui| {
-                            param_row(ParamRow {
+                            if !used {
+                                ui.set_opacity(0.5);
+                            }
+                            let disconnected = param_row(ParamRow {
                                 ui,
                                 spec,
                                 params: &mut node.params,
@@ -256,7 +266,14 @@ impl GraphEditor {
                                 modulation: modulation.as_mut().map(|(m, _, c)| (m, *c)),
                                 live,
                                 slider: &mut slider,
-                            })
+                            });
+                            if !used && let Some(when) = spec.when {
+                                ui.horizontal(|ui| {
+                                    ui.add_space(GUTTER_WIDTH + ui.spacing().item_spacing.x);
+                                    ui.weak(unused_reason(kind.spec.params, &when));
+                                });
+                            }
+                            disconnected
                         })
                         .inner;
                     ui.add_space(PARAM_GAP);
@@ -304,6 +321,33 @@ impl GraphEditor {
             self.renames.push(request);
         }
     }
+}
+
+/// A choice parameter's current value: what the node stores, else the default.
+fn choice_value(
+    specs: &[ParamSpec],
+    params: &BTreeMap<String, ParamValue>,
+    name: &str,
+) -> Option<String> {
+    match params.get(name) {
+        Some(ParamValue::Text(s)) => Some(s.clone()),
+        _ => match specs.iter().find(|p| p.name == name)?.default_value() {
+            ParamValue::Text(s) => Some(s),
+            _ => None,
+        },
+    }
+}
+
+/// Why a parameter shown despite its rule isn't being used, in the controlling parameter's words.
+fn unused_reason(specs: &[ParamSpec], when: &ShownWhen) -> String {
+    let label = specs
+        .iter()
+        .find(|p| p.name == when.param)
+        .map_or(when.param, |p| p.label);
+    format!(
+        "Unused: only applies when {label} is {}.",
+        when.values.join(" or ")
+    )
 }
 
 /// What one parameter row shows and edits.
