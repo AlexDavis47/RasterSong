@@ -619,7 +619,7 @@ impl App {
                     frame: self.clock.frame(),
                     tap: &tap,
                     refresh: 1.0 / self.project.inspect_rate.max(0.1),
-                    mode: self.settings.inspect_mode,
+                    views: self.settings.views,
                 }),
             },
         );
@@ -636,29 +636,35 @@ impl App {
         }
     }
 
-    /// Holding the inspect key over a connection turns the wheel into a way to change the view.
+    /// Holding Alt over a connection turns the wheel into a way to change the view.
     fn update_inspect_view(&mut self, ui: &Ui) {
-        let inspecting = self.editor.hovered_output().is_some()
-            && crate::editor::key_held(ui, crate::editor::INSPECT_KEY);
+        let inspecting = self.editor.hovered_output().is_some() && crate::editor::changing_view(ui);
         self.editor.scroll_reserved = inspecting;
         if !inspecting {
             self.inspect_scroll = 0.0;
             return;
         }
-        // Down the wheel is down the list.
-        self.inspect_scroll -= ui.input_mut(|i| std::mem::take(&mut i.smooth_scroll_delta.y));
-        let steps = (self.inspect_scroll / crate::editor::SCROLL_STEP).trunc();
-        if steps != 0.0 {
-            self.inspect_scroll -= steps * crate::editor::SCROLL_STEP;
-            self.settings.inspect_mode = self.settings.inspect_mode.stepped(steps as i32);
+        let wheel: Vec<_> = ui.input(|i| {
+            i.events
+                .iter()
+                .filter_map(|event| match event {
+                    egui::Event::MouseWheel { unit, delta, .. } => Some((*unit, delta.y)),
+                    _ => None,
+                })
+                .collect()
+        });
+        let steps = crate::editor::scroll_steps(wheel, &mut self.inspect_scroll);
+        if steps != 0 {
+            let audio = self.editor.hovered_is_audio();
+            self.settings.views.step(audio, steps);
         }
     }
 
-    /// Starts, moves and stops the sound of the connection under the pointer while the listen
-    /// key is held.
+    /// Starts, moves and stops the sound of the connection under the pointer while Shift is
+    /// held.
     fn update_listening(&mut self, ui: &Ui) {
         let fps = self.clock_shape.map_or(30.0, |s| s.1);
-        let wanted = crate::editor::key_held(ui, crate::editor::LISTEN_KEY)
+        let wanted = crate::editor::listening(ui)
             .then(|| self.editor.hovered_output())
             .flatten()
             .map(|(node, output)| rastersong_engine::ListenTarget {

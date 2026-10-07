@@ -644,7 +644,8 @@ fn meter_screenshots() {
     }
     save(&mut harness, "dark-22-video-wire-tooltip");
 
-    // Inspecting a connection in each view, and with the inspect key held.
+    // Inspecting a connection in each view, and in the middle of a change of view.
+    use rastersong_gui::editor::InspectMode::{Picture, Readings, Scope, Spectrum};
     let audio_mid = {
         let from = harness
             .state()
@@ -658,80 +659,47 @@ fn meter_screenshots() {
             .unwrap();
         from + (to - from) * 0.5
     };
-    let views = [
-        (
-            "video",
-            a + (b - a) * 0.5,
-            rastersong_gui::editor::InspectMode::Auto,
-            false,
-        ),
-        (
-            "video-scope",
-            a + (b - a) * 0.5,
-            rastersong_gui::editor::InspectMode::Scope,
-            false,
-        ),
-        (
-            "video-spectrum",
-            a + (b - a) * 0.5,
-            rastersong_gui::editor::InspectMode::Spectrum,
-            false,
-        ),
-        (
-            "audio",
-            audio_mid,
-            rastersong_gui::editor::InspectMode::Auto,
-            false,
-        ),
-        (
-            "audio-spectrum",
-            audio_mid,
-            rastersong_gui::editor::InspectMode::Spectrum,
-            false,
-        ),
-        (
-            "audio-picture",
-            audio_mid,
-            rastersong_gui::editor::InspectMode::Picture,
-            false,
-        ),
-        (
-            "audio-keys",
-            audio_mid,
-            rastersong_gui::editor::InspectMode::Spectrum,
-            true,
-        ),
-    ];
-    for (name, mid, mode, key) in views {
+    let video_mid = a + (b - a) * 0.5;
+    let set_views = |harness: &mut Harness<'_, App>, audio, other| {
         let mut settings = harness.state().settings().clone();
-        settings.inspect_mode = mode;
+        settings.views.audio = audio;
+        settings.views.other = other;
         harness.state_mut().set_settings(settings);
+    };
+    for (name, mid, audio, other) in [
+        ("video", video_mid, Scope, Picture),
+        ("video-scope", video_mid, Scope, Scope),
+        ("video-spectrum", video_mid, Scope, Spectrum),
+        ("video-readings", video_mid, Scope, Readings),
+        ("audio", audio_mid, Scope, Picture),
+        ("audio-spectrum", audio_mid, Spectrum, Picture),
+        ("audio-picture", audio_mid, Picture, Picture),
+    ] {
+        set_views(&mut harness, audio, other);
         harness.event(egui::Event::PointerMoved(mid - egui::vec2(40.0, 40.0)));
         harness.run_steps(2);
         harness.event(egui::Event::PointerMoved(mid));
-        if key {
-            harness.event(egui::Event::Key {
-                key: egui::Key::I,
-                physical_key: Some(egui::Key::I),
-                pressed: true,
-                repeat: false,
-                modifiers: egui::Modifiers::NONE,
-            });
-        }
         for _ in 0..40 {
             harness.run_steps(1);
             std::thread::sleep(Duration::from_millis(25));
         }
         save(&mut harness, &format!("dark-23-inspect-{name}"));
-        if key {
-            harness.event(egui::Event::Key {
-                key: egui::Key::I,
-                physical_key: Some(egui::Key::I),
-                pressed: false,
-                repeat: false,
-                modifiers: egui::Modifiers::NONE,
-            });
-            harness.run_steps(2);
-        }
     }
+
+    // From the scope to the spectrum, half way.
+    set_views(&mut harness, Scope, Picture);
+    harness.event(egui::Event::PointerMoved(
+        audio_mid - egui::vec2(40.0, 40.0),
+    ));
+    harness.run_steps(2);
+    harness.event(egui::Event::PointerMoved(audio_mid));
+    for _ in 0..40 {
+        harness.run_steps(1);
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    set_views(&mut harness, Spectrum, Picture);
+    harness.run_steps(1);
+    std::thread::sleep(Duration::from_millis(60));
+    harness.step();
+    save(&mut harness, "dark-24-inspect-transition");
 }

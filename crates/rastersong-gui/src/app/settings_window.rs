@@ -213,17 +213,28 @@ impl App {
         }
 
         section(ui, tr("settings.graph_editor"));
-        ui.horizontal(|ui| {
-            ui.label(tr("settings.inspect_mode"));
-            egui::ComboBox::from_id_salt("settings-inspect-mode")
-                .selected_text(self.settings.inspect_mode.label())
-                .show_ui(ui, |ui| {
-                    for mode in crate::editor::InspectMode::ALL {
-                        ui.selectable_value(&mut self.settings.inspect_mode, mode, mode.label());
-                    }
-                });
-        });
-        help(ui, tr("settings.inspect_mode.help"));
+        for (label, audio) in [
+            ("settings.view_audio", true),
+            ("settings.view_other", false),
+        ] {
+            ui.horizontal(|ui| {
+                ui.label(tr(label));
+                let mut view = self.settings.views.of(audio);
+                egui::ComboBox::from_id_salt(label)
+                    .selected_text(view.label())
+                    .show_ui(ui, |ui| {
+                        for mode in crate::editor::InspectMode::ALL {
+                            ui.selectable_value(&mut view, mode, mode.label());
+                        }
+                    });
+                if audio {
+                    self.settings.views.audio = view;
+                } else {
+                    self.settings.views.other = view;
+                }
+            });
+        }
+        help(ui, tr("settings.views.help"));
         ui.checkbox(&mut self.settings.node_stats, tr("settings.node_stats"));
         help(ui, tr("settings.node_stats.help"));
         ui.checkbox(

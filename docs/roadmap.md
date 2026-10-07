@@ -245,11 +245,11 @@ and the separate Look and Listen tools tried first: hands-on testing showed a mo
 meters already show on hover.
 
 - [x] **feature** **Inspection on hover.** Hovering a connection shows its meter, readings and a view of the signal at
-  the playhead; hold **I** and scroll to go through the views (automatic, picture, scope, spectrum, readings only),
+  the playhead; hold **Alt** and scroll to go through the views (picture, scope, spectrum, readings only; remembered for audio and for other signals),
   any signal in any view. The view is a setting; the update rate while the playhead moves is a project setting.
-- [x] **feature** **Listen key.** Hold **H** over a connection to hear it through the Audio Output sink path, with the
+- [x] **feature** **Listen key.** Hold **Shift** over a connection to hear it through the Audio Output sink path, with the
   playback ducked and fades in and out.
-- [ ] **feature** Keys are fixed (I and H) until the Settings page can rebind them.
+- [ ] **feature** Keys are fixed (Alt for the views, Shift to listen) until the Settings page can rebind them.
 - [x] **feature** **Engine taps.** *(done: see [Engine](engine.md#taps-and-listening); a dropped connection answers "not rendered")* The engine can be asked for the output of any connection at one frame without
   changing the render or the cache: the request is read-only, rate-limited, and dropped when the playhead moves or
   the graph is edited. A tap never enters the cache key and never changes deterministic output.

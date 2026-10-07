@@ -5,7 +5,7 @@ use rastersong_engine::{Layout, OutputLevel, ParamLevel};
 use rastersong_lang::{tr, tr_args};
 
 use super::canvas::{Geometry, Pin, wire_points};
-use super::inspect::{INSPECT_KEY, InspectContext, InspectMode, LISTEN_KEY, Visual, key_held};
+use super::inspect::{InspectContext, InspectMode, Visual, show_view};
 use super::{GraphEditor, NodeKey, Wire, modulation};
 
 /// How close (in screen pixels) the pointer must be to a wire for its tooltip.
@@ -140,9 +140,9 @@ impl GraphEditor {
             return;
         }
         self.hovered_output = tip.source.clone();
+        self.hovered_audio = tip.audio;
         if let (Some(inspect), Some((node, output))) = (readings.inspect, &tip.source) {
-            tip.selected = inspect.mode;
-            tip.mode = inspect.mode.resolved(tip.audio);
+            tip.mode = inspect.views.of(tip.audio);
             if tip.mode != InspectMode::Readings {
                 tip.visual = Some(super::inspect::inspect(ui, node, *output, inspect));
             }
@@ -238,8 +238,6 @@ struct Tip {
     /// The picture, scope or spectrum of the signal, and which it is.
     visual: Option<Visual>,
     mode: InspectMode,
-    /// The view the user chose, before `Auto` is resolved.
-    selected: InspectMode,
     level: Option<OutputLevel>,
     /// How the level is metered, from the signal's tag.
     scale: Option<crate::widgets::Scale>,
@@ -258,15 +256,15 @@ impl Tip {
     /// Lays the tip out: text first, then a grid whose rows are a label and a fixed-width
     /// value, so changing numbers never move anything.
     fn show(&self, ui: &mut Ui) {
-        // With the inspect key held, the views are listed beside the tip, the current one marked.
-        if self.source.is_some() && key_held(ui, INSPECT_KEY) {
+        // The views are listed beside the tip, the current one marked.
+        if self.source.is_some() {
             let items: Vec<_> = InspectMode::ALL
                 .iter()
                 .map(|mode| (mode.icon(), mode.label()))
                 .collect();
             let selected = InspectMode::ALL
                 .iter()
-                .position(|mode| *mode == self.selected)
+                .position(|mode| *mode == self.mode)
                 .unwrap_or(0);
             ui.horizontal_top(|ui| {
                 crate::widgets::icon_list(ui, &items, selected);
@@ -287,7 +285,7 @@ impl Tip {
         }
         if let Some(visual) = &self.visual {
             ui.add_space(2.0);
-            visual.show(ui, self.mode);
+            show_view(ui, visual, self.mode);
         }
         if self.level.is_some() || self.value.is_some() {
             if self.title.is_some() || !self.facts.is_empty() || self.visual.is_some() {
@@ -301,8 +299,8 @@ impl Tip {
                 egui::RichText::new(tr_args(
                     "inspect.hint",
                     &[
-                        ("inspect", INSPECT_KEY.name()),
-                        ("listen", LISTEN_KEY.name()),
+                        ("views", tr("inspect.key.views")),
+                        ("listen", tr("inspect.key.listen")),
                     ],
                 ))
                 .weak()

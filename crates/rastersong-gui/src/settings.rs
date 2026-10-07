@@ -22,8 +22,8 @@ pub struct Settings {
     pub node_stats: bool,
     /// Show each node's processing time in the graph editor, and tint the slow ones.
     pub show_performance: bool,
-    /// How hovering a connection shows what it carries: scrolled with the inspect key held.
-    pub inspect_mode: crate::editor::InspectMode,
+    /// How hovering a connection shows what it carries, for audio and for other signals.
+    pub views: crate::editor::ViewChoice,
     /// Preview resolution as a divisor of full resolution (1 = full, 2 = half, …).
     pub preview_divisor: u32,
     /// Playback volume, `0..=1`.
@@ -48,7 +48,7 @@ impl Default for Settings {
             wire_style: WireStyle::default(),
             node_stats: false,
             show_performance: false,
-            inspect_mode: crate::editor::InspectMode::default(),
+            views: crate::editor::ViewChoice::default(),
             preview_divisor: 2,
             volume: 0.8,
             metronome: false,

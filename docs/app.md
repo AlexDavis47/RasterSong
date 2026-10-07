@@ -34,18 +34,18 @@ Our own editor, drawn on a pannable, zoomable canvas (see [Decisions](decisions.
   Enter (or click). Right-click a node to duplicate or delete it; Delete removes the selection, Ctrl+D
   duplicates it.
 - **Inspecting a connection.** Resting the pointer on a wire or an output pin shows what it carries at the
-  playhead: a meter and the mean, min, max and RMS, with a view above them. The view is a **picture** (the
-  signal stretched over the project's shape, the way Video Output does), a **scope** (the waveform) or a
-  **spectrum** (an FFT on a logarithmic frequency axis, smoothed between updates), and any signal can be seen
-  any way: audio as a picture, video as a spectrum. **Automatic** picks a picture for video-like signals and a
-  scope for audio-like ones; **Readings only** leaves the view out. Hold **I** over a connection and scroll to go
-  through the views (the list of icons appears beside the popup, and the wheel stops zooming meanwhile); the
-  choice is kept in Settings. Hold **H** to hear the connection through the speakers, turning the playback down
-  while the pointer stays on it; with playback stopped it plays on from the playhead without moving it. How often
-  the view asks for a new frame while the playhead moves is the project's **update rate** (File → Settings →
-  Inspecting connections). It all reads through the engine's [taps](engine.md#taps-and-listening), so it never
-  changes the render. The picture, scope, spectrum and meter are shared widgets (`widgets/`) that take plain
-  samples and pixels, so they can be used anywhere.
+  playhead: a meter and the mean, min, max and RMS, with a view above them and the list of views beside. The
+  view is a **picture** (the signal stretched over the project's shape, the way Video Output does), a **scope**
+  (the waveform), a **spectrum** (an FFT on a logarithmic frequency axis, smoothed between updates) or
+  **readings only**, and any signal can be seen any way: audio as a picture, video as a spectrum. Hold **Alt**
+  over a connection and scroll to go through the views, one click of the wheel to a step; the popup fades and
+  resizes from one view to the next, and the wheel stops zooming meanwhile. The view is remembered separately for
+  audio and for other signals (File → Settings). Hold **Shift** to hear the connection through the speakers,
+  turning the playback down while the pointer stays on it; with playback stopped it plays on from the playhead
+  without moving it. How often the view asks for a new frame while the playhead moves is the project's **update
+  rate** (File → Settings → Inspecting connections). It all reads through the engine's
+  [taps](engine.md#taps-and-listening), so it never changes the render. The picture, scope, spectrum and meter are
+  shared widgets (`widgets/`) that take plain samples and pixels, so they can be used anywhere.
 - Wire thickness follows the RMS level of the signal at the playhead, so modulation is visible: a kick drum
   through a band split shows as the bass wire pulsing.
 - Wire colour shows what a wire carries, from the tag the last compile gave each output (before that, from

@@ -21,7 +21,9 @@ use rastersong_engine::{
 };
 
 pub use canvas::CanvasContext;
-pub use inspect::{INSPECT_KEY, InspectContext, InspectMode, LISTEN_KEY, SCROLL_STEP, key_held};
+pub use inspect::{
+    InspectContext, InspectMode, ViewChoice, changing_view, listening, scroll_steps,
+};
 pub use inspector::InspectorContext;
 pub use linked::LinkedRename;
 pub use modulation::{PARAM_PORT, as_param, param_port};
@@ -101,6 +103,8 @@ pub struct GraphEditor {
     last_canvas: Rect,
     /// The node output the pointer is over (a wire or an output pin), for the Listen tool.
     hovered_output: Option<(String, usize)>,
+    /// Whether that output carries audio.
+    hovered_audio: bool,
     /// Whether the wheel is for something other than zooming (changing the inspection view).
     pub scroll_reserved: bool,
     last_geometry: Vec<canvas::Geometry>,
@@ -154,6 +158,7 @@ impl GraphEditor {
             node_menu: None,
             last_canvas: Rect::NOTHING,
             hovered_output: None,
+            hovered_audio: false,
             scroll_reserved: false,
             last_geometry: Vec::new(),
             clipboard: None,
@@ -482,6 +487,11 @@ impl GraphEditor {
 
     /// Where a pin was last drawn, in screen space. For inputs, `port` is the input's index, or
     /// a parameter's port ([`param_port`]).
+    /// Whether the output the pointer rested on carries audio.
+    pub fn hovered_is_audio(&self) -> bool {
+        self.hovered_audio
+    }
+
     /// The node output the pointer rested on in the last frame: `(node id, output)`.
     pub fn hovered_output(&self) -> Option<(&str, usize)> {
         self.hovered_output

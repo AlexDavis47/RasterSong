@@ -1,15 +1,13 @@
 //! Small icons drawn with shapes (so they need no font), and a vertical list of them to choose
 //! from.
 
-use eframe::egui::{self, Align2, Color32, FontId, Painter, Rect, Sense, Stroke, Ui, pos2, vec2};
+use eframe::egui::{self, Color32, Painter, Rect, Sense, Stroke, Ui, pos2, vec2};
 
 use crate::theme::Theme;
 
 /// An icon for a way of looking at a signal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
-    /// Whatever suits the signal.
-    Auto,
     Picture,
     Scope,
     Spectrum,
@@ -31,15 +29,6 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
         )
     };
     match icon {
-        Icon::Auto => {
-            painter.text(
-                rect.center(),
-                Align2::CENTER_CENTER,
-                "A",
-                FontId::proportional(rect.height() * 1.1),
-                color,
-            );
-        }
         Icon::Picture => {
             painter.rect_stroke(rect, 2.0, stroke, egui::StrokeKind::Inside);
             painter.add(egui::Shape::line(

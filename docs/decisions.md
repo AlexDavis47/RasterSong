@@ -205,8 +205,8 @@ in `nodes.lang`, which a test checks against the registry so nothing is missing 
 
 The Look and Listen tools were built as modes with a toolbar, and hands-on testing showed they were not the best
 way in: the Select tool already shows meters on hover, so a separate mode only hid them. Inspection is now the
-default behaviour of hovering a connection. A held key (I) and the wheel go through the views (picture, scope,
-spectrum, readings only; any signal in any view), and listening is a second held key (H) rather than one of the views,
+default behaviour of hovering a connection. A held modifier (Alt) and the wheel go through the views (picture, scope,
+spectrum, readings only; any signal in any view), and listening is a second held modifier (Shift) rather than one of the views,
 so a connection can be watched and heard at once. The update rate while the playhead moves is a project setting,
 since how fast a project can afford to render is a property of the project. The views are shared widgets that take
 plain data. See [Inspecting connections](roadmap.md#inspecting-connections).
