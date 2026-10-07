@@ -347,8 +347,8 @@ Signals carry a tag (video or audio, which channels, the range of values) that c
 | [Delay](#delay) | Delays the signal by rows or frames; modulating the time bends rows into waves |
 | [Distortion](#distortion) | Drives the signal into a waveshaper: soft, hard, folding or wrapping |
 | [Dynamic EQ Band](#dynamic_eq) | An equalizer band whose gain follows the level of the signal: tame a range only when it gets loud |
+| [EQ Band](#equalizer) | One equalizer band: a peak, shelf, cut, notch or band pass. Chain several for a full equalizer |
 | [Envelope](#envelope) | Follows how strong the signal is, as a smooth curve from 0 up (Slew limits the signal itself instead) |
-| [Equalizer](#equalizer) | One equalizer band: a peak, shelf, cut, notch or band pass. Chain several for a full equalizer |
 | [FM](#fm) | Bends the carrier by reading it through a delay the modulator controls |
 | [Filter](#filter) | A resonant low, high, band or all pass, tilt or comb filter |
 | [Flanger](#flanger) | A short delay with feedback that combs the signal; modulate the time to sweep it |
@@ -621,6 +621,31 @@ Can process R, G and B separately.
 | `attack` (Attack) | 0.01 | 0.0001 to 1 (up to 0 to 1000000) | yes | How fast the band moves away from flat |
 | `release` (Release) | 0.1 | 0.001 to 5 (up to 0 to 1000000) | yes | How fast the band returns to flat |
 
+### `equalizer`
+
+**EQ Band**: One equalizer band: a peak, shelf, cut, notch or band pass. Chain several for a full equalizer
+
+Can process R, G and B separately.
+
+**Inputs**
+
+- `in` (main, required): The signal to process
+
+**Outputs**
+
+- `out`: The processed signal
+
+**Parameters**
+
+| Name | Default | Range | Modulation | What it does |
+|---|---|---|---|---|
+| `band` (Type) | `peak` | `peak`, `low_shelf`, `high_shelf`, `low_cut`, `high_cut`, `notch`, `band_pass` | no | What the band does: peak, low_shelf and high_shelf boost or cut by the gain; low_cut and high_cut remove one side; notch removes a narrow range; band_pass keeps only a range |
+| `frequency` (Frequency) | 30 | 0.01 to 500 (up to 0.000001 to 1000000000) | yes | Centre of a peak, notch or band pass, or the corner of a shelf or cut |
+| `unit` (Cycles per) | `row` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the frequency |
+| `q` (Q) | 0.707 | 0.1 to 20 (up to 0.05 to 100) | yes | Width of the band: higher is narrower. On a cut, higher adds a resonant peak at the corner; 0.707 is flat |
+| `gain` (Gain) | 0 dB | -24 to 24 (up to -48 to 48) | yes | Boost or cut in decibels. Used when `band` is `peak` or `low_shelf` or `high_shelf`. |
+| `slope` (Slope (dB/oct)) | `12` | `12`, `24`, `48` | no | How sharply a cut falls off past its corner. Used when `band` is `low_cut` or `high_cut`. |
+
 ### `envelope`
 
 **Envelope**: Follows how strong the signal is, as a smooth curve from 0 up (Slew limits the signal itself instead)
@@ -643,31 +668,6 @@ Can process R, G and B separately.
 | `attack` (Attack) | 5 | 0 to 1000 (up to 0 to 1000000) | yes | How quickly the output rises when the input gets stronger |
 | `release` (Release) | 50 | 0 to 5000 (up to 0 to 1000000) | yes | How quickly the output falls when the input gets weaker |
 | `unit` (Unit) | `ms` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for attack and release |
-
-### `equalizer`
-
-**Equalizer**: One equalizer band: a peak, shelf, cut, notch or band pass. Chain several for a full equalizer
-
-Can process R, G and B separately.
-
-**Inputs**
-
-- `in` (main, required): The signal to process
-
-**Outputs**
-
-- `out`: The processed signal
-
-**Parameters**
-
-| Name | Default | Range | Modulation | What it does |
-|---|---|---|---|---|
-| `band` (Type) | `peak` | `peak`, `low_shelf`, `high_shelf`, `low_cut`, `high_cut`, `notch`, `band_pass` | no | What the band does: peak, low_shelf and high_shelf boost or cut by the gain; low_cut and high_cut remove one side; notch removes a narrow range; band_pass keeps only a range |
-| `frequency` (Frequency) | 30 | 0.01 to 500 (up to 0.000001 to 1000000000) | yes | Centre of a peak, notch or band pass, or the corner of a shelf or cut |
-| `unit` (Cycles per) | `row` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the frequency |
-| `q` (Q) | 0.707 | 0.1 to 20 (up to 0.05 to 100) | yes | Width of the band: higher is narrower. On a cut, higher adds a resonant peak at the corner; 0.707 is flat |
-| `gain` (Gain) | 0 dB | -24 to 24 (up to -48 to 48) | yes | Boost or cut in decibels. Used when `band` is `peak` or `low_shelf` or `high_shelf`. |
-| `slope` (Slope (dB/oct)) | `12` | `12`, `24`, `48` | no | How sharply a cut falls off past its corner. Used when `band` is `low_cut` or `high_cut`. |
 
 ### `fm`
 

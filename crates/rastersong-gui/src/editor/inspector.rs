@@ -740,16 +740,24 @@ fn diamond_toggle(ui: &mut Ui, on: bool, color: egui::Color32) -> egui::Response
 /// The meters `kind` declares, drawn from what the node `id` published for the last frame.
 fn node_meters(ui: &mut Ui, kind: &NodeType, meters: &[NodeMeters], id: &str) {
     let spec = kind.spec.meters;
-    let Some(values) = meters.iter().find(|m| &*m.node == id) else {
-        return;
-    };
     if spec.is_empty() {
         return;
     }
+    // The meters are always drawn: while a frame is rendering after an edit there are no
+    // readings, and the last ones are shown so the inspector does not change height.
+    let values = meters.iter().find(|m| &*m.node == id);
     ui.add_space(6.0);
-    for (meter, &value) in spec.iter().zip(&values.values) {
+    for (i, meter) in spec.iter().enumerate() {
         let label = crate::widgets::meter_label(meter.kind);
         let key = egui::Id::new(("meter", id, meter.id));
+        let last = key.with("last");
+        let value = match values.and_then(|v| v.values.get(i)) {
+            Some(&value) => {
+                ui.data_mut(|d| d.insert_temp(last, value));
+                value
+            }
+            None => ui.data(|d| d.get_temp::<f32>(last)).unwrap_or(0.0),
+        };
         match meter.kind {
             MeterKind::Level => crate::widgets::level_meter(ui, key, label, value),
             MeterKind::GainReduction => {

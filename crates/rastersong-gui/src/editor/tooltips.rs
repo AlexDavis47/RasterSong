@@ -35,8 +35,13 @@ fn distance_to_curve(points: [Pos2; 4], p: Pos2) -> f32 {
         .fold(f32::INFINITY, f32::min)
 }
 
+/// Minimum width of a tooltip, and of the meter in it.
+const TIP_WIDTH: f32 = 230.0;
+const METER_WIDTH: f32 = 130.0;
+
+/// A reading with a sign and a fixed number of characters (`" +0.1234"`), so columns line up.
 fn number(x: f32) -> String {
-    format!("{x:.3}")
+    format!("{x:>+9.4}")
 }
 
 impl GraphEditor {
@@ -77,33 +82,23 @@ impl GraphEditor {
     }
 
     /// What an output carries at the playhead: its layout and tag, then its level.
-    fn signal_lines(&self, key: NodeKey, output: usize, readings: &Readings) -> Vec<String> {
-        let mut lines = Vec::new();
+    fn signal_tip(&self, key: NodeKey, output: usize, readings: &Readings) -> Tip {
+        let mut tip = Tip::default();
         let Some(node) = self.node(key) else {
-            return lines;
+            return tip;
         };
         if let Some(layout) = self
             .compiled(key)
             .and_then(|stats| stats.outputs.get(output))
         {
-            lines.extend(layout_lines(layout));
+            tip.facts = layout_lines(layout);
         }
-        if let Some(level) = readings
+        tip.level = readings
             .levels
             .iter()
             .find(|l| *l.node == *node.id && l.output == output)
-        {
-            lines.push(tr_args(
-                "editor.tip.level",
-                &[
-                    ("mean", &number(level.mean)),
-                    ("min", &number(level.min)),
-                    ("max", &number(level.max)),
-                    ("rms", &number(level.rms)),
-                ],
-            ));
-        }
-        lines
+            .cloned();
+        tip
     }
 
     /// Shows a tooltip for the wire or pin under the pointer, if there is one.
@@ -125,32 +120,28 @@ impl GraphEditor {
         let over_node = geometry.iter().any(|g| {
             Rect::from_two_pos(to_screen(g.rect.min), to_screen(g.rect.max)).contains(pointer)
         });
-        let lines = if let Some(pin) = hovered_pin {
-            self.pin_lines(pin, readings)
+        let tip = if let Some(pin) = hovered_pin {
+            self.pin_tip(pin, readings)
         } else if over_node {
             return;
         } else if let Some(wire) = self.wire_near(geometry, to_screen, pointer) {
-            self.wire_lines(wire, readings)
+            self.wire_tip(wire, readings)
         } else {
             return;
         };
-        if lines.is_empty() {
+        if tip.is_empty() {
             return;
         }
         let spot = Rect::from_center_size(pointer, egui::vec2(2.0, 2.0));
         ui.interact(spot, ui.id().with("canvas-tooltip"), Sense::hover())
-            .on_hover_ui(|ui| {
-                for line in &lines {
-                    ui.label(line);
-                }
-            });
+            .on_hover_ui(|ui| tip.show(ui));
     }
 
     fn name_of(&self, key: NodeKey) -> String {
         self.node(key).map(|n| n.id.to_string()).unwrap_or_default()
     }
 
-    fn wire_lines(&self, wire: Wire, readings: &Readings) -> Vec<String> {
+    fn wire_tip(&self, wire: Wire, readings: &Readings) -> Tip {
         let port_name = |key: NodeKey, port: usize, input: bool| -> String {
             let Some(node) = self.node(key) else {
                 return String::new();
@@ -181,7 +172,8 @@ impl GraphEditor {
                     .unwrap_or_default()
             }
         };
-        let mut lines = vec![tr_args(
+        let mut tip = self.signal_tip(wire.from.0, wire.from.1, readings);
+        tip.title = Some(tr_args(
             "editor.tip.wire",
             &[
                 ("from", &self.name_of(wire.from.0)),
@@ -189,36 +181,100 @@ impl GraphEditor {
                 ("to", &self.name_of(wire.to.0)),
                 ("in", &port_name(wire.to.0, wire.to.1, true)),
             ],
-        )];
-        lines.extend(self.signal_lines(wire.from.0, wire.from.1, readings));
-        lines
+        ));
+        tip
     }
 
-    fn pin_lines(&self, pin: Pin, readings: &Readings) -> Vec<String> {
+    fn pin_tip(&self, pin: Pin, readings: &Readings) -> Tip {
         match pin {
-            Pin::Out(key, output) => self.signal_lines(key, output, readings),
+            Pin::Out(key, output) => self.signal_tip(key, output, readings),
             Pin::In(key, port) => {
                 if let Some(index) = modulation::as_param(port) {
                     let id = self.name_of(key);
-                    return readings
-                        .params
-                        .iter()
-                        .find(|p| *p.node == *id && p.index == index)
-                        .map(|p| {
-                            vec![tr_args(
-                                "editor.tip.param_value",
-                                &[("value", &number(p.value))],
-                            )]
-                        })
-                        .unwrap_or_default();
+                    return Tip {
+                        value: readings
+                            .params
+                            .iter()
+                            .find(|p| *p.node == *id && p.index == index)
+                            .map(|p| p.value),
+                        ..Tip::default()
+                    };
                 }
                 match self.wires.iter().find(|w| w.to == (key, port)) {
-                    Some(wire) => self.signal_lines(wire.from.0, wire.from.1, readings),
-                    None => vec![tr("editor.tip.unconnected").to_owned()],
+                    Some(wire) => self.signal_tip(wire.from.0, wire.from.1, readings),
+                    None => Tip {
+                        title: Some(tr("editor.tip.unconnected").to_owned()),
+                        ..Tip::default()
+                    },
                 }
             }
         }
     }
+}
+
+/// What a tooltip says: a title, facts about the signal, and its readings at the playhead.
+#[derive(Debug, Default)]
+struct Tip {
+    title: Option<String>,
+    facts: Vec<String>,
+    level: Option<OutputLevel>,
+    /// A modulated parameter's value now.
+    value: Option<f32>,
+}
+
+impl Tip {
+    fn is_empty(&self) -> bool {
+        self.title.is_none()
+            && self.facts.is_empty()
+            && self.level.is_none()
+            && self.value.is_none()
+    }
+
+    /// Lays the tip out: text first, then a grid whose rows are a label and a fixed-width
+    /// value, so changing numbers never move anything.
+    fn show(&self, ui: &mut Ui) {
+        ui.set_min_width(TIP_WIDTH);
+        if let Some(title) = &self.title {
+            ui.label(egui::RichText::new(title).strong());
+        }
+        for fact in &self.facts {
+            ui.label(egui::RichText::new(fact).weak());
+        }
+        if self.level.is_none() && self.value.is_none() {
+            return;
+        }
+        if self.title.is_some() || !self.facts.is_empty() {
+            ui.separator();
+        }
+        egui::Grid::new("tip-readings")
+            .num_columns(2)
+            .spacing([10.0, 3.0])
+            .show(ui, |ui| {
+                if let Some(value) = self.value {
+                    row(ui, tr("editor.tip.value"), value);
+                }
+                if let Some(level) = &self.level {
+                    ui.label(tr("meter.peak"));
+                    crate::widgets::level_meter_compact(
+                        ui,
+                        level.min.abs().max(level.max.abs()),
+                        METER_WIDTH,
+                    );
+                    ui.end_row();
+                    row(ui, tr("editor.tip.mean"), level.mean);
+                    row(ui, tr("editor.tip.min"), level.min);
+                    row(ui, tr("editor.tip.max"), level.max);
+                    row(ui, tr("editor.tip.rms"), level.rms);
+                }
+            });
+    }
+}
+
+/// A grid row: the label, then the number in monospace with a fixed width and a sign.
+fn row(ui: &mut Ui, label: &str, value: f32) {
+    ui.label(label);
+    ui.label(egui::RichText::new(number(value)).monospace());
+    ui.end_row();
 }
 
 /// The lines describing a layout and its tag.

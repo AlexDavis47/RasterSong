@@ -537,3 +537,87 @@ fn tempo_bar_with_metronome() {
         save(&mut harness, &format!("{name}-tempo-metronome"));
     }
 }
+
+/// The wire tooltip and the inspector's meters, on a graph with a compressor.
+#[test]
+#[ignore = "needs a GPU; run explicitly to look at the UI"]
+fn meter_screenshots() {
+    let theme = ThemeChoice::Dark;
+    let graph = GraphDesc::from_json(
+        r#"{ "version": 0,
+            "nodes": [
+                { "id": "video", "type": "video_input", "position": [0, 0] },
+                { "id": "audio", "type": "audio_input", "position": [0, 120] },
+                { "id": "comp", "type": "compressor", "position": [220, 120],
+                  "params": { "threshold": -30, "ratio": 8 } },
+                { "id": "eq", "type": "equalizer", "position": [440, 120] },
+                { "id": "out", "type": "output", "position": [660, 0] },
+                { "id": "aout", "type": "audio_output", "position": [660, 120] }
+            ],
+            "connections": [
+                { "from": "video", "to": "out" }, { "from": "audio", "to": "comp" },
+                { "from": "comp", "to": "eq" }, { "from": "eq", "to": "aout" }
+            ] }"#,
+    )
+    .unwrap();
+    let mut app = app(theme);
+    let mut project = app.project().clone();
+    project.graph = graph;
+    app = App::new(
+        Arc::new(
+            FakeBackend::new()
+                .with_video(
+                    "clip",
+                    FakeVideo {
+                        width: 320,
+                        height: 180,
+                        frame_count: 120,
+                        frame_rate: Rational::new(30, 1),
+                    },
+                )
+                .with_audio(
+                    "song",
+                    AudioClip {
+                        sample_rate: 8000,
+                        channels: 1,
+                        samples: (0..24_000).map(|i| (i as f32 * 0.05).sin() * 0.8).collect(),
+                    },
+                ),
+        ),
+        project,
+        None,
+        AudioOut::silent(None),
+    );
+    with_theme(&mut app, theme);
+    let mut harness = gpu_harness(app);
+    wait_for_frames(&mut harness, 30);
+
+    let comp = harness.state().editor().key_of("comp").unwrap();
+    let header = harness
+        .state()
+        .editor()
+        .node_screen_rect(comp)
+        .unwrap()
+        .center_top()
+        + egui::vec2(0.0, 8.0);
+    click_at(&mut harness, header);
+    harness.run_steps(4);
+    save(&mut harness, "dark-20-compressor-inspector");
+
+    // Hover the wire between the compressor and the equalizer.
+    let from = harness.state().editor().node_screen_rect(comp).unwrap();
+    let eq = harness.state().editor().key_of("eq").unwrap();
+    let to = harness.state().editor().node_screen_rect(eq).unwrap();
+    let mid = egui::pos2(
+        (from.right() + to.left()) / 2.0,
+        (from.center().y + to.center().y) / 2.0,
+    );
+    harness.event(egui::Event::PointerMoved(mid - egui::vec2(3.0, 3.0)));
+    harness.run_steps(2);
+    harness.event(egui::Event::PointerMoved(mid));
+    for _ in 0..30 {
+        harness.run_steps(1);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    save(&mut harness, "dark-21-wire-tooltip");
+}

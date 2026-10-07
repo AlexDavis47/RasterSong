@@ -163,7 +163,7 @@ node.envelope.param.release.help = How quickly the output falls when the input g
 node.envelope.param.unit.label = Unit
 node.envelope.param.unit.help = Unit for attack and release
 
-node.equalizer.label = Equalizer
+node.equalizer.label = EQ Band
 node.equalizer.description = One equalizer band: a peak, shelf, cut, notch or band pass. Chain several for a full equalizer
 node.equalizer.input.in = The signal to process
 node.equalizer.output.out = The processed signal

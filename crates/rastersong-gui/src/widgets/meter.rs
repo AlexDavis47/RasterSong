@@ -1,4 +1,7 @@
 //! Level and gain-reduction meters, with peak hold.
+//!
+//! A meter is a bar and, to its right, a box with the value in decibels. The box has a fixed
+//! width and a monospace font, so the number never moves the bar or its neighbours.
 
 use eframe::egui::{self, Align2, Color32, FontId, Id, Rect, Sense, Ui, vec2};
 use rastersong_engine::MeterKind;
@@ -12,7 +15,25 @@ const LEVEL_RANGE: (f32, f32) = (-60.0, 6.0);
 const REDUCTION_RANGE: f32 = 24.0;
 /// How fast a held peak falls, in decibels per second.
 const HOLD_FALL: f32 = 20.0;
-const HEIGHT: f32 = 14.0;
+const HEIGHT: f32 = 16.0;
+/// Width of the box holding the decibel value.
+const READOUT_WIDTH: f32 = 64.0;
+/// The narrowest a bar is drawn when it fills the space it is given.
+const MIN_BAR: f32 = 40.0;
+
+/// How a meter is laid out.
+#[derive(Debug, Clone, Copy)]
+struct Look {
+    /// The bar's width, or `None` to fill the space left in the row.
+    bar_width: Option<f32>,
+    /// Whether a peak mark is held (it needs the meter to be drawn every frame).
+    hold: bool,
+}
+
+const FILL: Look = Look {
+    bar_width: None,
+    hold: true,
+};
 
 fn to_db(linear: f32) -> f32 {
     20.0 * linear.max(1e-6).log10()
@@ -39,19 +60,32 @@ fn held(ui: &Ui, id: Id, value: f32, floor: f32) -> f32 {
     hold
 }
 
-fn frame(ui: &mut Ui, label: &str, text: String, fill: impl FnOnce(&egui::Painter, Rect)) {
+/// The bar, then the box with `text`, in one row.
+fn bar_and_readout(ui: &mut Ui, look: Look, text: String, fill: impl FnOnce(&egui::Painter, Rect)) {
+    let spacing = ui.spacing().item_spacing.x;
+    let bar_width = look
+        .bar_width
+        .unwrap_or_else(|| (ui.available_width() - READOUT_WIDTH - spacing).max(MIN_BAR));
     ui.horizontal(|ui| {
-        ui.label(label);
-        let (rect, _) =
-            ui.allocate_exact_size(vec2(ui.available_width().max(60.0), HEIGHT), Sense::hover());
-        let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, 2.0, ui.visuals().extreme_bg_color);
-        fill(&painter, rect);
-        painter.text(
-            rect.right_center() - vec2(4.0, 0.0),
+        let (bar, _) = ui.allocate_exact_size(vec2(bar_width, HEIGHT), Sense::hover());
+        let painter = ui.painter_at(bar);
+        painter.rect_filled(bar, 2.0, ui.visuals().extreme_bg_color);
+        fill(&painter, bar);
+
+        let (boxed, _) = ui.allocate_exact_size(vec2(READOUT_WIDTH, HEIGHT), Sense::hover());
+        let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+        ui.painter().rect(
+            boxed,
+            2.0,
+            ui.visuals().extreme_bg_color,
+            stroke,
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().text(
+            boxed.right_center() - vec2(5.0, 0.0),
             Align2::RIGHT_CENTER,
             text,
-            FontId::proportional(10.5),
+            FontId::monospace(11.0),
             ui.visuals().text_color(),
         );
     });
@@ -60,15 +94,39 @@ fn frame(ui: &mut Ui, label: &str, text: String, fill: impl FnOnce(&egui::Painte
 /// A level meter for a linear peak (`1` is full scale), in decibels, with a held peak mark and a
 /// red clip zone above 0 dB.
 pub fn level_meter(ui: &mut Ui, id: Id, label: &str, peak: f32) {
+    ui.horizontal(|ui| {
+        ui.label(label);
+        level_bar(ui, id, peak, FILL);
+    });
+}
+
+/// A level meter without a label or peak hold, `width` wide, for tooltips.
+pub fn level_meter_compact(ui: &mut Ui, peak: f32, width: f32) {
+    level_bar(
+        ui,
+        Id::NULL,
+        peak,
+        Look {
+            bar_width: Some(width),
+            hold: false,
+        },
+    );
+}
+
+fn level_bar(ui: &mut Ui, id: Id, peak: f32, look: Look) {
     let theme = Theme::of(ui.ctx());
     let db = to_db(peak);
-    let hold = held(ui, id, db, LEVEL_RANGE.0);
+    let hold = if look.hold {
+        held(ui, id, db, LEVEL_RANGE.0)
+    } else {
+        db
+    };
     let text = if db <= LEVEL_RANGE.0 {
         "-∞".to_owned()
     } else {
         tr_args("meter.db", &[("value", &format!("{db:.1}"))])
     };
-    frame(ui, label, text, |painter, rect| {
+    bar_and_readout(ui, look, text, |painter, rect| {
         let at = |db: f32| rect.left() + rect.width() * level_position(db);
         let zero = at(0.0);
         let bar = Rect::from_min_max(rect.min, egui::pos2(at(db), rect.bottom()));
@@ -84,19 +142,21 @@ pub fn level_meter(ui: &mut Ui, id: Id, label: &str, peak: f32) {
             );
             painter.rect_filled(clip, 0.0, theme.error);
         }
-        let mark = at(hold);
-        let color = if hold > 0.0 {
-            theme.error
-        } else {
-            Color32::WHITE
-        };
-        painter.line_segment(
-            [
-                egui::pos2(mark, rect.top()),
-                egui::pos2(mark, rect.bottom()),
-            ],
-            egui::Stroke::new(1.5, color),
-        );
+        if look.hold {
+            let mark = at(hold);
+            let color = if hold > 0.0 {
+                theme.error
+            } else {
+                Color32::WHITE
+            };
+            painter.line_segment(
+                [
+                    egui::pos2(mark, rect.top()),
+                    egui::pos2(mark, rect.bottom()),
+                ],
+                egui::Stroke::new(1.5, color),
+            );
+        }
         painter.line_segment(
             [
                 egui::pos2(zero, rect.top()),
@@ -113,27 +173,30 @@ pub fn gain_reduction_meter(ui: &mut Ui, id: Id, label: &str, reduction_db: f32)
     let theme = Theme::of(ui.ctx());
     let reduction = reduction_db.clamp(0.0, REDUCTION_RANGE);
     let hold = held(ui, id, reduction, 0.0);
-    frame(
-        ui,
-        label,
-        tr_args("meter.db", &[("value", &format!("-{reduction_db:.1}"))]),
-        |painter, rect| {
-            let width = |db: f32| rect.width() * (db / REDUCTION_RANGE).clamp(0.0, 1.0);
-            let bar = Rect::from_min_max(
-                egui::pos2(rect.right() - width(reduction), rect.top()),
-                rect.max,
-            );
-            painter.rect_filled(bar, 2.0, theme.warning.gamma_multiply(0.9));
-            let mark = rect.right() - width(hold);
-            painter.line_segment(
-                [
-                    egui::pos2(mark, rect.top()),
-                    egui::pos2(mark, rect.bottom()),
-                ],
-                egui::Stroke::new(1.5, Color32::WHITE),
-            );
-        },
-    );
+    ui.horizontal(|ui| {
+        ui.label(label);
+        bar_and_readout(
+            ui,
+            FILL,
+            tr_args("meter.db", &[("value", &format!("-{reduction_db:.1}"))]),
+            |painter, rect| {
+                let width = |db: f32| rect.width() * (db / REDUCTION_RANGE).clamp(0.0, 1.0);
+                let bar = Rect::from_min_max(
+                    egui::pos2(rect.right() - width(reduction), rect.top()),
+                    rect.max,
+                );
+                painter.rect_filled(bar, 2.0, theme.warning.gamma_multiply(0.9));
+                let mark = rect.right() - width(hold);
+                painter.line_segment(
+                    [
+                        egui::pos2(mark, rect.top()),
+                        egui::pos2(mark, rect.bottom()),
+                    ],
+                    egui::Stroke::new(1.5, Color32::WHITE),
+                );
+            },
+        );
+    });
 }
 
 /// The label a kind of meter has in the text.
