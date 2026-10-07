@@ -344,7 +344,7 @@ and a regenerated `nodes.md`.
   - [ ] **feature** Analogue-style types: tube, diode and tape, each with its own transfer curve and
     harmonic character. Needs oversampling or a note about aliasing at low signal rates.
 - **Envelope / Slew**
-  - [ ] **chore** Investigate. Envelope (detector + attack/release, `peak` or `rms`) and Slew (rise/fall rate
+  - [x] **chore** Investigated: they differ (Envelope follows magnitude, Slew limits the signal's own rate), so both stay with cross-referencing descriptions and shared attack/release code (`dsp::AttackRelease`). Original note: Envelope (detector + attack/release, `peak` or `rms`) and Slew (rise/fall rate
     limit) look like the same effect except for RMS. If they are, combine into one node (keeping RMS) and remove
     the other. If they differ (slew limits the signal's own rate; envelope follows its magnitude), document the
     difference in both descriptions and share the smoothing code. Either way it is one smoothing implementation.
@@ -382,7 +382,7 @@ and a regenerated `nodes.md`.
 
 ### Cross-cutting node items
 
-- [ ] **chore** Every node's unit parameter uses the one `Unit` ([Units](#units-and-parameter-semantics)).
+- [x] **chore** Every node's unit parameter uses the one `Unit` (guard test `every_unit_parameter_offers_the_shared_units`) ([Units](#units-and-parameter-semantics)).
 - [x] **chore** Every node with a dry/wet `mix` uses the one shared definition
   ([Units and parameter semantics](#units-and-parameter-semantics)).
 - [ ] **feature** Add nodes only after the foundations are in, so new nodes use integer and conditional parameters
@@ -396,10 +396,10 @@ and a regenerated `nodes.md`.
 
 The aim: one implementation per idea, so fixes and features land in one place. Known candidates to consolidate:
 
-- [ ] **chore** **Units.** One `Unit` enum and one label set in `nodes/support.rs`, used by every node.
+- [x] **chore** **Units.** One `Unit` enum and one label set in `nodes/support.rs`, used by every node.
 - [ ] **chore** **Filters.** Filter, Three-Band Split, Equalizer, DC Filter, the Chorus/Flanger/Phaser filtering and
   Low Pass share one biquad / cascaded-stage implementation in `dsp.rs`, with slope and Q designs in one place.
-- [ ] **chore** **Level detectors and smoothers.** Envelope, Slew, Compressor, Gate, Limiter and the sidechain
+- [x] **chore** **Level detectors and smoothers** (`dsp::AttackRelease`; Slew is a linear rate limiter and keeps its own).** Envelope, Slew, Compressor, Gate, Limiter and the sidechain
   share one detector (peak/RMS, attack/release) and one smoother in `dsp.rs`.
 - [ ] **chore** **Layout and generators.** One shared generator layout setting (see above).
 - [x] **chore** **Dry/wet.** One shared `mix` definition and helper, not a copy per node.

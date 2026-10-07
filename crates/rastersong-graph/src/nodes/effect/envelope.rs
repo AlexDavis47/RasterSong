@@ -1,4 +1,4 @@
-use crate::dsp::smoothing_coefficient;
+use crate::dsp::AttackRelease;
 use crate::nodes::support::settle_frames;
 use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
@@ -21,10 +21,9 @@ pub struct Envelope {
     attack: f64,
     release: f64,
     unit: Unit,
-    /// Samples in one unit, and the smoothing coefficients of the constant times, set in `prepare`.
+    /// Samples in one unit, and the smoothing of the times, set in `prepare`.
     unit_samples: f64,
-    attack_coefficient: f32,
-    release_coefficient: f32,
+    times: AttackRelease,
     /// Longest time constant in samples, for warmup.
     slowest: f64,
     level: f32,
@@ -48,7 +47,7 @@ params! { Envelope {
 impl NodeKind for Envelope {
     const KIND: &'static str = "envelope";
     const SPEC: NodeSpec = NodeSpec::new("Envelope", Category::Effect)
-        .describe("Follows how strong the signal is, as a smooth curve from 0 up")
+        .describe("Follows how strong the signal is, as a smooth curve from 0 up (Slew limits the signal itself instead)")
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
@@ -65,8 +64,7 @@ impl NodeKind for Envelope {
             release: params.number_at(Self::RELEASE)?,
             unit: params.choice_as(Self::UNIT)?,
             unit_samples: 1.0,
-            attack_coefficient: 0.0,
-            release_coefficient: 0.0,
+            times: AttackRelease::default(),
             slowest: 0.0,
             level: 0.0,
         })
@@ -76,12 +74,7 @@ impl NodeKind for Envelope {
 impl Node for Envelope {
     fn prepare(&mut self, ctx: &PrepareContext) {
         self.unit_samples = self.unit.samples(ctx);
-        let (attack, release) = (
-            self.attack * self.unit_samples,
-            self.release * self.unit_samples,
-        );
-        self.attack_coefficient = smoothing_coefficient(attack) as f32;
-        self.release_coefficient = smoothing_coefficient(release) as f32;
+        self.times = AttackRelease::new(self.attack, self.release, self.unit_samples);
         // The slowest the times can get, when a signal moves them.
         self.slowest = (ctx.param_max(Self::ATTACK, self.attack))
             .max(ctx.param_max(Self::RELEASE, self.release))
@@ -93,11 +86,6 @@ impl Node for Envelope {
         // A modulated time gets its coefficient from every sample's value.
         let attack = ctx.param(Self::ATTACK);
         let release = ctx.param(Self::RELEASE);
-        let coefficient = |stream: Option<&[f32]>, i: usize, constant: f32| {
-            stream.map_or(constant, |s| {
-                smoothing_coefficient(f64::from(s[i]).max(0.0) * self.unit_samples) as f32
-            })
-        };
         for (i, (out, &x)) in outputs[0].data.iter_mut().zip(&inputs[0].data).enumerate() {
             // RMS smooths the power and takes the root afterwards.
             let target = match self.detector {
@@ -105,9 +93,9 @@ impl Node for Envelope {
                 Detector::Rms => x * x,
             };
             let c = if target > level {
-                coefficient(attack, i, self.attack_coefficient)
+                self.times.attack(attack, i) as f32
             } else {
-                coefficient(release, i, self.release_coefficient)
+                self.times.release(release, i) as f32
             };
             level = target + c * (level - target);
             *out = match self.detector {

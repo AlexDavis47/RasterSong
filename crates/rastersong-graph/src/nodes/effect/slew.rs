@@ -44,7 +44,7 @@ params! { Slew {
 impl NodeKind for Slew {
     const KIND: &'static str = "slew";
     const SPEC: NodeSpec = NodeSpec::new("Slew", Category::Effect)
-        .describe("Limits how fast the signal can rise and fall, turning jumps into ramps")
+        .describe("Limits how fast the signal itself can rise and fall, turning jumps into ramps (Envelope follows its strength instead)")
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[

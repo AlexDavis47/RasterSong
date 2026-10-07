@@ -407,3 +407,26 @@ fn modulatable_numbers_have_a_span_to_take_a_percentage_of() {
     }
     assert!(problems.is_empty(), "no span to modulate: {problems:?}");
 }
+
+/// Every `unit` parameter offers the one list of units (`Unit`), so no node can grow its own list
+/// or its own wording.
+#[test]
+fn every_unit_parameter_offers_the_shared_units() {
+    let mut shared: Option<&'static [&'static str]> = None;
+    let mut count = 0;
+    for t in Registry::shared().types() {
+        for spec in t.spec.params.iter().filter(|s| s.name == "unit") {
+            let ParamKind::Choice { options, .. } = spec.kind else {
+                panic!("{}.unit is not a choice", t.kind);
+            };
+            count += 1;
+            assert_eq!(
+                *shared.get_or_insert(options),
+                options,
+                "{}.unit has its own list of units",
+                t.kind
+            );
+        }
+    }
+    assert!(count > 10, "only {count} unit parameters found");
+}

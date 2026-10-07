@@ -111,6 +111,47 @@ pub fn smoothing_coefficient(samples: f64) -> f64 {
     }
 }
 
+/// The attack and release of a one-pole follower (Envelope, Gate, Compressor, Limiter): the
+/// smoothing coefficients for the constant times, and for times a signal modulates per sample.
+/// Times are in a unit of `unit_samples` samples; which side counts as attack is up to the node.
+#[derive(Debug, Clone, Copy)]
+pub struct AttackRelease {
+    unit_samples: f64,
+    attack: f64,
+    release: f64,
+}
+
+impl Default for AttackRelease {
+    fn default() -> Self {
+        Self::new(0.0, 0.0, 1.0)
+    }
+}
+
+impl AttackRelease {
+    pub fn new(attack_time: f64, release_time: f64, unit_samples: f64) -> Self {
+        Self {
+            unit_samples,
+            attack: smoothing_coefficient(attack_time * unit_samples),
+            release: smoothing_coefficient(release_time * unit_samples),
+        }
+    }
+
+    /// The coefficient of a time, in units (negative counts as zero).
+    pub fn coefficient(&self, time: f64) -> f64 {
+        smoothing_coefficient(time.max(0.0) * self.unit_samples)
+    }
+
+    /// The attack coefficient at sample `i`: from the stream when the time is modulated.
+    pub fn attack(&self, stream: Option<&[f32]>, i: usize) -> f64 {
+        stream.map_or(self.attack, |s| self.coefficient(f64::from(s[i])))
+    }
+
+    /// The release coefficient at sample `i`: from the stream when the time is modulated.
+    pub fn release(&self, stream: Option<&[f32]>, i: usize) -> f64 {
+        stream.map_or(self.release, |s| self.coefficient(f64::from(s[i])))
+    }
+}
+
 /// The response a [`Biquad`] has (RBJ audio EQ cookbook).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BiquadKind {
@@ -140,6 +181,42 @@ pub struct Biquad {
     b: [f64; 3],
     a: [f64; 2],
     z: [f64; 2],
+}
+
+/// The most Butterworth stages a cascade has (a 48 dB/oct slope).
+pub const MAX_STAGES: usize = 4;
+
+/// The quality factor of stage `index` (0-based) of a Butterworth low or high pass of `stages`
+/// second-order stages. The last stage has the highest and carries any resonance.
+pub fn butterworth_q(stages: usize, index: usize) -> f64 {
+    let order = (stages * 2) as f64;
+    1.0 / (2.0 * ((2 * index + 1) as f64 * std::f64::consts::PI / (2.0 * order)).cos())
+}
+
+/// The sections of a Butterworth low or high pass of `stages` stages (up to [`MAX_STAGES`]) at
+/// `frequency` cycles per sample, the rest left default (unused). `q` scales the last, sharpest
+/// stage so the flat default of 0.707 is flat at every slope and higher values peak the cutoff.
+pub fn butterworth_cascade(
+    high_pass: bool,
+    stages: usize,
+    frequency: f64,
+    q: f64,
+) -> [Biquad; MAX_STAGES] {
+    let kind = if high_pass {
+        BiquadKind::HighPass
+    } else {
+        BiquadKind::LowPass
+    };
+    let mut sections = [Biquad::default(); MAX_STAGES];
+    for (i, section) in sections.iter_mut().take(stages).enumerate() {
+        let resonance = if i + 1 == stages {
+            q / std::f64::consts::FRAC_1_SQRT_2
+        } else {
+            1.0
+        };
+        *section = Biquad::design(kind, frequency, butterworth_q(stages, i) * resonance);
+    }
+    sections
 }
 
 impl Biquad {

@@ -345,7 +345,7 @@ Signals carry a tag (video or audio, which channels, the range of values) that c
 | [Crossfade](#crossfade) | Fades or cuts between two signals |
 | [Delay](#delay) | Delays the signal by rows or frames; modulating the time bends rows into waves |
 | [Distortion](#distortion) | Drives the signal into a waveshaper: soft, hard, folding or wrapping |
-| [Envelope](#envelope) | Follows how strong the signal is, as a smooth curve from 0 up |
+| [Envelope](#envelope) | Follows how strong the signal is, as a smooth curve from 0 up (Slew limits the signal itself instead) |
 | [Equalizer](#equalizer) | Boosts or cuts low, mid and high ranges with a shelf, a peak and a shelf |
 | [FM](#fm) | Bends the carrier by reading it through a delay the modulator controls |
 | [Filter](#filter) | A resonant low, high, band or all pass, tilt or comb filter |
@@ -363,7 +363,7 @@ Signals carry a tag (video or audio, which channels, the range of values) that c
 | [Reverb](#reverb) | A dense decaying wash of echoes |
 | [Ring Modulation](#ring_mod) | Multiplies the carrier by the modulator, leaving sum and difference tones |
 | [Sample & Hold](#sample_hold) | Holds each sampled value for a while and optionally rounds it to a few levels |
-| [Slew](#slew) | Limits how fast the signal can rise and fall, turning jumps into ramps |
+| [Slew](#slew) | Limits how fast the signal itself can rise and fall, turning jumps into ramps (Envelope follows its strength instead) |
 | [Three-Band Split](#three_band) | Low, mid and high frequency bands that add back up to the input |
 
 ### `am`
@@ -571,7 +571,7 @@ Can process R, G and B separately.
 
 ### `envelope`
 
-**Envelope**: Follows how strong the signal is, as a smooth curve from 0 up
+**Envelope**: Follows how strong the signal is, as a smooth curve from 0 up (Slew limits the signal itself instead)
 
 Can process R, G and B separately.
 
@@ -988,7 +988,7 @@ Can process R, G and B separately.
 
 ### `slew`
 
-**Slew**: Limits how fast the signal can rise and fall, turning jumps into ramps
+**Slew**: Limits how fast the signal itself can rise and fall, turning jumps into ramps (Envelope follows its strength instead)
 
 Can process R, G and B separately.
 

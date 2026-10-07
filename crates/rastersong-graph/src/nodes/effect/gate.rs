@@ -1,4 +1,4 @@
-use crate::dsp::{db_to_gain, smoothing_coefficient};
+use crate::dsp::{AttackRelease, db_to_gain};
 use crate::nodes::support::settle_frames;
 use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{InputSpec, Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
@@ -21,8 +21,7 @@ pub struct Gate {
     /// Set in `prepare`.
     threshold_gain: f32,
     closed_gain: f64,
-    attack: f64,
-    release: f64,
+    times: AttackRelease,
     hold_samples: u64,
     /// Samples in one `unit`.
     unit_samples: f64,
@@ -116,8 +115,7 @@ impl NodeKind for Gate {
             range: params.number_at(Self::RANGE)?,
             threshold_gain: 0.0,
             closed_gain: 0.0,
-            attack: 0.0,
-            release: 0.0,
+            times: AttackRelease::default(),
             hold_samples: 0,
             unit_samples: 1.0,
             longest_samples: 0.0,
@@ -144,8 +142,7 @@ impl Node for Gate {
         self.threshold_gain = db_to_gain(self.threshold) as f32;
         self.closed_gain = Self::closed_gain(self.range);
         self.unit_samples = self.unit.samples(ctx);
-        self.attack = smoothing_coefficient(self.attack_time * self.unit_samples);
-        self.release = smoothing_coefficient(self.release_time * self.unit_samples);
+        self.times = AttackRelease::new(self.attack_time, self.release_time, self.unit_samples);
         self.hold_samples = (self.hold_time * self.unit_samples).round() as u64;
         let slowest = ctx
             .param_max(Self::ATTACK, self.attack_time)
@@ -191,9 +188,9 @@ impl Node for Gate {
             };
             let target = if open { 1.0 } else { closed };
             let c = if target > self.gain {
-                attack.map_or(self.attack, |a| smoothing_coefficient(samples(a[i])))
+                self.times.attack(attack, i)
             } else {
-                release.map_or(self.release, |r| smoothing_coefficient(samples(r[i])))
+                self.times.release(release, i)
             };
             self.gain = target + c * (self.gain - target);
             *out = (f64::from(x) * self.gain) as f32;

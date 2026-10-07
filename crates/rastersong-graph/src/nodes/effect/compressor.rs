@@ -1,4 +1,4 @@
-use crate::dsp::{db_to_gain, gain_to_db, smoothing_coefficient};
+use crate::dsp::{AttackRelease, db_to_gain, gain_to_db};
 use crate::nodes::support::settle_frames;
 use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{InputSpec, Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
@@ -18,8 +18,7 @@ pub struct Compressor {
     knee: f64,
     makeup: f64,
     /// Set in `prepare`.
-    attack: f64,
-    release: f64,
+    times: AttackRelease,
     /// Samples in one `unit`.
     unit_samples: f64,
     /// The slowest attack or release modulation can reach, in samples, for warmup.
@@ -121,8 +120,7 @@ impl NodeKind for Compressor {
             unit: params.choice_as(Self::UNIT)?,
             knee: params.number_at(Self::KNEE)?,
             makeup: params.number_at(Self::MAKEUP)?,
-            attack: 0.0,
-            release: 0.0,
+            times: AttackRelease::default(),
             unit_samples: 1.0,
             slowest_samples: 0.0,
             sidechain: false,
@@ -149,18 +147,12 @@ impl Compressor {
             0.0
         }
     }
-
-    /// The smoothing coefficient for a time of `time` in `unit`.
-    fn coefficient(&self, time: f64) -> f64 {
-        smoothing_coefficient(time * self.unit_samples)
-    }
 }
 
 impl Node for Compressor {
     fn prepare(&mut self, ctx: &PrepareContext) {
         self.unit_samples = self.unit.samples(ctx);
-        self.attack = self.coefficient(self.attack_time);
-        self.release = self.coefficient(self.release_time);
+        self.times = AttackRelease::new(self.attack_time, self.release_time, self.unit_samples);
         self.slowest_samples = ctx
             .param_max(Self::ATTACK, self.attack_time)
             .max(ctx.param_max(Self::RELEASE, self.release_time))
@@ -196,9 +188,9 @@ impl Node for Compressor {
             );
             // More reduction is the attack; less is the release.
             let c = if target < reduction {
-                attack.map_or(self.attack, |a| self.coefficient(f64::from(a[i])))
+                self.times.attack(attack, i)
             } else {
-                release.map_or(self.release, |r| self.coefficient(f64::from(r[i])))
+                self.times.release(release, i)
             };
             reduction = target + c * (reduction - target);
             *out = (f64::from(x) * db_to_gain(reduction + makeup.at64(i))) as f32;
