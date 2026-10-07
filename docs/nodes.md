@@ -343,10 +343,12 @@ Signals carry a tag (video or audio, which channels, the range of values) that c
 | [Clamp](#clamp) | Limits every sample to a range |
 | [Compressor](#compressor) | Turns loud parts down, following the input or a sidechain |
 | [Crossfade](#crossfade) | Fades or cuts between two signals |
+| [DC Filter](#dc_filter) | Removes the constant offset of a signal with a very slow high pass |
 | [Delay](#delay) | Delays the signal by rows or frames; modulating the time bends rows into waves |
 | [Distortion](#distortion) | Drives the signal into a waveshaper: soft, hard, folding or wrapping |
+| [Dynamic EQ Band](#dynamic_eq) | An equalizer band whose gain follows the level of the signal: tame a range only when it gets loud |
+| [EQ Band](#equalizer) | One equalizer band: a peak, shelf, cut, notch or band pass. Chain several for a full equalizer |
 | [Envelope](#envelope) | Follows how strong the signal is, as a smooth curve from 0 up (Slew limits the signal itself instead) |
-| [Equalizer](#equalizer) | Boosts or cuts low, mid and high ranges with a shelf, a peak and a shelf |
 | [FM](#fm) | Bends the carrier by reading it through a delay the modulator controls |
 | [Filter](#filter) | A resonant low, high, band or all pass, tilt or comb filter |
 | [Flanger](#flanger) | A short delay with feedback that combs the signal; modulate the time to sweep it |
@@ -523,6 +525,27 @@ Can process R, G and B separately.
 | `curve` (Curve) | `fade` | `fade`, `switch` | no | fade blends smoothly, switch cuts from `a` to `b` at the middle |
 | `position` (Position) | 0.5 | 0 to 1 | yes | 0 is only `a`, 1 is only `b` |
 
+### `dc_filter`
+
+**DC Filter**: Removes the constant offset of a signal with a very slow high pass
+
+Can process R, G and B separately.
+
+**Inputs**
+
+- `in` (main, required): The signal to process
+
+**Outputs**
+
+- `out`: The signal with its offset removed
+
+**Parameters**
+
+| Name | Default | Range | Modulation | What it does |
+|---|---|---|---|---|
+| `cutoff` (Cutoff) | 10 | 0.1 to 100 (up to 0.000001 to 1000000000) | yes | Below this frequency the signal is removed. Keep it far below anything you want to keep; the default suits audio |
+| `unit` (Cycles per) | `second` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the cutoff |
+
 ### `delay`
 
 **Delay**: Delays the signal by rows or frames; modulating the time bends rows into waves
@@ -569,6 +592,60 @@ Can process R, G and B separately.
 | `bias` (Bias) | 0 | -1 to 1 (up to -100 to 100) | yes | Offset added before shaping, for uneven distortion |
 | `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
 
+### `dynamic_eq`
+
+**Dynamic EQ Band**: An equalizer band whose gain follows the level of the signal: tame a range only when it gets loud
+
+Can process R, G and B separately.
+
+**Inputs**
+
+- `in` (main, required): The signal to process
+- `sidechain` (optional): Optional: a signal whose level drives the band instead of the main one
+
+**Outputs**
+
+- `out`: The processed signal
+
+**Parameters**
+
+| Name | Default | Range | Modulation | What it does |
+|---|---|---|---|---|
+| `band` (Type) | `peak` | `peak`, `low_shelf`, `high_shelf` | no | peak, low_shelf or high_shelf |
+| `frequency` (Frequency) | 1000 | 20 to 20000 (up to 0.000001 to 1000000000) | yes | Centre of a peak, or the corner of a shelf |
+| `unit` (Unit) | `second` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the frequency (cycles per unit) and for attack and release |
+| `q` (Q) | 1 | 0.1 to 20 (up to 0.05 to 100) | yes | Width of the band: higher is narrower |
+| `gain` (Gain) | -9 dB | -24 to 24 (up to -48 to 48) | yes | The most the band moves, in decibels. Negative turns the band down when the signal is loud; positive turns it up |
+| `threshold` (Threshold) | -18 dB | -60 to 0 (up to -200 to 60) | yes | Level above which the band starts to move |
+| `ratio` (Ratio) | 4 | 1 to 20 (up to 1 to 1000) | yes | How quickly the band moves toward its gain as the level rises past the threshold |
+| `attack` (Attack) | 0.01 | 0.0001 to 1 (up to 0 to 1000000) | yes | How fast the band moves away from flat |
+| `release` (Release) | 0.1 | 0.001 to 5 (up to 0 to 1000000) | yes | How fast the band returns to flat |
+
+### `equalizer`
+
+**EQ Band**: One equalizer band: a peak, shelf, cut, notch or band pass. Chain several for a full equalizer
+
+Can process R, G and B separately.
+
+**Inputs**
+
+- `in` (main, required): The signal to process
+
+**Outputs**
+
+- `out`: The processed signal
+
+**Parameters**
+
+| Name | Default | Range | Modulation | What it does |
+|---|---|---|---|---|
+| `band` (Type) | `peak` | `peak`, `low_shelf`, `high_shelf`, `low_cut`, `high_cut`, `notch`, `band_pass` | no | What the band does: peak, low_shelf and high_shelf boost or cut by the gain; low_cut and high_cut remove one side; notch removes a narrow range; band_pass keeps only a range |
+| `frequency` (Frequency) | 30 | 0.01 to 500 (up to 0.000001 to 1000000000) | yes | Centre of a peak, notch or band pass, or the corner of a shelf or cut |
+| `unit` (Cycles per) | `row` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the frequency |
+| `q` (Q) | 0.707 | 0.1 to 20 (up to 0.05 to 100) | yes | Width of the band: higher is narrower. On a cut, higher adds a resonant peak at the corner; 0.707 is flat |
+| `gain` (Gain) | 0 dB | -24 to 24 (up to -48 to 48) | yes | Boost or cut in decibels. Used when `band` is `peak` or `low_shelf` or `high_shelf`. |
+| `slope` (Slope (dB/oct)) | `12` | `12`, `24`, `48` | no | How sharply a cut falls off past its corner. Used when `band` is `low_cut` or `high_cut`. |
+
 ### `envelope`
 
 **Envelope**: Follows how strong the signal is, as a smooth curve from 0 up (Slew limits the signal itself instead)
@@ -592,33 +669,6 @@ Can process R, G and B separately.
 | `release` (Release) | 50 | 0 to 5000 (up to 0 to 1000000) | yes | How quickly the output falls when the input gets weaker |
 | `unit` (Unit) | `ms` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for attack and release |
 
-### `equalizer`
-
-**Equalizer**: Boosts or cuts low, mid and high ranges with a shelf, a peak and a shelf
-
-Can process R, G and B separately.
-
-**Inputs**
-
-- `in` (main, required): The signal to process
-
-**Outputs**
-
-- `out`: The processed signal
-
-**Parameters**
-
-| Name | Default | Range | Modulation | What it does |
-|---|---|---|---|---|
-| `unit` (Cycles per) | `row` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the three frequencies |
-| `low_freq` (Low freq) | 5 | 0.01 to 500 (up to 0.000001 to 1000000000) | yes | Corner of the low shelf |
-| `low_gain` (Low gain) | 0 dB | -24 to 24 (up to -48 to 48) | yes | Boost or cut of everything below the low corner |
-| `mid_freq` (Mid freq) | 30 | 0.01 to 500 (up to 0.000001 to 1000000000) | yes | Centre of the mid band |
-| `mid_gain` (Mid gain) | 0 dB | -24 to 24 (up to -48 to 48) | yes | Boost or cut around the mid frequency |
-| `mid_q` (Mid Q) | 1 | 0.1 to 20 (up to 0.05 to 100) | yes | Width of the mid band: higher is narrower |
-| `high_freq` (High freq) | 150 | 0.01 to 500 (up to 0.000001 to 1000000000) | yes | Corner of the high shelf |
-| `high_gain` (High gain) | 0 dB | -24 to 24 (up to -48 to 48) | yes | Boost or cut of everything above the high corner |
-
 ### `fm`
 
 **FM**: Bends the carrier by reading it through a delay the modulator controls
@@ -638,8 +688,8 @@ Can process R, G and B separately.
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `index` (Index) | 0.5 | 0 to 10 (up to 0 to 1000) | yes | How far the modulator moves the carrier, in rows or frames: the modulator at +1 reads twice this far back, at -1 not at all |
-| `unit` (Unit) | `row` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the index |
+| `depth` (Depth) | 0.5 | 0 to 10 (up to 0 to 1000) | yes | How far the modulator pushes the carrier, in rows or frames: the modulator at +1 reads twice this far back, at -1 not at all |
+| `unit` (Unit) | `row` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the depth |
 | `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
 
 ### `filter`
@@ -1031,6 +1081,7 @@ Can process R, G and B separately.
 | `low_hz` (Low / mid) | 250 | 1 to 100000 (up to 0.001 to 1000000000) | yes | Crossover between the low and mid bands |
 | `high_hz` (Mid / high) | 4000 | 1 to 100000 (up to 0.001 to 1000000000) | yes | Crossover between the mid and high bands |
 | `unit` (Cycles per) | `second` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the crossovers |
+| `slope` (Slope (dB/oct)) | `12` | `12`, `24`, `48` | no | How sharply each crossover separates the bands. The mid band is what remains, so the three bands always add back up to the input at any slope |
 
 ## Output
 
@@ -1053,6 +1104,12 @@ Optional. Without it, or with nothing connected, the source audio is used untouc
 
 - `out` (audio, -1 to 1): The sound as written
 
+**Parameters**
+
+| Name | Default | Range | Modulation | What it does |
+|---|---|---|---|---|
+| `volume` (Volume) | 0 dB | -48 to 12 (up to -120 to 60) | yes | Louder or quieter, in decibels, before the sound is clipped to -1 to 1. 0 changes nothing; the meter shows the peak after the volume, so a peak above 0 dB will clip. |
+
 ### `output`
 
 **Output**: The rendered result: RGB, or mono shown as grayscale
@@ -1064,4 +1121,10 @@ Optional. Without it, or with nothing connected, the source audio is used untouc
 **Outputs**
 
 - `out` (video, 0 to 1): The rendered picture
+
+**Parameters**
+
+| Name | Default | Range | Modulation | What it does |
+|---|---|---|---|---|
+| `stretch` (Stretch to fit) | `on` | `on`, `off` | no | on stretches a signal of any size or kind to the project size, as if it were wired to the video input, so the output always shows something; off requires an RGB or mono signal of exactly the project size |
 

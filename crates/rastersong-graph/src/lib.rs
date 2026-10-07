@@ -21,13 +21,15 @@ pub use desc::{
 };
 pub use error::GraphError;
 pub use graph::{
-    CompileOptions, Graph, MAX_INPUTS, MAX_PARAMS, NodeDiagnostic, NodeStats, OutputLevel,
-    ParamLevel, render_form,
+    CompileOptions, Graph, MAX_INPUTS, MAX_PARAMS, NodeCost, NodeDiagnostic, NodeMeters, NodeStats,
+    OutputLevel, ParamLevel, render_form,
 };
 pub use node::{
     Diagnostic, InputSpec, LayoutContext, Node, OutputSpec, PrepareContext, ProcessContext,
     Severity, Sources, Tempo, Value,
 };
-pub use nodes::{Category, Choice, NodeKind, NodeSpec, NodeType, Registry};
+pub use nodes::{
+    Category, Choice, MAX_METERS, Meter, MeterKind, NodeKind, NodeSpec, NodeType, Registry,
+};
 pub use params::{ParamKind, ParamSpec, Params, ShownWhen, range_span};
 pub use signal::{ChannelMap, Kind, Layout, Part, Range, Signal, Tag, TagRule};

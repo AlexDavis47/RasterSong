@@ -51,6 +51,15 @@ const AUDIO_EXTENSIONS: &[&str] = &[
     "wav", "mp3", "flac", "ogg", "m4a", "aac", "opus", "aiff", "mp4", "mkv", "mov",
 ];
 
+/// The Listen tool playing a connection.
+struct Listening {
+    target: rastersong_engine::ListenTarget,
+    /// Where listening started, in video seconds, and when. With playback stopped, listening
+    /// carries on from there in real time.
+    origin: f64,
+    since: std::time::Instant,
+}
+
 /// Something that would throw away unsaved changes, waiting for the user to decide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Pending {
@@ -93,6 +102,10 @@ pub struct App {
     /// What the playback mix was last built from: the render's audio, and the tracks' names,
     /// offsets and gains.
     sent_mix: Option<(AudioSink, Vec<MixEntry>)>,
+    /// The connection being listened to with the Listen tool, and from when.
+    listening: Option<Listening>,
+    /// Scrolled distance not yet worth a step of the inspection view.
+    inspect_scroll: f32,
     clock: PlaybackClock,
     /// Frame count and rate the clock was made for.
     clock_shape: Option<(usize, f64)>,
@@ -166,6 +179,8 @@ impl App {
             inspected_for: None,
             inspected: Vec::new(),
             sent_mix: None,
+            listening: None,
+            inspect_scroll: 0.0,
             waiting_since: None,
             selected_track: (!project.audio_tracks.is_empty()).then_some(0),
             solo: None,
@@ -250,6 +265,7 @@ impl App {
         self.settings = settings;
         self.settings.apply_language();
         self.engine.set_preview_scale(self.settings.preview_scale());
+        self.engine.set_config(self.settings.engine_config());
     }
 
     /// The track specs the engine should be rendering with.
@@ -549,12 +565,14 @@ impl App {
                     .collect();
                 let frame = self.engine.frame(self.clock.frame());
                 let params = frame.as_ref().map_or(&[][..], |f| &f.params[..]);
+                let meters = frame.as_ref().map_or(&[][..], |f| &f.meters[..]);
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     self.editor.show_inspector(
                         ui,
                         &InspectorContext {
                             tracks: &tracks,
                             params,
+                            meters,
                         },
                     );
                 });
@@ -582,16 +600,100 @@ impl App {
             _ => None,
         };
         let levels = frame.as_ref().map_or(&[][..], |f| &f.levels[..]);
+        let params = frame.as_ref().map_or(&[][..], |f| &f.params[..]);
+        let costs = frame.as_ref().map_or(&[][..], |f| &f.costs[..]);
+        self.update_inspect_view(ui);
+        let engine = &self.engine;
+        let tap = |request: &rastersong_engine::TapRequest| engine.tap(request);
         let canvas = self.editor.show(
             ui,
             &CanvasContext {
                 levels,
+                params,
                 failure: failure.as_ref(),
                 wire_style: self.settings.wire_style,
                 show_stats: self.settings.node_stats,
+                costs,
+                show_performance: self.settings.show_performance,
+                inspect: Some(crate::editor::InspectContext {
+                    frame: self.clock.frame(),
+                    tap: &tap,
+                    refresh: 1.0 / self.project.inspect_rate.max(0.1),
+                    views: self.settings.views,
+                }),
             },
         );
+        self.update_listening(ui);
         self.bypass_all_button(ui, canvas.rect);
+    }
+
+    /// Where listening is, in video seconds: the playhead while playing, else running on from
+    /// where it started.
+    fn listen_time(&self, fps: f64) -> f64 {
+        match &self.listening {
+            Some(l) if !self.clock.is_playing() => l.origin + l.since.elapsed().as_secs_f64(),
+            _ => self.clock.position() / fps,
+        }
+    }
+
+    /// Holding Alt over a connection turns the wheel into a way to change the view.
+    fn update_inspect_view(&mut self, ui: &Ui) {
+        let inspecting = self.editor.hovered_output().is_some() && crate::editor::changing_view(ui);
+        self.editor.scroll_reserved = inspecting;
+        if !inspecting {
+            self.inspect_scroll = 0.0;
+            return;
+        }
+        let wheel: Vec<_> = ui.input(|i| {
+            i.events
+                .iter()
+                .filter_map(|event| match event {
+                    egui::Event::MouseWheel { unit, delta, .. } => Some((*unit, delta.y)),
+                    _ => None,
+                })
+                .collect()
+        });
+        let steps = crate::editor::scroll_steps(wheel, &mut self.inspect_scroll);
+        if steps != 0 {
+            let audio = self.editor.hovered_is_audio();
+            self.settings.views.step(audio, steps);
+        }
+    }
+
+    /// Starts, moves and stops the sound of the connection under the pointer while Shift is
+    /// held.
+    fn update_listening(&mut self, ui: &Ui) {
+        let fps = self.clock_shape.map_or(30.0, |s| s.1);
+        let wanted = crate::editor::listening(ui)
+            .then(|| self.editor.hovered_output())
+            .flatten()
+            .map(|(node, output)| rastersong_engine::ListenTarget {
+                node: node.to_owned(),
+                output,
+            });
+        let now = self.listen_time(fps);
+        match (self.listening.as_ref().map(|l| &l.target), wanted) {
+            (_, Some(target)) if self.listening.as_ref().is_none_or(|l| l.target != target) => {
+                self.audio
+                    .listen(Mixer::rendered(self.engine.listened_audio(), 1.0), now);
+                self.listening = Some(Listening {
+                    target,
+                    origin: now,
+                    since: std::time::Instant::now(),
+                });
+            }
+            (Some(_), None) => {
+                self.audio.stop_listening();
+                self.engine.listen(None, self.clock.frame());
+                self.listening = None;
+            }
+            _ => {}
+        }
+        if let Some(l) = &self.listening {
+            self.engine
+                .listen(Some(l.target.clone()), (now.max(0.0) * fps) as usize);
+            ui.ctx().request_repaint();
+        }
     }
 
     /// The toggle in the canvas's corner that skips the whole graph.
@@ -909,6 +1011,13 @@ impl App {
                 }
             });
             ui.menu_button(tr("menu.edit"), |ui| self.edit_menu(ui));
+            ui.menu_button(tr("menu.view"), |ui| {
+                ui.checkbox(&mut self.settings.node_stats, tr("menu.view.node_stats"));
+                ui.checkbox(
+                    &mut self.settings.show_performance,
+                    tr("menu.view.performance"),
+                );
+            });
             ui.menu_button(tr("menu.help"), |ui| {
                 if ui.button(tr("menu.help.about")).clicked() {
                     self.show_about = true;

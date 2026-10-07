@@ -55,6 +55,28 @@ pub struct Project {
         skip_serializing_if = "is_default_max_warmup_frames"
     )]
     pub max_warmup_frames: u32,
+    /// How many times a second the inspection popup asks for a new frame while the playhead
+    /// moves. Each asks the engine to render one frame for the popup, so a project that is slow
+    /// to render wants this low.
+    #[serde(
+        default = "default_inspect_rate",
+        skip_serializing_if = "is_default_inspect_rate"
+    )]
+    pub inspect_rate: f64,
+}
+
+/// The default for [`Project::inspect_rate`], in updates a second.
+pub const DEFAULT_INSPECT_RATE: f64 = 5.0;
+
+/// The least and most [`Project::inspect_rate`] can be set to.
+pub const INSPECT_RATE_RANGE: std::ops::RangeInclusive<f64> = 1.0..=30.0;
+
+fn default_inspect_rate() -> f64 {
+    DEFAULT_INSPECT_RATE
+}
+
+fn is_default_inspect_rate(rate: &f64) -> bool {
+    *rate == DEFAULT_INSPECT_RATE
 }
 
 /// The default for [`Project::max_warmup_frames`]: about four seconds of 30 fps video.
@@ -155,6 +177,7 @@ impl Project {
             bypass_graph: false,
             audio_rate: crate::DEFAULT_AUDIO_RATE,
             max_warmup_frames: DEFAULT_MAX_WARMUP_FRAMES,
+            inspect_rate: DEFAULT_INSPECT_RATE,
         }
     }
 
@@ -247,6 +270,13 @@ impl Project {
         let mut project: Self = serde_json::from_value(value).map_err(invalid)?;
         project.tempo = project.tempo.sanitized();
         project.max_warmup_frames = project.max_warmup_frames.min(MAX_WARMUP_FRAMES_LIMIT);
+        project.inspect_rate = if project.inspect_rate.is_finite() {
+            project
+                .inspect_rate
+                .clamp(*INSPECT_RATE_RANGE.start(), *INSPECT_RATE_RANGE.end())
+        } else {
+            DEFAULT_INSPECT_RATE
+        };
         project.graph.upgrade();
         let dir = path.parent().unwrap_or(Path::new(""));
         let media = project
@@ -452,5 +482,37 @@ mod tests {
             .audio_tracks
             .push(ProjectTrack::new("audio".into(), "a.wav".into()));
         assert_eq!(project.unused_track_name(), "audio_2");
+    }
+}
+
+#[cfg(test)]
+mod inspect_rate_tests {
+    use super::*;
+
+    #[test]
+    fn inspect_rate_round_trips_defaults_and_is_limited_on_load() {
+        let dir = std::env::temp_dir().join(format!("rastersong-inspect-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("inspect.rastersong");
+        let mut project =
+            Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
+        project.save(&path).unwrap();
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("inspect"));
+        assert_eq!(
+            Project::load(&path).unwrap().inspect_rate,
+            DEFAULT_INSPECT_RATE
+        );
+
+        project.inspect_rate = 12.0;
+        project.save(&path).unwrap();
+        assert_eq!(Project::load(&path).unwrap().inspect_rate, 12.0);
+
+        std::fs::write(
+            &path,
+            r#"{ "version": 0, "inspect_rate": 5000, "graph": { "version": 0, "nodes": [] } }"#,
+        )
+        .unwrap();
+        assert_eq!(Project::load(&path).unwrap().inspect_rate, 30.0);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

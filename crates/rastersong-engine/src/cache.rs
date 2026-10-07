@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use rastersong_graph::{OutputLevel, ParamLevel};
+use rastersong_graph::{NodeCost, NodeMeters, OutputLevel, ParamLevel};
 
 use crate::{AudioBlock, PreviewScale};
 
@@ -25,6 +25,10 @@ pub struct Frame {
     pub levels: Arc<[OutputLevel]>,
     /// The value of every modulated parameter while rendering this frame.
     pub params: Arc<[ParamLevel]>,
+    /// How long every node took to process this frame.
+    pub costs: Arc<[NodeCost]>,
+    /// The meter values of the nodes that publish them.
+    pub meters: Arc<[NodeMeters]>,
     /// The frame's rendered sound, when the graph has an audio output.
     pub audio: Option<Arc<AudioBlock>>,
 }
@@ -64,6 +68,12 @@ impl FrameCache {
             bytes: 0,
             budget: budget_bytes,
         }
+    }
+
+    /// Changes the memory budget, dropping the frames farthest from `playhead` if it shrank.
+    pub fn set_budget(&mut self, budget_bytes: usize, playhead: usize) {
+        self.budget = budget_bytes;
+        self.evict(playhead);
     }
 
     pub fn key(&self) -> CacheKey {
@@ -172,6 +182,8 @@ mod tests {
             rgb: vec![index as u8; 3],
             levels: Arc::new([]),
             params: Arc::new([]),
+            costs: Arc::new([]),
+            meters: Arc::new([]),
             audio: None,
         }
     }

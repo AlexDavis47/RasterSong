@@ -81,8 +81,10 @@ Rules every node must satisfy (enforced by tests, see [Testing](testing.md)):
 ### Shared building blocks
 
 Shared code lives in `dsp.rs` (resampling, delay line, `mix`, dB conversion, `Biquad` with RBJ
-low/high/band/all-pass, peak and shelf designs) and `nodes/support.rs` (`Unit`, `ms_to_samples`,
+low/high/band/all-pass/notch, peak and shelf designs, `butterworth_cascade` for 12 to 48 dB/oct slopes, `AttackRelease` for detectors, `Stretcher` for drawing any signal at the picture size) and `nodes/support.rs` (`Unit`, `ms_to_samples`,
 `settle_frames`, the conversion `Mapping`).
+
+**Meters.** A node that has something worth watching (gain reduction, a peak) lists it in `NodeSpec::meters` and writes the values from `Node::meters`, which the graph calls after `process` (no allocation, never affects output). The frame carries them with the node's processing time; the inspector draws a level or gain-reduction meter for each, with no per-node GUI code.
 
 **Rule: before writing a helper in a node file, look here; if two nodes need it, it belongs here.** Per-node copies
 of a filter, a detector, a unit list, a layout choice or a wet/dry mix are how implementations fragment. The

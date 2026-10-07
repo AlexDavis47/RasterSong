@@ -25,7 +25,7 @@ choice! {
 
 choice! {
     /// How steeply a low or high pass cuts beyond the cutoff, in dB per octave.
-    pub enum Slope {
+    pub(crate) enum Slope {
         /// A single pole: a gentle, smooth roll-off with no resonance.
         Six = "6",
         /// Two poles: the classic resonant filter.
@@ -39,7 +39,7 @@ choice! {
 
 impl Slope {
     /// The number of biquad stages (the one-pole slope has none).
-    fn stages(self) -> usize {
+    pub(crate) fn stages(self) -> usize {
         match self {
             Self::Six => 0,
             Self::Twelve => 1,

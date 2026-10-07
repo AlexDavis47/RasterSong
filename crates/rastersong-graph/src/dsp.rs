@@ -38,6 +38,56 @@ pub fn resample(src: &[f32], dst: &mut [f32], group: usize, mode: Interpolation)
     }
 }
 
+/// Stretches a signal of any layout over a picture: the one implementation of "show this signal
+/// at the project's size", shared by the Video Output and anything else that has to draw an
+/// arbitrary signal.
+///
+/// A signal with the same number of samples per pixel as the picture is stretched channel by
+/// channel. Any other signal is read as a flat run of samples, stretched over the pixels and
+/// repeated in every channel (gray).
+#[derive(Debug, Default)]
+pub struct Stretcher {
+    channel: Vec<f32>,
+    stretched: Vec<f32>,
+}
+
+impl Stretcher {
+    /// Fills `dst` (`dst_spp` samples per pixel) from `src` (`src_spp` samples per pixel).
+    pub fn stretch(
+        &mut self,
+        src: &[f32],
+        src_spp: usize,
+        dst: &mut [f32],
+        dst_spp: usize,
+        mode: Interpolation,
+    ) {
+        let pixels = dst.len() / dst_spp.max(1);
+        self.stretched.resize(pixels, 0.0);
+        let per_channel = src_spp == dst_spp && src_spp > 0;
+        let channels = if per_channel { dst_spp } else { 1 };
+        for c in 0..channels {
+            let source: &[f32] = if per_channel {
+                self.channel.clear();
+                self.channel
+                    .extend(src.iter().skip(c).step_by(src_spp.max(1)));
+                &self.channel
+            } else {
+                src
+            };
+            resample(source, &mut self.stretched, 1, mode);
+            if per_channel {
+                for (p, &v) in self.stretched.iter().enumerate() {
+                    dst[p * dst_spp + c] = v;
+                }
+            } else {
+                for (pixel, &v) in dst.chunks_mut(dst_spp.max(1)).zip(&self.stretched) {
+                    pixel.fill(v);
+                }
+            }
+        }
+    }
+}
+
 /// A ring buffer delay line with fractional (linearly interpolated) reads.
 #[derive(Debug, Clone, Default)]
 pub struct DelayLine {
@@ -161,6 +211,8 @@ pub enum BiquadKind {
     BandPass,
     /// Passes every frequency at full level and shifts phase around the centre frequency.
     AllPass,
+    /// Removes a narrow band around the centre frequency and passes the rest.
+    Notch,
     /// Boosts or cuts by `gain_db` around the centre frequency.
     Peak {
         gain_db: f64,
@@ -250,6 +302,7 @@ impl Biquad {
                 1.0 - alpha,
             ),
             BiquadKind::BandPass => ([alpha, 0.0, -alpha], 1.0 + alpha, -2.0 * cos, 1.0 - alpha),
+            BiquadKind::Notch => ([1.0, -2.0 * cos, 1.0], 1.0 + alpha, -2.0 * cos, 1.0 - alpha),
             BiquadKind::AllPass => (
                 [1.0 - alpha, -2.0 * cos, 1.0 + alpha],
                 1.0 + alpha,
@@ -539,5 +592,130 @@ mod tests {
         assert_eq!(line.read(10.0), line.read(4.0), "clamped to max delay");
         line.reset();
         assert_eq!(line.read(1.0), 0.0);
+    }
+}
+
+/// A radix-2 fast Fourier transform of a fixed power-of-two size, for analysis (the spectrum
+/// analyzer) and for any node that works on spectra.
+#[derive(Debug, Clone)]
+pub struct Fft {
+    size: usize,
+    /// `cos` and `sin` of `-2πk/size` for `k < size/2`.
+    twiddles: Vec<(f32, f32)>,
+    window: Vec<f32>,
+    re: Vec<f32>,
+    im: Vec<f32>,
+}
+
+impl Fft {
+    /// A transform of `size` points, rounded up to a power of two (at least 2).
+    pub fn new(size: usize) -> Self {
+        let size = size.max(2).next_power_of_two();
+        let twiddles = (0..size / 2)
+            .map(|k| {
+                let a = -TAU * k as f64 / size as f64;
+                (a.cos() as f32, a.sin() as f32)
+            })
+            .collect();
+        // Periodic Hann: the usual window for spectrum display.
+        let window = (0..size)
+            .map(|i| (0.5 - 0.5 * (TAU * i as f64 / size as f64).cos()) as f32)
+            .collect();
+        Self {
+            size,
+            twiddles,
+            window,
+            re: vec![0.0; size],
+            im: vec![0.0; size],
+        }
+    }
+
+    pub fn size(&self) -> usize {
+        self.size
+    }
+
+    /// In-place transform of `re` and `im`, which must be `size` long.
+    fn transform(&mut self) {
+        let n = self.size;
+        let bits = n.trailing_zeros();
+        for i in 0..n {
+            let j = i.reverse_bits() >> (usize::BITS - bits);
+            if j > i {
+                self.re.swap(i, j);
+                self.im.swap(i, j);
+            }
+        }
+        let mut half = 1;
+        while half < n {
+            let step = n / (half * 2);
+            for start in (0..n).step_by(half * 2) {
+                for k in 0..half {
+                    let (c, s) = self.twiddles[k * step];
+                    let (a, b) = (start + k, start + k + half);
+                    let tr = self.re[b] * c - self.im[b] * s;
+                    let ti = self.re[b] * s + self.im[b] * c;
+                    self.re[b] = self.re[a] - tr;
+                    self.im[b] = self.im[a] - ti;
+                    self.re[a] += tr;
+                    self.im[a] += ti;
+                }
+            }
+            half *= 2;
+        }
+    }
+
+    /// The magnitude of each frequency bin from 0 to the Nyquist frequency (`size / 2 + 1` bins)
+    /// of the Hann-windowed `samples`, scaled so a full-scale sine reads about `1`. Input
+    /// shorter than the transform is zero-padded; longer input is cut to its first `size`
+    /// samples.
+    pub fn magnitudes(&mut self, samples: &[f32], out: &mut Vec<f32>) {
+        for (i, (re, im)) in self.re.iter_mut().zip(&mut self.im).enumerate() {
+            *re = samples.get(i).copied().unwrap_or(0.0) * self.window[i];
+            *im = 0.0;
+        }
+        self.transform();
+        // A Hann window has a coherent gain of one half; a real sine splits across two bins.
+        let scale = 4.0 / self.size as f32;
+        out.clear();
+        out.extend(
+            (0..=self.size / 2).map(|k| (self.re[k].hypot(self.im[k]) * scale).min(f32::MAX)),
+        );
+    }
+}
+
+#[cfg(test)]
+mod fft_tests {
+    use super::*;
+
+    #[test]
+    fn a_sine_peaks_in_its_bin_at_its_level() {
+        let size = 256;
+        let mut fft = Fft::new(size);
+        let sine: Vec<f32> = (0..size)
+            .map(|i| (0.5 * (TAU * 20.0 * i as f64 / size as f64).sin()) as f32)
+            .collect();
+        let mut out = Vec::new();
+        fft.magnitudes(&sine, &mut out);
+        assert_eq!(out.len(), size / 2 + 1);
+        let peak = out
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.total_cmp(b.1))
+            .unwrap();
+        assert_eq!(peak.0, 20);
+        assert!((*peak.1 - 0.5).abs() < 0.02, "{}", peak.1);
+        // Far from the tone there is almost nothing.
+        assert!(out[100] < 0.001);
+    }
+
+    #[test]
+    fn size_rounds_up_and_short_input_is_padded() {
+        let mut fft = Fft::new(100);
+        assert_eq!(fft.size(), 128);
+        let mut out = Vec::new();
+        fft.magnitudes(&[1.0; 10], &mut out);
+        assert_eq!(out.len(), 65);
+        fft.magnitudes(&[], &mut out);
+        assert!(out.iter().all(|&m| m == 0.0));
     }
 }

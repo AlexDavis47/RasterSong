@@ -1,6 +1,6 @@
-use crate::dsp::{AttackRelease, db_to_gain};
+use crate::dsp::{AttackRelease, db_to_gain, gain_to_db};
 use crate::nodes::support::settle_frames;
-use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
+use crate::nodes::{Category, Meter, NodeKind, NodeSpec, Unit};
 use crate::{InputSpec, Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Range at or below which a closed gate is fully silent.
@@ -65,6 +65,7 @@ impl NodeKind for Gate {
         .params(Self::PARAMS)
         .inputs(&[InputSpec::required("in"), InputSpec::optional("sidechain")])
         .per_channel()
+        .meters(&[Meter::gain_reduction("reduction")])
         .expects(crate::Range::Bipolar);
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "threshold": -12, "hold": 5, "release": 10 }"#,
@@ -106,6 +107,10 @@ impl Gate {
 }
 
 impl Node for Gate {
+    fn meters(&self, out: &mut [f32]) {
+        out[0] = (-gain_to_db(self.gain)).max(0.0) as f32;
+    }
+
     fn prepare(&mut self, ctx: &PrepareContext) {
         self.threshold_gain = db_to_gain(self.threshold) as f32;
         self.closed_gain = Self::closed_gain(self.range);

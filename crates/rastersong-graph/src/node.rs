@@ -366,6 +366,12 @@ pub trait Node: Send {
     /// output is pre-sized to its layout.
     fn process(&mut self, ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]);
 
+    /// Writes the values of the meters the node declares ([`crate::NodeSpec::meters`]) for the frame
+    /// just processed. Must not allocate or change the output.
+    fn meters(&self, out: &mut [f32]) {
+        let _ = out;
+    }
+
     /// Clears all internal state, as if no frame had ever been processed.
     fn reset(&mut self) {}
 

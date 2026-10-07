@@ -53,7 +53,7 @@ are defects, **feature** is new behavior, **chore** is cleanup or refactoring wi
 - [x] Node parameter inputs (modulation)
 - [ ] Automation clips (see [Timeline](#timeline))
 - [ ] The foundation workstream below (parameter types, units, modulation, text), since most node work depends on it
-- [ ] Look/Listen tools and the settings page
+- [ ] The settings page (connection inspection is done; its keys are not rebindable yet)
 
 ## Suggested order
 
@@ -169,8 +169,8 @@ Renames, merges, splits and removals need **no migration** while the format is v
 - [ ] **feature** **Settings page.** A real Settings window (File → Settings, and a toolbar button) so hidden
   settings can be exposed. *Partly done:* the window (File → Settings…, Ctrl+,), its Application and Project pages
   and the settings that already existed (theme, wire style, node stats, keep connections, tempo, audio rate) are in;
-  what is left is cache budget, render-ahead, default tool, the toolbar button and
-  the per-setting reset. Two scopes, clearly separated:
+  cache budget, render-ahead and the default preview resolution are in too (with a reset button); what is left is
+  the default tool, the toolbar button and reset buttons on the older settings. Two scopes, clearly separated:
   - *Application* (remembered between sessions, not in project files): theme, wire style, language, default
     preview resolution, cache budget (1 GiB today), render-ahead window (10 s today), default tool, keep input
     connections when duplicating and pasting.
@@ -222,44 +222,39 @@ Renames, merges, splits and removals need **no migration** while the format is v
 
 ### Tooltips
 
-- [ ] **feature** Hovering a connection shows its metadata as a tooltip: source node and port, destination, kind,
+- [x] **feature** Hovering a connection shows its metadata as a tooltip: source node and port, destination, kind, *(Done except a note or warning on the wire itself: notes show on the node's badge.)*
   channels and part (tag), nominal range, layout (width × height × samples per pixel), sample count per frame,
   and any note or warning on it.
-- [ ] **feature** Hovering a **pin** shows the pin's current output value as a tooltip, **sampled at the frame
+- [x] **feature** Hovering a **pin** shows the pin's current output value as a tooltip, **sampled at the frame
   rate** (one value per rendered frame, the same cadence as the modulation ghost handle). Define what the one value
   is (recommended: the mean of the frame's block for a signal, the exact value for a constant) and show min/max too.
   Parameter pins show the live modulated value.
 
 ### Performance
 
-- [ ] **feature** Performance display on nodes, to find slow ones. The engine measures each node's processing time
+- [x] **feature** Performance display on nodes, to find slow ones. The engine measures each node's processing time
   per frame (cheap timer around `process`, smoothed over recent frames, off the hot path) and the editor shows it
   as a badge on the node, and optionally a heat colour across the whole graph (View → Show performance). Report
   cost as time per frame and as a share of the graph's total, at the current preview resolution. The numbers are
   advisory and never part of the cache key. Feeds the benchmarks workflow in [benchmarks.md](benchmarks.md).
 
-### Look and Listen tools
+### Inspecting connections
 
-This **supersedes the earlier Probe/Inspect tool** (see [Decisions](decisions.md#looklisten-replaces-the-probeinspect-tool-october-2026)).
+This **supersedes the earlier Probe/Inspect tool** (see [Decisions](decisions.md#looklisten-replaces-the-probeinspect-tool-october-2026)),
+and the separate Look and Listen tools tried first: hands-on testing showed a mode switch got in the way when the
+meters already show on hover.
 
-- [ ] **feature** **Look tool.** While its key is held, hovering a connection opens a tooltip-style popup showing the
-  output of that connection at the playhead: a picture for video-like signals, a waveform for audio-like ones.
-  Pictures use **implicit stretch to match the project's video size**, exactly as the Video Output node does with
-  its stretch toggle (see [Nodes](#nodes)), so any signal is visible whatever its layout. One shared stretch
-  implementation serves both. *Needs: a read-only engine tap, shared preview widgets.*
-- [ ] **feature** **Listen tool.** A separate key; while held, hovering a connection plays that connection's output
-  as audio. It reuses the Audio Output sink (resampling to the project audio rate, sanitizing, clipping) so what
-  you hear is what an Audio Output node would play. Fades in and out so there are no clicks when the pointer
-  moves between connections. The master playback is ducked while listening.
-- [ ] **feature** **Tool bar and default tool.** A new toolbar in the graph for choosing the default tool: Select
-  (today's behavior), Look, Listen. Holding the key for another tool temporarily overrides the default. Keys are
-  rebindable once the Settings page exists.
-- [ ] **feature** **Engine taps.** The engine can be asked for the output of any connection at one frame without
+- [x] **feature** **Inspection on hover.** Hovering a connection shows its meter, readings and a view of the signal at
+  the playhead; hold **Alt** and scroll to go through the views (picture, scope, spectrum, readings only; remembered for audio and for other signals),
+  any signal in any view. The view is a setting; the update rate while the playhead moves is a project setting.
+- [x] **feature** **Listen key.** Hold **Shift** over a connection to hear it through the Audio Output sink path, with the
+  playback ducked and fades in and out.
+- [ ] **feature** Keys are fixed (Alt for the views, Shift to listen) until the Settings page can rebind them.
+- [x] **feature** **Engine taps.** *(done: see [Engine](engine.md#taps-and-listening); a dropped connection answers "not rendered")* The engine can be asked for the output of any connection at one frame without
   changing the render or the cache: the request is read-only, rate-limited, and dropped when the playhead moves or
-  the graph is edited. A tap never enters the cache key and never changes deterministic output. The design has to
-  say what happens for a tap on a connection the graph dropped (not feeding the output): either compute it on
-  demand or show "not rendered".
-- [ ] **chore** Remove the Probe tool item and its distance-based master-fade mixer from the backlog; they are not
+  the graph is edited. A tap never enters the cache key and never changes deterministic output.
+- [ ] **feature** More views: histogram, vectorscope, and a view of a signal's mean level over time.
+- [x] **chore** Remove the Probe tool item and its distance-based master-fade mixer from the backlog; they are not
   being built.
 
 ---
@@ -269,15 +264,15 @@ This **supersedes the earlier Probe/Inspect tool** (see [Decisions](decisions.md
 Reusable widgets, built once in `rastersong-gui` (a `widgets/` module) and used everywhere they apply. See the
 [DRY rule](#code-health-and-dry).
 
-- [ ] **feature** **Level meter** (peak and RMS, with hold and clip indicator), used by Audio Output, Gain,
+- [x] **feature** **Level meter** *(done for Audio Output and Gain; the preview volume control and timeline headers still to do)* (peak and RMS, with hold and clip indicator), used by Audio Output, Gain,
   Compressor, Limiter, the preview's volume control and the timeline's audio headers.
-- [ ] **feature** **Spectrum analyzer** (FFT-based, log frequency axis, smoothing), for Equalizer, Filter, Three-Band
+- [x] **feature** **Spectrum analyzer** *(done as a shared widget, `dsp::Fft` underneath, in the inspection popup; the Equalizer, Filter, Three-Band Split and DC Filter inspectors don't show one yet)* (FFT-based, log frequency axis, smoothing), for Equalizer, Filter, Three-Band
   Split, DC Filter and the Look/Listen popup. FFT through a permissively licensed crate (checked by `cargo-deny`),
   computed only for visible meters.
-- [ ] **feature** **Gain-reduction meter**, so the Compressor, Gate and Limiter show how much reduction is being
+- [x] **feature** **Gain-reduction meter**, so the Compressor, Gate and Limiter show how much reduction is being
   applied right now.
-- [ ] **feature** **Waveform / scope** and a **picture thumbnail** widget (shared by the Look tool and node previews).
-- [ ] **feature** **Node telemetry.** A way for a node to publish a few meter values per frame (gain reduction,
+- [x] **feature** **Waveform / scope** and a **picture thumbnail** widget *(shared in `widgets/`; node previews still to do)* (shared by the Look tool and node previews).
+- [x] **feature** **Node telemetry.** A way for a node to publish a few meter values per frame (gain reduction,
   peak, band energy) without allocation in `process` and without affecting output; the editor reads the last
   rendered frame, the same way it reads modulated values. Declared in the node's `SPEC` so the inspector draws the
   right widget with no per-node GUI code.
@@ -304,9 +299,9 @@ and a regenerated `nodes.md`.
 ### Inputs and outputs
 
 - **Audio Output**
-  - [ ] **feature** Volume control (gain, in dB, with a meter). Applies before sanitizing and clipping.
+  - [x] **feature** Volume control (gain, in dB, with a meter). Applies before sanitizing and clipping.
 - **Video Output**
-  - [ ] **feature** *Implicit stretch* toggle: stretch the incoming signal to the project's video size as if it
+  - [x] **feature** *Implicit stretch* toggle: stretch the incoming signal to the project's video size as if it
     were connected to the Video input node. **Defaults to on**, so the output always shows something whatever the
     signal's layout. Shares its implementation with the Look tool.
 
@@ -349,15 +344,15 @@ and a regenerated `nodes.md`.
     the other. If they differ (slew limits the signal's own rate; envelope follows its magnitude), document the
     difference in both descriptions and share the smoothing code. Either way it is one smoothing implementation.
 - **Equalizer**
-  - [ ] **feature** Make Equalizer a **single band**: any number of bands in series or parallel are equivalent, so
+  - [x] **feature** Make Equalizer a **single band**: any number of bands in series or parallel are equivalent, so
     users add several nodes instead. A band has a type (peak, low shelf, high shelf, low cut, high cut, notch,
     band pass), adjustable frequency, adjustable Q, and gain where it applies. The old three-band node is replaced by chained bands.
 - **Dynamic Equalizer Band** (new)
-  - [ ] **feature** Same controls as the single-band Equalizer, plus a dynamics response (threshold, ratio,
+  - [x] **feature** Same controls as the single-band Equalizer, plus a dynamics response (threshold, ratio,
     attack, release, optional sidechain). Shows its gain change on a gain-reduction meter. Shares the band design
     code with Equalizer and the detector with the Compressor.
 - **Frequency Modulation (FM)**
-  - [ ] **chore** Rename the "Index" parameter to something that explains itself (candidate: *Depth*, with help
+  - [x] **chore** Rename the "Index" parameter to something that explains itself (candidate: *Depth*, with help
     text saying it is how far the modulator pushes the carrier's frequency).
 - **Filter**
   - [x] **feature** Adjustable Q **and** a slope in dB/octave for sharper cuts (12, 24, 48, … dB/oct by cascading
@@ -369,7 +364,7 @@ and a regenerated `nodes.md`.
     slope; migration maps an old Low Pass to a Filter set to low pass. Update the "low pass as blur" examples in
     [Concepts](concepts.md#advanced-effects) and `examples/graphs/`. *Depends on the Filter items above.*
 - **DC Filter** (new)
-  - [ ] **feature** Removes DC offset from a signal (a very low-frequency high pass, with its cutoff exposed and a
+  - [x] **feature** Removes DC offset from a signal (a very low-frequency high pass, with its cutoff exposed and a
     sensible default). Documents when it is needed (after Offset, Distortion, Rectify).
 - **Reverb**
   - [ ] **feature** The current reverb makes beautiful patterns but is nearly impossible to use subtly on video.
@@ -377,7 +372,7 @@ and a regenerated `nodes.md`.
     early-reflections-only mode) or add a second, simpler reverb node (a short comb/all-pass or Schroeder-style
     one) with few controls. Prototype both on the example graphs and pick by how usable subtle settings are.
 - **Three-Band Split**
-  - [ ] **feature** Slope in dB/octave on the crossovers (shared filter code; Linkwitz-Riley cascades so the bands
+  - [x] **feature** Slope in dB/octave on the crossovers (shared filter code; Linkwitz-Riley cascades so the bands
     still sum flat).
 
 ### Cross-cutting node items
@@ -397,7 +392,7 @@ and a regenerated `nodes.md`.
 The aim: one implementation per idea, so fixes and features land in one place. Known candidates to consolidate:
 
 - [x] **chore** **Units.** One `Unit` enum and one label set in `nodes/support.rs`, used by every node.
-- [ ] **chore** **Filters.** Filter, Three-Band Split, Equalizer, DC Filter, the Chorus/Flanger/Phaser filtering and
+- [x] **chore** **Filters.** Filter, Three-Band Split, Equalizer, DC Filter, the Chorus/Flanger/Phaser filtering and
   Low Pass share one biquad / cascaded-stage implementation in `dsp.rs`, with slope and Q designs in one place.
 - [x] **chore** **Level detectors and smoothers** (`dsp::AttackRelease`; Slew is a linear rate limiter and keeps its own).** Envelope, Slew, Compressor, Gate, Limiter and the sidechain
   share one detector (peak/RMS, attack/release) and one smoother in `dsp.rs`.
@@ -410,7 +405,7 @@ The aim: one implementation per idea, so fixes and features land in one place. K
   string literals in widgets.
 - [ ] **chore** **Stretch.** One "stretch a signal to the project size" implementation, shared by the Stretch node,
   Video Output and the Look tool.
-- [ ] **chore** **Audio sinks.** One resample-sanitize-clip path, shared by Audio Output and the Listen tool.
+- [x] **chore** **Audio sinks.** One resample-sanitize-clip path, shared by Audio Output and the Listen tool.
 - [ ] **chore** Add guard tests where practical (the `mix` one is done): a registry test that fails if a node declares its own `unit` list
   or its own `mix`, so duplicates cannot creep back.
 - [ ] **chore** Codebase organization and code-quality checkup (not started), run after the foundations land and

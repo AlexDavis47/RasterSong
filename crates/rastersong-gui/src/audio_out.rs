@@ -23,10 +23,27 @@ struct Transport {
     at: Instant,
 }
 
+/// A connection being listened to: its sound, mixed over the playback.
+#[derive(Clone)]
+struct ListenPlay {
+    mixer: Arc<Mixer>,
+    /// Video seconds to start from when playback is stopped; the listening then runs on its own.
+    position: f64,
+    /// Changes with every listen, so the audio thread notices a new one.
+    id: u64,
+}
+
+/// How long the listened sound takes to fade in and out, in seconds.
+const LISTEN_FADE_SECS: f64 = 0.03;
+/// How much of the playback is turned down while listening, `0..=1`.
+const LISTEN_DUCK: f32 = 0.9;
+
 #[derive(Default)]
 struct Shared {
     transport: Mutex<Option<Transport>>,
     mixer: Mutex<Arc<Mixer>>,
+    listen: Mutex<Option<ListenPlay>>,
+    listens: std::sync::atomic::AtomicU64,
 }
 
 /// The audio device. If no device is available the app keeps working, silently.
@@ -92,6 +109,31 @@ impl AudioOut {
         }
     }
 
+    /// Mixes `mixer` over the playback, turning the playback down, until [`Self::stop_listening`].
+    /// With playback stopped it runs on its own from video time `position`; with playback
+    /// running it follows the playback's position. Fades in.
+    pub fn listen(&self, mixer: Mixer, position: f64) {
+        let id = self
+            .shared
+            .listens
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
+        if let Ok(mut listen) = self.shared.listen.lock() {
+            *listen = Some(ListenPlay {
+                mixer: Arc::new(mixer),
+                position,
+                id,
+            });
+        }
+    }
+
+    /// Fades the listened sound out and gives the playback its volume back.
+    pub fn stop_listening(&self) {
+        if let Ok(mut listen) = self.shared.listen.lock() {
+            *listen = None;
+        }
+    }
+
     pub fn set_mixer(&self, mixer: Mixer) {
         if let Ok(mut current) = self.shared.mixer.lock() {
             *current = Arc::new(mixer);
@@ -132,6 +174,9 @@ fn build<T: SizedSample + FromSample<f32>>(
                     source.transport = Some(transport);
                     source.mixer = mixer;
                 }
+                if let Ok(listen) = shared.listen.try_lock() {
+                    source.listen(listen.clone());
+                }
                 for frame in data.chunks_mut(channels) {
                     let [left, right] = source.next_frame();
                     for (c, out) in frame.iter_mut().enumerate() {
@@ -154,12 +199,28 @@ struct Source {
     hop: Vec<f32>,
     /// Frames of `hop` already played.
     played: usize,
+    listened: Listened,
+}
+
+/// The audio thread's side of listening to a connection.
+struct Listened {
+    stretcher: Stretcher,
+    /// The sound to mix in, kept while it fades out after listening stops.
+    mixer: Option<Arc<Mixer>>,
+    wanted: bool,
+    id: u64,
+    /// Video seconds, when playback is stopped.
+    position: f64,
+    /// `0..=1`.
+    gain: f32,
+    hop: Vec<f32>,
 }
 
 impl Source {
     fn new(rate: f64) -> Self {
         let stretcher = Stretcher::new(rate);
-        let hop = vec![0.0; stretcher.hop() * 2];
+        let stretcher_hop = stretcher.hop();
+        let hop = vec![0.0; stretcher_hop * 2];
         Self {
             played: stretcher.hop(),
             stretcher,
@@ -167,6 +228,29 @@ impl Source {
             metronome: Metronome::new(rate),
             transport: None,
             hop,
+            listened: Listened {
+                stretcher: Stretcher::new(rate),
+                mixer: None,
+                wanted: false,
+                id: 0,
+                position: 0.0,
+                gain: 0.0,
+                hop: vec![0.0; stretcher_hop * 2],
+            },
+        }
+    }
+
+    /// Takes what the UI wants listened to, or `None` to fade it out.
+    fn listen(&mut self, play: Option<ListenPlay>) {
+        let listened = &mut self.listened;
+        listened.wanted = play.is_some();
+        if let Some(play) = play {
+            if play.id != listened.id {
+                listened.id = play.id;
+                listened.position = play.position;
+                listened.stretcher.reset();
+            }
+            listened.mixer = Some(play.mixer);
         }
     }
 
@@ -181,11 +265,20 @@ impl Source {
 
     fn next_hop(&mut self) {
         self.played = 0;
+        let hop_secs = self.stretcher.hop() as f64 / self.stretcher.rate();
+        let fade = (hop_secs / LISTEN_FADE_SECS) as f32;
+        let listened = &mut self.listened;
+        listened.gain = if listened.wanted {
+            (listened.gain + fade).min(1.0)
+        } else {
+            (listened.gain - fade).max(0.0)
+        };
+        let duck = 1.0 - LISTEN_DUCK * listened.gain;
         match self.transport {
             Some(t) if t.playing && t.speed > 0.0 => {
                 // Where the clock is now, extrapolated from the UI's last report.
                 let position = t.position + t.at.elapsed().as_secs_f64() * t.speed;
-                let gain = t.volume * speed_gain(t.speed);
+                let gain = t.volume * speed_gain(t.speed) * duck;
                 self.stretcher
                     .next(&self.mixer, position, gain, &mut self.hop);
                 // Clicks follow the video's time, not the stretched audio, and ignore the speed
@@ -204,5 +297,91 @@ impl Source {
                 self.hop.fill(0.0);
             }
         }
+        self.mix_listened(hop_secs);
+    }
+
+    /// Adds the listened sound to the hop just rendered.
+    fn mix_listened(&mut self, hop_secs: f64) {
+        let listened = &mut self.listened;
+        if listened.gain <= 0.0 && !listened.wanted {
+            listened.mixer = None;
+            return;
+        }
+        let Some(mixer) = listened.mixer.clone() else {
+            return;
+        };
+        let (position, gain) = match self.transport {
+            Some(t) if t.playing && t.speed > 0.0 => (
+                t.position + t.at.elapsed().as_secs_f64() * t.speed,
+                t.volume * speed_gain(t.speed),
+            ),
+            transport => {
+                let position = listened.position;
+                listened.position += hop_secs;
+                (position, transport.map_or(1.0, |t| t.volume))
+            }
+        };
+        listened
+            .stretcher
+            .next(&mixer, position, gain * listened.gain, &mut listened.hop);
+        for (out, heard) in self.hop.iter_mut().zip(&listened.hop) {
+            *out += heard;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rastersong_engine::AudioBlock;
+    use rastersong_engine::playback::RenderedSource;
+
+    /// A steady 0.5 at 48 kHz in every frame of video at 30 fps.
+    #[derive(Debug)]
+    struct Steady;
+
+    impl RenderedSource for Steady {
+        fn blocks(&self, frames: std::ops::Range<usize>) -> Vec<Option<Arc<AudioBlock>>> {
+            frames
+                .map(|f| {
+                    Some(Arc::new(AudioBlock {
+                        start: f as u64 * 1600,
+                        sample_rate: 48_000,
+                        channels: 1,
+                        samples: vec![0.5; 1600],
+                    }))
+                })
+                .collect()
+        }
+
+        fn frame_rate(&self) -> f64 {
+            30.0
+        }
+    }
+
+    fn pull(source: &mut Source, seconds: f64) -> f32 {
+        let mut last = 0.0;
+        for _ in 0..(seconds * 48_000.0) as usize {
+            last = source.next_frame()[0];
+        }
+        last
+    }
+
+    #[test]
+    fn listened_sound_fades_in_while_stopped_and_out_when_listening_stops() {
+        let mut source = Source::new(48_000.0);
+        let play = ListenPlay {
+            mixer: Arc::new(Mixer::rendered(Arc::new(Steady), 1.0)),
+            position: 0.5,
+            id: 1,
+        };
+        source.listen(Some(play));
+        let heard = pull(&mut source, 0.3);
+        assert!((heard - 0.5).abs() < 0.05, "{heard}");
+
+        source.listen(None);
+        let after = pull(&mut source, 0.3);
+        assert!(after.abs() < 0.01, "{after}");
+        assert!(source.listened.mixer.is_none(), "released once silent");
     }
 }

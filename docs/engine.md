@@ -119,6 +119,29 @@ source audio is used untouched; a track wired straight into it is also used as i
   the `.mkv` as it renders.
 - *Planned:* a volume control on the node (see the [roadmap](roadmap.md#nodes)).
 
+## Taps and listening
+
+A **tap** reads one connection (the output of a node) at one frame, for the editor's inspection popup. **Listening**
+renders a connection's sound ahead of a position, for the listen key. Both are read-only:
+
+- They are answered by a second renderer the service builds on demand, with its own video decoder and graph
+  state, so a tap never moves the render-ahead, never touches the frame cache and is never part of the cache key.
+  The second renderer is dropped when nothing asks and an edit has made it stale.
+- Only the latest request is kept. `Engine::tap` returns `Pending` until the render thread answers (it calls the
+  update callback), and an answer is dropped when the project is edited; the editor asks again. A request for a
+  connection that doesn't feed the output (the graph prunes those) is answered `NotRendered`, and one for a graph
+  that can't render likewise.
+- A picture is the signal stretched over the project's shape, at most 320 pixels on its longest side, by the
+  same `dsp::Stretcher` Video Output uses. Audio is kept as samples for the scope.
+- Listening sends the connection's signal through the Audio Output's sink (sanitize, resample, clip), so what
+  is heard is what an Audio Output wired there would play. The sound is kept for a second ahead of the position
+  the caller reports with `Engine::listen`, and read through `Engine::listened_audio`, which plays in a `Mixer`
+  like the rendered sound of a graph. Frames of a connection that isn't rendered are silent.
+- The tap renderer renders one frame at a time on the render thread, ahead of render-ahead, so taps and
+  listening make the cache wait a moment; the editor rate-limits its requests (the pointer rests on a
+  connection first; while the playhead moves, a new frame is asked for at most as often as the project's
+  `inspect_rate`, 5 a second by default).
+
 ## Export / Offline Rendering
 
 Export uses the same graph and engine as preview, rendering every frame in order from the start at full resolution

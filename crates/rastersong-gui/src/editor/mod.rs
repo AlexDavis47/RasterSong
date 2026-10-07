@@ -2,11 +2,14 @@
 //! canvas. The project's [`GraphDesc`] stays the model; the editor converts to and from it.
 
 mod canvas;
+mod inspect;
 mod inspector;
 mod linked;
 mod modulation;
 mod param_field;
+mod performance;
 mod search;
+mod tooltips;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -18,6 +21,9 @@ use rastersong_engine::{
 };
 
 pub use canvas::CanvasContext;
+pub use inspect::{
+    InspectContext, InspectMode, ViewChoice, changing_view, listening, scroll_steps,
+};
 pub use inspector::InspectorContext;
 pub use linked::LinkedRename;
 pub use modulation::{PARAM_PORT, as_param, param_port};
@@ -95,6 +101,12 @@ pub struct GraphEditor {
     node_menu: Option<search::NodeMenu>,
     /// The canvas and node layout as last drawn, for hit-testing from outside (tests).
     last_canvas: Rect,
+    /// The node output the pointer is over (a wire or an output pin), for the Listen tool.
+    hovered_output: Option<(String, usize)>,
+    /// Whether that output carries audio.
+    hovered_audio: bool,
+    /// Whether the wheel is for something other than zooming (changing the inspection view).
+    pub scroll_reserved: bool,
     last_geometry: Vec<canvas::Geometry>,
     /// Text last copied, for the Edit menu's Paste (keyboard paste reads the system clipboard).
     clipboard: Option<String>,
@@ -103,6 +115,8 @@ pub struct GraphEditor {
     pub keep_connections: bool,
     /// The project's limit on pre-rendered warmup frames, to flag nodes that need more.
     pub max_warmup_frames: u32,
+    /// Each node's processing time in microseconds, smoothed over recent frames, by node id.
+    costs: HashMap<String, f32>,
     /// The project's video file name and audio track names, for the nodes linked to them.
     project_video: Option<String>,
     project_tracks: Vec<String>,
@@ -143,10 +157,14 @@ impl GraphEditor {
             search: None,
             node_menu: None,
             last_canvas: Rect::NOTHING,
+            hovered_output: None,
+            hovered_audio: false,
+            scroll_reserved: false,
             last_geometry: Vec::new(),
             clipboard: None,
             keep_connections: true,
             max_warmup_frames: rastersong_engine::DEFAULT_MAX_WARMUP_FRAMES,
+            costs: HashMap::new(),
             project_video: None,
             project_tracks: Vec::new(),
             renames: Vec::new(),
@@ -469,6 +487,18 @@ impl GraphEditor {
 
     /// Where a pin was last drawn, in screen space. For inputs, `port` is the input's index, or
     /// a parameter's port ([`param_port`]).
+    /// Whether the output the pointer rested on carries audio.
+    pub fn hovered_is_audio(&self) -> bool {
+        self.hovered_audio
+    }
+
+    /// The node output the pointer rested on in the last frame: `(node id, output)`.
+    pub fn hovered_output(&self) -> Option<(&str, usize)> {
+        self.hovered_output
+            .as_ref()
+            .map(|(node, output)| (node.as_str(), *output))
+    }
+
     pub fn pin_screen_pos(&self, key: NodeKey, input: bool, port: usize) -> Option<Pos2> {
         let g = self.last_geometry.iter().find(|g| g.key == key)?;
         let p = if input {

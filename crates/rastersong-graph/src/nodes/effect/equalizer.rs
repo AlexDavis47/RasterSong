@@ -1,53 +1,65 @@
 use std::f64::consts::PI;
 
-use crate::dsp::{Biquad, BiquadKind};
+use super::filter::Slope;
+use crate::dsp::{Biquad, BiquadKind, MAX_STAGES, butterworth_cascade};
 use crate::nodes::support::UNBOUNDED_WARMUP;
 use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
-/// A three-band parametric equaliser: a low shelf, a peaking mid band and a high shelf, each
-/// boosting or cutting by its gain in dB. Not to be confused with Three Band, which splits the
-/// signal into three outputs.
+choice! {
+    /// What the band does to the signal.
+    pub enum Shape {
+        /// Boosts or cuts a range around the frequency by `gain` dB.
+        Peak = "peak",
+        /// Boosts or cuts everything below the frequency by `gain` dB.
+        LowShelf = "low_shelf",
+        /// Boosts or cuts everything above the frequency by `gain` dB.
+        HighShelf = "high_shelf",
+        /// Removes what is slower than the frequency.
+        LowCut = "low_cut",
+        /// Removes what is faster than the frequency.
+        HighCut = "high_cut",
+        /// Removes a narrow range around the frequency.
+        Notch = "notch",
+        /// Keeps only a range around the frequency.
+        BandPass = "band_pass",
+    }
+}
+
+/// A single equaliser band. Any number of bands in series make a full equaliser, so one node is
+/// one band: add more nodes for more bands.
 #[derive(Debug)]
 pub struct Equalizer {
+    band: Shape,
+    slope: Slope,
     unit: Unit,
-    low_freq: f64,
-    low_gain: f64,
-    mid_freq: f64,
-    mid_gain: f64,
-    mid_q: f64,
-    high_freq: f64,
-    high_gain: f64,
+    frequency: f64,
+    q: f64,
+    gain: f64,
     /// Set in `prepare`: cycles per sample for one unit, and whether any parameter is modulated.
     per_sample: f64,
     modulated: bool,
-    /// Slowest cutoff in cycles per sample, for warmup.
+    /// Slowest frequency in cycles per sample and highest Q, for warmup.
     slowest: f64,
-    bands: [Biquad; 3],
+    sharpest: f64,
+    sections: [Biquad; MAX_STAGES],
 }
 
 params! { Equalizer {
+    BAND: ParamSpec::choice("band", Shape::OPTIONS, "peak"),
+    FREQUENCY: ParamSpec::number("frequency", 30.0, 0.01, 500.0)
+        .exposed()
+        .limits(1e-06, 1e9),
     UNIT: Unit::freq_param("row"),
-    LOW_FREQ: ParamSpec::number("low_freq", 5.0, 0.01, 500.0)
-        .limits(1e-06, 1e9),
-    LOW_GAIN: ParamSpec::number("low_gain", 0.0, -24.0, 24.0)
-        .unit("dB")
-        .exposed()
-        .limits(-48.0, 48.0),
-    MID_FREQ: ParamSpec::number("mid_freq", 30.0, 0.01, 500.0)
-        .limits(1e-06, 1e9),
-    MID_GAIN: ParamSpec::number("mid_gain", 0.0, -24.0, 24.0)
-        .unit("dB")
-        .exposed()
-        .limits(-48.0, 48.0),
-    MID_Q: ParamSpec::number("mid_q", 1.0, 0.1, 20.0)
+    Q: ParamSpec::number("q", 0.707, 0.1, 20.0)
         .limits(0.05, 100.0),
-    HIGH_FREQ: ParamSpec::number("high_freq", 150.0, 0.01, 500.0)
-        .limits(1e-06, 1e9),
-    HIGH_GAIN: ParamSpec::number("high_gain", 0.0, -24.0, 24.0)
+    GAIN: ParamSpec::number("gain", 0.0, -24.0, 24.0)
         .unit("dB")
         .exposed()
-        .limits(-48.0, 48.0),
+        .limits(-48.0, 48.0)
+        .shown_when("band", &["peak", "low_shelf", "high_shelf"]),
+    SLOPE: ParamSpec::choice("slope", &["12", "24", "48"], "12")
+        .shown_when("band", &["low_cut", "high_cut"]),
 } }
 
 impl NodeKind for Equalizer {
@@ -56,108 +68,106 @@ impl NodeKind for Equalizer {
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
-        r#"{ "low_gain": 6, "mid_gain": -9, "high_gain": 4 }"#,
-        r#"{ "low_freq": 0.3, "mid_freq": 0.9, "high_freq": 1.5, "mid_gain": 12, "mid_q": 6 }"#,
+        r#"{ "band": "peak", "frequency": 0.9, "gain": 12, "q": 6 }"#,
+        r#"{ "band": "low_shelf", "frequency": 0.3, "gain": 6 }"#,
+        r#"{ "band": "high_shelf", "frequency": 1.5, "gain": -9 }"#,
+        r#"{ "band": "low_cut", "frequency": 0.5 }"#,
+        r#"{ "band": "high_cut", "frequency": 0.9, "slope": "24", "q": 2 }"#,
+        r#"{ "band": "high_cut", "frequency": 0.9, "slope": "48" }"#,
+        r#"{ "band": "notch", "frequency": 0.7, "q": 4 }"#,
+        r#"{ "band": "band_pass", "frequency": 0.9, "q": 8 }"#,
     ];
     const BENCH: Option<&'static str> =
-        Some(r#"{ "low_gain": 6, "mid_gain": -6, "high_gain": 3 }"#);
+        Some(r#"{ "band": "peak", "frequency": 30, "gain": -6, "q": 1 }"#);
 
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
+            band: params.choice_as(Self::BAND)?,
+            slope: params.choice_as(Self::SLOPE)?,
             unit: params.choice_as(Self::UNIT)?,
-            low_freq: params.number_at(Self::LOW_FREQ)?,
-            low_gain: params.number_at(Self::LOW_GAIN)?,
-            mid_freq: params.number_at(Self::MID_FREQ)?,
-            mid_gain: params.number_at(Self::MID_GAIN)?,
-            mid_q: params.number_at(Self::MID_Q)?,
-            high_freq: params.number_at(Self::HIGH_FREQ)?,
-            high_gain: params.number_at(Self::HIGH_GAIN)?,
+            frequency: params.number_at(Self::FREQUENCY)?,
+            q: params.number_at(Self::Q)?,
+            gain: params.number_at(Self::GAIN)?,
             per_sample: 0.0,
             modulated: false,
             slowest: 0.0,
-            bands: [Biquad::default(); 3],
+            sharpest: 1.0,
+            sections: [Biquad::default(); MAX_STAGES],
         })
     }
 }
 
 impl Equalizer {
-    /// The three bands for the given frequencies (in this node's unit) and gains (dB).
-    fn design(&self, freq: [f64; 3], gain: [f64; 3]) -> [Biquad; 3] {
-        let f = |i: usize| freq[i] * self.per_sample;
-        let shelf_q = std::f64::consts::FRAC_1_SQRT_2;
-        [
-            Biquad::design(BiquadKind::LowShelf { gain_db: gain[0] }, f(0), shelf_q),
-            Biquad::design(BiquadKind::Peak { gain_db: gain[1] }, f(1), self.mid_q),
-            Biquad::design(BiquadKind::HighShelf { gain_db: gain[2] }, f(2), shelf_q),
-        ]
+    /// How many biquad sections the band uses.
+    fn used(&self) -> usize {
+        match self.band {
+            Shape::LowCut | Shape::HighCut => self.slope.stages(),
+            _ => 1,
+        }
     }
 
-    fn base(&self) -> ([f64; 3], [f64; 3]) {
-        (
-            [self.low_freq, self.mid_freq, self.high_freq],
-            [self.low_gain, self.mid_gain, self.high_gain],
-        )
+    /// The sections for a frequency (in this node's unit), quality factor and gain (dB).
+    fn design(&self, frequency: f64, q: f64, gain: f64) -> [Biquad; MAX_STAGES] {
+        let f = frequency * self.per_sample;
+        let one = |kind| {
+            let mut sections = [Biquad::default(); MAX_STAGES];
+            sections[0] = Biquad::design(kind, f, q);
+            sections
+        };
+        match self.band {
+            Shape::Peak => one(BiquadKind::Peak { gain_db: gain }),
+            Shape::LowShelf => one(BiquadKind::LowShelf { gain_db: gain }),
+            Shape::HighShelf => one(BiquadKind::HighShelf { gain_db: gain }),
+            Shape::Notch => one(BiquadKind::Notch),
+            Shape::BandPass => one(BiquadKind::BandPass),
+            Shape::LowCut => butterworth_cascade(true, self.slope.stages(), f, q),
+            Shape::HighCut => butterworth_cascade(false, self.slope.stages(), f, q),
+        }
     }
 }
 
 impl Node for Equalizer {
     fn prepare(&mut self, ctx: &PrepareContext) {
         self.per_sample = self.unit.per_sample(1.0, ctx);
-        let params = [
-            Self::LOW_FREQ,
-            Self::LOW_GAIN,
-            Self::MID_FREQ,
-            Self::MID_GAIN,
-            Self::HIGH_FREQ,
-            Self::HIGH_GAIN,
-        ];
-        self.modulated = params.iter().any(|&p| ctx.modulation(p).is_some());
-        let slowest = ctx
-            .param_min(Self::LOW_FREQ, self.low_freq)
-            .min(ctx.param_min(Self::MID_FREQ, self.mid_freq))
-            .min(ctx.param_min(Self::HIGH_FREQ, self.high_freq));
-        self.slowest = slowest * self.per_sample;
-        let (freq, gain) = self.base();
-        self.bands = self.design(freq, gain);
+        self.modulated = [Self::FREQUENCY, Self::Q, Self::GAIN]
+            .iter()
+            .any(|&p| ctx.modulation(p).is_some());
+        self.slowest = ctx.param_min(Self::FREQUENCY, self.frequency) * self.per_sample;
+        self.sharpest = ctx.param_max(Self::Q, self.q);
+        self.sections = self.design(self.frequency, self.q, self.gain);
     }
 
     fn process(&mut self, ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
-        let freq = [
-            ctx.value(Self::LOW_FREQ, self.low_freq),
-            ctx.value(Self::MID_FREQ, self.mid_freq),
-            ctx.value(Self::HIGH_FREQ, self.high_freq),
-        ];
-        let gain = [
-            ctx.value(Self::LOW_GAIN, self.low_gain),
-            ctx.value(Self::MID_GAIN, self.mid_gain),
-            ctx.value(Self::HIGH_GAIN, self.high_gain),
-        ];
+        let frequency = ctx.value(Self::FREQUENCY, self.frequency);
+        let q = ctx.value(Self::Q, self.q);
+        let gain = ctx.value(Self::GAIN, self.gain);
+        let used = self.used();
         for (i, (out, &x)) in outputs[0].data.iter_mut().zip(&inputs[0].data).enumerate() {
             if self.modulated {
-                let designed = self.design(
-                    [freq[0].at64(i), freq[1].at64(i), freq[2].at64(i)],
-                    [gain[0].at64(i), gain[1].at64(i), gain[2].at64(i)],
-                );
-                for (band, new) in self.bands.iter_mut().zip(designed) {
-                    band.retune(new);
+                let designed = self.design(frequency.at64(i), q.at64(i), gain.at64(i));
+                for (section, new) in self.sections.iter_mut().zip(designed).take(used) {
+                    section.retune(new);
                 }
             }
             let mut y = f64::from(x);
-            for band in &mut self.bands {
-                y = band.process(y);
+            for section in self.sections.iter_mut().take(used) {
+                y = section.process(y);
             }
             *out = y as f32;
         }
     }
 
     fn reset(&mut self) {
-        for band in &mut self.bands {
-            band.reset();
+        for section in &mut self.sections {
+            section.reset();
         }
     }
 
     fn warmup_frames(&self, ctx: &PrepareContext) -> u32 {
-        let samples = 7.0 * self.mid_q.max(1.0) / (PI * self.slowest.max(1e-9));
+        // A resonant section rings for about 7 time constants of Q / (π f); cascaded stages ring
+        // for longer, roughly in proportion to their number.
+        let stages = self.used() as f64;
+        let samples = 7.0 * self.sharpest.max(1.0) * stages / (PI * self.slowest.max(1e-9));
         if samples.is_finite() {
             ((samples / ctx.samples_per_frame() as f64).ceil() as u32).max(1)
         } else {
@@ -179,23 +189,55 @@ mod tests {
         let sine: Vec<f32> = (0..len)
             .map(|i| (TAU * cycles * i as f64 / len as f64).sin() as f32)
             .collect();
-        process_one(node.as_mut(), std::slice::from_ref(&sine));
+        for _ in 0..4 {
+            process_one(node.as_mut(), std::slice::from_ref(&sine));
+        }
         let out = process_one(node.as_mut(), &[sine]);
         out.iter().fold(0.0f32, |peak, &x| peak.max(x.abs()))
     }
 
     #[test]
-    fn flat_settings_pass_everything() {
+    fn a_flat_band_passes_everything() {
         for cycles in [1.0, 20.0, 100.0] {
             assert!((gain("{}", cycles) - 1.0).abs() < 0.01, "{cycles}");
         }
     }
 
     #[test]
-    fn each_band_moves_its_own_range() {
-        let p = r#"{ "low_freq": 4, "mid_freq": 30, "high_freq": 100, "low_gain": 12, "mid_gain": -12, "high_gain": 12 }"#;
-        assert!(gain(p, 0.5) > 3.5, "low shelf boosts, +12 dB is x4");
-        assert!(gain(p, 30.0) < 0.3, "mid band cuts");
-        assert!(gain(p, 120.0) > 3.0, "high shelf boosts");
+    fn a_peak_moves_only_its_own_range() {
+        let p = r#"{ "band": "peak", "frequency": 30, "gain": -12, "q": 4 }"#;
+        assert!(gain(p, 30.0) < 0.3, "centre is cut");
+        assert!((gain(p, 3.0) - 1.0).abs() < 0.05, "far below is untouched");
+    }
+
+    #[test]
+    fn shelves_move_everything_beyond_their_corner() {
+        let low = r#"{ "band": "low_shelf", "frequency": 8, "gain": 12 }"#;
+        assert!(gain(low, 0.5) > 3.5, "+12 dB is x4");
+        assert!((gain(low, 100.0) - 1.0).abs() < 0.1);
+        let high = r#"{ "band": "high_shelf", "frequency": 60, "gain": 12 }"#;
+        assert!(gain(high, 120.0) > 3.5);
+        assert!((gain(high, 1.0) - 1.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn cuts_remove_one_side_and_steeper_slopes_remove_more() {
+        let low = r#"{ "band": "low_cut", "frequency": 40 }"#;
+        assert!(gain(low, 2.0) < 0.1);
+        assert!(gain(low, 120.0) > 0.9);
+        let high12 = r#"{ "band": "high_cut", "frequency": 20, "slope": "12" }"#;
+        let high48 = r#"{ "band": "high_cut", "frequency": 20, "slope": "48" }"#;
+        assert!(gain(high12, 120.0) < 0.1);
+        assert!(gain(high48, 60.0) < gain(high12, 60.0) / 5.0);
+    }
+
+    #[test]
+    fn a_notch_removes_its_centre_and_a_band_pass_keeps_only_it() {
+        let notch = r#"{ "band": "notch", "frequency": 30, "q": 4 }"#;
+        assert!(gain(notch, 30.0) < 0.05);
+        assert!(gain(notch, 3.0) > 0.95);
+        let pass = r#"{ "band": "band_pass", "frequency": 30, "q": 4 }"#;
+        assert!((gain(pass, 30.0) - 1.0).abs() < 0.05);
+        assert!(gain(pass, 3.0) < 0.2);
     }
 }

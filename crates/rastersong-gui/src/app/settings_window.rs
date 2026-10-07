@@ -2,10 +2,13 @@
 //! in the project file), each with a line of help.
 
 use eframe::egui::{self, RichText, Ui};
-use rastersong_engine::{MAX_WARMUP_FRAMES_LIMIT, Tempo, UNBOUNDED_WARMUP};
+use rastersong_engine::{
+    INSPECT_RATE_RANGE, MAX_WARMUP_FRAMES_LIMIT, PreviewScale, Tempo, UNBOUNDED_WARMUP,
+};
 use rastersong_lang::{tr, tr_args};
 
 use super::{AUDIO_RATES, App};
+use crate::settings::Settings;
 use crate::theme::{ThemeChoice, WireStyle};
 use crate::value_box::ValueBox;
 
@@ -22,6 +25,16 @@ fn section(ui: &mut Ui, title: &str) {
     ui.add_space(6.0);
     ui.label(RichText::new(title).strong());
     ui.separator();
+}
+
+/// A small button that puts a setting back to its default; shown only when it differs.
+/// Returns true when it was clicked.
+fn reset_button(ui: &mut Ui, differs: bool) -> bool {
+    differs
+        && ui
+            .small_button("\u{21ba}")
+            .on_hover_text(tr("settings.reset"))
+            .clicked()
 }
 
 /// The help text under a setting.
@@ -129,9 +142,106 @@ impl App {
         });
         help(ui, tr("settings.language.help"));
 
+        section(ui, tr("settings.rendering"));
+        ui.horizontal(|ui| {
+            ui.label(tr("settings.preview_default"));
+            let mut scale = self.settings.preview_scale();
+            egui::ComboBox::from_id_salt("settings-preview-scale")
+                .selected_text(scale.label())
+                .show_ui(ui, |ui| {
+                    for option in PreviewScale::ALL {
+                        ui.selectable_value(&mut scale, option, option.label());
+                    }
+                });
+            if scale != self.settings.preview_scale() {
+                self.settings.set_preview_scale(scale);
+                self.engine.set_preview_scale(scale);
+            }
+        });
+        help(ui, tr("settings.preview_default.help"));
+        let mut engine_changed = false;
+        ui.horizontal(|ui| {
+            ui.label(tr("settings.cache"));
+            let mut mib = f64::from(self.settings.cache_mib);
+            if ui
+                .add(
+                    ValueBox::new(&mut mib)
+                        .range(
+                            f64::from(*Settings::CACHE_MIB_RANGE.start())
+                                ..=f64::from(*Settings::CACHE_MIB_RANGE.end()),
+                        )
+                        .max_decimals(0)
+                        .speed(16.0)
+                        .suffix(tr("settings.cache.suffix")),
+                )
+                .changed()
+            {
+                self.settings.cache_mib = mib.round() as u32;
+                engine_changed = true;
+            }
+            if reset_button(ui, self.settings.cache_mib != Settings::DEFAULT_CACHE_MIB) {
+                self.settings.cache_mib = Settings::DEFAULT_CACHE_MIB;
+                engine_changed = true;
+            }
+        });
+        help(ui, tr("settings.cache.help"));
+        ui.horizontal(|ui| {
+            ui.label(tr("settings.render_ahead"));
+            if ui
+                .add(
+                    ValueBox::new(&mut self.settings.render_ahead_secs)
+                        .range(Settings::RENDER_AHEAD_RANGE)
+                        .max_decimals(1)
+                        .speed(0.5)
+                        .suffix(tr("unit.seconds.suffix")),
+                )
+                .changed()
+            {
+                engine_changed = true;
+            }
+            if reset_button(
+                ui,
+                self.settings.render_ahead_secs != Settings::DEFAULT_RENDER_AHEAD_SECS,
+            ) {
+                self.settings.render_ahead_secs = Settings::DEFAULT_RENDER_AHEAD_SECS;
+                engine_changed = true;
+            }
+        });
+        help(ui, tr("settings.render_ahead.help"));
+        if engine_changed {
+            self.engine.set_config(self.settings.engine_config());
+        }
+
         section(ui, tr("settings.graph_editor"));
+        for (label, audio) in [
+            ("settings.view_audio", true),
+            ("settings.view_other", false),
+        ] {
+            ui.horizontal(|ui| {
+                ui.label(tr(label));
+                let mut view = self.settings.views.of(audio);
+                egui::ComboBox::from_id_salt(label)
+                    .selected_text(view.label())
+                    .show_ui(ui, |ui| {
+                        for mode in crate::editor::InspectMode::ALL {
+                            ui.selectable_value(&mut view, mode, mode.label());
+                        }
+                    });
+                if audio {
+                    self.settings.views.audio = view;
+                } else {
+                    self.settings.views.other = view;
+                }
+            });
+        }
+        help(ui, tr("settings.views.help"));
         ui.checkbox(&mut self.settings.node_stats, tr("settings.node_stats"));
         help(ui, tr("settings.node_stats.help"));
+        ui.checkbox(
+            &mut self.settings.show_performance,
+            tr("settings.performance"),
+        );
+        help(ui, tr("settings.performance.help"));
         ui.checkbox(
             &mut self.settings.keep_connections,
             tr("settings.keep_connections"),
@@ -193,6 +303,19 @@ impl App {
         });
         help(ui, tr("settings.warmup.help"));
         self.warmup_warning(ui);
+
+        section(ui, tr("settings.inspect"));
+        ui.horizontal(|ui| {
+            ui.label(tr("settings.inspect_rate"));
+            ui.add(
+                ValueBox::new(&mut self.project.inspect_rate)
+                    .range(INSPECT_RATE_RANGE)
+                    .max_decimals(0)
+                    .speed(0.2)
+                    .suffix(tr("settings.inspect_rate.suffix")),
+            );
+        });
+        help(ui, tr("settings.inspect_rate.help"));
 
         section(ui, tr("settings.audio"));
         ui.horizontal(|ui| {

@@ -16,7 +16,8 @@ use eframe::egui::{
     Stroke, StrokeKind, Ui, pos2, vec2,
 };
 use rastersong_engine::{
-    Category, Failure, Kind, NodeStats, OutputLevel, SPLIT, Severity, Tag, UNBOUNDED_WARMUP,
+    Category, Failure, Kind, NodeCost, NodeStats, OutputLevel, ParamLevel, SPLIT, Severity, Tag,
+    UNBOUNDED_WARMUP,
 };
 
 use super::search::{NodeMenu, SearchMenu};
@@ -45,11 +46,19 @@ const DRAG_THRESHOLD: f32 = 4.0;
 pub struct CanvasContext<'a> {
     /// Output levels at the playhead, for wire widths.
     pub levels: &'a [OutputLevel],
+    /// Values of modulated parameters at the playhead, for pin tooltips.
+    pub params: &'a [ParamLevel],
     /// Why the graph can't render, shown along the bottom of the canvas.
     pub failure: Option<&'a Failure>,
     pub wire_style: WireStyle,
     /// Whether to draw each node's latency and warmup under it.
     pub show_stats: bool,
+    /// How long each node took to process the frame at the playhead.
+    pub costs: &'a [NodeCost],
+    /// Whether to show node processing times and tint the slow nodes.
+    pub show_performance: bool,
+    /// How inspecting a connection works; none in tests that have no engine.
+    pub inspect: Option<super::inspect::InspectContext<'a>>,
 }
 
 /// How deep [`GraphEditor::output_color`] follows inherited colours upstream.
@@ -338,6 +347,7 @@ impl GraphEditor {
         let pointer = ui.input(|i| i.pointer.hover_pos());
 
         let output_colors = self.output_colors(theme);
+        self.smooth_costs(ctx.costs);
 
         // Wires, behind the nodes.
         let pin_pos = |pin: Pin| -> Option<Pos2> {
@@ -402,6 +412,9 @@ impl GraphEditor {
                 hovered_pin,
                 &output_colors,
             );
+            if ctx.show_performance {
+                self.draw_performance(&painter, theme, g, to_screen, visuals.weak_text_color());
+            }
         }
         // Compile notes and warnings: a badge on the node, the messages in its tooltip. Notes
         // (a signal used as something it wasn't made as, often on purpose) get a quiet badge.
@@ -433,6 +446,13 @@ impl GraphEditor {
                 }
             });
         }
+
+        let readings = super::tooltips::Readings {
+            levels: ctx.levels,
+            params: ctx.params,
+            inspect: ctx.inspect.as_ref(),
+        };
+        self.hover_tooltips(ui, rect, &geometry, &to_screen, hovered_pin, &readings);
 
         // The wire being dragged.
         if let (Interaction::Wire { from }, Some(pointer)) = (self.interaction, pointer)
@@ -491,7 +511,11 @@ impl GraphEditor {
         let hovered = response.hovered();
 
         // Zoom around the pointer.
-        if hovered && let Some(p) = pointer {
+        // Scrolling while inspecting changes the view instead.
+        if hovered
+            && !self.scroll_reserved
+            && let Some(p) = pointer
+        {
             let (scroll, pinch) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
             let factor = (scroll * 0.0015).exp() * pinch;
             if factor != 1.0 {
@@ -1119,6 +1143,12 @@ const GRADIENT_STEPS: usize = 6;
 /// shows its own colour.
 const MIN_CORE: f32 = 2.0;
 
+/// The control points of the curve a wire is drawn along.
+pub(super) fn wire_points(from: Pos2, to: Pos2) -> [Pos2; 4] {
+    let reach = ((to.x - from.x).abs() * 0.5).max(40.0);
+    [from, from + vec2(reach, 0.0), to - vec2(reach, 0.0), to]
+}
+
 fn draw_wire(
     painter: &egui::Painter,
     from: Pos2,
@@ -1127,8 +1157,7 @@ fn draw_wire(
     color: WireColor,
     style: WireStyle,
 ) {
-    let reach = ((to.x - from.x).abs() * 0.5).max(40.0);
-    let points = [from, from + vec2(reach, 0.0), to - vec2(reach, 0.0), to];
+    let points = wire_points(from, to);
     let stroke = |width: f32, color: Color32| {
         painter.add(CubicBezierShape::from_points_stroke(
             points,
