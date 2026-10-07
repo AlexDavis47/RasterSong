@@ -318,7 +318,7 @@ a migration where noted, and a regenerated `nodes.md`.
   - [x] **feature** *Steps* shows only when the mode is Step (conditional parameter).
   - [x] **feature** *Width* is conditional on the modes that use it.
 - **Constant**
-  - [ ] **feature** *Value*'s modulation toggle is off by default (no pin exposed): nobody modulates a constant.
+  - [x] **feature** *Value*'s modulation toggle is off by default (no pin exposed): nobody modulates a constant.
 - **Noise**
   - [ ] **feature** Add Gaussian noise and a smooth noise (Perlin or similar) as new types. Smooth noise takes a
     scale in the usual units and is deterministic across seeks.

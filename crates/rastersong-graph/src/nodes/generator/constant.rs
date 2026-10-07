@@ -11,7 +11,6 @@ pub struct Constant {
 
 params! { Constant {
     VALUE: ParamSpec::number("value", "Value", 0.0, -1.0, 1.0, "The value of every sample")
-        .exposed()
         .limits(-10.0, 10.0),
 } }
 
