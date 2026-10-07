@@ -37,20 +37,14 @@ params! { FrequencyShifter {
     .exposed()
     .limits(-1e9, 1e9),
     UNIT: Unit::freq_param("second", "Unit for the shift"),
-    MIX: ParamSpec::number(
-        "mix",
-        "Mix",
-        1.0,
-        0.0,
-        1.0,
-        "0 is the dry input, 1 is only the shifted signal; in between beats against the original",
-    ),
+    MIX: ParamSpec::mix(),
 } }
 
 impl NodeKind for FrequencyShifter {
     const KIND: &'static str = "frequency_shifter";
     const SPEC: NodeSpec = NodeSpec::new("Frequency Shifter", Category::Effect)
         .describe("Moves every frequency up or down by a fixed amount, giving inharmonic tones")
+        .doc("With Mix between 0 and 1 the shifted signal beats against the original.")
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[

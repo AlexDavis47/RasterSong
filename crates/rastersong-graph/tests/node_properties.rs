@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 
 use proptest::prelude::*;
 use rastersong_graph::{
-    Category, GraphDesc, Layout, MAX_PARAMS, Node, ParamKind, ParamValue, PrepareContext,
-    ProcessContext, Registry, Signal,
+    Category, GraphDesc, Layout, MAX_PARAMS, Node, ParamKind, ParamSpec, ParamValue,
+    PrepareContext, ProcessContext, Registry, Signal,
 };
 
 /// Samples per row. Blocks are whole rows, so "rows" units mean the same thing in every block.
@@ -332,6 +332,22 @@ fn shown_when_rules_point_at_real_choices() {
                     when.param
                 );
             }
+        }
+    }
+}
+
+/// Every `mix` is the shared dry/wet definition (`ParamSpec::mix`), so none can drift in range,
+/// default or wording, and each is a plain 0 to 1 number that starts fully wet.
+#[test]
+fn every_mix_is_the_shared_definition() {
+    for t in Registry::shared().types() {
+        for spec in t.spec.params.iter().filter(|s| s.name == "mix") {
+            let shared = ParamSpec::mix();
+            assert!(
+                spec.kind == shared.kind && spec.label == shared.label && spec.help == shared.help,
+                "{}.mix is not ParamSpec::mix()",
+                t.kind
+            );
         }
     }
 }

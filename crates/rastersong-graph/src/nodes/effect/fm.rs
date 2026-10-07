@@ -28,7 +28,7 @@ params! { Fm {
     .exposed()
     .limits(0.0, 1000.0),
     UNIT: Unit::time_param("row", "Unit for the index"),
-    MIX: ParamSpec::number("mix", "Mix", 1.0, 0.0, 1.0, "0 is the dry carrier, 1 is only the modulated carrier"),
+    MIX: ParamSpec::mix(),
 } }
 
 impl NodeKind for Fm {

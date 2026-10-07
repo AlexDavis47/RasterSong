@@ -5,7 +5,7 @@ or its main input. Unknown parameters are rejected, which catches typos.
 
 ```json
 {
-  "version": 9,
+  "version": 10,
   "nodes": [
     { "id": "video", "type": "video_input" },
     { "id": "audio", "type": "audio_input" },
@@ -37,7 +37,9 @@ some frequencies, version 6 linear frequency modulation (octave amounts are conv
 modulation rule above (both-ways amounts used to be peak to peak, and an `"overshoot"` flag let values pass the
 slider; the flag is read from old files and never written). Older graphs are rewritten on load so they move
 parameters as before: both-ways amounts are halved, and a modulation that overshot gets its slider range widened to
-where it reached, within the limits. An amount that came to more than the whole range is held to 100%.
+where it reached, within the limits. An amount that came to more than the whole range is held to 100%. Version 10
+made every `mix` start at 1; Reverb, Phaser, Flanger and Chorus, which started lower, get their old mix written out
+when an older graph that never set it is loaded.
 
 Renamed nodes, ports, parameters and options are upgraded on load by `migrate.rs` and `GraphDesc::upgrade`, so old
 files keep loading. **Any roadmap change that renames or reshapes a parameter must add a migration** (for example

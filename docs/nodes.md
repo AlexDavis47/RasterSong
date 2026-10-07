@@ -439,7 +439,7 @@ Can process R, G and B separately.
 | `unit` (Unit) | `ms` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the time |
 | `voices` (Voices) | 2 | 1 to 4 | yes | How many delayed copies are mixed in |
 | `spread` (Spread) | 0.3 | 0 to 0.6 | yes | How far apart the copies' delays are, as a fraction of the time |
-| `mix` (Mix) | 0.5 | 0 to 1 | yes | 0 is the dry input, 1 is only the copies |
+| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
 
 ### `clamp`
 
@@ -532,7 +532,7 @@ Can process R, G and B separately.
 | `time` (Time) | 0.05 | 0 to 100 (up to 0 to 1000) | yes | Delay length, in rows or frames. Small fractions of a row give the finest waves |
 | `unit` (Unit) | `row` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the time |
 | `feedback` (Feedback) | 0 | 0 to 0.99 | yes | How much of the delayed signal is fed back in |
-| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the delayed signal |
+| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
 
 ### `distortion`
 
@@ -555,7 +555,7 @@ Can process R, G and B separately.
 | `shape` (Shape) | `soft` | `soft`, `hard`, `fold`, `wrap` | no | soft rounds off, hard clips flat, fold reflects loud parts back, wrap jumps from top to bottom |
 | `drive` (Drive) | 12 dB | 0 to 48 (up to -96 to 96) | yes | Gain before shaping; more drive, more distortion |
 | `bias` (Bias) | 0 | -1 to 1 (up to -100 to 100) | yes | Offset added before shaping, for uneven distortion |
-| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the distorted signal |
+| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
 
 ### `envelope`
 
@@ -628,7 +628,7 @@ Can process R, G and B separately.
 |---|---|---|---|---|
 | `index` (Index) | 0.5 | 0 to 10 (up to 0 to 1000) | yes | How far the modulator moves the carrier, in rows or frames: the modulator at +1 reads twice this far back, at -1 not at all |
 | `unit` (Unit) | `row` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the index |
-| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry carrier, 1 is only the modulated carrier |
+| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
 
 ### `filter`
 
@@ -675,11 +675,13 @@ Can process R, G and B separately.
 | `time` (Time) | 2 | 0 to 10 (up to 0 to 1000) | yes | Delay length; wire an oscillator in here to sweep the comb |
 | `unit` (Unit) | `ms` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the time |
 | `feedback` (Feedback) | 0.5 | -0.95 to 0.95 | yes | How much of the delayed signal is fed back in; negative flips its sign |
-| `mix` (Mix) | 0.5 | 0 to 1 | yes | 0 is the dry input, 1 is only the delayed signal |
+| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
 
 ### `frequency_shifter`
 
 **Frequency Shifter**: Moves every frequency up or down by a fixed amount, giving inharmonic tones
+
+With Mix between 0 and 1 the shifted signal beats against the original.
 
 Can process R, G and B separately.
 
@@ -697,7 +699,7 @@ Can process R, G and B separately.
 |---|---|---|---|---|
 | `shift` (Shift) | 100 | -1000 to 1000 (up to -1000000000 to 1000000000) | yes | How far every frequency moves: positive shifts up, negative down |
 | `unit` (Cycles per) | `second` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the shift |
-| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the shifted signal; in between beats against the original |
+| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
 
 ### `gain`
 
@@ -833,6 +835,8 @@ Can process R, G and B separately.
 
 **Phaser**: Sweeps notches through the signal with allpass filters; modulate the frequency
 
+Mix is fully wet by default; around 0.5 the notches are deepest, because the filtered signal then cancels the dry one.
+
 Can process R, G and B separately.
 
 **Inputs**
@@ -851,7 +855,7 @@ Can process R, G and B separately.
 | `freq` (Frequency) | 1000 | 20 to 5000 (up to 0.000001 to 1000000000) | yes | Where the notches sit; wire an oscillator in here to sweep them |
 | `unit` (Cycles per) | `second` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the frequency |
 | `feedback` (Feedback) | 0.3 | -0.95 to 0.95 | yes | How much of the chain's output is fed back in, which sharpens the notches |
-| `mix` (Mix) | 0.5 | 0 to 1 | yes | 0 is the dry input, 1 is only the phased signal; around 0.5 gives the deepest notches |
+| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
 
 ### `quantize`
 
@@ -874,7 +878,7 @@ Can process R, G and B separately.
 | `step` (Step) | 0.125 | 0.001 to 1 (up to 0.000001 to 1000000) | yes | Size of one step: 0.25 gives the levels 0, 0.25, 0.5, 0.75, 1 |
 | `offset` (Offset) | 0 | -1 to 1 (up to -1000000 to 1000000) | yes | Where the steps start: steps sit at offset + n × step |
 | `rounding` (Rounding) | `nearest` | `nearest`, `floor`, `ceil` | no | nearest picks the closest step, floor the one below, ceil the one above |
-| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the quantized signal |
+| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
 
 ### `rectify`
 
@@ -945,7 +949,7 @@ Can process R, G and B separately.
 | `damping` (Damping) | 0.5 | 0 to 1 | yes | How quickly the tail loses its fast detail: higher is duller |
 | `predelay` (Pre-delay) | 0 | 0 to 100 (up to 0 to 10000) | yes | Gap before the reverb starts |
 | `unit` (Unit) | `ms` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the pre-delay |
-| `mix` (Mix) | 0.3 | 0 to 1 | yes | 0 is the dry input, 1 is only the reverb |
+| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
 
 ### `ring_mod`
 
@@ -966,7 +970,7 @@ Can process R, G and B separately.
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry carrier, 1 is only the ring modulated signal |
+| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
 
 ### `sample_hold`
 

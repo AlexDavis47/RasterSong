@@ -40,14 +40,7 @@ params! { Chorus {
         0.6,
         "How far apart the copies' delays are, as a fraction of the time",
     ),
-    MIX: ParamSpec::number(
-        "mix",
-        "Mix",
-        0.5,
-        0.0,
-        1.0,
-        "0 is the dry input, 1 is only the copies",
-    ),
+    MIX: ParamSpec::mix(),
 } }
 
 impl NodeKind for Chorus {

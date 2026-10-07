@@ -11,15 +11,7 @@ pub struct RingMod {
 }
 
 params! { RingMod {
-    MIX: ParamSpec::number(
-        "mix",
-        "Mix",
-        1.0,
-        0.0,
-        1.0,
-        "0 is the dry carrier, 1 is only the ring modulated signal",
-    )
-    .exposed(),
+    MIX: ParamSpec::mix().exposed(),
 } }
 
 impl NodeKind for RingMod {

@@ -254,6 +254,14 @@ const RENAMED_CHOICES: &[RenamedChoice] = &[
     },
 ];
 
+/// The `mix` default of effects that started below 1 before version 10.
+const OLD_MIX_DEFAULTS: &[(&str, f64)] = &[
+    ("reverb", 0.3),
+    ("phaser", 0.5),
+    ("flanger", 0.5),
+    ("chorus", 0.5),
+];
+
 /// Time units and frequency units were two lists with their own names; they are one now, singular
 /// and lowercase. Every node with a `unit` parameter takes these, whichever list it used.
 const RENAMED_UNITS: &[(&str, &str)] = &[
@@ -283,8 +291,27 @@ impl GraphDesc {
         self.move_layout_to_settings(Registry::shared());
         self.convert_modulation_inputs(MODULATION_INPUTS);
         self.upgrade_modulation(Registry::shared());
+        self.keep_old_mix_defaults(Registry::shared());
         self.modulate_by_one_rule(Registry::shared());
         self.version = FORMAT_VERSION;
+    }
+
+    /// Before version 10 these effects started at a partial mix. Every `mix` starts fully wet now,
+    /// and a default isn't written to files, so a graph that never set it gets the old value
+    /// written out. (Runs before the modulation upgrade, which reads the base value.)
+    fn keep_old_mix_defaults(&mut self, registry: &Registry) {
+        if self.version >= 10 {
+            return;
+        }
+        for node in &mut self.nodes {
+            if let Some((_, old)) = OLD_MIX_DEFAULTS.iter().find(|(kind, _)| *kind == node.kind)
+                && registry.get(&node.kind).is_some()
+            {
+                node.params
+                    .entry("mix".to_owned())
+                    .or_insert(ParamValue::Number(*old));
+            }
+        }
     }
 
     /// Graphs before version 9 measured a both-ways amount peak to peak and could let a value go
@@ -671,6 +698,32 @@ mod tests {
                 .modulation
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn effects_that_started_part_wet_keep_their_old_mix() {
+        let mut graph = GraphDesc::from_json(
+            r#"{ "version": 9, "nodes": [
+                { "id": "r", "type": "reverb" },
+                { "id": "c", "type": "chorus", "params": { "mix": 0.8 } },
+                { "id": "d", "type": "delay" } ] }"#,
+        )
+        .unwrap();
+        graph.upgrade();
+        let mix = |id: &str| {
+            graph
+                .nodes
+                .iter()
+                .find(|n| n.id == id)
+                .unwrap()
+                .params
+                .get("mix")
+                .cloned()
+        };
+        assert_eq!(mix("r"), Some(ParamValue::Number(0.3)));
+        assert_eq!(mix("c"), Some(ParamValue::Number(0.8)));
+        // Delay already started fully wet.
+        assert_eq!(mix("d"), None);
     }
 
     #[test]

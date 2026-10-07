@@ -57,20 +57,14 @@ params! { Phaser {
         0.95,
         "How much of the chain's output is fed back in, which sharpens the notches",
     ),
-    MIX: ParamSpec::number(
-        "mix",
-        "Mix",
-        0.5,
-        0.0,
-        1.0,
-        "0 is the dry input, 1 is only the phased signal; around 0.5 gives the deepest notches",
-    ),
+    MIX: ParamSpec::mix(),
 } }
 
 impl NodeKind for Phaser {
     const KIND: &'static str = "phaser";
     const SPEC: NodeSpec = NodeSpec::new("Phaser", Category::Effect)
         .describe("Sweeps notches through the signal with allpass filters; modulate the frequency")
+        .doc("Mix is fully wet by default; around 0.5 the notches are deepest, because the filtered signal then cancels the dry one.")
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[

@@ -98,8 +98,7 @@ params! { Reverb {
     PREDELAY: ParamSpec::number("predelay", "Pre-delay", 0.0, 0.0, 100.0, "Gap before the reverb starts")
         .limits(0.0, 10_000.0),
     UNIT: Unit::time_param("ms", "Unit for the pre-delay"),
-    MIX: ParamSpec::number("mix", "Mix", 0.3, 0.0, 1.0, "0 is the dry input, 1 is only the reverb")
-        .exposed(),
+    MIX: ParamSpec::mix().exposed(),
 } }
 
 impl NodeKind for Reverb {

@@ -40,14 +40,7 @@ params! { Delay {
         "How much of the delayed signal is fed back in",
     )
     .exposed(),
-    MIX: ParamSpec::number(
-        "mix",
-        "Mix",
-        1.0,
-        0.0,
-        1.0,
-        "0 is the dry input, 1 is only the delayed signal",
-    ),
+    MIX: ParamSpec::mix(),
 } }
 
 impl NodeKind for Delay {

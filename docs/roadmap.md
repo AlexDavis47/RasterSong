@@ -136,7 +136,7 @@ Every change that renames or reshapes a parameter, or merges, splits or removes 
   a pixel is a project-resolution pixel, scaled with the preview so downscaled previews match the full render as
   closely as possible; a sample is the literal sample at the current render size, and its help text says it changes
   with preview scale.*
-- [ ] **chore** Keep the optional per-node `mix`, but build it once: one shared `MIX` parameter definition and one
+- [x] **chore** Keep the optional per-node `mix`, but build it once: one shared `MIX` parameter definition and one
   dry/wet helper in `dsp.rs`, used by every node that has it. No removal or migration.
 
 ### Shared node settings
@@ -384,7 +384,7 @@ a migration where noted, and a regenerated `nodes.md`.
 ### Cross-cutting node items
 
 - [ ] **chore** Every node's unit parameter uses the one `Unit` ([Units](#units-and-parameter-semantics)).
-- [ ] **chore** Every node with a dry/wet `mix` uses the one shared definition
+- [x] **chore** Every node with a dry/wet `mix` uses the one shared definition
   ([Units and parameter semantics](#units-and-parameter-semantics)).
 - [ ] **feature** Add nodes only after the foundations are in, so new nodes use integer and conditional parameters
   from the start.
@@ -403,7 +403,7 @@ The aim: one implementation per idea, so fixes and features land in one place. K
 - [ ] **chore** **Level detectors and smoothers.** Envelope, Slew, Compressor, Gate, Limiter and the sidechain
   share one detector (peak/RMS, attack/release) and one smoother in `dsp.rs`.
 - [ ] **chore** **Layout and generators.** One shared generator layout setting (see above).
-- [ ] **chore** **Dry/wet.** One shared `mix` definition and helper, not a copy per node.
+- [x] **chore** **Dry/wet.** One shared `mix` definition and helper, not a copy per node.
 - [ ] **chore** **Inspector widgets.** One slider+value-box, one integer field, one choice control, one tooltip
   helper, one meter, one number formatter. No widget re-implements these. The inspector, the timeline and the
   editor use the same ones.
@@ -412,7 +412,7 @@ The aim: one implementation per idea, so fixes and features land in one place. K
 - [ ] **chore** **Stretch.** One "stretch a signal to the project size" implementation, shared by the Stretch node,
   Video Output and the Look tool.
 - [ ] **chore** **Audio sinks.** One resample-sanitize-clip path, shared by Audio Output and the Listen tool.
-- [ ] **chore** Add guard tests where practical: a registry test that fails if a node declares its own `unit` list
+- [ ] **chore** Add guard tests where practical (the `mix` one is done): a registry test that fails if a node declares its own `unit` list
   or its own `mix`, so duplicates cannot creep back.
 - [ ] **chore** Codebase organization and code-quality checkup (not started), run after the foundations land and
   scoped by this list.

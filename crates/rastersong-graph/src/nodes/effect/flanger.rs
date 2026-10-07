@@ -38,14 +38,7 @@ params! { Flanger {
         0.95,
         "How much of the delayed signal is fed back in; negative flips its sign",
     ),
-    MIX: ParamSpec::number(
-        "mix",
-        "Mix",
-        0.5,
-        0.0,
-        1.0,
-        "0 is the dry input, 1 is only the delayed signal",
-    ),
+    MIX: ParamSpec::mix(),
 } }
 
 impl NodeKind for Flanger {

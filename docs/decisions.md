@@ -121,8 +121,10 @@ because samples are forbidden.
 ### Per-node `mix` stays (October 2026)
 
 A small optional `mix` on a node is fine. Blend modes exist as the Blend node and are not a reason to strip `mix`.
-What changes is that `mix` is one shared parameter definition and one dry/wet helper, and a node omits it only
-where it is meaningless.
+What changes is that `mix` is one shared parameter definition (`ParamSpec::mix()`) and one dry/wet helper
+(`dsp::mix`), and a node omits it only where it is meaningless. Every `mix` starts at 1 (fully processed): no
+per-node presets. Graphs from before version 10 keep the lower defaults Reverb (0.3), Phaser, Flanger and Chorus (0.5)
+used to have, written out on load. Wording specific to a node lives in its description, not in the `mix` help.
 
 ### Modulation toggle off by default for constants (October 2026)
 

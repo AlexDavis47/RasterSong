@@ -99,6 +99,20 @@ impl ParamSpec {
         }
     }
 
+    /// The dry/wet blend every effect with a `mix` shares: 0 is the node's input untouched, 1 is
+    /// only what the node made of it, and in between crossfades the two ([`crate::dsp::mix`]).
+    /// Always starts at 1, fully processed.
+    pub const fn mix() -> Self {
+        Self::number(
+            "mix",
+            "Mix",
+            1.0,
+            0.0,
+            1.0,
+            "0 is the dry input, 1 is only the processed signal; in between crossfades the two",
+        )
+    }
+
     pub const fn choice(
         name: &'static str,
         label: &'static str,
