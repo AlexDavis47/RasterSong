@@ -1,9 +1,9 @@
-use rastersong_lang::{tr_args};
 use crate::nodes::{CHANNEL_PORTS, COMBINE, Category, NodeKind, NodeSpec};
 use crate::{
     Diagnostic, InputSpec, Layout, LayoutContext, Node, OutputSpec, Params, Part, ProcessContext,
     Signal, TagRule,
 };
+use rastersong_lang::tr_args;
 
 /// Separate signals → one interleaved signal, a channel each: R, G, B into RGB, L, R into
 /// stereo. The inverse of [`super::Split`]. The output has as many channels as the last
@@ -24,8 +24,7 @@ impl NodeKind for Combine {
             InputSpec::optional(CHANNEL_PORTS[6]),
             InputSpec::optional(CHANNEL_PORTS[7]),
         ])
-        .outputs(&[OutputSpec::new("out")
-            .tag(TagRule::INHERIT.part(Part::Whole))]);
+        .outputs(&[OutputSpec::new("out").tag(TagRule::INHERIT.part(Part::Whole))]);
 
     fn new(_: &Params) -> Result<Self, String> {
         Ok(Self)

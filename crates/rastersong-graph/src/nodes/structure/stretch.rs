@@ -10,10 +10,7 @@ pub struct Stretch;
 impl NodeKind for Stretch {
     const KIND: &'static str = "stretch";
     const SPEC: NodeSpec = NodeSpec::new(Category::Structure)
-        .inputs(&[
-            InputSpec::required("like"),
-            InputSpec::required("in"),
-        ])
+        .inputs(&[InputSpec::required("like"), InputSpec::required("in")])
         .outputs(&[OutputSpec::new("out")]);
 
     fn new(_: &Params) -> Result<Self, String> {

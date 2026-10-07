@@ -17,9 +17,7 @@ impl NodeKind for ToAudio {
     const SPEC: NodeSpec = NodeSpec::new(Category::Convert)
         .params(Self::PARAMS)
         .inputs(&[InputSpec::required("in")])
-        .outputs(&[
-            OutputSpec::new("out").tag(TagRule::AUDIO),
-        ]);
+        .outputs(&[OutputSpec::new("out").tag(TagRule::AUDIO)]);
     const TEST_CONFIGS: &'static [&'static str] =
         &[r#"{ "mapping": "bugged" }"#, r#"{ "mapping": "accurate" }"#];
     const BENCH: Option<&'static str> = Some(r#"{ "mapping": "bugged" }"#);

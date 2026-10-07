@@ -31,10 +31,7 @@ impl NodeKind for Crossfade {
     const KIND: &'static str = "crossfade";
     const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
-        .inputs(&[
-            InputSpec::required("a"),
-            InputSpec::required("b"),
-        ])
+        .inputs(&[InputSpec::required("a"), InputSpec::required("b")])
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "position": 0.25 }"#,

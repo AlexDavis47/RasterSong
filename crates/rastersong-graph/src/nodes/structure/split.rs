@@ -1,9 +1,9 @@
-use rastersong_lang::{tr, tr_args};
 use crate::nodes::{CHANNEL_PORTS, Category, MAX_CHANNELS, NodeKind, NodeSpec, SPLIT};
 use crate::{
     Diagnostic, InputSpec, Layout, LayoutContext, Node, OutputSpec, Params, Part, ProcessContext,
     Signal, TagRule,
 };
+use rastersong_lang::{tr, tr_args};
 
 /// An interleaved signal → one signal per channel: R, G and B of video, L and R of stereo, or
 /// any other channels. Has as many outputs as the input has channels (up to

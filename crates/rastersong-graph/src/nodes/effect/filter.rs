@@ -47,7 +47,6 @@ impl Slope {
             Self::FortyEight => 4,
         }
     }
-
 }
 
 /// A resonant filter with a choice of responses, running across rows and frames like an audio

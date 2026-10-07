@@ -10,8 +10,7 @@ params! { Transpose {} }
 
 impl NodeKind for Transpose {
     const KIND: &'static str = "transpose";
-    const SPEC: NodeSpec = NodeSpec::new(Category::Structure)
-        .params(Self::PARAMS);
+    const SPEC: NodeSpec = NodeSpec::new(Category::Structure).params(Self::PARAMS);
 
     fn new(_params: &Params) -> Result<Self, String> {
         Ok(Self)

@@ -26,8 +26,7 @@ params! { Flip {
 
 impl NodeKind for Flip {
     const KIND: &'static str = "flip";
-    const SPEC: NodeSpec = NodeSpec::new(Category::Structure)
-        .params(Self::PARAMS);
+    const SPEC: NodeSpec = NodeSpec::new(Category::Structure).params(Self::PARAMS);
 
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {

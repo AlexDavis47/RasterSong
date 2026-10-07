@@ -1,9 +1,9 @@
-use rastersong_lang::{tr_args};
 use crate::dsp::Biquad;
 use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{
     Node, OutputSpec, ParamSpec, Params, Part, PrepareContext, ProcessContext, Signal, TagRule,
 };
+use rastersong_lang::tr_args;
 
 /// Splits a signal into low, mid and high bands. Crossovers are in Hz of the input signal's own
 /// sample rate (for an audio input, ordinary Hz) unless `unit` says otherwise. Mid is what remains after removing low and high,
@@ -38,12 +38,9 @@ impl NodeKind for ThreeBand {
     const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .outputs(&[
-            OutputSpec::new("low")
-                .tag(TagRule::INHERIT.part(Part::Low)),
-            OutputSpec::new("mid")
-                .tag(TagRule::INHERIT.part(Part::Mid)),
-            OutputSpec::new("high")
-                .tag(TagRule::INHERIT.part(Part::High)),
+            OutputSpec::new("low").tag(TagRule::INHERIT.part(Part::Low)),
+            OutputSpec::new("mid").tag(TagRule::INHERIT.part(Part::Mid)),
+            OutputSpec::new("high").tag(TagRule::INHERIT.part(Part::High)),
         ])
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[

@@ -1,8 +1,8 @@
-use rastersong_lang::{tr_args};
 use crate::nodes::{Category, MAX_CHANNELS, NodeKind, NodeSpec};
 use crate::{
     InputSpec, Layout, LayoutContext, Node, OutputSpec, ParamSpec, Params, ProcessContext, Signal,
 };
+use rastersong_lang::tr_args;
 
 /// A packed mono carrier → an interleaved signal (RGB by default). The inverse of
 /// [`super::Interleave`].

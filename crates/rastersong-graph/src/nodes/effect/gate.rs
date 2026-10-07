@@ -63,10 +63,7 @@ impl NodeKind for Gate {
     const KIND: &'static str = "gate";
     const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
-        .inputs(&[
-            InputSpec::required("in"),
-            InputSpec::optional("sidechain"),
-        ])
+        .inputs(&[InputSpec::required("in"), InputSpec::optional("sidechain")])
         .per_channel()
         .expects(crate::Range::Bipolar);
     const TEST_CONFIGS: &'static [&'static str] = &[

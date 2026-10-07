@@ -81,8 +81,7 @@ impl NodeKind for AudioInput {
     const SPEC: NodeSpec = NodeSpec::new(Category::Input)
         .params(Self::PARAMS)
         .inputs(&[])
-        .outputs(&[OutputSpec::new("out")
-        .tag(TagRule::AUDIO)]);
+        .outputs(&[OutputSpec::new("out").tag(TagRule::AUDIO)]);
 
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self(Source {

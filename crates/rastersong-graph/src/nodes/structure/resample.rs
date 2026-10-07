@@ -1,6 +1,6 @@
-use rastersong_lang::{tr_args};
 use crate::nodes::{Category, NodeKind, NodeSpec};
 use crate::{Layout, LayoutContext, Node, ParamSpec, Params, ProcessContext, Signal};
+use rastersong_lang::tr_args;
 
 choice! {
     /// How the new pixels are read from the old ones.
@@ -39,8 +39,7 @@ params! { Resample {
 
 impl NodeKind for Resample {
     const KIND: &'static str = "resample";
-    const SPEC: NodeSpec = NodeSpec::new(Category::Structure)
-        .params(Self::PARAMS);
+    const SPEC: NodeSpec = NodeSpec::new(Category::Structure).params(Self::PARAMS);
 
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
@@ -67,7 +66,10 @@ impl Node for Resample {
         let target = self.target(ctx.inputs[0]);
         // Rows are samples of one block; keep the block small enough to be a picture.
         if target.len() > 1 << 28 {
-            return Err(tr_args("error.resample.too_large", &[("size", &target.to_string())]));
+            return Err(tr_args(
+                "error.resample.too_large",
+                &[("size", &target.to_string())],
+            ));
         }
         Ok(vec![target; ctx.output_count])
     }

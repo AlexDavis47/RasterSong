@@ -1,8 +1,8 @@
-use rastersong_lang::{tr};
 use crate::nodes::{Category, NodeKind, NodeSpec};
 use crate::{
     Diagnostic, InputSpec, Layout, LayoutContext, Node, OutputSpec, Params, ProcessContext, Signal,
 };
+use rastersong_lang::tr;
 
 /// An interleaved signal (RGB, stereo, …) → one mono carrier with the channels in sequence
 /// (R, G, B, R, G, B, …), as many times as wide as there are channels. The samples don't change,

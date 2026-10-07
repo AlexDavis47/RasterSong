@@ -1,8 +1,8 @@
-use rastersong_lang::{tr_args};
 use crate::nodes::{Category, NodeKind, NodeSpec, OUTPUT};
 use crate::{
     InputSpec, Layout, LayoutContext, Node, Params, ProcessContext, Range, Signal, TagRule,
 };
+use rastersong_lang::tr_args;
 
 /// The graph's result. Accepts an RGB signal of the output size, or a mono one, which is shown
 /// as grayscale.
@@ -30,7 +30,10 @@ impl Node for Output {
         } else {
             Err(tr_args(
                 "error.video_output.shape",
-                &[("expected", &ctx.output.to_string()), ("got", &input.to_string())],
+                &[
+                    ("expected", &ctx.output.to_string()),
+                    ("got", &input.to_string()),
+                ],
             ))
         }
     }
