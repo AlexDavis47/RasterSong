@@ -79,7 +79,9 @@ fn the_code_and_the_english_text_agree() {
             continue;
         }
         // Windows checkouts may have CRLF line endings, which would defeat the split below.
-        let text = std::fs::read_to_string(&file).unwrap().replace("\r\n", "\n");
+        let text = std::fs::read_to_string(&file)
+            .unwrap()
+            .replace("\r\n", "\n");
         // Test modules come last in these files and use made-up keys.
         let code = text
             .split("\n#[cfg(test)]\nmod tests")
