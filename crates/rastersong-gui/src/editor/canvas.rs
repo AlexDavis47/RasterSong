@@ -57,6 +57,8 @@ pub struct CanvasContext<'a> {
     pub costs: &'a [NodeCost],
     /// Whether to show node processing times and tint the slow nodes.
     pub show_performance: bool,
+    /// What the Look tool needs, while it is the tool in use.
+    pub look: Option<super::look::LookContext<'a>>,
 }
 
 /// How deep [`GraphEditor::output_color`] follows inherited colours upstream.
@@ -448,6 +450,7 @@ impl GraphEditor {
         let readings = super::tooltips::Readings {
             levels: ctx.levels,
             params: ctx.params,
+            look: ctx.look.as_ref(),
         };
         self.hover_tooltips(ui, rect, &geometry, &to_screen, hovered_pin, &readings);
 

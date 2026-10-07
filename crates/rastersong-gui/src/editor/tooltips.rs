@@ -5,6 +5,7 @@ use rastersong_engine::{Layout, OutputLevel, ParamLevel};
 use rastersong_lang::{tr, tr_args};
 
 use super::canvas::{Geometry, Pin, wire_points};
+use super::look::{LookContext, LookView};
 use super::{GraphEditor, NodeKey, Wire, modulation};
 
 /// How close (in screen pixels) the pointer must be to a wire for its tooltip.
@@ -17,6 +18,8 @@ const WIRE_SAMPLES: usize = 32;
 pub struct Readings<'a> {
     pub levels: &'a [OutputLevel],
     pub params: &'a [ParamLevel],
+    /// The Look tool, while it is in use.
+    pub look: Option<&'a LookContext<'a>>,
 }
 
 /// How far `p` is from the cubic curve through `points`.
@@ -36,7 +39,7 @@ fn distance_to_curve(points: [Pos2; 4], p: Pos2) -> f32 {
 }
 
 /// Minimum width of a tooltip, and of the meter in it.
-const TIP_WIDTH: f32 = 230.0;
+const TIP_WIDTH: f32 = 240.0;
 const METER_WIDTH: f32 = 130.0;
 
 /// A reading with a sign and a fixed number of characters (`" +0.1234"`), so columns line up.
@@ -93,7 +96,9 @@ impl GraphEditor {
         {
             tip.facts = layout_lines(layout);
             tip.scale = Some(crate::widgets::Scale::of(&layout.tag));
+            tip.audio = layout.tag.kind == rastersong_engine::Kind::Audio;
         }
+        tip.source = Some((node.id.to_string(), output));
         tip.level = readings
             .levels
             .iter()
@@ -121,7 +126,7 @@ impl GraphEditor {
         let over_node = geometry.iter().any(|g| {
             Rect::from_two_pos(to_screen(g.rect.min), to_screen(g.rect.max)).contains(pointer)
         });
-        let tip = if let Some(pin) = hovered_pin {
+        let mut tip = if let Some(pin) = hovered_pin {
             self.pin_tip(pin, readings)
         } else if over_node {
             return;
@@ -132,6 +137,9 @@ impl GraphEditor {
         };
         if tip.is_empty() {
             return;
+        }
+        if let (Some(look), Some((node, output))) = (readings.look, &tip.source) {
+            tip.look = Some(super::look::look(ui, node, *output, tip.audio, look));
         }
         let spot = Rect::from_center_size(pointer, egui::vec2(2.0, 2.0));
         ui.interact(spot, ui.id().with("canvas-tooltip"), Sense::hover())
@@ -214,10 +222,15 @@ impl GraphEditor {
 }
 
 /// What a tooltip says: a title, facts about the signal, and its readings at the playhead.
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct Tip {
     title: Option<String>,
     facts: Vec<String>,
+    /// The node output the tip is about, and whether it carries audio.
+    source: Option<(String, usize)>,
+    audio: bool,
+    /// The Look tool's picture or scope.
+    look: Option<LookView>,
     level: Option<OutputLevel>,
     /// How the level is metered, from the signal's tag.
     scale: Option<crate::widgets::Scale>,
@@ -243,10 +256,14 @@ impl Tip {
         for fact in &self.facts {
             ui.label(egui::RichText::new(fact).weak());
         }
+        if let Some(look) = &self.look {
+            ui.add_space(2.0);
+            look.show(ui);
+        }
         if self.level.is_none() && self.value.is_none() {
             return;
         }
-        if self.title.is_some() || !self.facts.is_empty() {
+        if self.title.is_some() || !self.facts.is_empty() || self.look.is_some() {
             ui.separator();
         }
         egui::Grid::new("tip-readings")

@@ -587,6 +587,9 @@ impl App {
         let levels = frame.as_ref().map_or(&[][..], |f| &f.levels[..]);
         let params = frame.as_ref().map_or(&[][..], |f| &f.params[..]);
         let costs = frame.as_ref().map_or(&[][..], |f| &f.costs[..]);
+        let tool = crate::editor::active_tool(ui, self.settings.default_tool);
+        let engine = &self.engine;
+        let tap = |request: &rastersong_engine::TapRequest| engine.tap(request);
         let canvas = self.editor.show(
             ui,
             &CanvasContext {
@@ -597,9 +600,28 @@ impl App {
                 show_stats: self.settings.node_stats,
                 costs,
                 show_performance: self.settings.show_performance,
+                look: (tool == crate::editor::Tool::Look).then(|| crate::editor::LookContext {
+                    frame: self.clock.frame(),
+                    tap: &tap,
+                }),
             },
         );
+        self.tool_bar(ui, canvas.rect, tool);
         self.bypass_all_button(ui, canvas.rect);
+    }
+
+    /// The buttons in the canvas's corner that choose the default tool.
+    fn tool_bar(&mut self, ui: &mut Ui, canvas: egui::Rect, active: crate::editor::Tool) {
+        let id = ui.id().with("tool-bar");
+        egui::Area::new(id)
+            .order(egui::Order::Foreground)
+            .fixed_pos(canvas.left_top() + egui::vec2(8.0, 8.0))
+            .show(ui.ctx(), |ui| {
+                if let Some(tool) = crate::editor::tool_bar(ui, self.settings.default_tool, active)
+                {
+                    self.settings.default_tool = tool;
+                }
+            });
     }
 
     /// The toggle in the canvas's corner that skips the whole graph.

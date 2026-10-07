@@ -643,4 +643,34 @@ fn meter_screenshots() {
         std::thread::sleep(Duration::from_millis(20));
     }
     save(&mut harness, "dark-22-video-wire-tooltip");
+
+    // The Look tool: the same wires with a picture and a scope.
+    let mut settings = harness.state().settings().clone();
+    settings.default_tool = rastersong_gui::editor::Tool::Look;
+    harness.state_mut().set_settings(settings);
+    for (name, mid) in [
+        ("video", a + (b - a) * 0.5),
+        ("audio", {
+            let from = harness
+                .state()
+                .editor()
+                .pin_screen_pos(comp, false, 0)
+                .unwrap();
+            let to = harness
+                .state()
+                .editor()
+                .pin_screen_pos(eq, true, 0)
+                .unwrap();
+            from + (to - from) * 0.5
+        }),
+    ] {
+        harness.event(egui::Event::PointerMoved(mid - egui::vec2(40.0, 40.0)));
+        harness.run_steps(2);
+        harness.event(egui::Event::PointerMoved(mid));
+        for _ in 0..40 {
+            harness.run_steps(1);
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        save(&mut harness, &format!("dark-23-look-{name}"));
+    }
 }

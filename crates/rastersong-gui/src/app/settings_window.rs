@@ -30,7 +30,7 @@ fn section(ui: &mut Ui, title: &str) {
 fn reset_button(ui: &mut Ui, differs: bool) -> bool {
     differs
         && ui
-            .small_button("{21ba}")
+            .small_button("\u{21ba}")
             .on_hover_text(tr("settings.reset"))
             .clicked()
 }
@@ -211,6 +211,17 @@ impl App {
         }
 
         section(ui, tr("settings.graph_editor"));
+        ui.horizontal(|ui| {
+            ui.label(tr("settings.default_tool"));
+            egui::ComboBox::from_id_salt("settings-default-tool")
+                .selected_text(self.settings.default_tool.label())
+                .show_ui(ui, |ui| {
+                    for tool in crate::editor::Tool::ALL {
+                        ui.selectable_value(&mut self.settings.default_tool, tool, tool.label());
+                    }
+                });
+        });
+        help(ui, tr("settings.default_tool.help"));
         ui.checkbox(&mut self.settings.node_stats, tr("settings.node_stats"));
         help(ui, tr("settings.node_stats.help"));
         ui.checkbox(

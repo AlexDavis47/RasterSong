@@ -4,10 +4,12 @@
 mod canvas;
 mod inspector;
 mod linked;
+mod look;
 mod modulation;
 mod param_field;
 mod performance;
 mod search;
+mod tools;
 mod tooltips;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -22,7 +24,9 @@ use rastersong_engine::{
 pub use canvas::CanvasContext;
 pub use inspector::InspectorContext;
 pub use linked::LinkedRename;
+pub use look::LookContext;
 pub use modulation::{PARAM_PORT, as_param, param_port};
+pub use tools::{Tool, active as active_tool, tool_bar};
 
 /// Identifies a node in the editor, stable across renames.
 pub type NodeKey = u64;

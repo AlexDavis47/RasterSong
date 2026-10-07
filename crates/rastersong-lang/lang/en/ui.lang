@@ -119,6 +119,17 @@ timeline.track.offset_drag = Drag to move this track against the video
 # --- Graph editor ---
 editor.bypass_graph = Bypass graph
 editor.bypass_graph.help = Skip every node: the video goes straight to the output, to compare with the original
+tool.select = Select
+tool.select.help = Edit nodes and connections as usual
+tool.look = Look
+tool.look.help = Hover a connection to see a picture or scope of what it carries at the playhead
+tool.listen = Listen
+tool.listen.help = Hover a connection to hear what it carries
+tool.hold_key = {help}. Hold {key} to use it for a moment
+editor.tip.look_waiting = Looking…
+editor.tip.look_not_rendered = Not rendered: this connection doesn't feed the output
+settings.default_tool = Default tool
+settings.default_tool.help = What hovering a connection does when no tool key is held
 editor.canvas.empty_hint = Right-click to add a node
 editor.shortcut.alt_click = Alt+click
 editor.search.hint = Search nodes…
