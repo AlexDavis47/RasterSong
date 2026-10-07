@@ -263,6 +263,20 @@ impl Renderer {
         (&self.rgb, self.audio.as_ref())
     }
 
+    /// The output frame the graph's state is at, if it is positioned anywhere: the one
+    /// [`Self::render`] last returned.
+    pub fn rendered(&self) -> Option<usize> {
+        self.next_source
+            .and_then(|s| s.checked_sub(self.latency + 1))
+    }
+
+    /// What output `output` of node `node` produced in the last processed source frame, or
+    /// `None` if the graph has no such output (the node doesn't feed the graph's output).
+    /// Read-only: nothing about the render changes.
+    pub fn tap(&self, node: &str, output: usize) -> Option<&Signal> {
+        self.graph.tap(node, output)
+    }
+
     /// The level of every node output in the last rendered frame.
     pub fn levels(&self) -> Vec<OutputLevel> {
         self.graph.levels()
@@ -329,6 +343,9 @@ impl Renderer {
             return Err(MediaError::FrameOutOfRange { index, count }.into());
         }
 
+        if self.rendered() == Some(index) {
+            return Ok(Some(&self.rgb));
+        }
         // Processing source frame `m` produces output frame `m - latency`.
         let next_output = self.next_source.and_then(|s| s.checked_sub(self.latency));
         let continue_forward =

@@ -557,6 +557,16 @@ impl Graph {
         self.audio_step.map(|s| &self.steps[s].outputs[0])
     }
 
+    /// What output `output` of node `node` produced in the last processed frame, or `None` if the
+    /// graph has no such output: the node doesn't exist or doesn't feed the graph's output, so
+    /// it was never compiled.
+    pub fn tap(&self, node: &str, output: usize) -> Option<&Signal> {
+        self.steps
+            .iter()
+            .find(|step| &*step.id == node)
+            .and_then(|step| step.outputs.get(output))
+    }
+
     /// When an audio input is wired straight into the audio output, the source it reads: the
     /// host can then use that audio as it is instead of the rendered blocks.
     pub fn audio_passthrough(&self) -> Option<&str> {

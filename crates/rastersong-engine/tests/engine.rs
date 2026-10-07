@@ -356,3 +356,104 @@ fn cached_frames_carry_rendered_sound_that_playback_reads() {
         assert!((pair[0] - cached.samples[j]).abs() < 1e-6, "sample {j}");
     }
 }
+
+mod taps {
+    use super::*;
+    use rastersong_engine::{TapOutcome, TapRequest};
+
+    fn ask(engine: &Engine, request: &TapRequest) -> TapOutcome {
+        let mut outcome = TapOutcome::Pending;
+        wait_until("the tap's answer", || {
+            outcome = engine.tap(request);
+            outcome != TapOutcome::Pending
+        });
+        outcome
+    }
+
+    fn request(frame: usize, node: &str) -> TapRequest {
+        TapRequest {
+            frame,
+            node: node.into(),
+            output: 0,
+        }
+    }
+
+    #[test]
+    fn a_tap_reads_a_connection_without_disturbing_the_render() {
+        let engine = engine();
+        load(&engine, FINITE);
+        wait_until("some frames", || engine.buffered_from(0) >= 10);
+
+        let TapOutcome::Ready(tap) = ask(&engine, &request(7, "crush")) else {
+            panic!("the crush node feeds the output");
+        };
+        // Crush is wired straight to the output, so its samples are the frame's pixels.
+        let expected = engine.frame(7).map(|f| f.rgb.clone());
+        let samples: Vec<u8> = tap
+            .samples
+            .as_deref()
+            .unwrap()
+            .iter()
+            .map(|&x| (x.clamp(0.0, 1.0) * 255.0).round() as u8)
+            .collect();
+        if let Some(expected) = expected {
+            assert_eq!(samples, expected);
+        }
+        assert!(tap.picture.is_some());
+
+        // The cache fills as it would have without the tap.
+        wait_until("all frames", || engine.buffered_from(0) == FRAMES);
+        let reference = sequential(FINITE, OutputSize::Native);
+        for (i, expected) in reference.iter().enumerate() {
+            assert_eq!(&engine.frame(i).unwrap().rgb, expected, "frame {i}");
+        }
+    }
+
+    #[test]
+    fn a_connection_that_does_not_feed_the_output_is_not_rendered() {
+        let engine = engine();
+        let graph = FINITE
+            .replace(
+                r#"{ "id": "out", "type": "output" }"#,
+                r#"{ "id": "out", "type": "output" }, { "id": "dead", "type": "bitcrush" }"#,
+            )
+            .replace(
+                r#""connections": ["#,
+                r#""connections": [ { "from": "video", "to": "dead" },"#,
+            );
+        load(&engine, &graph);
+        wait_until("some frames", || engine.buffered_from(0) >= 2);
+        assert_eq!(ask(&engine, &request(1, "dead")), TapOutcome::NotRendered);
+        assert_eq!(
+            ask(&engine, &request(1, "nothing")),
+            TapOutcome::NotRendered
+        );
+    }
+
+    #[test]
+    fn an_edit_drops_the_answer() {
+        let engine = engine();
+        load(&engine, &crush(2));
+        let asked = request(3, "crush");
+        assert!(matches!(ask(&engine, &asked), TapOutcome::Ready(_)));
+        assert!(
+            matches!(engine.tap(&asked), TapOutcome::Ready(_)),
+            "kept until edited"
+        );
+
+        engine.set_graph(GraphDesc::from_json(&crush(6)).unwrap());
+        assert_eq!(engine.tap(&asked), TapOutcome::Pending);
+        let TapOutcome::Ready(tap) = ask(&engine, &asked) else {
+            panic!("expected a new answer");
+        };
+        let new = sequential(&crush(6), OutputSize::Native);
+        let samples: Vec<u8> = tap
+            .samples
+            .as_deref()
+            .unwrap()
+            .iter()
+            .map(|&x| (x.clamp(0.0, 1.0) * 255.0).round() as u8)
+            .collect();
+        assert_eq!(samples, new[3]);
+    }
+}

@@ -13,6 +13,7 @@ mod project;
 mod renderer;
 mod service;
 pub mod sources;
+mod tap;
 mod thumbnails;
 pub mod waveform;
 
@@ -48,6 +49,7 @@ pub use service::{
     AudioTrackSpec, Engine, EngineConfig, EngineStatus, Failure, LoadedTrack, PreviewScale,
     RenderProgress,
 };
+pub use tap::{PICTURE_SIDE, Picture, Tap, TapOutcome, TapRequest, picture_size};
 pub use thumbnails::{THUMBNAIL_HEIGHT, Thumbnails};
 pub use waveform::Waveform;
 
