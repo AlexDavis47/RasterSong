@@ -620,4 +620,27 @@ fn meter_screenshots() {
         std::thread::sleep(Duration::from_millis(20));
     }
     save(&mut harness, "dark-21-wire-tooltip");
+
+    // And the video wire, which reads on a linear 0..1 scale.
+    let video = harness.state().editor().key_of("video").unwrap();
+    let out = harness.state().editor().key_of("out").unwrap();
+    let a = harness
+        .state()
+        .editor()
+        .pin_screen_pos(video, false, 0)
+        .unwrap();
+    let b = harness
+        .state()
+        .editor()
+        .pin_screen_pos(out, true, 0)
+        .unwrap();
+    let mid = a + (b - a) * 0.5;
+    harness.event(egui::Event::PointerMoved(mid - egui::vec2(3.0, 3.0)));
+    harness.run_steps(2);
+    harness.event(egui::Event::PointerMoved(mid));
+    for _ in 0..30 {
+        harness.run_steps(1);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    save(&mut harness, "dark-22-video-wire-tooltip");
 }

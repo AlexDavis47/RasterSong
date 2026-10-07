@@ -100,17 +100,87 @@ pub fn level_meter(ui: &mut Ui, id: Id, label: &str, peak: f32) {
     });
 }
 
-/// A level meter without a label or peak hold, `width` wide, for tooltips.
-pub fn level_meter_compact(ui: &mut Ui, peak: f32, width: f32) {
-    level_bar(
-        ui,
-        Id::NULL,
-        peak,
-        Look {
-            bar_width: Some(width),
-            hold: false,
-        },
-    );
+/// How a signal's values are shown, chosen from what the signal is said to be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scale {
+    /// Audio: peak level in decibels.
+    Decibels,
+    /// Video and other `0..=1` signals: linear, from 0 to 1.
+    Unipolar,
+    /// Other `-1..=1` signals: linear around a centre line.
+    Bipolar,
+}
+
+impl Scale {
+    /// The scale for a signal's tag: audio is read in decibels, anything else on a linear
+    /// scale of its range (a signal with no range is read as `0..=1`).
+    pub fn of(tag: &rastersong_engine::Tag) -> Self {
+        use rastersong_engine::{Kind, Range};
+        match (tag.kind, tag.range) {
+            (Kind::Audio, _) => Self::Decibels,
+            (_, Range::Bipolar) => Self::Bipolar,
+            _ => Self::Unipolar,
+        }
+    }
+
+    /// The label of the meter row.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Decibels => tr("meter.peak"),
+            Self::Unipolar | Self::Bipolar => tr("meter.range"),
+        }
+    }
+}
+
+/// A meter of the values from `min` to `max` on `scale`, `width` wide, without peak hold: for
+/// tooltips.
+pub fn signal_meter(ui: &mut Ui, scale: Scale, min: f32, max: f32, width: f32) {
+    let look = Look {
+        bar_width: Some(width),
+        hold: false,
+    };
+    if scale == Scale::Decibels {
+        level_bar(ui, Id::NULL, min.abs().max(max.abs()), look);
+        return;
+    }
+    let theme = Theme::of(ui.ctx());
+    let bipolar = scale == Scale::Bipolar;
+    let (low, high) = if bipolar { (-1.0, 1.0) } else { (0.0, 1.0) };
+    let outside = min < low - 1e-4 || max > high + 1e-4;
+    let text = if bipolar {
+        format!("{:.3}", min.abs().max(max.abs()))
+    } else {
+        format!("{max:.3}")
+    };
+    bar_and_readout(ui, look, text, |painter, rect| {
+        let at = |v: f32| rect.left() + rect.width() * ((v - low) / (high - low)).clamp(0.0, 1.0);
+        let (from, to) = if bipolar { (min, max) } else { (0.0, max) };
+        let color = if outside {
+            theme.error
+        } else {
+            theme.accent.gamma_multiply(0.8)
+        };
+        let left = at(from.min(to));
+        let right = at(from.max(to)).max(left + 1.5);
+        painter.rect_filled(
+            Rect::from_min_max(
+                egui::pos2(left, rect.top()),
+                egui::pos2(right, rect.bottom()),
+            ),
+            2.0,
+            color,
+        );
+        if bipolar {
+            let zero = at(0.0);
+            painter.line_segment(
+                [
+                    egui::pos2(zero, rect.top()),
+                    egui::pos2(zero, rect.bottom()),
+                ],
+                egui::Stroke::new(1.0, theme.text_dim),
+            );
+        }
+    });
 }
 
 fn level_bar(ui: &mut Ui, id: Id, peak: f32, look: Look) {

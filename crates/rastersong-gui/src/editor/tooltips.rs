@@ -92,6 +92,7 @@ impl GraphEditor {
             .and_then(|stats| stats.outputs.get(output))
         {
             tip.facts = layout_lines(layout);
+            tip.scale = Some(crate::widgets::Scale::of(&layout.tag));
         }
         tip.level = readings
             .levels
@@ -218,6 +219,8 @@ struct Tip {
     title: Option<String>,
     facts: Vec<String>,
     level: Option<OutputLevel>,
+    /// How the level is metered, from the signal's tag.
+    scale: Option<crate::widgets::Scale>,
     /// A modulated parameter's value now.
     value: Option<f32>,
 }
@@ -254,12 +257,9 @@ impl Tip {
                     row(ui, tr("editor.tip.value"), value);
                 }
                 if let Some(level) = &self.level {
-                    ui.label(tr("meter.peak"));
-                    crate::widgets::level_meter_compact(
-                        ui,
-                        level.min.abs().max(level.max.abs()),
-                        METER_WIDTH,
-                    );
+                    let scale = self.scale.unwrap_or(crate::widgets::Scale::Unipolar);
+                    ui.label(scale.label());
+                    crate::widgets::signal_meter(ui, scale, level.min, level.max, METER_WIDTH);
                     ui.end_row();
                     row(ui, tr("editor.tip.mean"), level.mean);
                     row(ui, tr("editor.tip.min"), level.min);
