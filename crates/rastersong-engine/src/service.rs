@@ -12,8 +12,9 @@ use rastersong_graph::{CompileOptions, GraphDesc, NodeStats, Registry, Tempo, re
 use rastersong_lang::{tr, tr_args};
 use rastersong_media::{AudioClip, AudioOptions, MediaBackend};
 
-use crate::audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE};
+use crate::audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE, SinkResampler};
 use crate::cache::{CacheKey, Frame, FrameCache};
+use crate::listen::{self, ListenTarget, Listened};
 use crate::playback::RenderedSource;
 use crate::project::{DEFAULT_MAX_WARMUP_FRAMES, MAX_WARMUP_FRAMES_LIMIT};
 use crate::renderer;
@@ -207,6 +208,12 @@ struct Shared {
     tap_serial: AtomicU64,
     /// The answer to the last tap the worker finished.
     tap_done: Mutex<Option<TapDone>>,
+    /// The sound rendered for the connection being listened to.
+    listened: Mutex<Listened>,
+    /// The frame listening is at, so the worker renders sound ahead of it.
+    listen_frame: AtomicUsize,
+    /// Bumped whenever the connection listened to changes.
+    listen_serial: AtomicU64,
 }
 
 /// A tap's answer and the project version it was made for.
@@ -242,6 +249,8 @@ struct State {
     audio_sink: AudioSink,
     /// The tap waiting for the worker, if any. Only the latest is kept.
     tap: Option<TapRequest>,
+    /// The connection being listened to, if any.
+    listen: Option<ListenTarget>,
     /// Bumped on every change, so the worker knows when to look again.
     changes: u64,
     shutdown: bool,
@@ -291,6 +300,7 @@ impl Engine {
                 max_warmup_frames: DEFAULT_MAX_WARMUP_FRAMES,
                 audio_sink: AudioSink::Source,
                 tap: None,
+                listen: None,
                 changes: 0,
                 shutdown: false,
             }),
@@ -301,6 +311,9 @@ impl Engine {
             progress: Mutex::new(None),
             tap_serial: AtomicU64::new(0),
             tap_done: Mutex::new(None),
+            listened: Mutex::new(Listened::default()),
+            listen_frame: AtomicUsize::new(0),
+            listen_serial: AtomicU64::new(0),
         });
         let worker = std::thread::Builder::new()
             .name("rastersong-render".into())
@@ -512,6 +525,31 @@ impl Engine {
         TapOutcome::Pending
     }
 
+    /// Listens to a connection (or to nothing, with `None`) from video frame `frame`: the render
+    /// thread renders its sound a little ahead of `frame`, which the caller keeps moving as
+    /// listening goes on. Read with [`Self::listened_audio`]. Never touches the render or the
+    /// cache.
+    pub fn listen(&self, target: Option<ListenTarget>, frame: usize) {
+        let mut state = lock(&self.shared.state);
+        let moved = self.shared.listen_frame.swap(frame, Ordering::SeqCst) != frame;
+        if state.listen != target {
+            state.listen = target;
+            self.shared.listen_serial.fetch_add(1, Ordering::SeqCst);
+            lock(&self.shared.listened).blocks.clear();
+        } else if !moved || state.listen.is_none() {
+            return;
+        }
+        state.changes += 1;
+        self.shared.changed.notify_all();
+    }
+
+    /// The sound of the connection being listened to, for a [`crate::playback::Mixer`].
+    pub fn listened_audio(&self) -> Arc<dyn RenderedSource> {
+        Arc::new(ListenedAudio {
+            shared: self.shared.clone(),
+        })
+    }
+
     /// Forgets a tap that is no longer wanted, so the render thread doesn't spend time on it.
     pub fn cancel_tap(&self) {
         let mut state = lock(&self.shared.state);
@@ -533,6 +571,7 @@ impl Engine {
         state.changes += 1;
         // Lock order is always state, then cache.
         lock(&self.shared.cache).set_key(state.key);
+        lock(&self.shared.listened).blocks.clear();
         self.shared.edits.fetch_add(1, Ordering::SeqCst);
         self.shared.changed.notify_all();
     }
@@ -565,6 +604,30 @@ impl RenderedSource for RenderedAudio {
         frames
             .map(|i| cache.get(i).and_then(|f| f.audio.clone()))
             .collect()
+    }
+
+    fn frame_rate(&self) -> f64 {
+        lock(&self.shared.state)
+            .info
+            .map_or(0.0, |info| info.frame_rate.as_f64())
+    }
+}
+
+/// The sound of the connection being listened to, as playback reads it.
+struct ListenedAudio {
+    shared: Arc<Shared>,
+}
+
+impl std::fmt::Debug for ListenedAudio {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ListenedAudio").finish_non_exhaustive()
+    }
+}
+
+impl RenderedSource for ListenedAudio {
+    fn blocks(&self, frames: Range<usize>) -> Vec<Option<Arc<AudioBlock>>> {
+        let listened = lock(&self.shared.listened);
+        frames.map(|i| listened.blocks.get(&i).cloned()).collect()
     }
 
     fn frame_rate(&self) -> f64 {
@@ -628,9 +691,21 @@ struct Worker {
     built: Option<Built>,
     /// The renderer taps are answered by, apart from the one filling the cache.
     tap_built: Option<Built>,
+    /// The key the tap renderer failed to build for, so it isn't tried again until an edit.
+    tap_failed: Option<CacheKey>,
+    /// Turns the listened connection's signal into sound, for the connection it was made for.
+    listen_sink: Option<ListenSink>,
     audio: AudioCache,
     /// The `changes` count when the project last failed; nothing is retried until it moves.
     failed_at: Option<u64>,
+}
+
+/// The resampler for one listened connection.
+struct ListenSink {
+    serial: u64,
+    /// The signal's block length and samples per pixel it was made for.
+    shape: (usize, u32),
+    resampler: SinkResampler,
 }
 
 /// What the worker should do next, decided while holding the state lock.
@@ -646,6 +721,8 @@ enum Job {
         edits: u64,
         project: Snapshot,
     },
+    /// Render the sound of frame `frame` of the connection being listened to.
+    Listen { frame: usize, serial: u64 },
     /// Answer the tap `request`; `serial` says which request it was.
     Tap { request: TapRequest, serial: u64 },
     /// Render ahead. `seen` is the change count when this was decided: if there turns out to be
@@ -660,6 +737,8 @@ impl Worker {
             shared,
             built: None,
             tap_built: None,
+            tap_failed: None,
+            listen_sink: None,
             audio: HashMap::new(),
             failed_at: None,
         }
@@ -679,6 +758,7 @@ impl Worker {
                     project,
                 } => self.build_tap(key, edits, project),
                 Job::Tap { request, serial } => self.run_tap(request, serial),
+                Job::Listen { frame, serial } => self.run_listen(frame, serial),
                 Job::Render { seen } => {
                     if !self.render_next() {
                         self.wait_for_change(seen);
@@ -696,23 +776,37 @@ impl Worker {
                 return None;
             }
             let stuck = self.failed_at == Some(state.changes);
-            if state.tap.is_none() && self.tap_built.as_ref().is_some_and(|b| b.key != state.key) {
+            if state.tap.is_none()
+                && state.listen.is_none()
+                && self.tap_built.as_ref().is_some_and(|b| b.key != state.key)
+            {
                 // Nothing is asking, and what it would answer with is out of date.
                 self.tap_built = None;
             }
             if let (Some(video), Some(graph), false) = (&state.video, &state.graph, stuck) {
-                if let Some(request) = state.tap.clone() {
+                if (state.tap.is_some() || state.listen.is_some())
+                    && self.tap_failed != Some(state.key)
+                {
                     if self.tap_built.as_ref().is_some_and(|b| b.key == state.key) {
-                        return Some(Job::Tap {
-                            request,
-                            serial: self.shared.tap_serial.load(Ordering::SeqCst),
+                        if let Some(request) = state.tap.clone() {
+                            return Some(Job::Tap {
+                                request,
+                                serial: self.shared.tap_serial.load(Ordering::SeqCst),
+                            });
+                        }
+                        if let Some(frame) = self.next_listen_frame(&state) {
+                            return Some(Job::Listen {
+                                frame,
+                                serial: self.shared.listen_serial.load(Ordering::SeqCst),
+                            });
+                        }
+                    } else {
+                        return Some(Job::BuildTap {
+                            key: state.key,
+                            edits: self.shared.edits.load(Ordering::SeqCst),
+                            project: Self::snapshot(&state, video, graph),
                         });
                     }
-                    return Some(Job::BuildTap {
-                        key: state.key,
-                        edits: self.shared.edits.load(Ordering::SeqCst),
-                        project: Self::snapshot(&state, video, graph),
-                    });
                 }
                 if self.built.as_ref().is_some_and(|b| b.key == state.key) {
                     return Some(Job::Render {
@@ -862,6 +956,7 @@ impl Worker {
         match renderer {
             Ok(renderer) => self.tap_built = Some(Built { key, renderer }),
             Err(failure) => {
+                self.tap_failed = Some(key);
                 let serial = self.shared.tap_serial.load(Ordering::SeqCst);
                 let request = lock(&self.shared.state).tap.clone();
                 if let Some(request) = request {
@@ -902,6 +997,86 @@ impl Worker {
             }
         };
         self.finish_tap(request, serial, key, outcome);
+    }
+
+    /// The first frame of the sound of the connection being listened to that isn't rendered yet,
+    /// from the listening position on for [`listen::AHEAD_SECS`].
+    fn next_listen_frame(&self, state: &State) -> Option<usize> {
+        state.listen.as_ref()?;
+        let info = self.tap_built.as_ref()?.renderer.info();
+        let from = self.shared.listen_frame.load(Ordering::SeqCst);
+        let ahead = (info.frame_rate.as_f64() * listen::AHEAD_SECS).ceil() as usize;
+        let listened = lock(&self.shared.listened);
+        (from..from.saturating_add(ahead).min(info.frames))
+            .find(|f| !listened.blocks.contains_key(f))
+    }
+
+    /// Renders frame `frame` on the tap renderer and keeps the sound of the listened connection.
+    fn run_listen(&mut self, frame: usize, serial: u64) {
+        let edits = self.shared.edits.load(Ordering::SeqCst);
+        let Some(target) = lock(&self.shared.state).listen.clone() else {
+            return;
+        };
+        let Some(built) = self.tap_built.as_mut() else {
+            return;
+        };
+        let info = *built.renderer.info();
+        let rate = lock(&self.shared.state).audio_rate;
+        let shared = &self.shared;
+        let cancel = || {
+            shared.edits.load(Ordering::SeqCst) != edits
+                || shared.listen_serial.load(Ordering::SeqCst) != serial
+        };
+        let rendered = built.renderer.render(frame, &cancel);
+        let block = match rendered {
+            Ok(Some(_)) => match built.renderer.tap(&target.node, target.output) {
+                Some(signal) => {
+                    let shape = (signal.data.len(), signal.layout.samples_per_pixel);
+                    if self
+                        .listen_sink
+                        .as_ref()
+                        .is_none_or(|s| s.serial != serial || s.shape != shape)
+                    {
+                        self.listen_sink = Some(ListenSink {
+                            serial,
+                            shape,
+                            resampler: SinkResampler::new(
+                                shape.0,
+                                shape.1,
+                                info.frame_rate.as_f64(),
+                                rate,
+                            ),
+                        });
+                    }
+                    let sink = self.listen_sink.as_mut().expect("set above");
+                    sink.resampler.push(frame as i64, &signal.data)
+                }
+                // Not rendered: an empty block, so the frame isn't asked for again.
+                None => AudioBlock {
+                    start: 0,
+                    sample_rate: rate,
+                    channels: 1,
+                    samples: Vec::new(),
+                },
+            },
+            Ok(None) => return,
+            Err(e) => {
+                tracing::warn!(frame, "listening failed: {e}");
+                AudioBlock {
+                    start: 0,
+                    sample_rate: rate,
+                    channels: 1,
+                    samples: Vec::new(),
+                }
+            }
+        };
+        if shared.listen_serial.load(Ordering::SeqCst) != serial {
+            return;
+        }
+        let ahead = (info.frame_rate.as_f64() * listen::AHEAD_SECS).ceil() as usize;
+        let mut listened = lock(&shared.listened);
+        listened.blocks.insert(frame, Arc::new(block));
+        listened.trim(shared.listen_frame.load(Ordering::SeqCst), ahead);
     }
 
     /// Records the answer to a tap, unless a newer request has replaced it.

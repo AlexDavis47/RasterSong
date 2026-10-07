@@ -7,6 +7,7 @@ pub mod audio;
 mod cache;
 mod clock;
 mod error;
+mod listen;
 mod offline;
 pub mod playback;
 mod project;
@@ -21,6 +22,7 @@ pub use audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE};
 pub use cache::{CacheKey, Frame, FrameCache};
 pub use clock::PlaybackClock;
 pub use error::EngineError;
+pub use listen::ListenTarget;
 pub use offline::{FrameSink, RenderSettings, RenderedFrame, render};
 pub use project::{
     DEFAULT_MAX_WARMUP_FRAMES, LoopRegion, MAX_WARMUP_FRAMES_LIMIT, PROJECT_EXTENSION,

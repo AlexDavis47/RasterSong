@@ -8,6 +8,7 @@ use std::sync::Arc;
 use common::{
     AUDIO, FINITE, FINITE_PASSTHROUGH, FRAMES, VIDEO, backend, crush, sequential, wait_until,
 };
+use rastersong_engine::playback::RenderedSource as _;
 use rastersong_engine::{
     AudioTrackSpec, Engine, EngineConfig, EngineStatus, GraphDesc, OutputSize, PreviewScale,
 };
@@ -455,5 +456,68 @@ mod taps {
             .map(|&x| (x.clamp(0.0, 1.0) * 255.0).round() as u8)
             .collect();
         assert_eq!(samples, new[3]);
+    }
+}
+
+mod listening {
+    use super::*;
+    use rastersong_engine::ListenTarget;
+
+    fn target(node: &str) -> ListenTarget {
+        ListenTarget {
+            node: node.into(),
+            output: 0,
+        }
+    }
+
+    #[test]
+    fn a_connection_is_heard_ahead_of_the_position_without_disturbing_the_render() {
+        let engine = engine();
+        load(&engine, FINITE);
+        wait_until("some frames", || engine.buffered_from(0) >= 5);
+        let source = engine.listened_audio();
+
+        engine.listen(Some(target("audio")), 3);
+        wait_until("the sound", || {
+            engine.listen(Some(target("audio")), 3);
+            source.blocks(3..8).iter().all(|b| b.is_some())
+        });
+        let block = source.blocks(4..5)[0].clone().unwrap();
+        assert!(!block.samples.is_empty());
+        assert!(block.samples.iter().any(|&x| x.abs() > 0.01), "silent");
+
+        // The sound moves on with the position.
+        wait_until("the sound at 50", || {
+            engine.listen(Some(target("audio")), 50);
+            source.blocks(50..55).iter().all(|b| b.is_some())
+        });
+        assert!(source.blocks(3..4)[0].is_none(), "old sound is dropped");
+
+        // Stopping clears it, and the cache is as it would have been.
+        engine.listen(None, 50);
+        assert!(source.blocks(50..55).iter().all(|b| b.is_none()));
+        wait_until("all frames", || engine.buffered_from(0) == FRAMES);
+        let reference = sequential(FINITE, OutputSize::Native);
+        for (i, expected) in reference.iter().enumerate() {
+            assert_eq!(&engine.frame(i).unwrap().rgb, expected, "frame {i}");
+        }
+    }
+
+    #[test]
+    fn a_connection_that_is_not_rendered_is_silent() {
+        let engine = engine();
+        load(&engine, FINITE);
+        let source = engine.listened_audio();
+        wait_until("silence", || {
+            engine.listen(Some(target("nothing")), 2);
+            source.blocks(2..4).iter().all(|b| b.is_some())
+        });
+        assert!(
+            source
+                .blocks(2..4)
+                .iter()
+                .flatten()
+                .all(|b| b.samples.is_empty())
+        );
     }
 }
