@@ -857,6 +857,8 @@ impl Worker {
                     rgb: rgb.to_vec(),
                     levels: built.renderer.levels().into(),
                     params: built.renderer.param_levels().into(),
+                    costs: built.renderer.costs().into(),
+                    meters: built.renderer.meters().into(),
                     audio: built.renderer.audio().cloned().map(Arc::new),
                 };
                 let playhead = self.shared.playhead.load(Ordering::SeqCst);

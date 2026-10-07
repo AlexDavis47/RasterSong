@@ -627,6 +627,18 @@ fn reports_output_levels() {
     let video = levels.iter().find(|l| &*l.node == "video").unwrap();
     assert!((video.rms - 0.5).abs() < 1e-6);
     assert_eq!(levels.len(), 2, "one output each for video and out");
+    assert!((video.mean - 0.5).abs() < 1e-6);
+    assert!((video.min - 0.5).abs() < 1e-6 && (video.max - 0.5).abs() < 1e-6);
+}
+
+#[test]
+fn reports_what_each_node_cost() {
+    let mut graph = compile(PASSTHROUGH).unwrap();
+    graph.process(0, &sources(|_| 0.5, |_| 0.0)).unwrap();
+    let costs = graph.costs();
+    assert_eq!(costs.len(), 2, "one per node");
+    assert!(costs.iter().all(|c| c.micros >= 0.0));
+    assert!(graph.meters().is_empty(), "no node here has meters");
 }
 
 /// AM on a carrier and modulator of 1.0 gives `1 + depth`, so the output shows the per-sample

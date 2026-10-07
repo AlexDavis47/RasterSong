@@ -32,9 +32,10 @@ pub use rastersong_graph::nodes::{
 pub use rastersong_graph::{
     Category, ChannelMap, Channels, CompileOptions, Connection, Diagnostic, FORMAT_VERSION,
     GeneratorLayout, Graph, GraphDesc, GraphError, Grouping, Interpolation, Kind, Layout,
-    MODULATION_AMOUNT_LIMITS, ModMode, Modulation, NodeDesc, NodeDiagnostic, NodeStats, NodeType,
-    OutputLevel, OutputSpec, ParamKind, ParamLevel, ParamSpec, ParamValue, Part, Range, Registry,
-    Severity, ShownWhen, Tag, TagRule, Tempo, range_span,
+    MODULATION_AMOUNT_LIMITS, Meter, MeterKind, ModMode, Modulation, NodeCost, NodeDesc,
+    NodeDiagnostic, NodeMeters, NodeStats, NodeType, OutputLevel, OutputSpec, ParamKind,
+    ParamLevel, ParamSpec, ParamValue, Part, Range, Registry, Severity, ShownWhen, Tag, TagRule,
+    Tempo, range_span,
 };
 pub use rastersong_media::{
     AudioClip, AudioOptions, BackendInfo, FakeBackend, FakeVideo, FfmpegBackend, LibraryInfo,

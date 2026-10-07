@@ -200,6 +200,28 @@ pub struct NodeSpec {
     /// Whether users add nodes of this type themselves. By default, every category but the
     /// inputs and the output, which come from the project.
     pub addable: bool,
+    /// Values the node publishes each frame for the inspector to draw as meters, in the order its
+    /// [`Node::meters`] writes them. At most [`MAX_METERS`].
+    pub meters: &'static [Meter],
+}
+
+/// The most meter values one node publishes.
+pub const MAX_METERS: usize = 4;
+
+/// How a meter value is drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MeterKind {
+    /// A level, linear (`0` silent, `1` full scale), drawn in decibels.
+    Level,
+    /// Gain being taken away, in decibels (`0` or more).
+    GainReduction,
+}
+
+/// One value a node publishes. Its label is `node.<kind>.meter.<id>` in the text.
+#[derive(Debug, Clone, Copy)]
+pub struct Meter {
+    pub id: &'static str,
+    pub kind: MeterKind,
 }
 
 impl NodeSpec {
@@ -214,6 +236,7 @@ impl NodeSpec {
             takes_layout: false,
             expects: Range::Unknown,
             addable: category.user_addable(),
+            meters: &[],
         }
     }
 
@@ -231,6 +254,12 @@ impl NodeSpec {
 
     pub const fn per_channel(mut self) -> Self {
         self.per_channel = true;
+        self
+    }
+
+    /// The meters the node publishes.
+    pub const fn meters(mut self, meters: &'static [Meter]) -> Self {
+        self.meters = meters;
         self
     }
 

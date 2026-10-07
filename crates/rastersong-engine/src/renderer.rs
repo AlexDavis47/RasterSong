@@ -268,6 +268,16 @@ impl Renderer {
         self.graph.levels()
     }
 
+    /// How long every node took to process the last rendered frame.
+    pub fn costs(&self) -> Vec<rastersong_graph::NodeCost> {
+        self.graph.costs()
+    }
+
+    /// The meter values of the nodes that publish them, from the last rendered frame.
+    pub fn meters(&self) -> Vec<rastersong_graph::NodeMeters> {
+        self.graph.meters()
+    }
+
     /// The value of every modulated parameter in the last rendered frame.
     pub fn param_levels(&self) -> Vec<rastersong_graph::ParamLevel> {
         self.graph.param_levels()

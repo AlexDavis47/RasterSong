@@ -8,7 +8,7 @@ use crate::desc::{
     Channels, Connection, GeneratorLayout, GraphDesc, Grouping, Interpolation, Modulation, NodeDesc,
 };
 use crate::dsp::{DelayLine, resample};
-use crate::nodes::{AUDIO_INPUT, AUDIO_OUTPUT, OUTPUT, Registry, VIDEO_INPUT};
+use crate::nodes::{AUDIO_INPUT, AUDIO_OUTPUT, MAX_METERS, Meter, OUTPUT, Registry, VIDEO_INPUT};
 
 use crate::{
     Diagnostic, GraphError, InputSpec, Layout, LayoutContext, Node, OutputSpec, ParamSpec,
@@ -53,6 +53,26 @@ pub struct OutputLevel {
     pub output: usize,
     /// Root mean square of the output's samples.
     pub rms: f32,
+    /// The mean, lowest and highest sample, over the same evenly spread subset as `rms`.
+    pub mean: f32,
+    pub min: f32,
+    pub max: f32,
+}
+
+/// How long a node took to process the last frame.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NodeCost {
+    pub node: Arc<str>,
+    /// Microseconds spent in the node's `process`, summed over its channels.
+    pub micros: f32,
+}
+
+/// The meter values a node published while processing the last frame, in the order its
+/// [`crate::NodeSpec::meters`] list them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NodeMeters {
+    pub node: Arc<str>,
+    pub values: Vec<f32>,
 }
 
 /// The value of a modulated parameter in the last processed frame, at its middle sample.
@@ -130,7 +150,11 @@ struct Step {
     /// Signals modulating parameters.
     params: Vec<ParamBinding>,
     outputs: Vec<Signal>,
-    levels: Vec<f32>,
+    levels: Vec<LevelStats>,
+    /// Microseconds the last frame took.
+    micros: f32,
+    /// The node's meter values after the last frame; empty when it has no meters.
+    meters: Vec<f32>,
 }
 
 /// A signal modulating one parameter: its input, and the parameter's per-sample values.
@@ -301,6 +325,7 @@ struct Pending {
     specs: &'static [ParamSpec],
     inputs: &'static [InputSpec],
     outputs: &'static [OutputSpec],
+    meters: &'static [Meter],
     modulation: BTreeMap<String, Modulation>,
     /// For each parameter, whether it is rounded to whole numbers.
     integer: Vec<bool>,
@@ -555,11 +580,37 @@ impl Graph {
                 step.levels
                     .iter()
                     .enumerate()
-                    .map(|(output, &rms)| OutputLevel {
+                    .map(|(output, stats)| OutputLevel {
                         node: step.id.clone(),
                         output,
-                        rms,
+                        rms: stats.rms,
+                        mean: stats.mean,
+                        min: stats.min,
+                        max: stats.max,
                     })
+            })
+            .collect()
+    }
+
+    /// What every node's processing cost in the last processed frame.
+    pub fn costs(&self) -> Vec<NodeCost> {
+        self.steps
+            .iter()
+            .map(|step| NodeCost {
+                node: step.id.clone(),
+                micros: step.micros,
+            })
+            .collect()
+    }
+
+    /// The meter values of every node that has meters, from the last processed frame.
+    pub fn meters(&self) -> Vec<NodeMeters> {
+        self.steps
+            .iter()
+            .filter(|step| !step.meters.is_empty())
+            .map(|step| NodeMeters {
+                node: step.id.clone(),
+                values: step.meters.clone(),
             })
             .collect()
     }
@@ -620,6 +671,8 @@ impl Graph {
                 params,
                 outputs,
                 levels,
+                micros,
+                meters,
                 ..
             } = &mut rest[0];
             for input in inputs.iter_mut() {
@@ -643,12 +696,26 @@ impl Graph {
                 sources,
                 params: &values,
             };
+            let started = std::time::Instant::now();
             match split {
                 Some(split) => split.process(nodes, &ctx, refs, params, outputs),
                 None => nodes[0].process(&ctx, refs, outputs),
             }
+            *micros = started.elapsed().as_secs_f32() * 1e6;
             for (level, output) in levels.iter_mut().zip(outputs.iter()) {
-                *level = rms(&output.data);
+                *level = LevelStats::of(&output.data);
+            }
+            if !meters.is_empty() {
+                meters.fill(0.0);
+                let mut one = [0.0; MAX_METERS];
+                for node in nodes.iter() {
+                    one.fill(0.0);
+                    node.meters(&mut one);
+                    // Separate channels: show the busiest.
+                    for (m, &v) in meters.iter_mut().zip(&one) {
+                        *m = m.max(v);
+                    }
+                }
             }
         }
         Ok(&self.steps[self.output_step].outputs[0])
@@ -776,7 +843,9 @@ impl<'a> Compiler<'a> {
             interpolation: p.interpolation,
             inputs,
             params,
-            levels: vec![0.0; shape.output_layouts.len()],
+            levels: vec![LevelStats::default(); shape.output_layouts.len()],
+            micros: 0.0,
+            meters: vec![0.0; p.meters.len()],
             outputs: shape
                 .output_layouts
                 .iter()
@@ -1100,19 +1169,39 @@ fn range_note(expects: Range, got: Range) -> String {
     )
 }
 
-/// RMS over an evenly spread subset of at most [`LEVEL_SAMPLES`] samples.
-fn rms(data: &[f32]) -> f32 {
-    if data.is_empty() {
-        return 0.0;
+/// Level statistics of one output over an evenly spread subset of at most [`LEVEL_SAMPLES`]
+/// samples.
+#[derive(Debug, Clone, Copy, Default)]
+struct LevelStats {
+    rms: f32,
+    mean: f32,
+    min: f32,
+    max: f32,
+}
+
+impl LevelStats {
+    fn of(data: &[f32]) -> Self {
+        if data.is_empty() {
+            return Self::default();
+        }
+        let stride = data.len().div_ceil(LEVEL_SAMPLES);
+        let (mut sum, mut squares, mut count) = (0.0f64, 0.0f64, 0usize);
+        let (mut min, mut max) = (f32::INFINITY, f32::NEG_INFINITY);
+        for &x in data.iter().step_by(stride) {
+            sum += f64::from(x);
+            squares += f64::from(x) * f64::from(x);
+            min = min.min(x);
+            max = max.max(x);
+            count += 1;
+        }
+        let n = count as f64;
+        Self {
+            rms: (squares / n).sqrt() as f32,
+            mean: (sum / n) as f32,
+            min,
+            max,
+        }
     }
-    let stride = data.len().div_ceil(LEVEL_SAMPLES);
-    let (sum, count) = data
-        .iter()
-        .step_by(stride)
-        .fold((0.0f64, 0usize), |(s, c), &x| {
-            (s + f64::from(x) * f64::from(x), c + 1)
-        });
-    (sum / count as f64).sqrt() as f32
 }
 
 /// Stands in for a node while it is being prepared.
@@ -1186,6 +1275,7 @@ fn create_nodes(desc: &GraphDesc, registry: &Registry) -> Result<Vec<Pending>, G
             specs,
             inputs: spec.inputs,
             outputs: spec.outputs,
+            meters: spec.meters,
             modulation: d.modulation.clone(),
             ranges: d.ranges.clone(),
             integer,
