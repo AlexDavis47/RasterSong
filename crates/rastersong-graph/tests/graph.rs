@@ -759,17 +759,9 @@ impl Node for Level {
     }
 }
 
-const LEVEL_PARAMS: &[ParamSpec] = &[ParamSpec::number(
-    "level",
-    "Level",
-    0.25,
-    0.0,
-    1.0,
-    "The value to output",
-)];
+const LEVEL_PARAMS: &[ParamSpec] = &[ParamSpec::number("level", 0.25, 0.0, 1.0)];
 
-const LEVEL_SPEC: NodeSpec = NodeSpec::new("Level", Category::Input)
-    .describe("Test generator")
+const LEVEL_SPEC: NodeSpec = NodeSpec::new(Category::Input)
     .params(LEVEL_PARAMS)
     .inputs(&[]);
 

@@ -14,6 +14,7 @@ publish = false
 [workspace.dependencies]
 rastersong-media = { path = "crates/rastersong-media" }
 rastersong-graph = { path = "crates/rastersong-graph" }
+rastersong-lang = { path = "crates/rastersong-lang" }
 rastersong-engine = { path = "crates/rastersong-engine" }
 
 # FFmpeg bindings. The major version must match the pinned FFmpeg in `xtask/src/ffmpeg.rs`.

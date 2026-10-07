@@ -1,0 +1,266 @@
+# Interface text: menus, dialogs, the graph editor, the inspector, the timeline and the settings.
+# `{name}` is replaced by the program; `\s` is a space that survives at the edge of a value.
+
+# --- Window and project ---
+window.title = {name} — RasterSong
+window.title_dirty = {name} • — RasterSong
+project.untitled = Untitled
+
+# --- Menus ---
+menu.file = File
+menu.file.new = New Project
+menu.file.open = Open Project…
+menu.file.save = Save Project
+menu.file.save_as = Save Project As…
+menu.file.open_video = Open Video…
+menu.file.add_audio = Add Audio Tracks…
+menu.file.settings = Settings…
+menu.file.import_graph = Import Graph…
+menu.file.export_graph = Export Graph…
+menu.edit = Edit
+menu.edit.undo = Undo
+menu.edit.redo = Redo
+menu.edit.cut = Cut
+menu.edit.copy = Copy
+menu.edit.paste = Paste
+menu.edit.duplicate = Duplicate
+menu.edit.delete = Delete
+menu.edit.select_all = Select All
+menu.help = Help
+menu.help.about = About RasterSong
+
+# --- Dialogs ---
+dialog.problem = Problem
+dialog.save = Save
+dialog.dont_save = Don't Save
+dialog.cancel = Cancel
+dialog.save_changes.title = Save changes to {name}?
+dialog.save_changes.body = Your changes will be lost if you don't save them.
+dialog.filter.project = RasterSong project
+dialog.filter.video = Video
+dialog.filter.audio = Audio
+dialog.filter.graph = Graph
+
+# --- About ---
+about.title = About RasterSong
+about.heading = RasterSong {version}
+about.copyright = Copyright © 2025-2026 Alexander Davis. Source-available; see LICENSE.
+about.ffmpeg = This software uses libraries from the FFmpeg project under the GNU LGPL.
+about.ffmpeg_license = FFmpeg license: {license}
+about.ffmpeg_libraries = FFmpeg libraries
+about.configuration = Configuration:
+
+# --- Preview and playback controls ---
+preview.empty = Open a video to start
+preview.open_video.help = Choose the video to process
+preview.graph_failed = The graph can't render; see the bottom of the graph panel
+preview.rendering = Rendering
+preview.warming = Warming up {done}/{total}
+preview.warming.help = Rebuilding the history that delays and filters in the graph need before
+  frame {frame} can be shown. Graphs with a lot of memory take longer after a seek.
+controls.play.help = Play / pause (Space)
+controls.loop = Loop
+controls.loop.help = Repeat the loop region (R)
+controls.loop.help_none = Ctrl+drag along the timeline's ruler to make a loop region
+controls.frame = frame {frame}
+controls.preview = Preview
+controls.preview.help = Preview resolution. Lower is faster; export is always full size.
+controls.unprocessed = Unprocessed
+controls.unprocessed.help = Show the original video instead of the processed one. Processing carries on.
+controls.split = Split
+controls.split.help = Compare both side by side. Drag the divider; switching Unprocessed swaps the sides.
+controls.resolution = {width}×{height} of {project_width}×{project_height}
+controls.resolution.help = Preview resolution, out of the project's resolution (the video's, which
+  is what gets exported)
+controls.volume = Playback volume {percent}%
+feed.processed = Processed
+feed.unprocessed = Unprocessed
+cache.loop_rendered = loop rendered
+cache.rendered_to_end = rendered to the end
+cache.ahead = {seconds} s ahead
+cache.slowed = {speed}× · {ahead}
+cache.help = Rendered ahead of the playhead. Playback slows to what rendering can keep up with.
+
+# --- Tempo ---
+tempo.bpm.suffix = \sbpm
+tempo.bpm.help = Beats per minute. Beat and bar units in nodes follow it.
+tempo.beats.suffix = \sbeats/bar
+tempo.beats.help = Beats in a bar (the time signature's top number)
+tempo.first_beat.prefix = first beat\s
+tempo.first_beat.help = Seconds from the start of the video to the first beat
+tempo.metronome = Metronome
+tempo.metronome.help = Click on every beat while playing, higher on the first beat of each bar,
+  to check the tempo and first beat by ear
+
+# --- Timeline ---
+timeline.empty = The timeline appears once a video is loaded.
+timeline.mode.time = Time
+timeline.mode.time.help = The ruler shows minutes and seconds. Click to show bars and beats and edit the tempo.
+timeline.mode.tempo = Tempo
+timeline.mode.tempo.help = The ruler shows bars and beats. Click to show minutes and seconds.
+timeline.ruler.help = Click or drag to move the playhead. Ctrl+drag makes a loop region, or moves its edges.
+  Right-click for looping options.
+timeline.loop.hint = Ctrl+drag along the ruler to make a loop region
+timeline.loop.enable = Loop playback (R)
+timeline.loop.remove = Remove loop region
+timeline.video_name.help = Video name, shared with the video input node
+timeline.track.add = + Audio track
+timeline.track.add.help = Add an audio file as a new track
+timeline.track.reorder = Drag to reorder the tracks
+timeline.track.loading = loading…
+timeline.track.name.help = Track name, shared with its Audio Input node
+timeline.track.mute = Mute in playback (Alt+click to solo)
+timeline.track.unmute = Unmute (Alt+click to solo)
+timeline.track.remove = Remove track
+timeline.track.offset = Offset
+timeline.track.offset.help = Seconds this track starts after the video
+timeline.track.offset_drag = Drag to move this track against the video
+
+# --- Graph editor ---
+editor.bypass_graph = Bypass graph
+editor.bypass_graph.help = Skip every node: the video goes straight to the output, to compare with the original
+editor.canvas.empty_hint = Right-click to add a node
+editor.shortcut.alt_click = Alt+click
+editor.search.hint = Search nodes…
+editor.search.none = No matching nodes
+editor.menu.copy = Copy
+editor.menu.copy_many = Copy {count} nodes
+editor.menu.duplicate = Duplicate
+editor.menu.duplicate_many = Duplicate {count} nodes
+editor.menu.bypass = Bypass
+editor.menu.bypass_many = Bypass {count} nodes
+editor.menu.delete = Delete
+editor.menu.delete_many = Delete {count} nodes
+editor.node.unknown_kind = {kind} (unknown)
+editor.node.bypassed = Bypassed
+editor.node.latency = latency {frames} fr
+editor.node.warmup = warmup {frames} fr
+editor.node.warmup_never = warmup never settles
+editor.node.warmup_over_limit = ⚠ {text} (above the {limit} fr limit)
+editor.node.warning_line = {mark} {message}
+editor.error_bar = ⚠  {message}
+editor.error_bar.node_message = {node}: {detail}
+editor.error_bar.hover = Click to show the node
+editor.linked.video_default = Video
+editor.linked.video_title = ▣ {name}
+editor.linked.track_title = ♪ {track}
+editor.linked.track_missing = ♪ {track} (no track)
+
+# --- Inspector ---
+editor.inspector.empty_select = Click a node to edit it.
+editor.inspector.empty_add = Right-click the graph to add nodes.
+editor.inspector.unknown_kind = Unknown node type `{kind}`
+editor.inspector.linked_name_help = Name shown on the node. It's the project's name for this input, so the
+  timeline shows it too.
+editor.inspector.name_help = Name shown on the node
+editor.inspector.separator = ·
+editor.inspector.note_line = ℹ {message}
+editor.inspector.warning_line = ⚠ {message}
+editor.inspector.node_settings = Node settings
+editor.inspector.parameters = Parameters
+editor.inspector.no_settings = No settings.
+editor.inspector.linked_video = The project's video
+editor.inspector.linked_track = Track "{track}"
+editor.inspector.linked_help = Linked to the project: rename or remove it in the timeline
+editor.inspector.unused_reason = Unused: only applies when {param} is {values}.
+editor.inspector.or = or
+editor.inspector.output_line = {port}: {layout}, {tag}
+editor.inspector.output_single = Output: {layout}, {tag}
+editor.inspector.signal_help = What the signal is said to be. Advisory: it colours wires and drives warnings, and never changes processing. Relabel changes it.
+
+editor.setting.resampling = Resampling
+editor.setting.resampling.help = How the other inputs are stretched or shrunk to the length of the main input
+editor.setting.resampling.hold = Hold
+editor.setting.resampling.hold.help = Repeat samples
+editor.setting.resampling.linear = Linear
+editor.setting.resampling.linear.help = Ramp smoothly between samples
+editor.setting.grouping = Grouping
+editor.setting.grouping.help = How a one-channel input is spread over a main input with several channels (RGB, stereo)
+editor.setting.grouping.pixels = Pixels
+editor.setting.grouping.pixels.help = Each value covers whole pixels, so a pixel's R, G and B (or L and R) move together
+editor.setting.grouping.samples = Samples
+editor.setting.grouping.samples.help = Spread over every value, ignoring pixels: a pixel's channels can differ
+editor.setting.layout = Layout
+editor.setting.layout.help = What the generated signal is shaped like: the video's frame, or one block of the audio track
+editor.setting.layout.video = Video
+editor.setting.layout.video.help = Shaped like the video: RGB pixels in rows
+editor.setting.layout.audio = Audio
+editor.setting.layout.audio.help = Shaped like one block of the audio track named audio, or of the first track; mono at 48 kHz when the project has none
+editor.setting.channels = Channels
+editor.setting.channels.help = How this node treats the channels of an interleaved signal: R, G, B of video, L, R of stereo.
+editor.setting.channels.together = Together
+editor.setting.channels.together.help = Runs R, G, B, R, G, B… (or L, R, L, R…) through the node as one
+  stream. Channels bleed into each other, as in a low pass or a modulated delay.
+editor.setting.channels.separate = Separate
+editor.setting.channels.separate.help = Runs each channel through its own copy of the node. The same as
+  Split Channels → the node once per channel → Combine Channels.
+
+editor.param.pin_hide = Hide this parameter's modulation pin (disconnects it)
+editor.param.pin_show = Show a pin on the node to modulate this parameter with a signal
+editor.param.locked = This parameter can't be modulated. {reason}.
+editor.param.reset = Reset to default
+editor.param.int = int
+editor.param.int.help = Round to whole numbers: the value, and, when a signal modulates it, the result at every sample
+editor.param.no_such_track = {track} (no such track)
+editor.param.no_tracks = No audio tracks yet
+editor.param.track_help = Click or drag to set. Alt+click or right-click to reset to the default.
+editor.param.slider_range = Slider range
+editor.param.min = Min
+editor.param.max = Max
+editor.param.reset_range = Reset range
+editor.param.value_help = Drag, or click to type. Values beyond the slider are allowed.
+  Alt+click or right-click to reset.
+
+editor.modulation.title = Modulation
+editor.modulation.knob_help = Modulation {amount} of the range, about {effect}. Drag to change, double-click or Alt+click to reset, right-click for options.
+editor.modulation.both_ways = Both ways
+editor.modulation.both_ways.help = The signal moves the value up and down around it
+editor.modulation.one_way = One way
+editor.modulation.one_way.help = The signal's strength moves the value one way; a negative amount turns it down
+editor.modulation.amount = Amount
+editor.modulation.amount.help = How far a full signal moves the value, as a percentage of the slider's range.
+editor.modulation.either_side = Either side
+editor.modulation.moves_by = Moves by
+editor.modulation.sweep.help = The same amount in the parameter's own unit: how far a full signal moves
+  the value (either side of it, both ways).
+editor.modulation.reset_amount = Reset amount
+editor.modulation.disconnect = Disconnect signal
+
+# --- Settings ---
+settings.title = Settings
+settings.application = Application
+settings.application.help = Remembered on this computer, for every project
+settings.project = Project
+settings.project.help = Saved in the project file
+settings.appearance = Appearance
+settings.theme = Theme
+settings.theme.help = Dark, light, or whichever the system uses.
+settings.wires = Wires
+settings.wires.help = How connections are drawn in the graph.
+settings.language = Language
+settings.language.help = The language of the interface. Other languages are folders of .lang files in the `lang` folder next to the program; text a language lacks is shown in English.
+settings.graph_editor = Graph editor
+settings.node_stats = Show node latency and warmup
+settings.node_stats.help = Under each node, show how many frames it delays its output and how many it needs to settle after a seek.
+settings.keep_connections = Keep input connections when duplicating and pasting
+settings.keep_connections.help = New copies are connected to the same sources as the originals. Hold Shift (Ctrl+Shift+D, Ctrl+Shift+V) to do the opposite once.
+settings.tempo = Tempo
+settings.tempo.help = The tempo of the music. Beat and bar units in nodes, and the tempo ruler, follow it.
+settings.seeking = Seeking
+settings.warmup = Max warmup frames
+settings.warmup.help = After a jump in the timeline, this many earlier frames are rendered and thrown away so effects with memory (delays, feedback, filters) have history. Lower is faster, but jumping into a long echo or reverb tail is only approximate. Playing from the start and exporting are always exact, and effects themselves are never shortened.
+settings.warmup.never = never fully settles
+settings.warmup.needs = needs {frames} frames of warmup
+settings.warmup.warning = ⚠ {node} {needs}, above the limit of {limit}: jumping into it is approximate.
+settings.audio = Audio
+settings.audio_rate = Audio output rate
+settings.audio_rate.help = The sample rate of the sound an Audio Output node renders.
+
+# --- Themes ---
+theme.dark = Dark
+theme.light = Light
+theme.system = Follow system
+wires.solid = Solid
+wires.outline = Outlined
+wires.gradient = Gradient
+wires.glow = Glow

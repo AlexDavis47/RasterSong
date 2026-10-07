@@ -4,6 +4,7 @@ use ffmpeg::ffi;
 use ffmpeg::format::Pixel;
 use ffmpeg::frame;
 use ffmpeg_next as ffmpeg;
+use rastersong_lang::{tr, tr_args};
 
 use crate::MediaError;
 
@@ -25,7 +26,7 @@ impl Scaler {
         // SAFETY: plain allocation; null is handled.
         let ctx = unsafe { ffi::sws_alloc_context() };
         if ctx.is_null() {
-            return Err(MediaError::Decode("could not allocate a scaler".into()));
+            return Err(MediaError::Decode(tr("error.media.scaler_alloc").into()));
         }
         // SAFETY: ctx is a valid, freshly allocated context. These are public option fields.
         unsafe {
@@ -53,9 +54,9 @@ impl Scaler {
         // SAFETY: both frames are valid; dst has allocated buffers matching its format and size.
         let ret = unsafe { ffi::sws_scale_frame(self.ctx, self.dst.as_mut_ptr(), src.as_ptr()) };
         if ret < 0 {
-            return Err(MediaError::Decode(format!(
-                "pixel format conversion failed: {}",
-                ffmpeg::Error::from(ret)
+            return Err(MediaError::Decode(tr_args(
+                "error.media.scaler_convert",
+                &[("reason", &ffmpeg::Error::from(ret).to_string())],
             )));
         }
 

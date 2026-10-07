@@ -3,6 +3,7 @@
 
 use eframe::egui::{self, RichText, Ui};
 use rastersong_engine::{MAX_WARMUP_FRAMES_LIMIT, Tempo, UNBOUNDED_WARMUP};
+use rastersong_lang::{tr, tr_args};
 
 use super::{AUDIO_RATES, App};
 use crate::theme::{ThemeChoice, WireStyle};
@@ -37,18 +38,18 @@ pub(super) fn tempo_fields(ui: &mut Ui, tempo: &mut Tempo) {
             .range(Tempo::MIN_BPM..=Tempo::MAX_BPM)
             .speed(0.2)
             .max_decimals(2)
-            .suffix(" bpm"),
+            .suffix(tr("tempo.bpm.suffix")),
     )
-    .on_hover_text("Beats per minute. Beat and bar units in nodes follow it.");
+    .on_hover_text(tr("tempo.bpm.help"));
     let mut beats = f64::from(tempo.beats_per_bar);
     if ui
         .add(
             ValueBox::new(&mut beats)
                 .range(1.0..=64.0)
                 .max_decimals(0)
-                .suffix(" beats/bar"),
+                .suffix(tr("tempo.beats.suffix")),
         )
-        .on_hover_text("Beats in a bar (the time signature's top number)")
+        .on_hover_text(tr("tempo.beats.help"))
         .changed()
     {
         tempo.beats_per_bar = beats.round() as u32;
@@ -57,16 +58,16 @@ pub(super) fn tempo_fields(ui: &mut Ui, tempo: &mut Tempo) {
         ValueBox::new(&mut tempo.offset_secs)
             .speed(0.005)
             .max_decimals(3)
-            .prefix("first beat ")
-            .suffix(" s"),
+            .prefix(tr("tempo.first_beat.prefix"))
+            .suffix(tr("unit.seconds.suffix")),
     )
-    .on_hover_text("Seconds from the start of the video to the first beat");
+    .on_hover_text(tr("tempo.first_beat.help"));
 }
 
 impl App {
     pub(super) fn settings_window(&mut self, ctx: &egui::Context) {
         let mut open = self.show_settings;
-        egui::Window::new("Settings")
+        egui::Window::new(tr("settings.title"))
             .open(&mut open)
             .collapsible(false)
             .default_width(420.0)
@@ -75,11 +76,15 @@ impl App {
                     ui.selectable_value(
                         &mut self.settings_tab,
                         SettingsTab::Application,
-                        "Application",
+                        tr("settings.application"),
                     )
-                    .on_hover_text("Remembered on this computer, for every project");
-                    ui.selectable_value(&mut self.settings_tab, SettingsTab::Project, "Project")
-                        .on_hover_text("Saved in the project file");
+                    .on_hover_text(tr("settings.application.help"));
+                    ui.selectable_value(
+                        &mut self.settings_tab,
+                        SettingsTab::Project,
+                        tr("settings.project"),
+                    )
+                    .on_hover_text(tr("settings.project.help"));
                 });
                 ui.separator();
                 match self.settings_tab {
@@ -91,39 +96,47 @@ impl App {
     }
 
     fn application_settings(&mut self, ui: &mut Ui) {
-        section(ui, "Appearance");
+        section(ui, tr("settings.appearance"));
         ui.horizontal(|ui| {
-            ui.label("Theme");
+            ui.label(tr("settings.theme"));
             for choice in ThemeChoice::ALL {
                 ui.radio_value(&mut self.settings.theme, choice, choice.label());
             }
         });
-        help(ui, "Dark, light, or whichever the system uses.");
+        help(ui, tr("settings.theme.help"));
         ui.horizontal(|ui| {
-            ui.label("Wires");
+            ui.label(tr("settings.wires"));
             for style in WireStyle::ALL {
                 ui.radio_value(&mut self.settings.wire_style, style, style.label());
             }
         });
-        help(ui, "How connections are drawn in the graph.");
+        help(ui, tr("settings.wires.help"));
+        ui.horizontal(|ui| {
+            ui.label(tr("settings.language"));
+            let current = self.settings.language.clone();
+            let mut chosen = current.clone();
+            egui::ComboBox::from_id_salt("settings-language")
+                .selected_text(&current)
+                .show_ui(ui, |ui| {
+                    for code in rastersong_lang::available_locales(&crate::settings::locale_dir()) {
+                        ui.selectable_value(&mut chosen, code.clone(), code);
+                    }
+                });
+            if chosen != current {
+                self.settings.language = chosen;
+                self.settings.apply_language();
+            }
+        });
+        help(ui, tr("settings.language.help"));
 
-        section(ui, "Graph editor");
-        ui.checkbox(
-            &mut self.settings.node_stats,
-            "Show node latency and warmup",
-        );
-        help(
-            ui,
-            "Under each node, show how many frames it delays its output and how many it needs to settle after a seek.",
-        );
+        section(ui, tr("settings.graph_editor"));
+        ui.checkbox(&mut self.settings.node_stats, tr("settings.node_stats"));
+        help(ui, tr("settings.node_stats.help"));
         ui.checkbox(
             &mut self.settings.keep_connections,
-            "Keep input connections when duplicating and pasting",
+            tr("settings.keep_connections"),
         );
-        help(
-            ui,
-            "New copies are connected to the same sources as the originals. Hold Shift (Ctrl+Shift+D, Ctrl+Shift+V) to do the opposite once.",
-        );
+        help(ui, tr("settings.keep_connections.help"));
     }
 
     /// Says so when the graph needs more warmup than the limit allows, and which node needs it.
@@ -137,30 +150,34 @@ impl App {
             return;
         }
         let needs = if worst.warmup_frames == UNBOUNDED_WARMUP {
-            "never fully settles".to_owned()
+            tr("settings.warmup.never").to_owned()
         } else {
-            format!("needs {} frames of warmup", worst.warmup_frames)
+            tr_args(
+                "settings.warmup.needs",
+                &[("frames", &worst.warmup_frames.to_string())],
+            )
         };
         ui.colored_label(
             ui.visuals().warn_fg_color,
-            format!(
-                "⚠ {} {needs}, above the limit of {limit}: jumping into it is approximate.",
-                worst.node
+            tr_args(
+                "settings.warmup.warning",
+                &[
+                    ("node", &worst.node),
+                    ("needs", &needs),
+                    ("limit", &limit.to_string()),
+                ],
             ),
         );
     }
 
     fn project_settings(&mut self, ui: &mut Ui) {
-        section(ui, "Tempo");
+        section(ui, tr("settings.tempo"));
         ui.horizontal_wrapped(|ui| tempo_fields(ui, &mut self.project.tempo));
-        help(
-            ui,
-            "The tempo of the music. Beat and bar units in nodes, and the tempo ruler, follow it.",
-        );
+        help(ui, tr("settings.tempo.help"));
 
-        section(ui, "Seeking");
+        section(ui, tr("settings.seeking"));
         ui.horizontal(|ui| {
-            ui.label("Max warmup frames");
+            ui.label(tr("settings.warmup"));
             let mut frames = f64::from(self.project.max_warmup_frames);
             if ui
                 .add(
@@ -174,33 +191,33 @@ impl App {
                 self.project.max_warmup_frames = frames.round() as u32;
             }
         });
-        help(
-            ui,
-            "After a jump in the timeline, this many earlier frames are rendered and thrown away so effects with memory (delays, feedback, filters) have history. Lower is faster, but jumping into a long echo or reverb tail is only approximate. Playing from the start and exporting are always exact, and effects themselves are never shortened.",
-        );
+        help(ui, tr("settings.warmup.help"));
         self.warmup_warning(ui);
 
-        section(ui, "Audio");
+        section(ui, tr("settings.audio"));
         ui.horizontal(|ui| {
-            ui.label("Audio output rate");
+            ui.label(tr("settings.audio_rate"));
             egui::ComboBox::from_id_salt("settings-audio-rate")
-                .selected_text(format!(
-                    "{:.1} kHz",
-                    f64::from(self.project.audio_rate) / 1000.0
+                .selected_text(tr_args(
+                    "unit.khz",
+                    &[(
+                        "value",
+                        &format!("{:.1}", f64::from(self.project.audio_rate) / 1000.0),
+                    )],
                 ))
                 .show_ui(ui, |ui| {
                     for rate in AUDIO_RATES {
                         ui.selectable_value(
                             &mut self.project.audio_rate,
                             rate,
-                            format!("{:.1} kHz", f64::from(rate) / 1000.0),
+                            tr_args(
+                                "unit.khz",
+                                &[("value", &format!("{:.1}", f64::from(rate) / 1000.0))],
+                            ),
                         );
                     }
                 });
         });
-        help(
-            ui,
-            "The sample rate of the sound an Audio Output node renders.",
-        );
+        help(ui, tr("settings.audio_rate.help"));
     }
 }

@@ -1,6 +1,6 @@
-use std::f64::consts::{FRAC_1_SQRT_2, PI, TAU};
+use std::f64::consts::{PI, TAU};
 
-use crate::dsp::{Biquad, BiquadKind, DelayLine};
+use crate::dsp::{Biquad, BiquadKind, DelayLine, MAX_STAGES, butterworth_cascade};
 use crate::nodes::support::UNBOUNDED_WARMUP;
 use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
@@ -48,12 +48,6 @@ impl Slope {
         }
     }
 
-    /// The quality factor of stage `index` (0-based) of a Butterworth filter of this slope. The
-    /// last stage has the highest, and carries the resonance.
-    fn butterworth_q(self, index: usize) -> f64 {
-        let order = (self.stages() * 2) as f64;
-        1.0 / (2.0 * ((2 * index + 1) as f64 * PI / (2.0 * order)).cos())
-    }
 }
 
 /// A resonant filter with a choice of responses, running across rows and frames like an audio
@@ -80,47 +74,26 @@ pub struct Filter {
     line: DelayLine,
 }
 
-/// The most biquad stages any response uses (the 48 dB/oct slope).
-const MAX_STAGES: usize = 4;
-
 params! { Filter {
-    RESPONSE: ParamSpec::choice(
-        "response",
-        "Type",
-        Kind::OPTIONS,
-        "lowpass",
-        "lowpass, highpass, bandpass, allpass, tilt (gain dB of low-versus-high balance) or comb (echo every cutoff cycle)",
-    ),
-    SLOPE: ParamSpec::choice(
-        "slope",
-        "Slope (dB/oct)",
-        Slope::OPTIONS,
-        "12",
-        "How sharply the cut falls off past the cutoff: 6 is a gentle one-pole roll-off, 48 a brick wall",
-    )
+    RESPONSE: ParamSpec::choice("response", Kind::OPTIONS, "lowpass"),
+    SLOPE: ParamSpec::choice("slope", Slope::OPTIONS, "12")
     .shown_when("response", &["lowpass", "highpass"]),
-    CUTOFF: ParamSpec::number("cutoff", "Cutoff", 40.0, 0.01, 200.0, "Frequency of the filter's corner or centre")
+    CUTOFF: ParamSpec::number("cutoff", 40.0, 0.01, 200.0)
         .exposed()
         .limits(1e-06, 1e9),
-    UNIT: Unit::freq_param("row", "Unit for the cutoff"),
-    Q: ParamSpec::number(
-        "q",
-        "Resonance",
-        0.707,
+    UNIT: Unit::freq_param("row"),
+    Q: ParamSpec::number("q", 0.707,
         0.1,
-        20.0,
-        "Sharpness: 0.707 is flat (no resonance), higher rings or narrows. For a comb, higher repeats more. The 6 dB slope has none",
-    )
+        20.0)
     .limits(0.05, 100.0),
-    GAIN: ParamSpec::number("gain", "Gain", 0.0, -24.0, 24.0, "For tilt: dB boost of lows and cut of highs (negative reverses)")
+    GAIN: ParamSpec::number("gain", 0.0, -24.0, 24.0)
         .unit("dB")
         .limits(-48.0, 48.0),
 } }
 
 impl NodeKind for Filter {
     const KIND: &'static str = "filter";
-    const SPEC: NodeSpec = NodeSpec::new("Filter", Category::Effect)
-        .describe("A resonant low, high, band or all pass, tilt or comb filter")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
@@ -169,23 +142,12 @@ impl Filter {
         let mut sections = [Biquad::default(); MAX_STAGES];
         match self.kind {
             Kind::LowPass | Kind::HighPass => {
-                let kind = if self.kind == Kind::LowPass {
-                    BiquadKind::LowPass
-                } else {
-                    BiquadKind::HighPass
-                };
-                let stages = self.slope.stages();
-                for (i, section) in sections.iter_mut().take(stages).enumerate() {
-                    // Butterworth stages are maximally flat; the resonance scales the last,
-                    // sharpest one (so the default 0.707 is flat at every slope).
-                    let resonance = if i + 1 == stages {
-                        q / FRAC_1_SQRT_2
-                    } else {
-                        1.0
-                    };
-                    *section =
-                        Biquad::design(kind, cutoff, self.slope.butterworth_q(i) * resonance);
-                }
+                sections = butterworth_cascade(
+                    self.kind == Kind::HighPass,
+                    self.slope.stages(),
+                    cutoff,
+                    q,
+                );
             }
             Kind::BandPass => sections[0] = one(BiquadKind::BandPass),
             Kind::AllPass => sections[0] = one(BiquadKind::AllPass),

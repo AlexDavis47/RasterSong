@@ -14,6 +14,7 @@
 
 use eframe::egui::{self, Color32, CornerRadius, Rect, Response, Sense, Stroke, Ui, pos2, vec2};
 use rastersong_engine::{MODULATION_AMOUNT_LIMITS, ModMode, Modulation, ParamSpec, range_span};
+use rastersong_lang::{tr, tr_args};
 
 use crate::theme::Theme;
 use crate::value_box::ValueBox;
@@ -102,7 +103,8 @@ pub fn reset_menu(response: &Response, differs: bool) -> bool {
     egui::Popup::context_menu(response)
         .id(response.id.with("reset-menu"))
         .show(|ui| {
-            let reset = egui::Button::new("Reset to default").shortcut_text("Alt+click");
+            let reset = egui::Button::new(tr("editor.param.reset"))
+                .shortcut_text(tr("editor.shortcut.alt_click"));
             if ui.add_enabled(differs, reset).clicked() {
                 chosen = true;
                 ui.close();
@@ -155,8 +157,7 @@ pub fn param_field(
 
     let height = ui.spacing().interact_size.y;
     let (rect, track) = ui.allocate_exact_size(vec2(track_width, height), Sense::click_and_drag());
-    let track = track
-        .on_hover_text("Click or drag to set. Alt+click or right-click to reset to the default.");
+    let track = track.on_hover_text(tr("editor.param.track_help"));
     if alt_clicked(ui, &track) {
         *value = range.default;
     }
@@ -168,22 +169,23 @@ pub fn param_field(
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
             ui.set_min_width(170.0);
-            let reset = egui::Button::new("Reset to default").shortcut_text("Alt+click");
+            let reset = egui::Button::new(tr("editor.param.reset"))
+                .shortcut_text(tr("editor.shortcut.alt_click"));
             if ui.add_enabled(*value != range.default, reset).clicked() {
                 reset_value = true;
                 ui.close();
             }
             ui.separator();
-            ui.label("Slider range");
+            ui.label(tr("editor.param.slider_range"));
             ui.horizontal(|ui| {
-                ui.label("Min");
+                ui.label(tr("editor.param.min"));
                 ui.add(
                     ValueBox::new(&mut new_range.0)
                         .range(range.limits.0..=range.limits.1)
                         .speed(((shown.1 - shown.0) / 300.0).max(1e-6))
                         .max_decimals(3),
                 );
-                ui.label("Max");
+                ui.label(tr("editor.param.max"));
                 ui.add(
                     ValueBox::new(&mut new_range.1)
                         .range(range.limits.0..=range.limits.1)
@@ -192,7 +194,10 @@ pub fn param_field(
                 );
             });
             if ui
-                .add_enabled(shown != range.soft, egui::Button::new("Reset range"))
+                .add_enabled(
+                    shown != range.soft,
+                    egui::Button::new(tr("editor.param.reset_range")),
+                )
                 .clicked()
             {
                 reset_range = true;
@@ -260,10 +265,7 @@ pub fn param_field(
                 .whole(range.whole)
                 .size(vec2(value_width, height)),
         )
-        .on_hover_text(
-            "Drag, or click to type. Values beyond the slider are allowed. \
-             Alt+click or right-click to reset.",
-        );
+        .on_hover_text(tr("editor.param.value_help"));
     if reset_gesture(ui, &value_box, *value != range.default) {
         *value = range.default;
         value_box.surrender_focus();
@@ -378,37 +380,37 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated, range: (f64, f64)) -> KnobRespons
         Stroke::new(1.5, visuals.fg_stroke.color),
     );
 
-    let response = response.on_hover_text(format!(
-        "Modulation {} of the range, about {}. Drag to change, double-click or Alt+click to reset, right-click for options.",
-        amount_text(*modulation),
-        amount_effect(m.spec, *modulation, range)
+    let response = response.on_hover_text(tr_args(
+        "editor.modulation.knob_help",
+        &[
+            ("amount", &amount_text(*modulation)),
+            ("effect", &amount_effect(m.spec, *modulation, range)),
+        ],
     ));
     // Clicks inside don't close it, so its fields can be typed into.
     let menu = egui::Popup::context_menu(&response)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
     menu.show(|ui| {
         ui.set_min_width(190.0);
-        ui.label(egui::RichText::new("Modulation").strong());
+        ui.label(egui::RichText::new(tr("editor.modulation.title")).strong());
         ui.separator();
         let both = modulation.mode == ModMode::Bipolar;
         if ui
-            .radio(both, "Both ways")
-            .on_hover_text("The signal moves the value up and down around it")
+            .radio(both, tr("editor.modulation.both_ways"))
+            .on_hover_text(tr("editor.modulation.both_ways.help"))
             .clicked()
         {
             modulation.mode = ModMode::Bipolar;
         }
         if ui
-            .radio(!both, "One way")
-            .on_hover_text(
-                "The signal's strength moves the value one way; a negative amount turns it down",
-            )
+            .radio(!both, tr("editor.modulation.one_way"))
+            .on_hover_text(tr("editor.modulation.one_way.help"))
             .clicked()
         {
             modulation.mode = ModMode::Unipolar;
         }
         ui.horizontal(|ui| {
-            ui.label("Amount");
+            ui.label(tr("editor.modulation.amount"));
             ui.add(
                 ValueBox::new(&mut modulation.amount)
                     .range(AMOUNT_LIMITS.0..=AMOUNT_LIMITS.1)
@@ -416,15 +418,13 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated, range: (f64, f64)) -> KnobRespons
                     .suffix("%")
                     .max_decimals(1),
             )
-            .on_hover_text(
-                "How far a full signal moves the value, as a percentage of the slider's range.",
-            );
+            .on_hover_text(tr("editor.modulation.amount.help"));
         });
         // The same amount in the parameter's own terms, for when you know the distance you want.
         ui.horizontal(|ui| {
             ui.label(match modulation.mode {
-                ModMode::Bipolar => "Either side",
-                ModMode::Unipolar => "Moves by",
+                ModMode::Bipolar => tr("editor.modulation.either_side"),
+                ModMode::Unipolar => tr("editor.modulation.moves_by"),
             });
             let unit = if m.spec.unit.is_empty() {
                 String::new()
@@ -441,10 +441,7 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated, range: (f64, f64)) -> KnobRespons
                         .suffix(&unit)
                         .max_decimals(3),
                 )
-                .on_hover_text(
-                    "The same amount in the parameter's own unit: how far a full signal moves \
-                     the value (either side of it, both ways).",
-                )
+                .on_hover_text(tr("editor.modulation.sweep.help"))
                 .changed()
             {
                 modulation.amount = m.spec.modulation_amount_for_sweep(sweep, range);
@@ -453,7 +450,8 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated, range: (f64, f64)) -> KnobRespons
         if ui
             .add_enabled(
                 modulation.amount != default_amount,
-                egui::Button::new("Reset amount").shortcut_text("Alt+click"),
+                egui::Button::new(tr("editor.modulation.reset_amount"))
+                    .shortcut_text(tr("editor.shortcut.alt_click")),
             )
             .clicked()
         {
@@ -461,7 +459,7 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated, range: (f64, f64)) -> KnobRespons
             ui.close();
         }
         ui.separator();
-        if ui.button("Disconnect signal").clicked() {
+        if ui.button(tr("editor.modulation.disconnect")).clicked() {
             result.disconnect = true;
             ui.close();
         }
@@ -563,8 +561,8 @@ mod tests {
     #[test]
     fn amounts_read_with_their_direction_and_unit() {
         use rastersong_engine::{ModMode, Modulation, ParamSpec};
-        let feedback = ParamSpec::number("feedback", "Feedback", 0.0, 0.0, 1.0, "");
-        let bits = ParamSpec::number("bits", "Bits", 4.0, 1.0, 24.0, "").unit("bits");
+        let feedback = ParamSpec::number("feedback", 0.0, 0.0, 1.0);
+        let bits = ParamSpec::number("bits", 4.0, 1.0, 24.0).unit("bits");
         let m = |amount, mode| Modulation { amount, mode };
         assert_eq!(amount_text(m(25.0, ModMode::Bipolar)), "±25%");
         assert_eq!(amount_text(m(-12.5, ModMode::Unipolar)), "-12.5%");
@@ -597,7 +595,7 @@ mod tests {
         use egui_kittest::Harness;
         use rastersong_engine::{ModMode, Modulation, ParamSpec};
 
-        let spec = ParamSpec::number("time", "Time", 1.0, 0.0, 10.0, "");
+        let spec = ParamSpec::number("time", 1.0, 0.0, 10.0);
         let state = (
             5.0f64,
             Modulation {

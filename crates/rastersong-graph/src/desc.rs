@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use rastersong_lang::tr_args;
 use serde::{Deserialize, Serialize};
 
 use crate::GraphError;
@@ -179,9 +180,12 @@ impl GraphDesc {
         let desc: Self =
             serde_json::from_str(json).map_err(|e| GraphError::Parse(e.to_string()))?;
         if desc.version != FORMAT_VERSION {
-            return Err(GraphError::Parse(format!(
-                "unsupported graph format version {} (this build reads version {FORMAT_VERSION}; there are no migrations before 1.0)",
-                desc.version
+            return Err(GraphError::Parse(tr_args(
+                "error.graph.version",
+                &[
+                    ("version", &desc.version.to_string()),
+                    ("supported", &FORMAT_VERSION.to_string()),
+                ],
             )));
         }
         let mut desc = desc;

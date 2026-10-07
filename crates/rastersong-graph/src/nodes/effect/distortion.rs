@@ -40,40 +40,23 @@ pub struct Distortion {
 }
 
 params! { Distortion {
-    SHAPE: ParamSpec::choice(
-        "shape",
-        "Shape",
-        Shape::OPTIONS,
-        "soft",
-        "soft rounds off, hard clips flat, fold reflects loud parts back, wrap jumps from top to bottom",
-    ),
-    DRIVE: ParamSpec::number(
-        "drive",
-        "Drive",
-        12.0,
+    SHAPE: ParamSpec::choice("shape", Shape::OPTIONS, "soft"),
+    DRIVE: ParamSpec::number("drive", 12.0,
         0.0,
-        48.0,
-        "Gain before shaping; more drive, more distortion",
-    )
+        48.0)
     .unit("dB")
     .exposed()
     .limits(-96.0, 96.0),
-    BIAS: ParamSpec::number(
-        "bias",
-        "Bias",
-        0.0,
+    BIAS: ParamSpec::number("bias", 0.0,
         -1.0,
-        1.0,
-        "Offset added before shaping, for uneven distortion",
-    )
+        1.0)
     .limits(-100.0, 100.0),
     MIX: ParamSpec::mix(),
 } }
 
 impl NodeKind for Distortion {
     const KIND: &'static str = "distortion";
-    const SPEC: NodeSpec = NodeSpec::new("Distortion", Category::Effect)
-        .describe("Drives the signal into a waveshaper: soft, hard, folding or wrapping")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .per_channel()
         .expects(crate::Range::Bipolar);

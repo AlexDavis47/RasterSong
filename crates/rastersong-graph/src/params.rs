@@ -1,5 +1,6 @@
 //! Node parameters: declared once per node type, used both to read graph files and to build UIs.
 
+use rastersong_lang::tr_args;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::nodes::Choice;
@@ -10,10 +11,6 @@ use crate::{MODULATION_AMOUNT_LIMITS, ModMode, Modulation, ParamValue};
 pub struct ParamSpec {
     /// Name in graph files.
     pub name: &'static str,
-    /// Name shown to the user.
-    pub label: &'static str,
-    /// One sentence for tooltips.
-    pub help: &'static str,
     /// Unit shown after the value, e.g. "Hz". Empty for none.
     pub unit: &'static str,
     pub kind: ParamKind,
@@ -24,8 +21,9 @@ pub struct ParamSpec {
     /// Whether only whole numbers make sense (counts, divisions, steps): the slider and value box
     /// snap to them, loaded values are rounded, and a modulated value is rounded at every sample.
     pub integer: bool,
-    /// Why a signal can't modulate it (set by [`Self::fixed`]); empty when it can.
-    pub locked: &'static str,
+    /// Whether a signal is barred from modulating it (set by [`Self::fixed`]); the reason is in the
+    /// node's text, under `locked`.
+    pub locked: bool,
     /// When the parameter means something: the editor hides it (and the docs say so) while
     /// the rule fails. A hidden parameter keeps its value and still saves.
     pub when: Option<ShownWhen>,
@@ -71,18 +69,9 @@ pub enum ParamKind {
 }
 
 impl ParamSpec {
-    pub const fn number(
-        name: &'static str,
-        label: &'static str,
-        default: f64,
-        min: f64,
-        max: f64,
-        help: &'static str,
-    ) -> Self {
+    pub const fn number(name: &'static str, default: f64, min: f64, max: f64) -> Self {
         Self {
             name,
-            label,
-            help,
             unit: "",
             kind: ParamKind::Number {
                 default,
@@ -94,7 +83,7 @@ impl ParamSpec {
             modulatable: true,
             exposed: false,
             integer: false,
-            locked: "",
+            locked: false,
             when: None,
         }
     }
@@ -103,53 +92,35 @@ impl ParamSpec {
     /// only what the node made of it, and in between crossfades the two ([`crate::dsp::mix`]).
     /// Always starts at 1, fully processed.
     pub const fn mix() -> Self {
-        Self::number(
-            "mix",
-            "Mix",
-            1.0,
-            0.0,
-            1.0,
-            "0 is the dry input, 1 is only the processed signal; in between crossfades the two",
-        )
+        Self::number("mix", 1.0, 0.0, 1.0)
     }
 
     pub const fn choice(
         name: &'static str,
-        label: &'static str,
         options: &'static [&'static str],
         default: &'static str,
-        help: &'static str,
     ) -> Self {
         Self {
             name,
-            label,
-            help,
             unit: "",
             kind: ParamKind::Choice { options, default },
             modulatable: false,
             exposed: false,
             integer: false,
-            locked: "",
+            locked: false,
             when: None,
         }
     }
 
-    pub const fn text(
-        name: &'static str,
-        label: &'static str,
-        default: &'static str,
-        help: &'static str,
-    ) -> Self {
+    pub const fn text(name: &'static str, default: &'static str) -> Self {
         Self {
             name,
-            label,
-            help,
             unit: "",
             kind: ParamKind::Text { default },
             modulatable: false,
             exposed: false,
             integer: false,
-            locked: "",
+            locked: false,
             when: None,
         }
     }
@@ -184,13 +155,13 @@ impl ParamSpec {
             .is_none_or(|w| value_of(w.param).is_some_and(|v| w.values.contains(&v.as_str())))
     }
 
-    /// Can't be modulated, for the stated reason, which the editor shows on the parameter.
-    /// Modulation is the default and a lock needs a real reason: the value changes the shape of
-    /// what the graph is compiled for, say, not "nobody wrote it".
-    pub const fn fixed(mut self, reason: &'static str) -> Self {
+    /// Can't be modulated, for a reason the node's text states (`locked`), which the editor shows on
+    /// the parameter. Modulation is the default and a lock needs a real reason: the value changes
+    /// the shape of what the graph is compiled for, say, not "nobody wrote it".
+    pub const fn fixed(mut self) -> Self {
         self.modulatable = false;
         self.exposed = false;
-        self.locked = reason;
+        self.locked = true;
         self
     }
 
@@ -358,7 +329,7 @@ impl<'a> Params<'a> {
     ) -> Result<Self, String> {
         let known: BTreeSet<&str> = specs.iter().map(|s| s.name).collect();
         if let Some(unknown) = values.keys().find(|k| !known.contains(k.as_str())) {
-            return Err(format!("unknown parameter `{unknown}`"));
+            return Err(tr_args("error.param.unknown", &[("name", unknown)]));
         }
         Ok(Self { specs, values })
     }
@@ -404,13 +375,25 @@ impl<'a> Params<'a> {
             Some(ParamValue::Number(n)) if n.is_finite() && (limit_min..=limit_max).contains(n) => {
                 Ok(*n)
             }
-            Some(ParamValue::Number(n)) if limit_min.is_finite() || limit_max.is_finite() => Err(
-                format!("`{name}` must be between {limit_min} and {limit_max}, got {n}"),
-            ),
-            Some(ParamValue::Number(n)) => {
-                Err(format!("`{name}` must be a finite number, got {n}"))
+            Some(ParamValue::Number(n)) if limit_min.is_finite() || limit_max.is_finite() => {
+                Err(tr_args(
+                    "error.param.between",
+                    &[
+                        ("name", name),
+                        ("min", &limit_min.to_string()),
+                        ("max", &limit_max.to_string()),
+                        ("got", &n.to_string()),
+                    ],
+                ))
             }
-            Some(other) => Err(format!("`{name}` must be a number, got {other:?}")),
+            Some(ParamValue::Number(n)) => Err(tr_args(
+                "error.param.finite",
+                &[("name", name), ("got", &n.to_string())],
+            )),
+            Some(other) => Err(tr_args(
+                "error.param.number",
+                &[("name", name), ("got", &format!("{other:?}"))],
+            )),
         }
     }
 
@@ -427,13 +410,25 @@ impl<'a> Params<'a> {
         };
         match self.values.get(name) {
             None => Ok(default),
-            Some(ParamValue::Text(s)) => options
-                .iter()
-                .find(|&&o| o == s)
-                .copied()
-                .ok_or_else(|| format!("`{name}` must be one of {options:?}, got {s:?}")),
-            Some(other) => Err(format!(
-                "`{name}` must be one of {options:?}, got {other:?}"
+            Some(ParamValue::Text(s)) => {
+                options.iter().find(|&&o| o == s).copied().ok_or_else(|| {
+                    tr_args(
+                        "error.param.choice",
+                        &[
+                            ("name", name),
+                            ("options", &format!("{options:?}")),
+                            ("got", &format!("{s:?}")),
+                        ],
+                    )
+                })
+            }
+            Some(other) => Err(tr_args(
+                "error.param.choice",
+                &[
+                    ("name", name),
+                    ("options", &format!("{options:?}")),
+                    ("got", &format!("{other:?}")),
+                ],
             )),
         }
     }
@@ -443,9 +438,9 @@ impl<'a> Params<'a> {
     pub fn choice_as<E: Choice>(&self, index: usize) -> Result<E, String> {
         let option = self.choice_at(index)?;
         E::from_option(option).ok_or_else(|| {
-            format!(
-                "`{}` option `{option}` has no matching variant",
-                self.specs[index].name
+            tr_args(
+                "error.param.no_variant",
+                &[("name", self.specs[index].name), ("option", option)],
             )
         })
     }
@@ -459,7 +454,10 @@ impl<'a> Params<'a> {
         match self.values.get(name) {
             None => Ok(default.to_owned()),
             Some(ParamValue::Text(s)) => Ok(s.clone()),
-            Some(other) => Err(format!("`{name}` must be text, got {other:?}")),
+            Some(other) => Err(tr_args(
+                "error.param.text",
+                &[("name", name), ("got", &format!("{other:?}"))],
+            )),
         }
     }
 }
@@ -469,11 +467,11 @@ mod tests {
     use super::*;
 
     const SPECS: &[ParamSpec] = &[
-        ParamSpec::number("time", "Time", 1.0, 0.0, 10.0, ""),
-        ParamSpec::number("gain", "Gain", 0.0, -1.0, 1.0, "").limits(-10.0, 10.0),
-        ParamSpec::number("depth", "Depth", 0.0, -1.0, 1.0, "").unbounded(),
-        ParamSpec::choice("unit", "Unit", &["rows", "frames"], "rows", ""),
-        ParamSpec::text("source", "Source", "video", ""),
+        ParamSpec::number("time", 1.0, 0.0, 10.0),
+        ParamSpec::number("gain", 0.0, -1.0, 1.0).limits(-10.0, 10.0),
+        ParamSpec::number("depth", 0.0, -1.0, 1.0).unbounded(),
+        ParamSpec::choice("unit", &["rows", "frames"], "rows"),
+        ParamSpec::text("source", "video"),
     ];
 
     fn values(json: &str) -> BTreeMap<String, ParamValue> {
@@ -511,7 +509,7 @@ mod tests {
 
     #[test]
     fn modulation_is_a_percentage_of_the_slider_range() {
-        let spec = ParamSpec::number("time", "Time", 1.0, 0.0, 10.0, "");
+        let spec = ParamSpec::number("time", 1.0, 0.0, 10.0);
         let range = spec.usual_range();
         let both = |amount| Modulation {
             amount,
@@ -547,7 +545,7 @@ mod tests {
             spec.modulated_range(5.0, both(100.0), (2.0, 6.0)),
             (2.0, 6.0)
         );
-        let wide = ParamSpec::number("t", "T", 1.0, 0.0, 10.0, "").limits(-100.0, 100.0);
+        let wide = ParamSpec::number("t", 1.0, 0.0, 10.0).limits(-100.0, 100.0);
         assert_eq!(
             wide.modulated_range(50.0, both(40.0), range),
             (46.0, 50.0),

@@ -9,18 +9,17 @@ pub struct Clamp {
 }
 
 params! { Clamp {
-    MIN: ParamSpec::number("min", "Min", 0.0, -1.0, 1.0, "Samples below this are raised to it")
+    MIN: ParamSpec::number("min", 0.0, -1.0, 1.0)
         .exposed()
         .limits(-100.0, 100.0),
-    MAX: ParamSpec::number("max", "Max", 1.0, -1.0, 1.0, "Samples above this are lowered to it")
+    MAX: ParamSpec::number("max", 1.0, -1.0, 1.0)
         .exposed()
         .limits(-100.0, 100.0),
 } }
 
 impl NodeKind for Clamp {
     const KIND: &'static str = "clamp";
-    const SPEC: NodeSpec = NodeSpec::new("Clamp", Category::Effect)
-        .describe("Limits every sample to a range")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[

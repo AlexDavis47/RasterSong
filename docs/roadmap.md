@@ -151,7 +151,7 @@ Renames, merges, splits and removals need **no migration** while the format is v
 
 ### Text and localization
 
-- [ ] **chore** Move all user-facing text into **lang files** so locale and wording can be changed without touching
+- [x] **chore** Move all user-facing text into **lang files** (done: see [Text and languages](text.md)) so locale and wording can be changed without touching
   code. Covers: node labels, descriptions, parameter labels and help text, port help, choice labels, menu and
   button text, tooltips, notes and warnings, dialogs and errors. Proposed shape: a string table keyed by stable ids
   (`node.delay.label`, `node.delay.param.time.help`, `ui.timeline.loop`), `en` embedded at build time as the
@@ -160,7 +160,7 @@ Renames, merges, splits and removals need **no migration** while the format is v
   in step. Evaluate Fluent against a simple key/value format first (plurals and units need some formatting;
   keep it as small as that allows). Do this early: every new string in this roadmap should go in a lang file from
   the start.
-- [ ] **chore** Settings page picks the language (see [Project and settings](#project-and-settings)).
+- [x] **chore** Settings page picks the language (see [Project and settings](#project-and-settings)).
 
 ---
 
@@ -169,7 +169,7 @@ Renames, merges, splits and removals need **no migration** while the format is v
 - [ ] **feature** **Settings page.** A real Settings window (File → Settings, and a toolbar button) so hidden
   settings can be exposed. *Partly done:* the window (File → Settings…, Ctrl+,), its Application and Project pages
   and the settings that already existed (theme, wire style, node stats, keep connections, tempo, audio rate) are in;
-  what is left is language, cache budget, render-ahead, default tool, the toolbar button and
+  what is left is cache budget, render-ahead, default tool, the toolbar button and
   the per-setting reset. Two scopes, clearly separated:
   - *Application* (remembered between sessions, not in project files): theme, wire style, language, default
     preview resolution, cache budget (1 GiB today), render-ahead window (10 s today), default tool, keep input
@@ -344,7 +344,7 @@ and a regenerated `nodes.md`.
   - [ ] **feature** Analogue-style types: tube, diode and tape, each with its own transfer curve and
     harmonic character. Needs oversampling or a note about aliasing at low signal rates.
 - **Envelope / Slew**
-  - [ ] **chore** Investigate. Envelope (detector + attack/release, `peak` or `rms`) and Slew (rise/fall rate
+  - [x] **chore** Investigated: they differ (Envelope follows magnitude, Slew limits the signal's own rate), so both stay with cross-referencing descriptions and shared attack/release code (`dsp::AttackRelease`). Original note: Envelope (detector + attack/release, `peak` or `rms`) and Slew (rise/fall rate
     limit) look like the same effect except for RMS. If they are, combine into one node (keeping RMS) and remove
     the other. If they differ (slew limits the signal's own rate; envelope follows its magnitude), document the
     difference in both descriptions and share the smoothing code. Either way it is one smoothing implementation.
@@ -382,7 +382,7 @@ and a regenerated `nodes.md`.
 
 ### Cross-cutting node items
 
-- [ ] **chore** Every node's unit parameter uses the one `Unit` ([Units](#units-and-parameter-semantics)).
+- [x] **chore** Every node's unit parameter uses the one `Unit` (guard test `every_unit_parameter_offers_the_shared_units`) ([Units](#units-and-parameter-semantics)).
 - [x] **chore** Every node with a dry/wet `mix` uses the one shared definition
   ([Units and parameter semantics](#units-and-parameter-semantics)).
 - [ ] **feature** Add nodes only after the foundations are in, so new nodes use integer and conditional parameters
@@ -396,17 +396,17 @@ and a regenerated `nodes.md`.
 
 The aim: one implementation per idea, so fixes and features land in one place. Known candidates to consolidate:
 
-- [ ] **chore** **Units.** One `Unit` enum and one label set in `nodes/support.rs`, used by every node.
+- [x] **chore** **Units.** One `Unit` enum and one label set in `nodes/support.rs`, used by every node.
 - [ ] **chore** **Filters.** Filter, Three-Band Split, Equalizer, DC Filter, the Chorus/Flanger/Phaser filtering and
   Low Pass share one biquad / cascaded-stage implementation in `dsp.rs`, with slope and Q designs in one place.
-- [ ] **chore** **Level detectors and smoothers.** Envelope, Slew, Compressor, Gate, Limiter and the sidechain
+- [x] **chore** **Level detectors and smoothers** (`dsp::AttackRelease`; Slew is a linear rate limiter and keeps its own).** Envelope, Slew, Compressor, Gate, Limiter and the sidechain
   share one detector (peak/RMS, attack/release) and one smoother in `dsp.rs`.
 - [ ] **chore** **Layout and generators.** One shared generator layout setting (see above).
 - [x] **chore** **Dry/wet.** One shared `mix` definition and helper, not a copy per node.
 - [ ] **chore** **Inspector widgets.** One slider+value-box, one integer field, one choice control, one tooltip
   helper, one meter, one number formatter. No widget re-implements these. The inspector, the timeline and the
   editor use the same ones.
-- [ ] **chore** **Text.** All strings from lang files (see [Text and localization](#text-and-localization)); no
+- [x] **chore** **Text.** All strings from lang files (see [Text and localization](#text-and-localization)); no
   string literals in widgets.
 - [ ] **chore** **Stretch.** One "stretch a signal to the project size" implementation, shared by the Stretch node,
   Video Output and the Look tool.

@@ -291,7 +291,10 @@ fn locked_numbers_state_a_reason() {
                 continue;
             }
             assert!(
-                spec.locked.len() > 20 && !spec.locked.contains("TODO"),
+                {
+                    let reason = t.param_locked(spec);
+                    reason.len() > 20 && !reason.contains("TODO")
+                },
                 "{}.{} is locked without a reason",
                 t.kind,
                 spec.name
@@ -337,14 +340,17 @@ fn shown_when_rules_point_at_real_choices() {
 }
 
 /// Every `mix` is the shared dry/wet definition (`ParamSpec::mix`), so none can drift in range,
-/// default or wording, and each is a plain 0 to 1 number that starts fully wet.
+/// default or wording (no node has its own `mix` text), and each is a plain 0 to 1 number that starts
+/// fully wet.
 #[test]
 fn every_mix_is_the_shared_definition() {
     for t in Registry::shared().types() {
         for spec in t.spec.params.iter().filter(|s| s.name == "mix") {
             let shared = ParamSpec::mix();
             assert!(
-                spec.kind == shared.kind && spec.label == shared.label && spec.help == shared.help,
+                spec.kind == shared.kind
+                    && rastersong_lang::try_tr(&format!("node.{}.param.mix.label", t.kind))
+                        .is_none(),
                 "{}.mix is not ParamSpec::mix()",
                 t.kind
             );
@@ -406,4 +412,59 @@ fn modulatable_numbers_have_a_span_to_take_a_percentage_of() {
         }
     }
     assert!(problems.is_empty(), "no span to modulate: {problems:?}");
+}
+
+/// Every `unit` parameter offers the one list of units (`Unit`), so no node can grow its own list
+/// or its own wording.
+#[test]
+fn every_unit_parameter_offers_the_shared_units() {
+    let mut shared: Option<&'static [&'static str]> = None;
+    let mut count = 0;
+    for t in Registry::shared().types() {
+        for spec in t.spec.params.iter().filter(|s| s.name == "unit") {
+            let ParamKind::Choice { options, .. } = spec.kind else {
+                panic!("{}.unit is not a choice", t.kind);
+            };
+            count += 1;
+            assert_eq!(
+                *shared.get_or_insert(options),
+                options,
+                "{}.unit has its own list of units",
+                t.kind
+            );
+        }
+    }
+    assert!(count > 10, "only {count} unit parameters found");
+}
+
+/// The lang files hold every node's text and nothing stale: each node, port and parameter has its
+/// entries, and no `node.*` key names something that no longer exists.
+#[test]
+fn the_lang_files_cover_every_node() {
+    let english: std::collections::HashSet<String> =
+        rastersong_lang::english_keys().into_iter().collect();
+    let mut expected = std::collections::HashSet::new();
+    let mut missing = Vec::new();
+    for t in Registry::shared().types() {
+        for key in t.text_keys() {
+            // A parameter may fall back to the shared entry for its name (`param.mix.*`).
+            let shared = key
+                .split_once(".param.")
+                .map(|(_, rest)| format!("param.{rest}"));
+            if !english.contains(&key) && !shared.is_some_and(|k| english.contains(&k)) {
+                missing.push(key.clone());
+            }
+            expected.insert(key);
+        }
+        expected.insert(format!("node.{}.doc", t.kind));
+    }
+    assert!(missing.is_empty(), "no English text for: {missing:#?}");
+    let stale: Vec<_> = english
+        .iter()
+        .filter(|k| k.starts_with("node.") && !expected.contains(*k))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "text for things that no longer exist: {stale:#?}"
+    );
 }

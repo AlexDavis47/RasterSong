@@ -15,12 +15,11 @@ params! { ToVideo {
 
 impl NodeKind for ToVideo {
     const KIND: &'static str = "to_video";
-    const SPEC: NodeSpec = NodeSpec::new("Audio to Video", Category::Convert)
-        .describe("Audio's -1 to 1 back to video's 0 to 1, as read from an 8-bit file")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Convert)
         .params(Self::PARAMS)
-        .inputs(&[InputSpec::required("in", "Audio, with values from -1 to 1")])
+        .inputs(&[InputSpec::required("in")])
         .outputs(&[
-            OutputSpec::new("out", "The same samples as video, from 0 to 1").tag(TagRule::VIDEO),
+            OutputSpec::new("out").tag(TagRule::VIDEO),
         ]);
     const TEST_CONFIGS: &'static [&'static str] =
         &[r#"{ "mapping": "bugged" }"#, r#"{ "mapping": "accurate" }"#];

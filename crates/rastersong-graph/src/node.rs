@@ -7,25 +7,21 @@ use crate::{Layout, Signal, TagRule};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InputSpec {
     pub name: &'static str,
-    /// One sentence for tooltips and the generated reference.
-    pub help: &'static str,
     /// Optional inputs that aren't connected receive silence (all zeros) at the main input's length.
     pub required: bool,
 }
 
 impl InputSpec {
-    pub const fn required(name: &'static str, help: &'static str) -> Self {
+    pub const fn required(name: &'static str) -> Self {
         Self {
             name,
-            help,
             required: true,
         }
     }
 
-    pub const fn optional(name: &'static str, help: &'static str) -> Self {
+    pub const fn optional(name: &'static str) -> Self {
         Self {
             name,
-            help,
             required: false,
         }
     }
@@ -35,8 +31,6 @@ impl InputSpec {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OutputSpec {
     pub name: &'static str,
-    /// One sentence for tooltips and the generated reference.
-    pub help: &'static str,
     /// How the output's [`crate::Tag`] is set from what the node produced. Whatever the rule
     /// leaves open comes from the node (by default its main input), so a delay on the red channel
     /// is still red video.
@@ -45,10 +39,9 @@ pub struct OutputSpec {
 
 impl OutputSpec {
     /// An output that carries whatever the node's main input carries.
-    pub const fn new(name: &'static str, help: &'static str) -> Self {
+    pub const fn new(name: &'static str) -> Self {
         Self {
             name,
-            help,
             tag: TagRule::INHERIT,
         }
     }

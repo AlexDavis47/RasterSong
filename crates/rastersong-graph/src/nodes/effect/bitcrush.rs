@@ -9,22 +9,16 @@ pub struct Bitcrush {
 }
 
 params! { Bitcrush {
-    BITS: ParamSpec::number(
-        "bits",
-        "Bits",
-        4.0,
+    BITS: ParamSpec::number("bits", 4.0,
         1.0,
-        24.0,
-        "Bit depth; fewer bits means fewer levels",
-    )
+        24.0)
     .exposed()
     .unit("bits"),
 } }
 
 impl NodeKind for Bitcrush {
     const KIND: &'static str = "bitcrush";
-    const SPEC: NodeSpec = NodeSpec::new("Bit Crush", Category::Effect)
-        .describe("Reduces bit depth, posterizing the image")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[r#"{ "bits": 3 }"#, r#"{ "bits": 1.5 }"#];

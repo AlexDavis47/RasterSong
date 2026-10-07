@@ -1,4 +1,4 @@
-use crate::dsp::{db_to_gain, gain_to_db, smoothing_coefficient};
+use crate::dsp::{AttackRelease, db_to_gain, gain_to_db};
 use crate::nodes::support::settle_frames;
 use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{InputSpec, Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
@@ -18,8 +18,7 @@ pub struct Compressor {
     knee: f64,
     makeup: f64,
     /// Set in `prepare`.
-    attack: f64,
-    release: f64,
+    times: AttackRelease,
     /// Samples in one `unit`.
     unit_samples: f64,
     /// The slowest attack or release modulation can reach, in samples, for warmup.
@@ -30,78 +29,44 @@ pub struct Compressor {
 }
 
 params! { Compressor {
-    THRESHOLD: ParamSpec::number(
-        "threshold",
-        "Threshold",
-        -18.0,
+    THRESHOLD: ParamSpec::number("threshold", -18.0,
         -60.0,
-        0.0,
-        "Level above which the signal is turned down",
-    )
+        0.0)
     .unit("dB")
     .exposed()
     .limits(-200.0, 60.0),
-    RATIO: ParamSpec::number(
-        "ratio",
-        "Ratio",
-        4.0,
+    RATIO: ParamSpec::number("ratio", 4.0,
         1.0,
-        20.0,
-        "How much is taken off above the threshold: 4 lets 1 dB through for every 4 dB over",
-    )
+        20.0)
     .limits(1.0, 1000.0),
-    ATTACK: ParamSpec::number(
-        "attack",
-        "Attack",
-        10.0,
+    ATTACK: ParamSpec::number("attack", 10.0,
         0.01,
-        1000.0,
-        "How quickly the compressor turns the signal down once it goes over",
-    )
+        1000.0)
     .limits(0.0, 1e6),
-    RELEASE: ParamSpec::number(
-        "release",
-        "Release",
-        100.0,
+    RELEASE: ParamSpec::number("release", 100.0,
         0.1,
-        5000.0,
-        "How quickly it lets go once the signal falls back",
-    )
+        5000.0)
     .limits(0.0, 1e6),
-    UNIT: Unit::time_param("ms", "Unit for attack and release"),
-    KNEE: ParamSpec::number(
-        "knee",
-        "Knee",
-        6.0,
+    UNIT: Unit::time_param("ms"),
+    KNEE: ParamSpec::number("knee", 6.0,
         0.0,
-        24.0,
-        "Width of the soft transition around the threshold; 0 is a hard knee",
-    )
+        24.0)
     .unit("dB")
     .limits(0.0, 100.0),
-    MAKEUP: ParamSpec::number(
-        "makeup",
-        "Makeup",
-        0.0,
+    MAKEUP: ParamSpec::number("makeup", 0.0,
         -24.0,
-        24.0,
-        "Gain applied after compression",
-    )
+        24.0)
     .unit("dB")
     .limits(-96.0, 96.0),
 } }
 
 impl NodeKind for Compressor {
     const KIND: &'static str = "compressor";
-    const SPEC: NodeSpec = NodeSpec::new("Compressor", Category::Effect)
-        .describe("Turns loud parts down, following the input or a sidechain")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .inputs(&[
-            InputSpec::required("in", "The signal to compress"),
-            InputSpec::optional(
-                "sidechain",
-                "A signal whose level drives the compression instead of the input's own",
-            ),
+            InputSpec::required("in"),
+            InputSpec::optional("sidechain"),
         ])
         .per_channel()
         .expects(crate::Range::Bipolar);
@@ -121,8 +86,7 @@ impl NodeKind for Compressor {
             unit: params.choice_as(Self::UNIT)?,
             knee: params.number_at(Self::KNEE)?,
             makeup: params.number_at(Self::MAKEUP)?,
-            attack: 0.0,
-            release: 0.0,
+            times: AttackRelease::default(),
             unit_samples: 1.0,
             slowest_samples: 0.0,
             sidechain: false,
@@ -149,18 +113,12 @@ impl Compressor {
             0.0
         }
     }
-
-    /// The smoothing coefficient for a time of `time` in `unit`.
-    fn coefficient(&self, time: f64) -> f64 {
-        smoothing_coefficient(time * self.unit_samples)
-    }
 }
 
 impl Node for Compressor {
     fn prepare(&mut self, ctx: &PrepareContext) {
         self.unit_samples = self.unit.samples(ctx);
-        self.attack = self.coefficient(self.attack_time);
-        self.release = self.coefficient(self.release_time);
+        self.times = AttackRelease::new(self.attack_time, self.release_time, self.unit_samples);
         self.slowest_samples = ctx
             .param_max(Self::ATTACK, self.attack_time)
             .max(ctx.param_max(Self::RELEASE, self.release_time))
@@ -196,9 +154,9 @@ impl Node for Compressor {
             );
             // More reduction is the attack; less is the release.
             let c = if target < reduction {
-                attack.map_or(self.attack, |a| self.coefficient(f64::from(a[i])))
+                self.times.attack(attack, i)
             } else {
-                release.map_or(self.release, |r| self.coefficient(f64::from(r[i])))
+                self.times.release(release, i)
             };
             reduction = target + c * (reduction - target);
             *out = (f64::from(x) * db_to_gain(reduction + makeup.at64(i))) as f32;

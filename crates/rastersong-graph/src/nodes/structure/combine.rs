@@ -1,3 +1,4 @@
+use rastersong_lang::{tr_args};
 use crate::nodes::{CHANNEL_PORTS, COMBINE, Category, NodeKind, NodeSpec};
 use crate::{
     Diagnostic, InputSpec, Layout, LayoutContext, Node, OutputSpec, Params, Part, ProcessContext,
@@ -12,20 +13,18 @@ pub struct Combine;
 
 impl NodeKind for Combine {
     const KIND: &'static str = COMBINE;
-    const SPEC: NodeSpec = NodeSpec::new("Combine Channels", Category::Structure)
-        .describe("Separate signals into one interleaved signal: R, G, B into RGB, or L, R into stereo")
-        .doc("Each connected input becomes one channel of the output, in order. The first input sets the size; the others are stretched to it. Three channels of video make RGB; two of audio make stereo.")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Structure)
         .inputs(&[
-            InputSpec::required(CHANNEL_PORTS[0], "Channel 1: red, or left. Sets the size"),
-            InputSpec::optional(CHANNEL_PORTS[1], "Channel 2: green, or right"),
-            InputSpec::optional(CHANNEL_PORTS[2], "Channel 3: blue"),
-            InputSpec::optional(CHANNEL_PORTS[3], "Channel 4"),
-            InputSpec::optional(CHANNEL_PORTS[4], "Channel 5"),
-            InputSpec::optional(CHANNEL_PORTS[5], "Channel 6"),
-            InputSpec::optional(CHANNEL_PORTS[6], "Channel 7"),
-            InputSpec::optional(CHANNEL_PORTS[7], "Channel 8"),
+            InputSpec::required(CHANNEL_PORTS[0]),
+            InputSpec::optional(CHANNEL_PORTS[1]),
+            InputSpec::optional(CHANNEL_PORTS[2]),
+            InputSpec::optional(CHANNEL_PORTS[3]),
+            InputSpec::optional(CHANNEL_PORTS[4]),
+            InputSpec::optional(CHANNEL_PORTS[5]),
+            InputSpec::optional(CHANNEL_PORTS[6]),
+            InputSpec::optional(CHANNEL_PORTS[7]),
         ])
-        .outputs(&[OutputSpec::new("out", "The channels interleaved, pixel by pixel")
+        .outputs(&[OutputSpec::new("out")
             .tag(TagRule::INHERIT.part(Part::Whole))]);
 
     fn new(_: &Params) -> Result<Self, String> {
@@ -59,9 +58,14 @@ impl Node for Combine {
             .skip(1)
             .filter(|&(_, (layout, &connected))| connected && !layout.same_shape(&first))
             .map(|(i, (layout, _))| {
-                Diagnostic::note(format!(
-                    "{} is {layout}, so it's stretched to fit {}'s {first}.",
-                    CHANNEL_PORTS[i], CHANNEL_PORTS[0]
+                Diagnostic::note(tr_args(
+                    "diagnostic.combine.stretched",
+                    &[
+                        ("port", CHANNEL_PORTS[i]),
+                        ("layout", &layout.to_string()),
+                        ("first_port", CHANNEL_PORTS[0]),
+                        ("first", &first.to_string()),
+                    ],
                 ))
             })
             .collect()

@@ -5,6 +5,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::theme::{ThemeChoice, WireStyle};
 
+/// Where other languages are looked for: a `lang` folder next to the program.
+pub fn locale_dir() -> std::path::PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("lang")))
+        .unwrap_or_else(|| std::path::PathBuf::from("lang"))
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -20,6 +28,9 @@ pub struct Settings {
     pub metronome: bool,
     /// Duplicate and Paste connect the new nodes to the sources of the originals.
     pub keep_connections: bool,
+    /// The language of the interface: a folder of `.lang` files in the program's `lang` folder, or
+    /// `en` for the text built in.
+    pub language: String,
 }
 
 impl Default for Settings {
@@ -32,6 +43,7 @@ impl Default for Settings {
             volume: 0.8,
             metronome: false,
             keep_connections: true,
+            language: rastersong_lang::ENGLISH_CODE.to_owned(),
         }
     }
 }
@@ -46,6 +58,14 @@ impl Settings {
 
     pub fn set_preview_scale(&mut self, scale: PreviewScale) {
         self.preview_divisor = scale.divisor();
+    }
+
+    /// Switches the interface to `language`, falling back to English when it can't be loaded.
+    pub fn apply_language(&mut self) {
+        if rastersong_lang::set_locale(&self.language, &locale_dir()).is_err() {
+            self.language = rastersong_lang::ENGLISH_CODE.to_owned();
+            let _ = rastersong_lang::set_locale(rastersong_lang::ENGLISH_CODE, &locale_dir());
+        }
     }
 }
 

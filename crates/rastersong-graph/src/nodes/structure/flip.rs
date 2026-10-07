@@ -21,19 +21,12 @@ pub struct Flip {
 }
 
 params! { Flip {
-    MODE: ParamSpec::choice(
-        "mode",
-        "Mode",
-        Mode::OPTIONS,
-        "horizontal",
-        "horizontal mirrors each row, vertical turns the rows upside down, reverse does both, ",
-    ),
+    MODE: ParamSpec::choice("mode", Mode::OPTIONS, "horizontal"),
 } }
 
 impl NodeKind for Flip {
     const KIND: &'static str = "flip";
-    const SPEC: NodeSpec = NodeSpec::new("Flip", Category::Structure)
-        .describe("Mirrors or turns over the picture")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Structure)
         .params(Self::PARAMS);
 
     fn new(params: &Params) -> Result<Self, String> {

@@ -54,26 +54,20 @@ pub struct Blend {
 }
 
 params! { Blend {
-    MODE: ParamSpec::choice("mode", "Mode", Mode::OPTIONS, "add", "How `a` and `b` are combined"),
-    AMOUNT: ParamSpec::number(
-        "amount",
-        "Amount",
-        1.0,
+    MODE: ParamSpec::choice("mode", Mode::OPTIONS, "add"),
+    AMOUNT: ParamSpec::number("amount", 1.0,
         0.0,
-        1.0,
-        "0 passes `a` through, 1 is the full blend",
-    )
+        1.0)
     .exposed(),
 } }
 
 impl NodeKind for Blend {
     const KIND: &'static str = "blend";
-    const SPEC: NodeSpec = NodeSpec::new("Blend", Category::Effect)
-        .describe("Combines two signals: add, multiply, screen, difference and more")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .inputs(&[
-            InputSpec::required("a", "The base signal"),
-            InputSpec::required("b", "The signal blended onto the base"),
+            InputSpec::required("a"),
+            InputSpec::required("b"),
         ])
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[

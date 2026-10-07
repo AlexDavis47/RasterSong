@@ -1,3 +1,4 @@
+use rastersong_lang::{tr, tr_args};
 use crate::nodes::{CHANNEL_PORTS, Category, MAX_CHANNELS, NodeKind, NodeSpec, SPLIT};
 use crate::{
     Diagnostic, InputSpec, Layout, LayoutContext, Node, OutputSpec, Params, Part, ProcessContext,
@@ -10,26 +11,24 @@ use crate::{
 #[derive(Debug)]
 pub struct Split;
 
-const fn channel(name: &'static str, help: &'static str) -> OutputSpec {
+const fn channel(name: &'static str) -> OutputSpec {
     // A split-off channel is a part of the whole; which one comes from the input's tag.
-    OutputSpec::new(name, help).tag(TagRule::INHERIT)
+    OutputSpec::new(name).tag(TagRule::INHERIT)
 }
 
 impl NodeKind for Split {
     const KIND: &'static str = SPLIT;
-    const SPEC: NodeSpec = NodeSpec::new("Split Channels", Category::Structure)
-        .describe("Each channel of an interleaved signal on its own: R, G, B of video or L, R of stereo")
-        .doc("One output per channel of the input: three for RGB video, two for stereo audio. Outputs past the input's channel count carry silence.")
-        .inputs(&[InputSpec::required("in", "The interleaved signal to take apart")])
+    const SPEC: NodeSpec = NodeSpec::new(Category::Structure)
+        .inputs(&[InputSpec::required("in")])
         .outputs(&[
-            channel(CHANNEL_PORTS[0], "Channel 1: red, or left"),
-            channel(CHANNEL_PORTS[1], "Channel 2: green, or right"),
-            channel(CHANNEL_PORTS[2], "Channel 3: blue"),
-            channel(CHANNEL_PORTS[3], "Channel 4"),
-            channel(CHANNEL_PORTS[4], "Channel 5"),
-            channel(CHANNEL_PORTS[5], "Channel 6"),
-            channel(CHANNEL_PORTS[6], "Channel 7"),
-            channel(CHANNEL_PORTS[7], "Channel 8"),
+            channel(CHANNEL_PORTS[0]),
+            channel(CHANNEL_PORTS[1]),
+            channel(CHANNEL_PORTS[2]),
+            channel(CHANNEL_PORTS[3]),
+            channel(CHANNEL_PORTS[4]),
+            channel(CHANNEL_PORTS[5]),
+            channel(CHANNEL_PORTS[6]),
+            channel(CHANNEL_PORTS[7]),
         ]);
 
     fn new(_: &Params) -> Result<Self, String> {
@@ -57,11 +56,13 @@ impl Node for Split {
     fn diagnostics(&self, ctx: &LayoutContext) -> Vec<Diagnostic> {
         let channels = ctx.inputs[0].samples_per_pixel as usize;
         match channels {
-            1 => vec![Diagnostic::note(
-                "The input has one channel, so only c1 carries a signal.",
-            )],
-            n if n > MAX_CHANNELS => vec![Diagnostic::warning(format!(
-                "The input has {n} channels; only the first {MAX_CHANNELS} are split off."
+            1 => vec![Diagnostic::note(tr("diagnostic.split.one_channel"))],
+            n if n > MAX_CHANNELS => vec![Diagnostic::warning(tr_args(
+                "diagnostic.split.too_many",
+                &[
+                    ("count", &n.to_string()),
+                    ("max", &MAX_CHANNELS.to_string()),
+                ],
             ))],
             _ => Vec::new(),
         }

@@ -1,4 +1,4 @@
-use crate::dsp::{db_to_gain, smoothing_coefficient};
+use crate::dsp::{AttackRelease, db_to_gain};
 use crate::nodes::support::settle_frames;
 use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
@@ -15,39 +15,28 @@ pub struct Limiter {
     /// Samples in one unit, and the release smoothing coefficient of the constant time: set in
     /// `prepare`.
     unit_samples: f64,
-    coefficient: f32,
+    times: AttackRelease,
     slowest: f64,
     gain: f32,
 }
 
 params! { Limiter {
-    CEILING: ParamSpec::number(
-        "ceiling",
-        "Ceiling",
-        -6.0,
+    CEILING: ParamSpec::number("ceiling", -6.0,
         -48.0,
-        0.0,
-        "The loudest any sample may get: 0 dB is full scale, 1.0",
-    )
+        0.0)
     .unit("dB")
     .exposed()
     .limits(-120.0, 24.0),
-    RELEASE: ParamSpec::number(
-        "release",
-        "Release",
-        50.0,
+    RELEASE: ParamSpec::number("release", 50.0,
         0.0,
-        1000.0,
-        "How slowly the gain recovers after a peak; longer is smoother",
-    )
+        1000.0)
     .limits(0.0, 1e6),
-    UNIT: Unit::time_param("ms", "Unit for the release"),
+    UNIT: Unit::time_param("ms"),
 } }
 
 impl NodeKind for Limiter {
     const KIND: &'static str = "limiter";
-    const SPEC: NodeSpec = NodeSpec::new("Limiter", Category::Effect)
-        .describe("Stops the signal from passing a ceiling by pulling the gain down")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .per_channel()
         .expects(crate::Range::Bipolar);
@@ -64,7 +53,7 @@ impl NodeKind for Limiter {
             release: params.number_at(Self::RELEASE)?,
             unit: params.choice_as(Self::UNIT)?,
             unit_samples: 1.0,
-            coefficient: 0.0,
+            times: AttackRelease::default(),
             slowest: 0.0,
             gain: 1.0,
         })
@@ -74,7 +63,7 @@ impl NodeKind for Limiter {
 impl Node for Limiter {
     fn prepare(&mut self, ctx: &PrepareContext) {
         self.unit_samples = self.unit.samples(ctx);
-        self.coefficient = smoothing_coefficient(self.release * self.unit_samples) as f32;
+        self.times = AttackRelease::new(0.0, self.release, self.unit_samples);
         // About 7 time constants to recover to within 0.1%, at the slowest the release gets.
         self.slowest = 7.0 * ctx.param_max(Self::RELEASE, self.release) * self.unit_samples;
     }
@@ -88,9 +77,7 @@ impl Node for Limiter {
             let peak = x.abs();
             let allowed = if peak > ceiling { ceiling / peak } else { 1.0 };
             // Recover toward 1, but never above what this sample allows.
-            let coefficient = release.map_or(self.coefficient, |r| {
-                smoothing_coefficient(f64::from(r[i]).max(0.0) * self.unit_samples) as f32
-            });
+            let coefficient = self.times.release(release, i) as f32;
             let recovered = 1.0 + (gain - 1.0) * coefficient;
             gain = recovered.min(allowed);
             *out = x * gain;

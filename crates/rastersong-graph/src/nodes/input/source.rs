@@ -36,21 +36,15 @@ impl Source {
 pub struct VideoInput(Source);
 
 params! { VideoInput {
-    SOURCE: ParamSpec::text(
-        SOURCE_PARAM,
-        "Source",
-        DEFAULT_VIDEO,
-        "Name of the host-supplied video signal",
-    ),
+    SOURCE: ParamSpec::text(SOURCE_PARAM, DEFAULT_VIDEO),
 } }
 
 impl NodeKind for VideoInput {
     const KIND: &'static str = VIDEO_INPUT;
-    const SPEC: NodeSpec = NodeSpec::new("Video", Category::Input)
-        .describe("The video as RGB, 0 to 1")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Input)
         .params(Self::PARAMS)
         .inputs(&[])
-        .outputs(&[OutputSpec::new("out", "The video, as RGB from 0 to 1").tag(TagRule::VIDEO)]);
+        .outputs(&[OutputSpec::new("out").tag(TagRule::VIDEO)]);
 
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self(Source {
@@ -79,24 +73,15 @@ impl Node for VideoInput {
 pub struct AudioInput(Source);
 
 params! { AudioInput {
-    SOURCE: ParamSpec::text(
-        SOURCE_PARAM,
-        "Source",
-        DEFAULT_AUDIO,
-        "Name of the host-supplied audio signal",
-    ),
+    SOURCE: ParamSpec::text(SOURCE_PARAM, DEFAULT_AUDIO),
 } }
 
 impl NodeKind for AudioInput {
     const KIND: &'static str = AUDIO_INPUT;
-    const SPEC: NodeSpec = NodeSpec::new("Audio", Category::Input)
-        .describe("The audio track, one frame's worth per block, -1 to 1, channels interleaved")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Input)
         .params(Self::PARAMS)
         .inputs(&[])
-        .outputs(&[OutputSpec::new(
-            "out",
-            "The audio, one frame's worth per block, from -1 to 1; stereo comes as L, R, L, R, …",
-        )
+        .outputs(&[OutputSpec::new("out")
         .tag(TagRule::AUDIO)]);
 
     fn new(params: &Params) -> Result<Self, String> {

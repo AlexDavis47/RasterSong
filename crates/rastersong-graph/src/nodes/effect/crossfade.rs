@@ -20,32 +20,20 @@ pub struct Crossfade {
 }
 
 params! { Crossfade {
-    CURVE: ParamSpec::choice(
-        "curve",
-        "Curve",
-        Curve::OPTIONS,
-        "fade",
-        "fade blends smoothly, switch cuts from `a` to `b` at the middle",
-    ),
-    POSITION: ParamSpec::number(
-        "position",
-        "Position",
-        0.5,
+    CURVE: ParamSpec::choice("curve", Curve::OPTIONS, "fade"),
+    POSITION: ParamSpec::number("position", 0.5,
         0.0,
-        1.0,
-        "0 is only `a`, 1 is only `b`",
-    )
+        1.0)
     .exposed(),
 } }
 
 impl NodeKind for Crossfade {
     const KIND: &'static str = "crossfade";
-    const SPEC: NodeSpec = NodeSpec::new("Crossfade", Category::Effect)
-        .describe("Fades or cuts between two signals")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .inputs(&[
-            InputSpec::required("a", "The signal heard at position 0"),
-            InputSpec::required("b", "The signal heard at position 1"),
+            InputSpec::required("a"),
+            InputSpec::required("b"),
         ])
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[

@@ -3359,6 +3359,7 @@ dependencies = [
  "clap",
  "png",
  "rastersong-engine",
+ "rastersong-lang",
  "tracing",
  "tracing-subscriber",
 ]
@@ -3368,6 +3369,7 @@ name = "rastersong-engine"
 version = "0.1.0"
 dependencies = [
  "rastersong-graph",
+ "rastersong-lang",
  "rastersong-media",
  "serde",
  "serde_json",
@@ -3382,9 +3384,9 @@ dependencies = [
  "criterion",
  "proptest",
  "rastersong-graph",
+ "rastersong-lang",
  "serde",
  "serde_json",
- "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3396,6 +3398,7 @@ dependencies = [
  "eframe",
  "egui_kittest",
  "rastersong-engine",
+ "rastersong-lang",
  "rfd",
  "serde",
  "serde_json",
@@ -3404,12 +3407,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rastersong-lang"
+version = "0.1.0"
+
+[[package]]
 name = "rastersong-media"
 version = "0.1.0"
 dependencies = [
  "criterion",
  "ffmpeg-next",
- "thiserror 2.0.21",
+ "rastersong-lang",
  "tracing",
 ]
 

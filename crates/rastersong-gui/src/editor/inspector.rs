@@ -8,6 +8,7 @@ use rastersong_engine::{
     Channels, GeneratorLayout, Grouping, Interpolation, Modulation, NodeStats, NodeType, ParamKind,
     ParamLevel, ParamSpec, ParamValue, Severity, ShownWhen,
 };
+use rastersong_lang::{tr, tr_args};
 
 use super::param_field::{GUTTER_WIDTH, Modulated, NumberRange, param_field, reset_gesture};
 use super::{GraphEditor, param_port};
@@ -27,9 +28,9 @@ impl GraphEditor {
     pub fn show_inspector(&mut self, ui: &mut Ui, ctx: &InspectorContext) {
         let Some(key) = self.active.filter(|&k| self.node(k).is_some()) else {
             ui.add_space(8.0);
-            ui.weak("Click a node to edit it.");
+            ui.weak(tr("editor.inspector.empty_select"));
             ui.add_space(4.0);
-            ui.weak("Right-click the graph to add nodes.");
+            ui.weak(tr("editor.inspector.empty_add"));
             return;
         };
         let kind = self
@@ -61,7 +62,7 @@ impl GraphEditor {
         let Some(kind) = kind else {
             ui.colored_label(
                 Theme::of(ui.ctx()).error,
-                format!("Unknown node type `{}`", node.kind),
+                tr_args("editor.inspector.unknown_kind", &[("kind", &node.kind)]),
             );
             return;
         };
@@ -72,20 +73,18 @@ impl GraphEditor {
                 e.font(egui::TextStyle::Heading)
                     .desired_width(f32::INFINITY)
             });
-            edit.response.on_hover_text(
-                "Name shown on the node. It's the project's name for this input, so the \
-                 timeline shows it too.",
-            );
+            edit.response
+                .on_hover_text(tr("editor.inspector.linked_name_help"));
             renamed = edit.committed;
         } else {
             let mut name = node.label.clone().unwrap_or_default();
             let edit = egui::TextEdit::singleline(&mut name)
-                .hint_text(kind.spec.label)
+                .hint_text(kind.label())
                 .font(egui::TextStyle::Heading)
                 .desired_width(f32::INFINITY);
             if ui
                 .add(edit)
-                .on_hover_text("Name shown on the node")
+                .on_hover_text(tr("editor.inspector.name_help"))
                 .changed()
             {
                 let name = name.trim();
@@ -93,24 +92,31 @@ impl GraphEditor {
             }
         }
         ui.horizontal(|ui| {
-            ui.weak(kind.spec.label);
-            ui.weak("·");
+            ui.weak(kind.label());
+            ui.weak(tr("editor.inspector.separator"));
             ui.weak(&node.id);
         });
         ui.add_space(2.0);
-        ui.label(RichText::new(kind.spec.description).small());
+        ui.label(RichText::new(kind.description()).small());
         if let Some(compiled) = &compiled {
             for diagnostic in &compiled.diagnostics {
                 ui.add_space(4.0);
                 match diagnostic.severity {
                     Severity::Note => ui.label(
-                        RichText::new(format!("ℹ {}", diagnostic.message))
-                            .small()
-                            .color(theme.text_dim),
+                        RichText::new(tr_args(
+                            "editor.inspector.note_line",
+                            &[("message", &diagnostic.message)],
+                        ))
+                        .small()
+                        .color(theme.text_dim),
                     ),
-                    Severity::Warning => {
-                        ui.colored_label(theme.warning, format!("⚠ {}", diagnostic.message))
-                    }
+                    Severity::Warning => ui.colored_label(
+                        theme.warning,
+                        tr_args(
+                            "editor.inspector.warning_line",
+                            &[("message", &diagnostic.message)],
+                        ),
+                    ),
                 };
             }
             signals(ui, &kind, compiled);
@@ -119,81 +125,106 @@ impl GraphEditor {
         let shared_settings =
             kind.spec.inputs.len() > 1 || kind.spec.per_channel || kind.spec.takes_layout;
         if shared_settings {
-            section(ui, "Node settings");
+            section(ui, tr("editor.inspector.node_settings"));
             egui::Grid::new("node-settings")
                 .num_columns(2)
                 .spacing([10.0, 8.0])
                 .show(ui, |ui| {
                     if kind.spec.inputs.len() > 1 {
-                        ui.label("Resampling").on_hover_text(
-                            "How the other inputs are stretched or shrunk to the length of the main input",
+                        ui.label(tr("editor.setting.resampling"))
+                            .on_hover_text(tr("editor.setting.resampling.help"));
+                        choice(
+                            ui,
+                            "resampling",
+                            &mut node.interpolation,
+                            Interpolation::default(),
+                            &[
+                                (
+                                    Interpolation::Hold,
+                                    tr("editor.setting.resampling.hold"),
+                                    tr("editor.setting.resampling.hold.help"),
+                                ),
+                                (
+                                    Interpolation::Linear,
+                                    tr("editor.setting.resampling.linear"),
+                                    tr("editor.setting.resampling.linear.help"),
+                                ),
+                            ],
                         );
-                        choice(ui, "resampling", &mut node.interpolation, Interpolation::default(), &[
-                            (Interpolation::Hold, "Hold", "Repeat samples"),
-                            (Interpolation::Linear, "Linear", "Ramp smoothly between samples"),
-                        ]);
                         ui.end_row();
-                        ui.label("Grouping").on_hover_text(
-                            "How a one-channel input is spread over a main input with several channels (RGB, stereo)",
+                        ui.label(tr("editor.setting.grouping"))
+                            .on_hover_text(tr("editor.setting.grouping.help"));
+                        choice(
+                            ui,
+                            "grouping",
+                            &mut node.grouping,
+                            Grouping::default(),
+                            &[
+                                (
+                                    Grouping::Pixels,
+                                    tr("editor.setting.grouping.pixels"),
+                                    tr("editor.setting.grouping.pixels.help"),
+                                ),
+                                (
+                                    Grouping::Samples,
+                                    tr("editor.setting.grouping.samples"),
+                                    tr("editor.setting.grouping.samples.help"),
+                                ),
+                            ],
                         );
-                        choice(ui, "grouping", &mut node.grouping, Grouping::default(), &[
-                            (
-                                Grouping::Pixels,
-                                "Pixels",
-                                "Each value covers whole pixels, so a pixel's R, G and B (or L and R) move together",
-                            ),
-                            (
-                                Grouping::Samples,
-                                "Samples",
-                                "Spread over every value, ignoring pixels: a pixel's channels can differ",
-                            ),
-                        ]);
                         ui.end_row();
                     }
                     if kind.spec.takes_layout {
-                        ui.label("Layout").on_hover_text(
-                            "What the generated signal is shaped like: the video's frame, or one block of the audio track",
+                        ui.label(tr("editor.setting.layout"))
+                            .on_hover_text(tr("editor.setting.layout.help"));
+                        choice(
+                            ui,
+                            "layout",
+                            &mut node.layout,
+                            GeneratorLayout::default(),
+                            &[
+                                (
+                                    GeneratorLayout::Video,
+                                    tr("editor.setting.layout.video"),
+                                    tr("editor.setting.layout.video.help"),
+                                ),
+                                (
+                                    GeneratorLayout::Audio,
+                                    tr("editor.setting.layout.audio"),
+                                    tr("editor.setting.layout.audio.help"),
+                                ),
+                            ],
                         );
-                        choice(ui, "layout", &mut node.layout, GeneratorLayout::default(), &[
-                            (
-                                GeneratorLayout::Video,
-                                "Video",
-                                "Shaped like the video: RGB pixels in rows",
-                            ),
-                            (
-                                GeneratorLayout::Audio,
-                                "Audio",
-                                "Shaped like one block of the audio track named audio, or of the first track; mono at 48 kHz when the project has none",
-                            ),
-                        ]);
                         ui.end_row();
                     }
                     if kind.spec.per_channel {
-                        ui.label("Channels").on_hover_text(
-                            "How this node treats the channels of an interleaved signal: R, G, B of video, L, R of stereo.",
+                        ui.label(tr("editor.setting.channels"))
+                            .on_hover_text(tr("editor.setting.channels.help"));
+                        choice(
+                            ui,
+                            "channels",
+                            &mut node.channels,
+                            Channels::default(),
+                            &[
+                                (
+                                    Channels::Together,
+                                    tr("editor.setting.channels.together"),
+                                    tr("editor.setting.channels.together.help"),
+                                ),
+                                (
+                                    Channels::Separate,
+                                    tr("editor.setting.channels.separate"),
+                                    tr("editor.setting.channels.separate.help"),
+                                ),
+                            ],
                         );
-                        choice(ui, "channels", &mut node.channels, Channels::default(), &[
-                            (
-                                Channels::Together,
-                                "Together",
-                                "Runs R, G, B, R, G, B… (or L, R, L, R…) through the node as one \
-                                 stream. Channels bleed into each other, as in a low pass or a \
-                                 modulated delay.",
-                            ),
-                            (
-                                Channels::Separate,
-                                "Separate",
-                                "Runs each channel through its own copy of the node. The same as \
-                                 Split Channels → the node once per channel → Combine Channels.",
-                            ),
-                        ]);
                         ui.end_row();
                     }
                 });
         }
 
         if !kind.spec.params.is_empty() {
-            section(ui, "Parameters");
+            section(ui, tr("editor.inspector.parameters"));
             // Sized from the panel once: sizing from the row's own contents would feed back
             // through the layout and make sliders change size while dragged.
             let track_width = (ui.available_width() - CONTROL_ROOM).max(MIN_TRACK);
@@ -204,19 +235,19 @@ impl GraphEditor {
                     if linked && spec.name == "source" {
                         ui.horizontal(|ui| {
                             ui.add_space(GUTTER_WIDTH + ui.spacing().item_spacing.x);
-                            ui.label(spec.label).on_hover_text(spec.help);
+                            ui.label(kind.param_label(spec.name))
+                                .on_hover_text(kind.param_help(spec.name));
                         });
                         let source = super::linked::track_of(node).to_owned();
                         let shown = if node.kind == super::linked::VIDEO_INPUT {
-                            "The project's video".to_owned()
+                            tr("editor.inspector.linked_video").to_owned()
                         } else {
-                            format!("Track \"{source}\"")
+                            tr_args("editor.inspector.linked_track", &[("track", &source)])
                         };
                         ui.horizontal(|ui| {
                             ui.add_space(GUTTER_WIDTH + ui.spacing().item_spacing.x);
-                            ui.weak(shown).on_hover_text(
-                                "Linked to the project: rename or remove it in the timeline",
-                            );
+                            ui.weak(shown)
+                                .on_hover_text(tr("editor.inspector.linked_help"));
                         });
                         ui.add_space(PARAM_GAP);
                         continue;
@@ -257,6 +288,7 @@ impl GraphEditor {
                             }
                             let disconnected = param_row(ParamRow {
                                 ui,
+                                kind: &kind,
                                 spec,
                                 params: &mut node.params,
                                 tracks,
@@ -270,7 +302,7 @@ impl GraphEditor {
                             if !used && let Some(when) = spec.when {
                                 ui.horizontal(|ui| {
                                     ui.add_space(GUTTER_WIDTH + ui.spacing().item_spacing.x);
-                                    ui.weak(unused_reason(kind.spec.params, &when));
+                                    ui.weak(unused_reason(&kind, &when));
                                 });
                             }
                             disconnected
@@ -307,7 +339,7 @@ impl GraphEditor {
             });
         } else if !shared_settings {
             ui.add_space(8.0);
-            ui.weak("No settings.");
+            ui.weak(tr("editor.inspector.no_settings"));
         }
         if let Some((index, exposed)) = toggled {
             self.set_param_exposed(key, index, exposed);
@@ -339,20 +371,31 @@ fn choice_value(
 }
 
 /// Why a parameter shown despite its rule isn't being used, in the controlling parameter's words.
-fn unused_reason(specs: &[ParamSpec], when: &ShownWhen) -> String {
-    let label = specs
+fn unused_reason(kind: &NodeType, when: &ShownWhen) -> String {
+    let label = kind
+        .spec
+        .params
         .iter()
         .find(|p| p.name == when.param)
-        .map_or(when.param, |p| p.label);
-    format!(
-        "Unused: only applies when {label} is {}.",
-        when.values.join(" or ")
+        .map_or(when.param, |p| kind.param_label(p.name));
+    tr_args(
+        "editor.inspector.unused_reason",
+        &[
+            ("param", label),
+            (
+                "values",
+                &when
+                    .values
+                    .join(&format!(" {} ", tr("editor.inspector.or"))),
+            ),
+        ],
     )
 }
 
 /// What one parameter row shows and edits.
 struct ParamRow<'a, 'u> {
     ui: &'u mut Ui,
+    kind: &'a NodeType,
     spec: &'a ParamSpec,
     params: &'a mut BTreeMap<String, ParamValue>,
     /// For an audio input's track: the project's tracks.
@@ -396,12 +439,25 @@ fn signals(ui: &mut Ui, kind: &NodeType, compiled: &NodeStats) {
     };
     for (i, layout) in compiled.outputs.iter().take(shown).enumerate() {
         let text = if compiled.outputs.len() > 1 {
-            format!("{}: {layout}, {}", output(i), layout.tag)
+            tr_args(
+                "editor.inspector.output_line",
+                &[
+                    ("port", output(i)),
+                    ("layout", &layout.to_string()),
+                    ("tag", &layout.tag.to_string()),
+                ],
+            )
         } else {
-            format!("Output: {layout}, {}", layout.tag)
+            tr_args(
+                "editor.inspector.output_single",
+                &[
+                    ("layout", &layout.to_string()),
+                    ("tag", &layout.tag.to_string()),
+                ],
+            )
         };
         ui.label(RichText::new(text).small().weak())
-            .on_hover_text("What the signal is said to be. Advisory: it colours wires and drives warnings, and never changes processing. Relabel changes it.");
+            .on_hover_text(tr("editor.inspector.signal_help"));
     }
 }
 
@@ -442,6 +498,7 @@ fn choice<T: PartialEq + Copy>(
 fn param_row(row: ParamRow) -> bool {
     let ParamRow {
         ui,
+        kind,
         spec,
         params,
         tracks,
@@ -471,9 +528,9 @@ fn param_row(row: ParamRow) -> bool {
                     ui.visuals().weak_text_color()
                 };
                 let hover = if *exposed {
-                    "Hide this parameter's modulation pin (disconnects it)"
+                    tr("editor.param.pin_hide")
                 } else {
-                    "Show a pin on the node to modulate this parameter with a signal"
+                    tr("editor.param.pin_show")
                 };
                 if diamond_toggle(ui, *exposed, color)
                     .on_hover_text(hover)
@@ -482,17 +539,18 @@ fn param_row(row: ParamRow) -> bool {
                     *exposed = !*exposed;
                 }
             }
-            None if !spec.locked.is_empty() => {
-                locked_diamond(ui).on_hover_text(format!(
-                    "This parameter can't be modulated. {}.",
-                    spec.locked.trim_end_matches('.')
+            None if spec.locked => {
+                locked_diamond(ui).on_hover_text(tr_args(
+                    "editor.param.locked",
+                    &[("reason", kind.param_locked(spec).trim_end_matches('.'))],
                 ));
             }
             None => {
                 ui.allocate_space(egui::vec2(GUTTER_WIDTH, 14.0));
             }
         }
-        ui.label(spec.label).on_hover_text(spec.help);
+        ui.label(kind.param_label(spec.name))
+            .on_hover_text(kind.param_help(spec.name));
         if !spec.unit.is_empty() {
             ui.weak(spec.unit);
         }
@@ -502,12 +560,11 @@ fn param_row(row: ParamRow) -> bool {
                     value != default,
                     egui::Button::new("↺").small().frame(false),
                 )
-                .on_hover_text("Reset to default");
+                .on_hover_text(tr("editor.param.reset"));
             reset = reset_button.clicked();
             if let Some(integer) = integer {
-                ui.toggle_value(integer, "int").on_hover_text(
-                    "Round to whole numbers: the value, and, when a signal modulates it, the                      result at every sample",
-                );
+                ui.toggle_value(integer, tr("editor.param.int"))
+                    .on_hover_text(tr("editor.param.int.help"));
             }
         });
     });
@@ -579,7 +636,7 @@ fn param_row(row: ParamRow) -> bool {
             Some(tracks) => {
                 let missing = !tracks.contains(s);
                 let shown = if missing {
-                    format!("{s} (no such track)")
+                    tr_args("editor.param.no_such_track", &[("track", s)])
                 } else {
                     s.clone()
                 };
@@ -592,7 +649,7 @@ fn param_row(row: ParamRow) -> bool {
                     .width(150.0)
                     .show_ui(ui, |ui| {
                         if tracks.is_empty() {
-                            ui.weak("No audio tracks yet");
+                            ui.weak(tr("editor.param.no_tracks"));
                         }
                         for track in tracks {
                             ui.selectable_value(s, track.clone(), track);

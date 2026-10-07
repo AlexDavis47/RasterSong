@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use rastersong_graph::{GraphDesc, Tempo};
+use rastersong_lang::tr_args;
 use serde::{Deserialize, Serialize};
 
 use crate::{AudioTrackSpec, DEFAULT_AUDIO_TRACK};
@@ -221,13 +222,26 @@ impl Project {
     pub fn load(path: &Path) -> Result<Self, String> {
         let error = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
         let json = std::fs::read_to_string(path).map_err(|e| error(&e))?;
-        let value: serde_json::Value = serde_json::from_str(&json)
-            .map_err(|e| error(&format!("invalid project file: {e}")))?;
-        let invalid = |e: serde_json::Error| error(&format!("invalid project file: {e}"));
+        let value: serde_json::Value = serde_json::from_str(&json).map_err(|e| {
+            error(&tr_args(
+                "error.project.invalid",
+                &[("error", &e.to_string())],
+            ))
+        })?;
+        let invalid = |e: serde_json::Error| {
+            error(&tr_args(
+                "error.project.invalid",
+                &[("error", &e.to_string())],
+            ))
+        };
         let version = value.get("version").and_then(serde_json::Value::as_u64);
         if version != Some(u64::from(PROJECT_VERSION)) {
-            return Err(error(&format!(
-                "unsupported project version {version:?} (this build reads version {PROJECT_VERSION}; there are no migrations before 1.0)"
+            return Err(error(&tr_args(
+                "error.project.version",
+                &[
+                    ("version", &format!("{version:?}")),
+                    ("supported", &PROJECT_VERSION.to_string()),
+                ],
             )));
         }
         let mut project: Self = serde_json::from_value(value).map_err(invalid)?;

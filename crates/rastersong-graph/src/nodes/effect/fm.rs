@@ -17,31 +17,22 @@ pub struct Fm {
 }
 
 params! { Fm {
-    INDEX: ParamSpec::number(
-        "index",
-        "Index",
-        0.5,
+    INDEX: ParamSpec::number("index", 0.5,
         0.0,
-        10.0,
-        "How far the modulator moves the carrier, in rows or frames: the modulator at +1 reads twice this far back, at -1 not at all",
-    )
+        10.0)
     .exposed()
     .limits(0.0, 1000.0),
-    UNIT: Unit::time_param("row", "Unit for the index"),
+    UNIT: Unit::time_param("row"),
     MIX: ParamSpec::mix(),
 } }
 
 impl NodeKind for Fm {
     const KIND: &'static str = "fm";
-    const SPEC: NodeSpec = NodeSpec::new("FM", Category::Effect)
-        .describe("Bends the carrier by reading it through a delay the modulator controls")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .inputs(&[
-            InputSpec::required("carrier", "The signal that gets bent"),
-            InputSpec::required(
-                "modulator",
-                "The signal that sets how far back the carrier is read",
-            ),
+            InputSpec::required("carrier"),
+            InputSpec::required("modulator"),
         ])
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[

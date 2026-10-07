@@ -11,7 +11,7 @@ publish.workspace = true
 
 [dependencies]
 ffmpeg-next.workspace = true
-thiserror.workspace = true
+rastersong-lang.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

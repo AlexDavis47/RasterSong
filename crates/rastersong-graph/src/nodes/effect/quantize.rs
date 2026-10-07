@@ -25,39 +25,22 @@ pub struct Quantize {
 }
 
 params! { Quantize {
-    STEP: ParamSpec::number(
-        "step",
-        "Step",
-        0.125,
+    STEP: ParamSpec::number("step", 0.125,
         0.001,
-        1.0,
-        "Size of one step: 0.25 gives the levels 0, 0.25, 0.5, 0.75, 1",
-    )
+        1.0)
     .exposed()
     .limits(1e-6, 1e6),
-    OFFSET: ParamSpec::number(
-        "offset",
-        "Offset",
-        0.0,
+    OFFSET: ParamSpec::number("offset", 0.0,
         -1.0,
-        1.0,
-        "Where the steps start: steps sit at offset + n × step",
-    )
+        1.0)
     .limits(-1e6, 1e6),
-    ROUNDING: ParamSpec::choice(
-        "rounding",
-        "Rounding",
-        Rounding::OPTIONS,
-        "nearest",
-        "nearest picks the closest step, floor the one below, ceil the one above",
-    ),
+    ROUNDING: ParamSpec::choice("rounding", Rounding::OPTIONS, "nearest"),
     MIX: ParamSpec::mix(),
 } }
 
 impl NodeKind for Quantize {
     const KIND: &'static str = "quantize";
-    const SPEC: NodeSpec = NodeSpec::new("Quantize", Category::Effect)
-        .describe("Snaps every sample to a grid of evenly spaced levels")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[

@@ -2,6 +2,7 @@
 //! Pure logic, so it can be tested without a window.
 
 use eframe::egui::{Pos2, Rect, Vec2};
+use rastersong_lang::tr;
 
 /// Zoom limits, as multiples of the size that fits the pane.
 pub const MIN_ZOOM: f32 = 0.1;
@@ -25,8 +26,8 @@ impl Feed {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Processed => "Processed",
-            Self::Unprocessed => "Unprocessed",
+            Self::Processed => tr("feed.processed"),
+            Self::Unprocessed => tr("feed.unprocessed"),
         }
     }
 }

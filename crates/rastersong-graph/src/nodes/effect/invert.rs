@@ -20,28 +20,16 @@ pub struct Invert {
 }
 
 params! { Invert {
-    MODE: ParamSpec::choice(
-        "mode",
-        "Mode",
-        Mode::OPTIONS,
-        "video",
-        "video flips around the middle of 0 to 1 (1 - x), audio flips the sign (-x)",
-    ),
-    AMOUNT: ParamSpec::number(
-        "amount",
-        "Amount",
-        1.0,
+    MODE: ParamSpec::choice("mode", Mode::OPTIONS, "video"),
+    AMOUNT: ParamSpec::number("amount", 1.0,
         0.0,
-        1.0,
-        "0 leaves the signal alone, 1 is fully inverted, in between fades toward it",
-    )
+        1.0)
     .exposed(),
 } }
 
 impl NodeKind for Invert {
     const KIND: &'static str = "invert";
-    const SPEC: NodeSpec = NodeSpec::new("Invert", Category::Effect)
-        .describe("Flips the signal: negative for video, upside down for audio")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[

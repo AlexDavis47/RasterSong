@@ -9,13 +9,14 @@ GUI only talks to the engine; it never decodes or schedules anything itself.
 crates/
   rastersong-media    FFmpeg I/O only: probing, frame index, video/audio decode, encode
   rastersong-graph    Pure Rust, no FFmpeg: Signal type, Node trait, scheduler, built-in nodes
+  rastersong-lang     User-facing text: string tables (English embedded) and the lookup, see [Text and languages](text.md)
   rastersong-engine   Render service: sequential renderer, warmup, frame cache, cancellation, playback clock
   rastersong-cli      Headless file-in → file-out renderer (testing, benchmarking, batch use)
   rastersong-gui      egui application: viewer, node editor, parameters, timeline
 xtask/                Developer tasks (fetch FFmpeg, generate test fixtures, packaging)
 ```
 
-Dependency direction: `gui → engine → (media, graph)`. `media` and `graph` never depend on each other.
+Dependency direction: `gui → engine → (media, graph)`, and `graph`, `engine` and `gui` use `lang`. `media` and `graph` never depend on each other.
 
 ## Sequential schedule
 

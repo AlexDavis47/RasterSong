@@ -4,6 +4,7 @@
 
 use eframe::egui::{self, Color32, CornerRadius};
 use rastersong_engine::{Category, Kind, Part, Tag, TagRule};
+use rastersong_lang::tr;
 use serde::{Deserialize, Serialize};
 
 /// The user's theme choice. Dark by default, whatever the system uses.
@@ -20,9 +21,9 @@ impl ThemeChoice {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Dark => "Dark",
-            Self::Light => "Light",
-            Self::System => "Follow system",
+            Self::Dark => tr("theme.dark"),
+            Self::Light => tr("theme.light"),
+            Self::System => tr("theme.system"),
         }
     }
 
@@ -54,10 +55,10 @@ impl WireStyle {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Solid => "Solid",
-            Self::Outline => "Outlined",
-            Self::Gradient => "Gradient",
-            Self::Glow => "Glow",
+            Self::Solid => tr("wires.solid"),
+            Self::Outline => tr("wires.outline"),
+            Self::Gradient => tr("wires.gradient"),
+            Self::Glow => tr("wires.glow"),
         }
     }
 }

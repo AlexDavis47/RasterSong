@@ -1,5 +1,6 @@
 //! Compiling a [`GraphDesc`] into a sequential schedule, and running it one frame at a time.
 
+use rastersong_lang::{tr, tr_args};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
@@ -400,7 +401,7 @@ impl Graph {
         {
             return Err(GraphError::Node {
                 node: reader.id.clone(),
-                message: "can't read from an output node".into(),
+                message: tr("error.node.reads_output").into(),
             });
         }
         let mut order = Vec::new();
@@ -591,13 +592,19 @@ impl Graph {
                 Some(s) => {
                     return Err(GraphError::Source {
                         name: name.clone(),
-                        message: format!("expected {layout}, got {}", s.layout),
+                        message: tr_args(
+                            "error.source.wrong_layout",
+                            &[
+                                ("expected", &layout.to_string()),
+                                ("got", &s.layout.to_string()),
+                            ],
+                        ),
                     });
                 }
                 None => {
                     return Err(GraphError::Source {
                         name: name.clone(),
-                        message: "not supplied".into(),
+                        message: tr("error.source.not_supplied").into(),
                     });
                 }
             }
@@ -821,13 +828,9 @@ impl<'a> Compiler<'a> {
         let mut separate = None;
         if let (Channels::Separate, Some(main)) = (p.channels, main) {
             if main.samples_per_pixel <= 1 {
-                diagnostics.push(Diagnostic::note(
-                    "Separate channels has no effect here: the signal has one channel.",
-                ));
+                diagnostics.push(Diagnostic::note(tr("diagnostic.separate.one_channel")));
             } else if !p.per_channel {
-                diagnostics.push(Diagnostic::warning(
-                    "This node can't run once per channel, so the channels are processed together.",
-                ));
+                diagnostics.push(Diagnostic::warning(tr("diagnostic.separate.unsupported")));
             } else {
                 let mut channel = main.reshaped(main.width, main.height, 1);
                 channel.tag.part = main.tag.part;
@@ -835,9 +838,7 @@ impl<'a> Compiler<'a> {
                 if node_outputs.iter().all(|l| l.same_shape(&channel)) {
                     separate = Some((main.samples_per_pixel as usize, channel, node_outputs));
                 } else {
-                    diagnostics.push(Diagnostic::warning(
-                        "This node changes the signal's shape, so the channels are processed together.",
-                    ));
+                    diagnostics.push(Diagnostic::warning(tr("diagnostic.separate.reshapes")));
                 }
             }
         }
@@ -1085,14 +1086,17 @@ impl<'a> Compiler<'a> {
 /// and the conversion to use if the usual behaviour is wanted.
 fn range_note(expects: Range, got: Range) -> String {
     let convert = match expects {
-        Range::Bipolar => " Video to Audio converts it if you want the usual behaviour.",
-        Range::Unipolar => " Audio to Video converts it if you want the usual behaviour.",
+        Range::Bipolar => tr("diagnostic.range.convert_to_audio"),
+        Range::Unipolar => tr("diagnostic.range.convert_to_video"),
         Range::Unknown => "",
     };
-    format!(
-        "Tuned for values from {}; this signal runs {}, so levels and thresholds act differently.{convert}",
-        expects.label().unwrap_or_default(),
-        got.label().unwrap_or_default()
+    tr_args(
+        "diagnostic.range",
+        &[
+            ("expects", expects.label().unwrap_or_default()),
+            ("got", got.label().unwrap_or_default()),
+            ("convert", convert),
+        ],
     )
 }
 
@@ -1126,9 +1130,7 @@ fn create_nodes(desc: &GraphDesc, registry: &Registry) -> Result<Vec<Pending>, G
             message,
         };
         if d.id.is_empty() || d.id.contains('.') {
-            return Err(node_error(
-                "node ids must be non-empty and contain no `.`".into(),
-            ));
+            return Err(node_error(tr("error.node.bad_id").into()));
         }
         if pending.iter().any(|p| p.id == d.id) {
             return Err(GraphError::DuplicateId(d.id.clone()));
@@ -1154,7 +1156,10 @@ fn create_nodes(desc: &GraphDesc, registry: &Registry) -> Result<Vec<Pending>, G
                 .iter()
                 .position(|s| s.name == name && s.number_limits().is_some())
             else {
-                return Err(node_error(format!("`{name}` isn't a number parameter")));
+                return Err(node_error(tr_args(
+                    "error.node.not_a_number",
+                    &[("name", name)],
+                )));
             };
             integer[index] = true;
             if let Some(value) = specs[index].number_value(&d.params) {
@@ -1167,8 +1172,9 @@ fn create_nodes(desc: &GraphDesc, registry: &Registry) -> Result<Vec<Pending>, G
             .map_err(node_error)?;
         for name in d.modulation.keys() {
             if !specs.iter().any(|s| s.name == name && s.modulatable) {
-                return Err(node_error(format!(
-                    "`{name}` isn't a parameter that can be modulated"
+                return Err(node_error(tr_args(
+                    "error.node.not_modulatable",
+                    &[("name", name)],
                 )));
             }
         }
@@ -1233,14 +1239,15 @@ fn connect(desc: &GraphDesc, pending: &mut [Pending]) -> Result<(), GraphError> 
                 .iter()
                 .position(|s| s.name == param && s.modulatable)
                 .ok_or_else(|| {
-                    connection_error(format!(
-                        "`{}` has no parameter `{param}` that can be modulated",
-                        pending[to].id
+                    connection_error(tr_args(
+                        "error.connection.no_param",
+                        &[("node", &pending[to].id), ("param", param)],
                     ))
                 })?;
             if pending[to].param_wires[index].is_some() {
-                return Err(connection_error(format!(
-                    "parameter `{param}` is already connected"
+                return Err(connection_error(tr_args(
+                    "error.connection.param_taken",
+                    &[("param", param)],
                 )));
             }
             pending[to].param_wires[index] = Some((from, out));
@@ -1254,16 +1261,20 @@ fn connect(desc: &GraphDesc, pending: &mut [Pending]) -> Result<(), GraphError> 
         }
         .ok_or_else(|| {
             let names: Vec<_> = inputs.iter().map(|i| i.name).collect();
-            connection_error(format!(
-                "`{}` has no input {to_port:?}; inputs are {names:?}",
-                pending[to].id
+            connection_error(tr_args(
+                "error.connection.no_input",
+                &[
+                    ("node", &pending[to].id),
+                    ("port", &format!("{to_port:?}")),
+                    ("inputs", &format!("{names:?}")),
+                ],
             ))
         })?;
 
         if pending[to].wires[input].is_some() {
-            return Err(connection_error(format!(
-                "input `{}` is already connected",
-                inputs[input].name
+            return Err(connection_error(tr_args(
+                "error.connection.input_taken",
+                &[("input", inputs[input].name)],
             )));
         }
         pending[to].wires[input] = Some((from, out));

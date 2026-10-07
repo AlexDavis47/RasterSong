@@ -1,3 +1,4 @@
+use rastersong_lang::{tr_args};
 use crate::nodes::{Category, NodeKind, NodeSpec, OUTPUT};
 use crate::{
     InputSpec, Layout, LayoutContext, Node, Params, ProcessContext, Range, Signal, TagRule,
@@ -10,13 +11,9 @@ pub struct Output;
 
 impl NodeKind for Output {
     const KIND: &'static str = OUTPUT;
-    const SPEC: NodeSpec = NodeSpec::new("Output", Category::Output)
-        .describe("The rendered result: RGB, or mono shown as grayscale")
-        .inputs(&[InputSpec::required(
-            "in",
-            "The picture to render: RGB, or mono for grayscale",
-        )])
-        .outputs(&[crate::OutputSpec::new("out", "The rendered picture").tag(TagRule::VIDEO)])
+    const SPEC: NodeSpec = NodeSpec::new(Category::Output)
+        .inputs(&[InputSpec::required("in")])
+        .outputs(&[crate::OutputSpec::new("out").tag(TagRule::VIDEO)])
         .expects(Range::Unipolar);
 
     fn new(_: &Params) -> Result<Self, String> {
@@ -31,9 +28,9 @@ impl Node for Output {
         if size_matches && matches!(input.samples_per_pixel, 1 | 3) {
             Ok(vec![ctx.output])
         } else {
-            Err(format!(
-                "expects a {} or mono signal of that size, got {input}",
-                ctx.output
+            Err(tr_args(
+                "error.video_output.shape",
+                &[("expected", &ctx.output.to_string()), ("got", &input.to_string())],
             ))
         }
     }

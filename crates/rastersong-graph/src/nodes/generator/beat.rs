@@ -47,47 +47,20 @@ pub struct Beat {
 }
 
 params! { Beat {
-    PERIOD: ParamSpec::choice(
-        "period",
-        "Period",
-        Period::OPTIONS,
-        "beat",
-        "beat restarts the shape on every beat, bar on every bar",
-    ),
-    DIVISION: ParamSpec::number(
-        "division",
-        "Division",
+    PERIOD: ParamSpec::choice("period", Period::OPTIONS, "beat"),
+    DIVISION: ParamSpec::number("division", 1.0,
         1.0,
-        1.0,
-        16.0,
-        "Cycles per period: 2 restarts twice as often (half beats). Use the bar period for slower",
-    )
+        16.0)
     .integer()
     .limits(1.0, 1000.0),
-    SHAPE: ParamSpec::choice(
-        "shape",
-        "Shape",
-        Shape::OPTIONS,
-        "decay",
-        "phase rises 0 to 1, decay falls 1 to 0, pulse is on for the width, step climbs in stairs",
-    ),
-    WIDTH: ParamSpec::number(
-        "width",
-        "Width",
-        0.25,
+    SHAPE: ParamSpec::choice("shape", Shape::OPTIONS, "decay"),
+    WIDTH: ParamSpec::number("width", 0.25,
         0.0,
-        1.0,
-        "For the pulse shape, the fraction of each cycle it stays on",
-    )
+        1.0)
     .shown_when("shape", &["pulse"]),
-    STEPS: ParamSpec::number(
-        "steps",
-        "Steps",
-        4.0,
+    STEPS: ParamSpec::number("steps", 4.0,
         1.0,
-        32.0,
-        "For the step shape, how many stairs each cycle climbs",
-    )
+        32.0)
     .integer()
     .limits(1.0, 1024.0)
     .shown_when("shape", &["step"]),
@@ -95,14 +68,11 @@ params! { Beat {
 
 impl NodeKind for Beat {
     const KIND: &'static str = "beat";
-    const SPEC: NodeSpec = NodeSpec::new("Beat", Category::Generator)
-        .describe(
-            "A 0 to 1 signal locked to the project's beats or bars: phase, decay, pulse or steps",
-        )
+    const SPEC: NodeSpec = NodeSpec::new(Category::Generator)
         .params(Self::PARAMS)
         .takes_layout()
         .inputs(&[])
-        .outputs(&[OutputSpec::new("out", "The beat-locked signal")]);
+        .outputs(&[OutputSpec::new("out")]);
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "shape": "phase" }"#,
         r#"{ "shape": "decay", "period": "bar", "division": 2 }"#,

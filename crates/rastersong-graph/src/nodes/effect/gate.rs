@@ -1,4 +1,4 @@
-use crate::dsp::{db_to_gain, smoothing_coefficient};
+use crate::dsp::{AttackRelease, db_to_gain};
 use crate::nodes::support::settle_frames;
 use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{InputSpec, Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
@@ -21,8 +21,7 @@ pub struct Gate {
     /// Set in `prepare`.
     threshold_gain: f32,
     closed_gain: f64,
-    attack: f64,
-    release: f64,
+    times: AttackRelease,
     hold_samples: u64,
     /// Samples in one `unit`.
     unit_samples: f64,
@@ -35,67 +34,38 @@ pub struct Gate {
 }
 
 params! { Gate {
-    THRESHOLD: ParamSpec::number(
-        "threshold",
-        "Threshold",
-        -40.0,
+    THRESHOLD: ParamSpec::number("threshold", -40.0,
         -80.0,
-        0.0,
-        "Level the signal must reach to open the gate",
-    )
+        0.0)
     .unit("dB")
     .exposed()
     .limits(-200.0, 60.0),
-    ATTACK: ParamSpec::number(
-        "attack",
-        "Attack",
-        1.0,
+    ATTACK: ParamSpec::number("attack", 1.0,
         0.01,
-        1000.0,
-        "How quickly the gate opens",
-    )
+        1000.0)
     .limits(0.0, 1e6),
-    HOLD: ParamSpec::number(
-        "hold",
-        "Hold",
-        50.0,
+    HOLD: ParamSpec::number("hold", 50.0,
         0.0,
-        5000.0,
-        "How long the gate stays open after the signal drops below the threshold",
-    )
+        5000.0)
     .limits(0.0, 1e6),
-    RELEASE: ParamSpec::number(
-        "release",
-        "Release",
-        100.0,
+    RELEASE: ParamSpec::number("release", 100.0,
         0.1,
-        5000.0,
-        "How quickly the gate closes",
-    )
+        5000.0)
     .limits(0.0, 1e6),
-    UNIT: Unit::time_param("ms", "Unit for attack, hold and release"),
-    RANGE: ParamSpec::number(
-        "range",
-        "Range",
-        -80.0,
+    UNIT: Unit::time_param("ms"),
+    RANGE: ParamSpec::number("range", -80.0,
         SILENT_RANGE,
-        0.0,
-        "How far a closed gate turns the signal down; -80 dB is silence",
-    )
+        0.0)
     .unit("dB"),
 } }
 
 impl NodeKind for Gate {
     const KIND: &'static str = "gate";
-    const SPEC: NodeSpec = NodeSpec::new("Gate", Category::Effect)
-        .describe("Silences the signal while it, or a sidechain, is quiet")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .inputs(&[
-            InputSpec::required("in", "The signal to gate"),
-            InputSpec::optional(
-                "sidechain",
-                "A signal whose level opens the gate instead of the input's own",
-            ),
+            InputSpec::required("in"),
+            InputSpec::optional("sidechain"),
         ])
         .per_channel()
         .expects(crate::Range::Bipolar);
@@ -116,8 +86,7 @@ impl NodeKind for Gate {
             range: params.number_at(Self::RANGE)?,
             threshold_gain: 0.0,
             closed_gain: 0.0,
-            attack: 0.0,
-            release: 0.0,
+            times: AttackRelease::default(),
             hold_samples: 0,
             unit_samples: 1.0,
             longest_samples: 0.0,
@@ -144,8 +113,7 @@ impl Node for Gate {
         self.threshold_gain = db_to_gain(self.threshold) as f32;
         self.closed_gain = Self::closed_gain(self.range);
         self.unit_samples = self.unit.samples(ctx);
-        self.attack = smoothing_coefficient(self.attack_time * self.unit_samples);
-        self.release = smoothing_coefficient(self.release_time * self.unit_samples);
+        self.times = AttackRelease::new(self.attack_time, self.release_time, self.unit_samples);
         self.hold_samples = (self.hold_time * self.unit_samples).round() as u64;
         let slowest = ctx
             .param_max(Self::ATTACK, self.attack_time)
@@ -191,9 +159,9 @@ impl Node for Gate {
             };
             let target = if open { 1.0 } else { closed };
             let c = if target > self.gain {
-                attack.map_or(self.attack, |a| smoothing_coefficient(samples(a[i])))
+                self.times.attack(attack, i)
             } else {
-                release.map_or(self.release, |r| smoothing_coefficient(samples(r[i])))
+                self.times.release(release, i)
             };
             self.gain = target + c * (self.gain - target);
             *out = (f64::from(x) * self.gain) as f32;

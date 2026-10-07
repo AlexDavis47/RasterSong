@@ -1,3 +1,4 @@
+use rastersong_lang::{tr_args};
 use crate::dsp::Biquad;
 use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{
@@ -21,38 +22,27 @@ pub struct ThreeBand {
 }
 
 params! { ThreeBand {
-    LOW_HZ: ParamSpec::number(
-        "low_hz",
-        "Low / mid",
-        250.0,
+    LOW_HZ: ParamSpec::number("low_hz", 250.0,
         1.0,
-        100_000.0,
-        "Crossover between the low and mid bands",
-    )
+        100_000.0)
     .limits(0.001, 1e9),
-    HIGH_HZ: ParamSpec::number(
-        "high_hz",
-        "Mid / high",
-        4000.0,
+    HIGH_HZ: ParamSpec::number("high_hz", 4000.0,
         1.0,
-        100_000.0,
-        "Crossover between the mid and high bands",
-    )
+        100_000.0)
     .limits(0.001, 1e9),
-    UNIT: Unit::freq_param("second", "Unit for the crossovers"),
+    UNIT: Unit::freq_param("second"),
 } }
 
 impl NodeKind for ThreeBand {
     const KIND: &'static str = "three_band";
-    const SPEC: NodeSpec = NodeSpec::new("Three-Band Split", Category::Effect)
-        .describe("Low, mid and high frequency bands that add back up to the input")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .outputs(&[
-            OutputSpec::new("low", "Everything below the low crossover")
+            OutputSpec::new("low")
                 .tag(TagRule::INHERIT.part(Part::Low)),
-            OutputSpec::new("mid", "What is left between the crossovers")
+            OutputSpec::new("mid")
                 .tag(TagRule::INHERIT.part(Part::Mid)),
-            OutputSpec::new("high", "Everything above the high crossover")
+            OutputSpec::new("high")
                 .tag(TagRule::INHERIT.part(Part::High)),
         ])
         .per_channel();
@@ -66,8 +56,9 @@ impl NodeKind for ThreeBand {
         let low_hz = params.number_at(Self::LOW_HZ)?;
         let high_hz = params.number_at(Self::HIGH_HZ)?;
         if low_hz >= high_hz {
-            return Err(format!(
-                "`low_hz` ({low_hz}) must be below `high_hz` ({high_hz})"
+            return Err(tr_args(
+                "error.three_band.order",
+                &[("low", &low_hz.to_string()), ("high", &high_hz.to_string())],
             ));
         }
         Ok(Self {

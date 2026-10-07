@@ -8,26 +8,20 @@ pub struct Am {
 }
 
 params! { Am {
-    DEPTH: ParamSpec::number(
-        "depth",
-        "Depth",
-        1.0,
+    DEPTH: ParamSpec::number("depth", 1.0,
         -10.0,
-        10.0,
-        "How strongly the modulator scales the carrier: carrier × (1 + depth × modulator)",
-    )
+        10.0)
     .exposed()
     .unbounded(),
 } }
 
 impl NodeKind for Am {
     const KIND: &'static str = "am";
-    const SPEC: NodeSpec = NodeSpec::new("Amplitude Modulation", Category::Effect)
-        .describe("Scales the carrier by the modulator")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .inputs(&[
-            InputSpec::required("carrier", "The signal that gets scaled"),
-            InputSpec::required("modulator", "The signal that scales the carrier"),
+            InputSpec::required("carrier"),
+            InputSpec::required("modulator"),
         ])
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[r#"{ "depth": 0.8 }"#, r#"{ "depth": -2 }"#];

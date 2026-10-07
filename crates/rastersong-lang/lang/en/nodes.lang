@@ -1,0 +1,515 @@
+# Node text: labels, descriptions, ports and parameters, keyed by node kind.
+# Shared parameters (`param.<name>.*`) apply to every node that has no entry of its own.
+
+param.mix.label = Mix
+param.mix.help = 0 is the dry input, 1 is only the processed signal; in between crossfades the two
+
+node.am.label = Amplitude Modulation
+node.am.description = Scales the carrier by the modulator
+node.am.input.carrier = The signal that gets scaled
+node.am.input.modulator = The signal that scales the carrier
+node.am.output.out = The processed signal
+node.am.param.depth.label = Depth
+node.am.param.depth.help = How strongly the modulator scales the carrier: carrier × (1 + depth × modulator)
+
+node.audio_input.label = Audio
+node.audio_input.description = The audio track, one frame's worth per block, -1 to 1, channels interleaved
+node.audio_input.output.out = The audio, one frame's worth per block, from -1 to 1; stereo comes as L, R, L, R, …
+node.audio_input.param.source.label = Source
+node.audio_input.param.source.help = Name of the host-supplied audio signal
+
+node.audio_output.label = Audio Output
+node.audio_output.description = The rendered sound: replaces the source audio in the preview and the export
+node.audio_output.doc = Optional. Without it, or with nothing connected, the source audio is used untouched; so is a track wired straight in. Mono and stereo signals are written as they are; any other signal is written as interleaved samples to a stereo track. Each frame's block is resampled from its own rate to the project's audio rate, and clipped to -1 to 1.
+node.audio_output.input.in = The sound to output, from -1 to 1: mono, stereo, or any signal read as samples
+node.audio_output.output.out = The sound as written
+
+node.beat.label = Beat
+node.beat.description = A 0 to 1 signal locked to the project's beats or bars: phase, decay, pulse or steps
+node.beat.output.out = The beat-locked signal
+node.beat.param.period.label = Period
+node.beat.param.period.help = beat restarts the shape on every beat, bar on every bar
+node.beat.param.division.label = Division
+node.beat.param.division.help = Cycles per period: 2 restarts twice as often (half beats). Use the bar period for slower
+node.beat.param.shape.label = Shape
+node.beat.param.shape.help = phase rises 0 to 1, decay falls 1 to 0, pulse is on for the width, step climbs in stairs
+node.beat.param.width.label = Width
+node.beat.param.width.help = For the pulse shape, the fraction of each cycle it stays on
+node.beat.param.steps.label = Steps
+node.beat.param.steps.help = For the step shape, how many stairs each cycle climbs
+
+node.bitcrush.label = Bit Crush
+node.bitcrush.description = Reduces bit depth, posterizing the image
+node.bitcrush.input.in = The signal to process
+node.bitcrush.output.out = The processed signal
+node.bitcrush.param.bits.label = Bits
+node.bitcrush.param.bits.help = Bit depth; fewer bits means fewer levels
+
+node.blend.label = Blend
+node.blend.description = Combines two signals: add, multiply, screen, difference and more
+node.blend.input.a = The base signal
+node.blend.input.b = The signal blended onto the base
+node.blend.output.out = The processed signal
+node.blend.param.mode.label = Mode
+node.blend.param.mode.help = How `a` and `b` are combined
+node.blend.param.amount.label = Amount
+node.blend.param.amount.help = 0 passes `a` through, 1 is the full blend
+
+node.chorus.label = Chorus
+node.chorus.description = Thickens the signal with delayed copies; modulate the time to make them drift
+node.chorus.input.in = The signal to process
+node.chorus.output.out = The processed signal
+node.chorus.param.time.label = Time
+node.chorus.param.time.help = Delay of the copies; wire an oscillator in here to make them drift
+node.chorus.param.unit.label = Unit
+node.chorus.param.unit.help = Unit for the time
+node.chorus.param.voices.label = Voices
+node.chorus.param.voices.help = How many delayed copies are mixed in
+node.chorus.param.spread.label = Spread
+node.chorus.param.spread.help = How far apart the copies' delays are, as a fraction of the time
+
+node.clamp.label = Clamp
+node.clamp.description = Limits every sample to a range
+node.clamp.input.in = The signal to process
+node.clamp.output.out = The processed signal
+node.clamp.param.min.label = Min
+node.clamp.param.min.help = Samples below this are raised to it
+node.clamp.param.max.label = Max
+node.clamp.param.max.help = Samples above this are lowered to it
+
+node.combine.label = Combine Channels
+node.combine.description = Separate signals into one interleaved signal: R, G, B into RGB, or L, R into stereo
+node.combine.doc = Each connected input becomes one channel of the output, in order. The first input sets the size; the others are stretched to it. Three channels of video make RGB; two of audio make stereo.
+node.combine.input.c1 = Channel 1: red, or left. Sets the size
+node.combine.input.c2 = Channel 2: green, or right
+node.combine.input.c3 = Channel 3: blue
+node.combine.input.c4 = Channel 4
+node.combine.input.c5 = Channel 5
+node.combine.input.c6 = Channel 6
+node.combine.input.c7 = Channel 7
+node.combine.input.c8 = Channel 8
+node.combine.output.out = The channels interleaved, pixel by pixel
+
+node.compressor.label = Compressor
+node.compressor.description = Turns loud parts down, following the input or a sidechain
+node.compressor.input.in = The signal to compress
+node.compressor.input.sidechain = A signal whose level drives the compression instead of the input's own
+node.compressor.output.out = The processed signal
+node.compressor.param.threshold.label = Threshold
+node.compressor.param.threshold.help = Level above which the signal is turned down
+node.compressor.param.ratio.label = Ratio
+node.compressor.param.ratio.help = How much is taken off above the threshold: 4 lets 1 dB through for every 4 dB over
+node.compressor.param.attack.label = Attack
+node.compressor.param.attack.help = How quickly the compressor turns the signal down once it goes over
+node.compressor.param.release.label = Release
+node.compressor.param.release.help = How quickly it lets go once the signal falls back
+node.compressor.param.unit.label = Unit
+node.compressor.param.unit.help = Unit for attack and release
+node.compressor.param.knee.label = Knee
+node.compressor.param.knee.help = Width of the soft transition around the threshold; 0 is a hard knee
+node.compressor.param.makeup.label = Makeup
+node.compressor.param.makeup.help = Gain applied after compression
+
+node.constant.label = Constant
+node.constant.description = The same value in every sample: a flat colour, or silence
+node.constant.output.out = The constant signal
+node.constant.param.value.label = Value
+node.constant.param.value.help = The value of every sample
+
+node.crossfade.label = Crossfade
+node.crossfade.description = Fades or cuts between two signals
+node.crossfade.input.a = The signal heard at position 0
+node.crossfade.input.b = The signal heard at position 1
+node.crossfade.output.out = The processed signal
+node.crossfade.param.curve.label = Curve
+node.crossfade.param.curve.help = fade blends smoothly, switch cuts from `a` to `b` at the middle
+node.crossfade.param.position.label = Position
+node.crossfade.param.position.help = 0 is only `a`, 1 is only `b`
+
+node.delay.label = Delay
+node.delay.description = Delays the signal by rows or frames; modulating the time bends rows into waves
+node.delay.input.in = The signal to process
+node.delay.output.out = The processed signal
+node.delay.param.time.label = Time
+node.delay.param.time.help = Delay length, in rows or frames. Small fractions of a row give the finest waves
+node.delay.param.unit.label = Unit
+node.delay.param.unit.help = Unit for the time
+node.delay.param.feedback.label = Feedback
+node.delay.param.feedback.help = How much of the delayed signal is fed back in
+
+node.distortion.label = Distortion
+node.distortion.description = Drives the signal into a waveshaper: soft, hard, folding or wrapping
+node.distortion.input.in = The signal to process
+node.distortion.output.out = The processed signal
+node.distortion.param.shape.label = Shape
+node.distortion.param.shape.help = soft rounds off, hard clips flat, fold reflects loud parts back, wrap jumps from top to bottom
+node.distortion.param.drive.label = Drive
+node.distortion.param.drive.help = Gain before shaping; more drive, more distortion
+node.distortion.param.bias.label = Bias
+node.distortion.param.bias.help = Offset added before shaping, for uneven distortion
+
+node.envelope.label = Envelope
+node.envelope.description = Follows how strong the signal is, as a smooth curve from 0 up (Slew limits the signal itself instead)
+node.envelope.input.in = The signal to process
+node.envelope.output.out = The processed signal
+node.envelope.param.detector.label = Detector
+node.envelope.param.detector.help = peak follows each sample's magnitude, rms follows average power and is smoother
+node.envelope.param.attack.label = Attack
+node.envelope.param.attack.help = How quickly the output rises when the input gets stronger
+node.envelope.param.release.label = Release
+node.envelope.param.release.help = How quickly the output falls when the input gets weaker
+node.envelope.param.unit.label = Unit
+node.envelope.param.unit.help = Unit for attack and release
+
+node.equalizer.label = Equalizer
+node.equalizer.description = Boosts or cuts low, mid and high ranges with a shelf, a peak and a shelf
+node.equalizer.input.in = The signal to process
+node.equalizer.output.out = The processed signal
+node.equalizer.param.unit.label = Cycles per
+node.equalizer.param.unit.help = Unit for the three frequencies
+node.equalizer.param.low_freq.label = Low freq
+node.equalizer.param.low_freq.help = Corner of the low shelf
+node.equalizer.param.low_gain.label = Low gain
+node.equalizer.param.low_gain.help = Boost or cut of everything below the low corner
+node.equalizer.param.mid_freq.label = Mid freq
+node.equalizer.param.mid_freq.help = Centre of the mid band
+node.equalizer.param.mid_gain.label = Mid gain
+node.equalizer.param.mid_gain.help = Boost or cut around the mid frequency
+node.equalizer.param.mid_q.label = Mid Q
+node.equalizer.param.mid_q.help = Width of the mid band: higher is narrower
+node.equalizer.param.high_freq.label = High freq
+node.equalizer.param.high_freq.help = Corner of the high shelf
+node.equalizer.param.high_gain.label = High gain
+node.equalizer.param.high_gain.help = Boost or cut of everything above the high corner
+
+node.filter.label = Filter
+node.filter.description = A resonant low, high, band or all pass, tilt or comb filter
+node.filter.input.in = The signal to process
+node.filter.output.out = The processed signal
+node.filter.param.response.label = Type
+node.filter.param.response.help = lowpass, highpass, bandpass, allpass, tilt (gain dB of low-versus-high balance) or comb (echo every cutoff cycle)
+node.filter.param.slope.label = Slope (dB/oct)
+node.filter.param.slope.help = How sharply the cut falls off past the cutoff: 6 is a gentle one-pole roll-off, 48 a brick wall
+node.filter.param.cutoff.label = Cutoff
+node.filter.param.cutoff.help = Frequency of the filter's corner or centre
+node.filter.param.unit.label = Cycles per
+node.filter.param.unit.help = Unit for the cutoff
+node.filter.param.q.label = Resonance
+node.filter.param.q.help = Sharpness: 0.707 is flat (no resonance), higher rings or narrows. For a comb, higher repeats more. The 6 dB slope has none
+node.filter.param.gain.label = Gain
+node.filter.param.gain.help = For tilt: dB boost of lows and cut of highs (negative reverses)
+
+node.flanger.label = Flanger
+node.flanger.description = A short delay with feedback that combs the signal; modulate the time to sweep it
+node.flanger.input.in = The signal to process
+node.flanger.output.out = The processed signal
+node.flanger.param.time.label = Time
+node.flanger.param.time.help = Delay length; wire an oscillator in here to sweep the comb
+node.flanger.param.unit.label = Unit
+node.flanger.param.unit.help = Unit for the time
+node.flanger.param.feedback.label = Feedback
+node.flanger.param.feedback.help = How much of the delayed signal is fed back in; negative flips its sign
+
+node.flip.label = Flip
+node.flip.description = Mirrors or turns over the picture
+node.flip.input.in = The signal to process
+node.flip.output.out = The processed signal
+node.flip.param.mode.label = Mode
+node.flip.param.mode.help = horizontal mirrors each row, vertical turns the rows upside down, reverse does both, 
+
+node.fm.label = FM
+node.fm.description = Bends the carrier by reading it through a delay the modulator controls
+node.fm.input.carrier = The signal that gets bent
+node.fm.input.modulator = The signal that sets how far back the carrier is read
+node.fm.output.out = The processed signal
+node.fm.param.index.label = Index
+node.fm.param.index.help = How far the modulator moves the carrier, in rows or frames: the modulator at +1 reads twice this far back, at -1 not at all
+node.fm.param.unit.label = Unit
+node.fm.param.unit.help = Unit for the index
+
+node.frequency_shifter.label = Frequency Shifter
+node.frequency_shifter.description = Moves every frequency up or down by a fixed amount, giving inharmonic tones
+node.frequency_shifter.doc = With Mix between 0 and 1 the shifted signal beats against the original.
+node.frequency_shifter.input.in = The signal to process
+node.frequency_shifter.output.out = The processed signal
+node.frequency_shifter.param.shift.label = Shift
+node.frequency_shifter.param.shift.help = How far every frequency moves: positive shifts up, negative down
+node.frequency_shifter.param.unit.label = Cycles per
+node.frequency_shifter.param.unit.help = Unit for the shift
+
+node.gain.label = Gain
+node.gain.description = Makes the signal louder or quieter, in decibels
+node.gain.input.in = The signal to process
+node.gain.output.out = The processed signal
+node.gain.param.gain.label = Gain
+node.gain.param.gain.help = How much louder (or brighter) the signal gets; negative is quieter, 0 changes nothing
+
+node.gate.label = Gate
+node.gate.description = Silences the signal while it, or a sidechain, is quiet
+node.gate.input.in = The signal to gate
+node.gate.input.sidechain = A signal whose level opens the gate instead of the input's own
+node.gate.output.out = The processed signal
+node.gate.param.threshold.label = Threshold
+node.gate.param.threshold.help = Level the signal must reach to open the gate
+node.gate.param.attack.label = Attack
+node.gate.param.attack.help = How quickly the gate opens
+node.gate.param.hold.label = Hold
+node.gate.param.hold.help = How long the gate stays open after the signal drops below the threshold
+node.gate.param.release.label = Release
+node.gate.param.release.help = How quickly the gate closes
+node.gate.param.unit.label = Unit
+node.gate.param.unit.help = Unit for attack, hold and release
+node.gate.param.range.label = Range
+node.gate.param.range.help = How far a closed gate turns the signal down; -80 dB is silence
+
+node.interleave.label = Interleave
+node.interleave.description = Channels as one mono carrier, as many times as wide (R, G, B, R, G, B, …)
+node.interleave.input.in = An interleaved signal, such as RGB video, to flatten
+node.interleave.output.out = The channels in sequence, as one mono signal as many times as wide as there are channels
+
+node.invert.label = Invert
+node.invert.description = Flips the signal: negative for video, upside down for audio
+node.invert.input.in = The signal to process
+node.invert.output.out = The processed signal
+node.invert.param.mode.label = Mode
+node.invert.param.mode.help = video flips around the middle of 0 to 1 (1 - x), audio flips the sign (-x)
+node.invert.param.amount.label = Amount
+node.invert.param.amount.help = 0 leaves the signal alone, 1 is fully inverted, in between fades toward it
+
+node.limiter.label = Limiter
+node.limiter.description = Stops the signal from passing a ceiling by pulling the gain down
+node.limiter.input.in = The signal to process
+node.limiter.output.out = The processed signal
+node.limiter.param.ceiling.label = Ceiling
+node.limiter.param.ceiling.help = The loudest any sample may get: 0 dB is full scale, 1.0
+node.limiter.param.release.label = Release
+node.limiter.param.release.help = How slowly the gain recovers after a peak; longer is smoother
+node.limiter.param.unit.label = Unit
+node.limiter.param.unit.help = Unit for the release
+
+node.noise.label = Noise
+node.noise.description = Random values in a chosen colour: grain in video, hiss in audio
+node.noise.output.out = The noise
+node.noise.param.color.label = Color
+node.noise.param.color.help = How the noise is spread over frequencies: white is sharp grain, brown is slow drift, violet is the finest grain
+node.noise.param.seed.label = Seed
+node.noise.param.seed.help = Picks which noise; the same seed always gives the same noise
+node.noise.param.amplitude.label = Amplitude
+node.noise.param.amplitude.help = Scales the noise, which spans -1 to 1 before the offset is added
+node.noise.param.offset.label = Offset
+node.noise.param.offset.help = Added to the noise: 0.5 with amplitude 0.5 fills the video range 0 to 1, 0 suits audio
+
+node.offset.label = Offset
+node.offset.description = Adds a constant to every sample
+node.offset.input.in = The signal to process
+node.offset.output.out = The processed signal
+node.offset.param.amount.label = Amount
+node.offset.param.amount.help = Added to every sample: brightens video, shifts audio up
+
+node.oscillator.label = Oscillator
+node.oscillator.description = A sine, triangle, square or saw wave: stripes in video, a tone in audio
+node.oscillator.output.out = The wave
+node.oscillator.param.wave.label = Wave
+node.oscillator.param.wave.help = The shape of one cycle
+node.oscillator.param.freq.label = Frequency
+node.oscillator.param.freq.help = Cycles per unit of time or space: how many stripes fit in a row, or how high the tone is
+node.oscillator.param.unit.label = Cycles per
+node.oscillator.param.unit.help = Unit for the frequency (cycles per unit): Row keeps the look at any resolution
+node.oscillator.param.phase.label = Phase
+node.oscillator.param.phase.help = Where in the cycle the wave starts, as a fraction of a cycle
+node.oscillator.param.amplitude.label = Amplitude
+node.oscillator.param.amplitude.help = Half the peak-to-peak height; with the offset it places the wave in the signal's range
+node.oscillator.param.offset.label = Offset
+node.oscillator.param.offset.help = Added to the wave: 0.5 with amplitude 0.5 fills the video range 0 to 1, 0 suits audio
+node.oscillator.param.pulse_width.label = Pulse width
+node.oscillator.param.pulse_width.help = For the square wave, the fraction of the cycle it stays high
+
+node.output.label = Output
+node.output.description = The rendered result: RGB, or mono shown as grayscale
+node.output.input.in = The picture to render: RGB, or mono for grayscale
+node.output.output.out = The rendered picture
+
+node.pack.label = Pack
+node.pack.description = A packed mono carrier back into channels: RGB, stereo, …
+node.pack.input.in = A mono signal as many times as wide as the picture as there are channels, as Interleave makes
+node.pack.output.out = The interleaved signal
+node.pack.param.channels.label = Channels
+node.pack.param.channels.help = How many channels each pixel gets: 3 for RGB, 2 for stereo
+node.pack.param.channels.locked = The number of channels changes the signal's layout, which the graph is compiled for and can't change per sample
+
+node.phaser.label = Phaser
+node.phaser.description = Sweeps notches through the signal with allpass filters; modulate the frequency
+node.phaser.doc = Mix is fully wet by default; around 0.5 the notches are deepest, because the filtered signal then cancels the dry one.
+node.phaser.input.in = The signal to process
+node.phaser.output.out = The processed signal
+node.phaser.param.stages.label = Stages
+node.phaser.param.stages.help = How many allpass filters are chained; every two add a notch
+node.phaser.param.freq.label = Frequency
+node.phaser.param.freq.help = Where the notches sit; wire an oscillator in here to sweep them
+node.phaser.param.unit.label = Cycles per
+node.phaser.param.unit.help = Unit for the frequency
+node.phaser.param.feedback.label = Feedback
+node.phaser.param.feedback.help = How much of the chain's output is fed back in, which sharpens the notches
+
+node.quantize.label = Quantize
+node.quantize.description = Snaps every sample to a grid of evenly spaced levels
+node.quantize.input.in = The signal to process
+node.quantize.output.out = The processed signal
+node.quantize.param.step.label = Step
+node.quantize.param.step.help = Size of one step: 0.25 gives the levels 0, 0.25, 0.5, 0.75, 1
+node.quantize.param.offset.label = Offset
+node.quantize.param.offset.help = Where the steps start: steps sit at offset + n × step
+node.quantize.param.rounding.label = Rounding
+node.quantize.param.rounding.help = nearest picks the closest step, floor the one below, ceil the one above
+
+node.rectify.label = Rectify
+node.rectify.description = Folds or drops one half of the wave around a centre value
+node.rectify.input.in = The signal to process
+node.rectify.output.out = The processed signal
+node.rectify.param.kind.label = Kind
+node.rectify.param.kind.help = full flips the negative half up, half drops it, negative keeps only the negative half
+node.rectify.param.center.label = Center
+node.rectify.param.center.help = The value the wave is rectified around: 0 for audio, 0.5 to fold video around mid-gray
+
+node.relabel.label = Relabel
+node.relabel.description = Changes what a signal is said to be (kind, channels, range), not its samples
+node.relabel.doc = Signals carry a tag (video or audio, which channels, the range of values) that colours wires and drives warnings. Nothing converts a signal because of its tag; this node only rewrites it, for when a signal is reused on purpose as something else.
+node.relabel.input.in = The signal to process
+node.relabel.output.out = The same samples, relabelled
+node.relabel.param.kind.label = Kind
+node.relabel.param.kind.help = What the signal is meant to be
+node.relabel.param.channels.label = Channels
+node.relabel.param.channels.help = named gives the channels their usual names (RGB, stereo), numbered just counts them
+node.relabel.param.range.label = Range
+node.relabel.param.range.help = The range the values are meant to span
+node.relabel.param.part.label = Part
+node.relabel.param.part.help = whole stops treating the signal as one channel or band of another
+
+node.remap.label = Remap
+node.remap.description = Stretches one range of values onto another: contrast, inversion, levels
+node.remap.input.in = The signal to process
+node.remap.output.out = The processed signal
+node.remap.param.in_low.label = In low
+node.remap.param.in_low.help = The input value that becomes `out_low`
+node.remap.param.in_high.label = In high
+node.remap.param.in_high.help = The input value that becomes `out_high`
+node.remap.param.out_low.label = Out low
+node.remap.param.out_low.help = What `in_low` becomes
+node.remap.param.out_high.label = Out high
+node.remap.param.out_high.help = What `in_high` becomes
+node.remap.param.outside.label = Outside
+node.remap.param.outside.help = clamp stops at the output range, extend continues the line beyond it
+
+node.resample.label = Resample
+node.resample.description = Resizes the picture; effects after it work at the new resolution
+node.resample.input.in = The signal to process
+node.resample.output.out = The processed signal
+node.resample.param.width.label = Width
+node.resample.param.width.help = New width in pixels; 0 keeps the input's width
+node.resample.param.width.locked = The size changes the signal's layout, which the graph is compiled for and can't change per sample
+node.resample.param.height.label = Height
+node.resample.param.height.help = New height in pixels; 0 keeps the input's height
+node.resample.param.height.locked = The size changes the signal's layout, which the graph is compiled for and can't change per sample
+node.resample.param.method.label = Method
+node.resample.param.method.help = nearest picks the closest pixel, linear blends the four closest
+
+node.reverb.label = Reverb
+node.reverb.description = A dense decaying wash of echoes
+node.reverb.doc = Uses 12 internal delay lines whose lengths follow the signal's sample rate. On video the tail is long in samples, so the node uses a lot of memory and asks the host to render up to 120 frames of warmup before a seek.
+node.reverb.input.in = The signal to process
+node.reverb.output.out = The processed signal
+node.reverb.param.size.label = Size
+node.reverb.param.size.help = How long the tail rings: higher is longer
+node.reverb.param.damping.label = Damping
+node.reverb.param.damping.help = How quickly the tail loses its fast detail: higher is duller
+node.reverb.param.predelay.label = Pre-delay
+node.reverb.param.predelay.help = Gap before the reverb starts
+node.reverb.param.unit.label = Unit
+node.reverb.param.unit.help = Unit for the pre-delay
+
+node.ring_mod.label = Ring Modulation
+node.ring_mod.description = Multiplies the carrier by the modulator, leaving sum and difference tones
+node.ring_mod.input.carrier = The signal that gets multiplied
+node.ring_mod.input.modulator = The signal it is multiplied by
+node.ring_mod.output.out = The processed signal
+
+node.sample_hold.label = Sample & Hold
+node.sample_hold.description = Holds each sampled value for a while and optionally rounds it to a few levels
+node.sample_hold.input.in = The signal to process
+node.sample_hold.output.out = The processed signal
+node.sample_hold.param.period.label = Period
+node.sample_hold.param.period.help = How long each sampled value is held; 0 samples every sample (no hold)
+node.sample_hold.param.unit.label = Unit
+node.sample_hold.param.unit.help = Unit for the period
+node.sample_hold.param.levels.label = Levels
+node.sample_hold.param.levels.help = Rounds each value to this many evenly spaced levels between 0 and 1; 0 or 1 leaves values alone
+
+node.slew.label = Slew
+node.slew.description = Limits how fast the signal itself can rise and fall, turning jumps into ramps (Envelope follows its strength instead)
+node.slew.input.in = The signal to process
+node.slew.output.out = The processed signal
+node.slew.param.rise.label = Rise
+node.slew.param.rise.help = Time to climb a full 0 to 1 when the input jumps up; 0 is instant
+node.slew.param.fall.label = Fall
+node.slew.param.fall.help = Time to fall a full 1 to 0 when the input jumps down; 0 is instant
+node.slew.param.unit.label = Unit
+node.slew.param.unit.help = Unit for rise and fall
+
+node.split.label = Split Channels
+node.split.description = Each channel of an interleaved signal on its own: R, G, B of video or L, R of stereo
+node.split.doc = One output per channel of the input: three for RGB video, two for stereo audio. Outputs past the input's channel count carry silence.
+node.split.input.in = The interleaved signal to take apart
+node.split.output.c1 = Channel 1: red, or left
+node.split.output.c2 = Channel 2: green, or right
+node.split.output.c3 = Channel 3: blue
+node.split.output.c4 = Channel 4
+node.split.output.c5 = Channel 5
+node.split.output.c6 = Channel 6
+node.split.output.c7 = Channel 7
+node.split.output.c8 = Channel 8
+
+node.stretch.label = Stretch to Match
+node.stretch.description = A signal stretched to the length and layout of another
+node.stretch.doc = The output has `like`'s size and layout and `in`'s values: audio stretched over a picture, or a picture squeezed into an audio block. With pixel grouping (the default), a mono signal stretched over RGB moves each pixel's channels together; per sample, it is spread over every channel value.
+node.stretch.input.like = The signal whose size and layout the result takes
+node.stretch.input.in = The signal to stretch
+node.stretch.output.out = `in` at the size of `like`
+
+node.three_band.label = Three-Band Split
+node.three_band.description = Low, mid and high frequency bands that add back up to the input
+node.three_band.input.in = The signal to process
+node.three_band.output.low = Everything below the low crossover
+node.three_band.output.mid = What is left between the crossovers
+node.three_band.output.high = Everything above the high crossover
+node.three_band.param.low_hz.label = Low / mid
+node.three_band.param.low_hz.help = Crossover between the low and mid bands
+node.three_band.param.high_hz.label = Mid / high
+node.three_band.param.high_hz.help = Crossover between the mid and high bands
+node.three_band.param.unit.label = Cycles per
+node.three_band.param.unit.help = Unit for the crossovers
+
+node.to_audio.label = Video to Audio
+node.to_audio.description = Video's 0 to 1 as audio's -1 to 1, as written to an 8-bit file
+node.to_audio.input.in = Video, with values from 0 to 1
+node.to_audio.output.out = The same samples as audio, from -1 to 1
+node.to_audio.param.mapping.label = Mapping
+node.to_audio.param.mapping.help = accurate maps black to -1 and white to 1; bugged reproduces the signed/unsigned misread, wrapping at mid-gray
+
+node.to_video.label = Audio to Video
+node.to_video.description = Audio's -1 to 1 back to video's 0 to 1, as read from an 8-bit file
+node.to_video.input.in = Audio, with values from -1 to 1
+node.to_video.output.out = The same samples as video, from 0 to 1
+node.to_video.param.mapping.label = Mapping
+node.to_video.param.mapping.help = accurate maps black to -1 and white to 1; bugged reproduces the signed/unsigned misread, wrapping at mid-gray
+
+node.transpose.label = Transpose
+node.transpose.description = Swaps rows and columns: the picture's width and height trade places
+node.transpose.input.in = The signal to process
+node.transpose.output.out = The processed signal
+
+node.video_input.label = Video
+node.video_input.description = The video as RGB, 0 to 1
+node.video_input.output.out = The video, as RGB from 0 to 1
+node.video_input.param.source.label = Source
+node.video_input.param.source.help = Name of the host-supplied video signal
+

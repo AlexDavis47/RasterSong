@@ -121,21 +121,19 @@ impl Node for Sum {
 }
 
 const SUM_INPUTS: &[crate::InputSpec] = &[
-    crate::InputSpec::required("a", "First addend"),
-    crate::InputSpec::required("b", "Second addend"),
+    crate::InputSpec::required("a"),
+    crate::InputSpec::required("b"),
 ];
 
 /// Registers the test nodes `lookahead` and `sum`.
 pub fn register_fakes(registry: &mut Registry) {
     use crate::{Category, NodeSpec};
-    registry.register_custom(
-        "lookahead",
-        NodeSpec::new("Lookahead", Category::Effect),
-        |_| Ok(Lookahead::default()),
-    );
+    registry.register_custom("lookahead", NodeSpec::new(Category::Effect), |_| {
+        Ok(Lookahead::default())
+    });
     registry.register_custom(
         "sum",
-        NodeSpec::new("Sum", Category::Effect).inputs(SUM_INPUTS),
+        NodeSpec::new(Category::Effect).inputs(SUM_INPUTS),
         |_| Ok(Sum),
     );
 }

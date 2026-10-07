@@ -12,7 +12,7 @@ and `Node` (what it *does* each frame).
 ```rust
 pub trait NodeKind: Node + Sized + 'static {
     const KIND: &'static str;                 // type name in graph files
-    const SPEC: NodeSpec;                     // label, category, description, ports, parameters
+    const SPEC: NodeSpec;                     // category, ports, parameters (text is in `nodes.lang`)
     const TEST_CONFIGS: &'static [&'static str] = &[];  // parameter sets for the property tests
     const BENCH: Option<&'static str> = None;           // parameter set for benchmarks
     fn new(params: &Params) -> Result<Self, String>;    // must succeed with all defaults
@@ -49,6 +49,8 @@ pub trait Node: Send {
 1. Create `nodes/<category>/<name>.rs` (copy `effect/bitcrush.rs` for a stateless effect, `effect/delay.rs` for a
    stateful one).
 2. Add one line to the `nodes!` list in `nodes/mod.rs`: `<name>: [<Type>]` under its category.
+3. Write its text in `crates/rastersong-lang/lang/en/nodes.lang` (label, description, a line for each port and
+   parameter; see [Text and languages](text.md)). A test fails for any entry that is missing or left over.
 
 That is all. The add-node menu, the inspector, the registry tests, the property tests (block-size independence,
 reset determinism, finite output, modulation sweeps), the benchmarks and `docs/nodes.md` are all driven by the
@@ -58,10 +60,10 @@ registry. In the node's file:
   (`Type::DRIVE`). Constructors read with `params.number_at(Self::DRIVE)`, `params.choice_as::<Shape>(Self::SHAPE)`
   and so on, and a compile-time assertion checks each constant is in the position of the parameter it names, so
   no parameter is ever looked up by a string or a bare `0`. Choices are enums made with `choice!`, which has no
-  fallback arm. Every parameter, input and output has help text (a registry test fails without it).
+  fallback arm. Every parameter, input and output has help text, kept in the lang file rather than the spec (a test fails without it).
 - **Per-sample values** come from `ctx.value(Self::DRIVE, self.drive)`, which is the node's own constant when
   nothing modulates the parameter and the modulating signal's values when something does: `drive.at(i)`.
-- **Ports** are in `SPEC` (`.inputs(&[...])`, `.outputs(&[...])`, with help text and wire-colour hints). A node
+- **Ports** are in `SPEC` (`.inputs(&[...])`, `.outputs(&[...])`, with wire-colour hints). A node
   defaults to one input `in` and one output `out`.
 - **Tests** go in the same file: numeric tests with `crate::testing::{node, process_one}`, plus `TEST_CONFIGS`
   and `BENCH`. A registry test fails if an effect leaves them empty, so a new effect can't skip the property tests.
@@ -121,8 +123,8 @@ Specs also say which parameters show a pin on new nodes (`exposed`).
 **Whole-number parameters** (counts, divisions, steps, seeds, pixel sizes) are declared `.integer()`. The usual range, default and limits must be whole (a test checks), the slider and value box snap to whole values, loaded fractional values are rounded by `migrate.rs`, and a modulated value is rounded at every sample. Parameters that merely accept fractions (Bit Crush bits) are not integers; the per-node `int` toggle covers those.
 
 **Locked parameters.** Modulation is the default and a parameter is locked with `.fixed("reason")` only when modulating
-it is infeasible ([Decisions](decisions.md#modulation-is-allowed-unless-infeasible-october-2026)). The reason is
-shown in the inspector (a crossed-out pin; hover for the text) and in [nodes.md](nodes.md), and a test rejects a
+it is infeasible ([Decisions](decisions.md#modulation-is-allowed-unless-infeasible-october-2026)). The reason is written in `nodes.lang`
+(`node.<kind>.param.<name>.locked`) and shown in the inspector (a crossed-out pin; hover for the text) and in [nodes.md](nodes.md), and a test rejects a
 missing one. Today only what changes the signal's *layout* is locked: Pack channels and Resample width and height,
 because the graph is compiled for a fixed layout. Everything else reads its value per sample through
 `ctx.value(Self::PARAM, constant)` (or `ctx.param(..)` for a stream), sizing its buffers from `ctx.param_max(..)` in

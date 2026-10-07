@@ -15,6 +15,7 @@ use eframe::egui::{
     UiBuilder, Vec2, pos2, vec2,
 };
 use rastersong_engine::{LoopRegion, Tempo, TimelineMode, Waveform};
+use rastersong_lang::tr;
 
 use crate::name_edit::name_edit;
 use crate::theme::Theme;
@@ -455,15 +456,11 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         vec2(MODE_WIDTH, RULER_HEIGHT - 2.0),
     );
     let (icon, name, hover) = match model.mode {
-        TimelineMode::Time => (
-            "⏱",
-            "Time",
-            "The ruler shows minutes and seconds. Click to show bars and beats and edit the tempo.",
-        ),
+        TimelineMode::Time => ("⏱", tr("timeline.mode.time"), tr("timeline.mode.time.help")),
         TimelineMode::Tempo => (
             "♪",
-            "Tempo",
-            "The ruler shows bars and beats. Click to show minutes and seconds.",
+            tr("timeline.mode.tempo"),
+            tr("timeline.mode.tempo.help"),
         ),
     };
     if ui
@@ -578,12 +575,14 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
             ui.spacing_mut().item_spacing.y = 2.0;
             ui.horizontal(|ui| {
                 ui.label("▣");
-                let current = model.video_name.as_deref().unwrap_or("Video");
+                let current = model
+                    .video_name
+                    .as_deref()
+                    .unwrap_or(tr("editor.linked.video_default"));
                 let edit = name_edit(ui, ui.id().with("video-name"), current, |e| {
                     e.desired_width(NAME_WIDTH)
                 });
-                edit.response
-                    .on_hover_text("Video name, shared with the video input node");
+                edit.response.on_hover_text(tr("timeline.video_name.help"));
                 if let Some(name) = edit.committed {
                     response.actions.push(TrackAction::RenameVideo(name));
                 }
@@ -627,7 +626,7 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         } else if grip.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }
-        grip.on_hover_text("Drag to reorder the tracks");
+        grip.on_hover_text(tr("timeline.track.reorder"));
         header(ui, rect, header_clip, |ui| {
             audio_header(ui, track, i, &mut response);
         });
@@ -657,8 +656,8 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
     );
     header(ui, add_row, header_clip, |ui| {
         if ui
-            .button("+ Audio track")
-            .on_hover_text("Add an audio file as a new track")
+            .button(tr("timeline.track.add"))
+            .on_hover_text(tr("timeline.track.add.help"))
             .clicked()
         {
             response.actions.push(TrackAction::Add);
@@ -777,19 +776,19 @@ fn loop_ruler(
         ui.data_mut(|d| d.remove::<RulerDrag>(id));
     }
 
-    let ruler = ruler.on_hover_text(
-        "Click or drag to move the playhead. Ctrl+drag makes a loop region, or moves its edges. \
-         Right-click for looping options.",
-    );
+    let ruler = ruler.on_hover_text(tr("timeline.ruler.help"));
     ruler.context_menu(|ui| {
         let Some(mut r) = region else {
-            ui.weak("Ctrl+drag along the ruler to make a loop region");
+            ui.weak(tr("timeline.loop.hint"));
             return;
         };
-        if ui.checkbox(&mut r.enabled, "Loop playback (R)").changed() {
+        if ui
+            .checkbox(&mut r.enabled, tr("timeline.loop.enable"))
+            .changed()
+        {
             response.loop_region = Some(Some(r));
         }
-        if ui.button("Remove loop region").clicked() {
+        if ui.button(tr("timeline.loop.remove")).clicked() {
             response.loop_region = Some(None);
             ui.close();
         }
@@ -945,7 +944,7 @@ impl AudioLane<'_> {
             painter.text(
                 lane.left_center() + vec2(6.0, 0.0),
                 Align2::LEFT_CENTER,
-                "loading…",
+                tr("timeline.track.loading"),
                 FontId::proportional(11.0),
                 ui.visuals().weak_text_color(),
             );
@@ -1022,7 +1021,7 @@ impl AudioLane<'_> {
         if hovered {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
         }
-        drag.on_hover_text("Drag to move this track against the video");
+        drag.on_hover_text(tr("timeline.track.offset_drag"));
     }
 }
 
@@ -1048,9 +1047,7 @@ fn audio_header(ui: &mut Ui, track: &TrackView, index: usize, response: &mut Tim
             let edit = name_edit(ui, ui.id().with(("track-name", index)), &track.name, |e| {
                 e.desired_width(NAME_WIDTH)
             });
-            let edit_response = edit
-                .response
-                .on_hover_text("Track name, shared with its Audio Input node");
+            let edit_response = edit.response.on_hover_text(tr("timeline.track.name.help"));
             if edit_response.gained_focus() {
                 response.actions.push(TrackAction::Select(index));
             }
@@ -1061,9 +1058,9 @@ fn audio_header(ui: &mut Ui, track: &TrackView, index: usize, response: &mut Tim
             if ui
                 .add(mute)
                 .on_hover_text(if track.muted {
-                    "Unmute (Alt+click to solo)"
+                    tr("timeline.track.unmute")
                 } else {
-                    "Mute in playback (Alt+click to solo)"
+                    tr("timeline.track.mute")
                 })
                 .clicked()
             {
@@ -1075,7 +1072,7 @@ fn audio_header(ui: &mut Ui, track: &TrackView, index: usize, response: &mut Tim
             }
             if ui
                 .add(egui::Button::new("×").frame(false))
-                .on_hover_text("Remove track")
+                .on_hover_text(tr("timeline.track.remove"))
                 .clicked()
             {
                 response.actions.push(TrackAction::Remove(index));
@@ -1083,16 +1080,16 @@ fn audio_header(ui: &mut Ui, track: &TrackView, index: usize, response: &mut Tim
         });
         ui.horizontal(|ui| {
             ui.add_space(16.0);
-            ui.weak("Offset");
+            ui.weak(tr("timeline.track.offset"));
             let mut offset = track.offset;
             let edit = ui
                 .add(
                     crate::value_box::ValueBox::new(&mut offset)
                         .speed(0.01)
-                        .suffix(" s")
+                        .suffix(tr("unit.seconds.suffix"))
                         .max_decimals(3),
                 )
-                .on_hover_text("Seconds this track starts after the video");
+                .on_hover_text(tr("timeline.track.offset.help"));
             if edit.changed() {
                 response.actions.push(TrackAction::SetOffset(index, offset));
             }

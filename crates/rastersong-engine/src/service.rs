@@ -9,6 +9,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 
 use rastersong_graph::{CompileOptions, GraphDesc, NodeStats, Registry, Tempo, render_form};
+use rastersong_lang::{tr, tr_args};
 use rastersong_media::{AudioClip, AudioOptions, MediaBackend};
 
 use crate::audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE};
@@ -56,11 +57,11 @@ impl PreviewScale {
     /// The name shown for this scale: Full, Half, Quarter, Eighth or Sixteenth.
     pub fn label(self) -> &'static str {
         match self {
-            Self::Full => "Full",
-            Self::Half => "Half",
-            Self::Quarter => "Quarter",
-            Self::Eighth => "Eighth",
-            Self::Sixteenth => "Sixteenth",
+            Self::Full => tr("preview_scale.full"),
+            Self::Half => tr("preview_scale.half"),
+            Self::Quarter => tr("preview_scale.quarter"),
+            Self::Eighth => tr("preview_scale.eighth"),
+            Self::Sixteenth => tr("preview_scale.sixteenth"),
         }
     }
 
@@ -119,12 +120,16 @@ pub struct Failure {
     pub message: String,
     /// The node at fault, when the problem is with one node of the graph.
     pub node: Option<String>,
+    /// The message without the "node `id`:" lead-in, for showing under the node's name.
+    pub detail: String,
 }
 
 impl Failure {
     fn new(message: impl Into<String>) -> Self {
+        let message = message.into();
         Self {
-            message: message.into(),
+            detail: message.clone(),
+            message,
             node: None,
         }
     }
@@ -132,6 +137,10 @@ impl Failure {
     fn from_error(error: &EngineError) -> Self {
         Self {
             message: error.to_string(),
+            detail: match error {
+                EngineError::Graph(e) => e.detail(),
+                other => other.to_string(),
+            },
             node: match error {
                 EngineError::Graph(e) => e.node().map(str::to_owned),
                 _ => None,
@@ -748,7 +757,12 @@ impl Worker {
                         .shared
                         .backend
                         .load_audio(&spec.path, AudioOptions::default())
-                        .map_err(|e| Failure::new(format!("audio track `{}`: {e}", spec.name)))?;
+                        .map_err(|e| {
+                            Failure::new(tr_args(
+                                "error.audio_track",
+                                &[("name", &spec.name), ("error", &e.to_string())],
+                            ))
+                        })?;
                     let entry = DecodedAudio {
                         modulator: Arc::new(Modulator::new(&clip)),
                         waveform: Arc::new(Waveform::new(&clip)),

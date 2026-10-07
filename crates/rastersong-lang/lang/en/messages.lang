@@ -1,0 +1,117 @@
+# Shared names and messages: node categories, signal descriptions, errors and diagnostics.
+
+# --- Node categories ---
+category.input = Inputs
+category.generator = Generators
+category.structure = Channels
+category.convert = Conversion
+category.effect = Effects
+category.output = Output
+
+# --- What a signal is said to be ---
+signal.untagged = untagged
+signal.kind.unknown = unknown
+signal.kind.video = video
+signal.kind.audio = audio
+signal.channels.mono = mono
+signal.channels.stereo = stereo
+signal.channels.rgb = RGB
+signal.channels.numbered = interleaved channels
+signal.part.red = red channel
+signal.part.green = green channel
+signal.part.blue = blue channel
+signal.part.left = left channel
+signal.part.right = right channel
+signal.part.channel = channel {number}
+signal.part.low = low band
+signal.part.mid = mid band
+signal.part.high = high band
+signal.range.unipolar = 0 to 1
+signal.range.bipolar = -1 to 1
+
+# --- Preview resolutions ---
+preview_scale.full = Full
+preview_scale.half = Half
+preview_scale.quarter = Quarter
+preview_scale.eighth = Eighth
+preview_scale.sixteenth = Sixteenth
+
+# --- Graph and project errors ---
+error.graph.parse = invalid graph file: {message}
+error.graph.version = unsupported graph format version {version} (this build reads version {supported}; there are no migrations before 1.0)
+error.graph.unknown_node_type = node `{id}`: unknown node type `{kind}`
+error.graph.unknown_node_type.detail = unknown node type `{kind}`
+error.graph.duplicate_id = node id `{id}` is used more than once
+error.graph.connection = connection `{connection}`: {message}
+error.graph.missing_input = node `{node}`: input `{input}` must be connected
+error.graph.missing_input.detail = input `{input}` must be connected
+error.graph.cycle = the graph has a cycle through {nodes}
+error.graph.output_count = the graph must have exactly one `output` node, found {count}
+error.graph.audio_output_count = the graph can have at most one `audio_output` node, found {count}
+error.graph.node = node `{node}`: {message}
+error.graph.source = source `{name}`: {message}
+error.node.reads_output = can't read from an output node
+error.node.bad_id = node ids must be non-empty and contain no `.`
+error.node.not_a_number = `{name}` isn't a number parameter
+error.node.not_modulatable = `{name}` isn't a parameter that can be modulated
+error.source.wrong_layout = expected {expected}, got {got}
+error.source.not_supplied = not supplied
+error.connection.no_param = `{node}` has no parameter `{param}` that can be modulated
+error.connection.param_taken = parameter `{param}` is already connected
+error.connection.no_input = `{node}` has no input {port}; inputs are {inputs}
+error.connection.input_taken = input `{input}` is already connected
+error.param.unknown = unknown parameter `{name}`
+error.param.between = `{name}` must be between {min} and {max}, got {got}
+error.param.finite = `{name}` must be a finite number, got {got}
+error.param.number = `{name}` must be a number, got {got}
+error.param.choice = `{name}` must be one of {options}, got {got}
+error.param.no_variant = `{name}` option `{option}` has no matching variant
+error.param.text = `{name}` must be text, got {got}
+error.three_band.order = `low_hz` ({low}) must be below `high_hz` ({high})
+error.video_output.shape = expects a {expected} or mono signal of that size, got {got}
+error.pack.row = a row of {input} has {samples} samples, which doesn't divide into pixels of {channels} channels
+error.resample.too_large = {size} is too large
+error.project.invalid = invalid project file: {error}
+error.project.version = unsupported project version {version} (this build reads version {supported}; there are no migrations before 1.0)
+error.audio_track = audio track `{name}`: {error}
+error.audio_unavailable = Audio playback is unavailable: {error}
+error.no_output_device = no output device
+
+# --- Notes and warnings on nodes ---
+diagnostic.separate.one_channel = Separate channels has no effect here: the signal has one channel.
+diagnostic.separate.unsupported = This node can't run once per channel, so the channels are processed together.
+diagnostic.separate.reshapes = This node changes the signal's shape, so the channels are processed together.
+diagnostic.range = Tuned for values from {expects}; this signal runs {got}, so levels and thresholds act differently.{convert}
+diagnostic.range.convert_to_audio = \sVideo to Audio converts it if you want the usual behaviour.
+diagnostic.range.convert_to_video = \sAudio to Video converts it if you want the usual behaviour.
+diagnostic.audio_output.many_channels = {count} samples per pixel are read as one long stereo stream, so expect a raw, buzzy sound.
+diagnostic.combine.stretched = {port} is {layout}, so it's stretched to fit {first_port}'s {first}.
+diagnostic.interleave.one_channel = The input already has one channel, so it passes through unchanged.
+diagnostic.split.one_channel = The input has one channel, so only c1 carries a signal.
+diagnostic.split.too_many = The input has {count} channels; only the first {max} are split off.
+
+# --- Media errors (the reasons FFmpeg gives are passed through in its own words) ---
+error.media.init = FFmpeg failed to initialize: {message}
+error.media.open = could not open {path}: {reason}
+error.media.no_video = {path} has no video stream
+error.media.no_audio = {path} has no audio stream
+error.media.frame_out_of_range = frame {index} is out of range (the video has {count} frames)
+error.media.frame_unavailable = frame {index} could not be decoded
+error.media.decode = decoding failed: {message}
+error.media.audio_invalid = invalid audio output: {rate} Hz, {channels} channels
+error.media.audio_setup = could not set up audio conversion: {reason}
+error.media.audio_convert = audio conversion failed: {reason}
+error.media.scaler_alloc = could not allocate a scaler
+error.media.scaler_convert = pixel format conversion failed: {reason}
+error.media.no_decodable_frames = the video stream has no decodable frames
+error.media.no_keyframe = no keyframe found after reopening
+
+# --- Units shown next to numbers ---
+unit.seconds.suffix = \ss
+unit.khz = {value} kHz
+
+# --- Command-line tool ---
+cli.info.version = RasterSong {version}
+cli.info.ffmpeg = FFmpeg ({license})
+cli.info.configuration = ssconfiguration: {value}
+cli.render.done = Rendered {frames} frames at {width}x{height} in {seconds} s ({fps} fps) to {out}

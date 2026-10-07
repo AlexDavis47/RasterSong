@@ -84,7 +84,7 @@ impl FfmpegVideoSource {
         if index.len() == 0 {
             return Err(MediaError::Open {
                 path: path.to_owned(),
-                reason: "the video stream has no decodable frames".into(),
+                reason: rastersong_lang::tr("error.media.no_decodable_frames").into(),
             });
         }
 
@@ -203,9 +203,9 @@ impl FfmpegVideoSource {
         tracing::debug!(path = %self.path.display(), "restarting decode from the beginning");
         self.input = open_input(&self.path)?;
         self.reset_decoder();
-        let packet = self
-            .read_keyframe()
-            .ok_or_else(|| MediaError::Decode("no keyframe found after reopening".into()))?;
+        let packet = self.read_keyframe().ok_or_else(|| {
+            MediaError::Decode(rastersong_lang::tr("error.media.no_keyframe").into())
+        })?;
         self.send(&packet);
         Ok(())
     }

@@ -4,6 +4,7 @@ use std::ptr;
 use ffmpeg::util::error::EAGAIN;
 use ffmpeg::{decoder, ffi, frame, media};
 use ffmpeg_next as ffmpeg;
+use rastersong_lang::tr_args;
 
 use super::{decode_error, open_input};
 use crate::{AudioClip, AudioOptions, MediaError};
@@ -70,8 +71,12 @@ struct Resampler {
 impl Resampler {
     fn new(out_rate: u32, out_channels: u32) -> Result<Self, MediaError> {
         if out_rate == 0 || out_channels == 0 {
-            return Err(MediaError::Decode(format!(
-                "invalid audio output: {out_rate} Hz, {out_channels} channels"
+            return Err(MediaError::Decode(tr_args(
+                "error.media.audio_invalid",
+                &[
+                    ("rate", &out_rate.to_string()),
+                    ("channels", &out_channels.to_string()),
+                ],
             )));
         }
         // SAFETY: zeroed is a valid "unset" AVChannelLayout, and av_channel_layout_default fills it.
@@ -150,9 +155,9 @@ impl Resampler {
                 }
             };
             if ret < 0 {
-                return Err(MediaError::Decode(format!(
-                    "could not set up audio conversion: {}",
-                    ffmpeg::Error::from(ret)
+                return Err(MediaError::Decode(tr_args(
+                    "error.media.audio_setup",
+                    &[("reason", &ffmpeg::Error::from(ret).to_string())],
                 )));
             }
             self.input = Some((f.format, f.sample_rate));
@@ -178,9 +183,9 @@ impl Resampler {
                 written
             };
             if written < 0 {
-                return Err(MediaError::Decode(format!(
-                    "audio conversion failed: {}",
-                    ffmpeg::Error::from(written)
+                return Err(MediaError::Decode(tr_args(
+                    "error.media.audio_convert",
+                    &[("reason", &ffmpeg::Error::from(written).to_string())],
                 )));
             }
             // Input is consumed in one call; flushing may take several.

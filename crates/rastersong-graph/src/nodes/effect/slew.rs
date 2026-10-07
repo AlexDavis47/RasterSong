@@ -20,31 +20,20 @@ pub struct Slew {
 }
 
 params! { Slew {
-    RISE: ParamSpec::number(
-        "rise",
-        "Rise",
-        0.25,
+    RISE: ParamSpec::number("rise", 0.25,
         0.0,
-        4.0,
-        "Time to climb a full 0 to 1 when the input jumps up; 0 is instant",
-    )
+        4.0)
     .limits(0.0, 1e6),
-    FALL: ParamSpec::number(
-        "fall",
-        "Fall",
-        0.25,
+    FALL: ParamSpec::number("fall", 0.25,
         0.0,
-        4.0,
-        "Time to fall a full 1 to 0 when the input jumps down; 0 is instant",
-    )
+        4.0)
     .limits(0.0, 1e6),
-    UNIT: Unit::time_param("row", "Unit for rise and fall"),
+    UNIT: Unit::time_param("row"),
 } }
 
 impl NodeKind for Slew {
     const KIND: &'static str = "slew";
-    const SPEC: NodeSpec = NodeSpec::new("Slew", Category::Effect)
-        .describe("Limits how fast the signal can rise and fall, turning jumps into ramps")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[

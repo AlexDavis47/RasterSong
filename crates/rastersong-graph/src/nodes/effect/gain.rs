@@ -9,14 +9,9 @@ pub struct Gain {
 }
 
 params! { Gain {
-    GAIN: ParamSpec::number(
-        "gain",
-        "Gain",
-        0.0,
+    GAIN: ParamSpec::number("gain", 0.0,
         -48.0,
-        24.0,
-        "How much louder (or brighter) the signal gets; negative is quieter, 0 changes nothing",
-    )
+        24.0)
     .unit("dB")
     .exposed()
     .limits(-120.0, 120.0),
@@ -24,8 +19,7 @@ params! { Gain {
 
 impl NodeKind for Gain {
     const KIND: &'static str = "gain";
-    const SPEC: NodeSpec = NodeSpec::new("Gain", Category::Effect)
-        .describe("Makes the signal louder or quieter, in decibels")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[r#"{ "gain": 6 }"#, r#"{ "gain": -20 }"#];
