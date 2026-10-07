@@ -346,6 +346,7 @@ Signals carry a tag (video or audio, which channels, the range of values) that c
 | [DC Filter](#dc_filter) | Removes the constant offset of a signal with a very slow high pass |
 | [Delay](#delay) | Delays the signal by rows or frames; modulating the time bends rows into waves |
 | [Distortion](#distortion) | Drives the signal into a waveshaper: soft, hard, folding or wrapping |
+| [Dynamic EQ Band](#dynamic_eq) | An equalizer band whose gain follows the level of the signal: tame a range only when it gets loud |
 | [Envelope](#envelope) | Follows how strong the signal is, as a smooth curve from 0 up (Slew limits the signal itself instead) |
 | [Equalizer](#equalizer) | One equalizer band: a peak, shelf, cut, notch or band pass. Chain several for a full equalizer |
 | [FM](#fm) | Bends the carrier by reading it through a delay the modulator controls |
@@ -590,6 +591,35 @@ Can process R, G and B separately.
 | `drive` (Drive) | 12 dB | 0 to 48 (up to -96 to 96) | yes | Gain before shaping; more drive, more distortion |
 | `bias` (Bias) | 0 | -1 to 1 (up to -100 to 100) | yes | Offset added before shaping, for uneven distortion |
 | `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
+
+### `dynamic_eq`
+
+**Dynamic EQ Band**: An equalizer band whose gain follows the level of the signal: tame a range only when it gets loud
+
+Can process R, G and B separately.
+
+**Inputs**
+
+- `in` (main, required): The signal to process
+- `sidechain` (optional): Optional: a signal whose level drives the band instead of the main one
+
+**Outputs**
+
+- `out`: The processed signal
+
+**Parameters**
+
+| Name | Default | Range | Modulation | What it does |
+|---|---|---|---|---|
+| `band` (Type) | `peak` | `peak`, `low_shelf`, `high_shelf` | no | peak, low_shelf or high_shelf |
+| `frequency` (Frequency) | 1000 | 20 to 20000 (up to 0.000001 to 1000000000) | yes | Centre of a peak, or the corner of a shelf |
+| `unit` (Unit) | `second` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the frequency (cycles per unit) and for attack and release |
+| `q` (Q) | 1 | 0.1 to 20 (up to 0.05 to 100) | yes | Width of the band: higher is narrower |
+| `gain` (Gain) | -9 dB | -24 to 24 (up to -48 to 48) | yes | The most the band moves, in decibels. Negative turns the band down when the signal is loud; positive turns it up |
+| `threshold` (Threshold) | -18 dB | -60 to 0 (up to -200 to 60) | yes | Level above which the band starts to move |
+| `ratio` (Ratio) | 4 | 1 to 20 (up to 1 to 1000) | yes | How quickly the band moves toward its gain as the level rises past the threshold |
+| `attack` (Attack) | 0.01 | 0.0001 to 1 (up to 0 to 1000000) | yes | How fast the band moves away from flat |
+| `release` (Release) | 0.1 | 0.001 to 5 (up to 0 to 1000000) | yes | How fast the band returns to flat |
 
 ### `envelope`
 

@@ -100,7 +100,7 @@ impl Compressor {
     }
 
     /// Gain reduction in dB for an input level in dB, with a soft knee `knee` dB wide.
-    fn reduction(level: f64, threshold: f64, ratio: f64, knee: f64) -> f64 {
+    pub(super) fn reduction(level: f64, threshold: f64, ratio: f64, knee: f64) -> f64 {
         let over = level - threshold;
         let slope = 1.0 / ratio.max(1.0) - 1.0;
         if knee > 0.0 && 2.0 * over.abs() <= knee {

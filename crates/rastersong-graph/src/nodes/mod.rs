@@ -108,6 +108,7 @@ nodes! {
         filter: [Filter],
         equalizer: [Equalizer],
         dc_filter: [DcFilter],
+        dynamic_eq: [DynamicEq],
         fm: [Fm],
         reverb: [Reverb],
         gain: [Gain],
