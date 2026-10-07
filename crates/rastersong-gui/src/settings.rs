@@ -31,6 +31,10 @@ pub struct Settings {
     /// The language of the interface: a folder of `.lang` files in the program's `lang` folder, or
     /// `en` for the text built in.
     pub language: String,
+    /// Memory for rendered frames, in MiB.
+    pub cache_mib: u32,
+    /// How far ahead of the playhead to render, in seconds.
+    pub render_ahead_secs: f64,
 }
 
 impl Default for Settings {
@@ -44,6 +48,8 @@ impl Default for Settings {
             metronome: false,
             keep_connections: true,
             language: rastersong_lang::ENGLISH_CODE.to_owned(),
+            cache_mib: Self::DEFAULT_CACHE_MIB,
+            render_ahead_secs: Self::DEFAULT_RENDER_AHEAD_SECS,
         }
     }
 }
@@ -51,6 +57,26 @@ impl Default for Settings {
 impl Settings {
     /// The key settings are stored under in eframe's storage.
     pub const STORAGE_KEY: &str = "rastersong-settings";
+
+    pub const DEFAULT_CACHE_MIB: u32 = 1024;
+    pub const DEFAULT_RENDER_AHEAD_SECS: f64 = 10.0;
+    pub const CACHE_MIB_RANGE: std::ops::RangeInclusive<u32> = 64..=32768;
+    pub const RENDER_AHEAD_RANGE: std::ops::RangeInclusive<f64> = 1.0..=120.0;
+
+    /// The cache budget and lookahead the engine should use.
+    pub fn engine_config(&self) -> rastersong_engine::EngineConfig {
+        rastersong_engine::EngineConfig {
+            cache_bytes: self
+                .cache_mib
+                .clamp(*Self::CACHE_MIB_RANGE.start(), *Self::CACHE_MIB_RANGE.end())
+                as usize
+                * (1 << 20),
+            lookahead_secs: self.render_ahead_secs.clamp(
+                *Self::RENDER_AHEAD_RANGE.start(),
+                *Self::RENDER_AHEAD_RANGE.end(),
+            ),
+        }
+    }
 
     pub fn preview_scale(&self) -> PreviewScale {
         PreviewScale::from_divisor(self.preview_divisor).unwrap_or(PreviewScale::Half)

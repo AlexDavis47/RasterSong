@@ -250,6 +250,7 @@ impl App {
         self.settings = settings;
         self.settings.apply_language();
         self.engine.set_preview_scale(self.settings.preview_scale());
+        self.engine.set_config(self.settings.engine_config());
     }
 
     /// The track specs the engine should be rendering with.

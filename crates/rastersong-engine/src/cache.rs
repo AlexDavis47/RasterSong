@@ -66,6 +66,12 @@ impl FrameCache {
         }
     }
 
+    /// Changes the memory budget, dropping the frames farthest from `playhead` if it shrank.
+    pub fn set_budget(&mut self, budget_bytes: usize, playhead: usize) {
+        self.budget = budget_bytes;
+        self.evict(playhead);
+    }
+
     pub fn key(&self) -> CacheKey {
         self.key
     }

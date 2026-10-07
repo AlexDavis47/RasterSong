@@ -192,7 +192,7 @@ impl std::fmt::Debug for Engine {
 
 struct Shared {
     backend: Arc<dyn MediaBackend>,
-    config: EngineConfig,
+    config: Mutex<EngineConfig>,
     state: Mutex<State>,
     /// Signalled on every change to `state`.
     changed: Condvar,
@@ -258,7 +258,7 @@ impl Engine {
         let shared = Arc::new(Shared {
             backend,
             cache: Mutex::new(FrameCache::new(key, config.cache_bytes)),
-            config,
+            config: Mutex::new(config),
             state: Mutex::new(State {
                 video: None,
                 tracks: Vec::new(),
@@ -296,6 +296,15 @@ impl Engine {
             shared,
             worker: Some(worker),
         }
+    }
+
+    /// Changes the cache budget and lookahead while running. Rendered frames are kept; a smaller
+    /// budget drops the frames farthest from the playhead.
+    pub fn set_config(&self, config: EngineConfig) {
+        let playhead = self.shared.playhead.load(Ordering::SeqCst);
+        lock(&self.shared.cache).set_budget(config.cache_bytes, playhead);
+        *lock(&self.shared.config) = config;
+        self.shared.changed.notify_all();
     }
 
     /// Called from the render thread whenever new frames or a status change are available
@@ -800,7 +809,7 @@ impl Worker {
         let Some(info) = self.built.as_ref().map(|b| *b.renderer.info()) else {
             return false;
         };
-        let window = Self::window(&self.shared.config, &info);
+        let window = Self::window(&lock(&self.shared.config), &info);
         let wanted = |shared: &Shared| {
             let playhead = shared.playhead.load(Ordering::SeqCst);
             let looping = lock(&shared.state).looping.clone();
