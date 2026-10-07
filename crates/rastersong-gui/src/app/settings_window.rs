@@ -59,7 +59,7 @@ pub(super) fn tempo_fields(ui: &mut Ui, tempo: &mut Tempo) {
             .speed(0.005)
             .max_decimals(3)
             .prefix(tr("tempo.first_beat.prefix"))
-            .suffix(" s"),
+            .suffix(tr("unit.seconds.suffix")),
     )
     .on_hover_text(tr("tempo.first_beat.help"));
 }
@@ -198,16 +198,22 @@ impl App {
         ui.horizontal(|ui| {
             ui.label(tr("settings.audio_rate"));
             egui::ComboBox::from_id_salt("settings-audio-rate")
-                .selected_text(format!(
-                    "{:.1} kHz",
-                    f64::from(self.project.audio_rate) / 1000.0
+                .selected_text(tr_args(
+                    "unit.khz",
+                    &[(
+                        "value",
+                        &format!("{:.1}", f64::from(self.project.audio_rate) / 1000.0),
+                    )],
                 ))
                 .show_ui(ui, |ui| {
                     for rate in AUDIO_RATES {
                         ui.selectable_value(
                             &mut self.project.audio_rate,
                             rate,
-                            format!("{:.1} kHz", f64::from(rate) / 1000.0),
+                            tr_args(
+                                "unit.khz",
+                                &[("value", &format!("{:.1}", f64::from(rate) / 1000.0))],
+                            ),
                         );
                     }
                 });

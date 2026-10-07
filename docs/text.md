@@ -58,5 +58,5 @@ A language is a folder of `.lang` files under the `lang` folder next to the prog
 the same keys. It overlays English: a key it lacks shows in English. The Settings window (Application → Language)
 lists the folders found and switches at once; the choice is remembered between sessions.
 
-Not yet moved: messages from the media layer and the command-line tool, and text in the number formatting (units
-like `Hz`, `fr`).
+Not in the tables: the reasons FFmpeg itself gives (passed through in its words), the `--help` text of the
+command-line tool, and number formatting such as `{:.1}`.

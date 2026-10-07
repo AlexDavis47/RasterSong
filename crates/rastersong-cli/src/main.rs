@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use rastersong_engine::{AudioOptions, FfmpegBackend, GraphDesc, MediaBackend, RenderSettings};
+use rastersong_lang::tr_args;
 use tracing_subscriber::EnvFilter;
 
 /// Headless RasterSong renderer.
@@ -78,12 +79,27 @@ fn main() -> Result<()> {
 
 fn info() -> Result<()> {
     let backend = rastersong_engine::init()?;
-    println!("RasterSong {}", env!("CARGO_PKG_VERSION"));
-    println!("FFmpeg ({})", backend.license());
+    println!(
+        "{}",
+        tr_args(
+            "cli.info.version",
+            &[("version", env!("CARGO_PKG_VERSION"))]
+        )
+    );
+    println!(
+        "{}",
+        tr_args("cli.info.ffmpeg", &[("license", backend.license())])
+    );
     for lib in &backend.libraries {
         println!("  {:<11} {}", lib.name, lib.version);
     }
-    println!("  configuration: {}", backend.configuration);
+    println!(
+        "{}",
+        tr_args(
+            "cli.info.configuration",
+            &[("value", backend.configuration)]
+        )
+    );
     Ok(())
 }
 
@@ -113,12 +129,21 @@ fn render(args: RenderArgs) -> Result<()> {
 
     let seconds = started.elapsed().as_secs_f64();
     eprintln!(
-        "Rendered {} frames at {}x{} in {seconds:.1} s ({:.1} fps) to {}",
-        info.frames,
-        info.width,
-        info.height,
-        info.frames as f64 / seconds.max(1e-9),
-        args.out.display()
+        "{}",
+        tr_args(
+            "cli.render.done",
+            &[
+                ("frames", &info.frames.to_string()),
+                ("width", &info.width.to_string()),
+                ("height", &info.height.to_string()),
+                ("seconds", &format!("{seconds:.1}")),
+                (
+                    "fps",
+                    &format!("{:.1}", info.frames as f64 / seconds.max(1e-9))
+                ),
+                ("out", &args.out.display().to_string()),
+            ],
+        )
     );
     Ok(())
 }

@@ -151,7 +151,7 @@ Renames, merges, splits and removals need **no migration** while the format is v
 
 ### Text and localization
 
-- [x] **chore** Move all user-facing text into **lang files** (done: see [Text and languages](text.md); media-layer and CLI messages are still in code) so locale and wording can be changed without touching
+- [x] **chore** Move all user-facing text into **lang files** (done: see [Text and languages](text.md)) so locale and wording can be changed without touching
   code. Covers: node labels, descriptions, parameter labels and help text, port help, choice labels, menu and
   button text, tooltips, notes and warnings, dialogs and errors. Proposed shape: a string table keyed by stable ids
   (`node.delay.label`, `node.delay.param.time.help`, `ui.timeline.loop`), `en` embedded at build time as the

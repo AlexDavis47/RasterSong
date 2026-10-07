@@ -3359,6 +3359,7 @@ dependencies = [
  "clap",
  "png",
  "rastersong-engine",
+ "rastersong-lang",
  "tracing",
  "tracing-subscriber",
 ]
@@ -3415,7 +3416,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "ffmpeg-next",
- "thiserror 2.0.21",
+ "rastersong-lang",
  "tracing",
 ]
 

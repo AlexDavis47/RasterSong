@@ -1086,7 +1086,7 @@ fn audio_header(ui: &mut Ui, track: &TrackView, index: usize, response: &mut Tim
                 .add(
                     crate::value_box::ValueBox::new(&mut offset)
                         .speed(0.01)
-                        .suffix(" s")
+                        .suffix(tr("unit.seconds.suffix"))
                         .max_decimals(3),
                 )
                 .on_hover_text(tr("timeline.track.offset.help"));

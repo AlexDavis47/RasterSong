@@ -89,3 +89,29 @@ diagnostic.combine.stretched = {port} is {layout}, so it's stretched to fit {fir
 diagnostic.interleave.one_channel = The input already has one channel, so it passes through unchanged.
 diagnostic.split.one_channel = The input has one channel, so only c1 carries a signal.
 diagnostic.split.too_many = The input has {count} channels; only the first {max} are split off.
+
+# --- Media errors (the reasons FFmpeg gives are passed through in its own words) ---
+error.media.init = FFmpeg failed to initialize: {message}
+error.media.open = could not open {path}: {reason}
+error.media.no_video = {path} has no video stream
+error.media.no_audio = {path} has no audio stream
+error.media.frame_out_of_range = frame {index} is out of range (the video has {count} frames)
+error.media.frame_unavailable = frame {index} could not be decoded
+error.media.decode = decoding failed: {message}
+error.media.audio_invalid = invalid audio output: {rate} Hz, {channels} channels
+error.media.audio_setup = could not set up audio conversion: {reason}
+error.media.audio_convert = audio conversion failed: {reason}
+error.media.scaler_alloc = could not allocate a scaler
+error.media.scaler_convert = pixel format conversion failed: {reason}
+error.media.no_decodable_frames = the video stream has no decodable frames
+error.media.no_keyframe = no keyframe found after reopening
+
+# --- Units shown next to numbers ---
+unit.seconds.suffix = \ss
+unit.khz = {value} kHz
+
+# --- Command-line tool ---
+cli.info.version = RasterSong {version}
+cli.info.ffmpeg = FFmpeg ({license})
+cli.info.configuration = ssconfiguration: {value}
+cli.render.done = Rendered {frames} frames at {width}x{height} in {seconds} s ({fps} fps) to {out}
