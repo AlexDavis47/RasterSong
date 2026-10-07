@@ -89,7 +89,10 @@ impl ThreeBand {
 
     /// Runs `x` through the first `stages` sections.
     fn run(sections: &mut [Biquad], stages: usize, x: f64) -> f64 {
-        sections.iter_mut().take(stages).fold(x, |y, s| s.process(y))
+        sections
+            .iter_mut()
+            .take(stages)
+            .fold(x, |y, s| s.process(y))
     }
 }
 
@@ -140,7 +143,8 @@ impl Node for ThreeBand {
 
     fn warmup_frames(&self, ctx: &PrepareContext) -> u32 {
         // The low band settles slowest: allow ten periods of the low crossover.
-        let settle_samples =  10.0 * self.slope.stages() as f64 / self.low_cycles.max(f64::MIN_POSITIVE);
+        let settle_samples =
+            10.0 * self.slope.stages() as f64 / self.low_cycles.max(f64::MIN_POSITIVE);
         ((settle_samples / ctx.samples_per_frame() as f64).ceil() as u32).max(1)
     }
 }
@@ -195,9 +199,8 @@ mod tests {
 
     #[test]
     fn a_steeper_slope_keeps_more_of_a_tone_out_of_the_far_band() {
-        let low_leak = |slope: &str| {
-            band_levels_with(&format!(r#"{{ "slope": "{slope}" }}"#), 2000.0)[0]
-        };
+        let low_leak =
+            |slope: &str| band_levels_with(&format!(r#"{{ "slope": "{slope}" }}"#), 2000.0)[0];
         assert!(low_leak("48") < low_leak("12") / 10.0);
     }
 

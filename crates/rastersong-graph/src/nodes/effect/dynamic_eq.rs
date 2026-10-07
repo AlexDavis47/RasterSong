@@ -131,7 +131,8 @@ impl Node for DynamicEq {
             * self.unit_samples;
         self.slowest_frequency = ctx.param_min(Self::FREQUENCY, self.frequency) * self.per_sample;
         self.sidechain = ctx.connected[1];
-        self.moving = ctx.modulation(Self::FREQUENCY).is_some() || ctx.modulation(Self::Q).is_some();
+        self.moving =
+            ctx.modulation(Self::FREQUENCY).is_some() || ctx.modulation(Self::Q).is_some();
         self.reset();
     }
 

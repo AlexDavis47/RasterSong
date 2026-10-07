@@ -4,6 +4,7 @@ mod dist;
 mod docs;
 mod ffmpeg;
 mod fixtures;
+mod fmt;
 mod release_ffmpeg;
 mod util;
 
@@ -38,6 +39,12 @@ enum Task {
         #[arg(long)]
         check: bool,
     },
+    /// Format the workspace and the node files `cargo fmt` can't reach, as CI checks them.
+    Fmt {
+        /// Fail instead of writing if anything is unformatted.
+        #[arg(long)]
+        check: bool,
+    },
     /// Build the app in release mode with the release FFmpeg and package it for testers in
     /// target/dist: a zip on Windows, a universal app bundle zip on macOS, an AppImage on Linux.
     Dist,
@@ -49,6 +56,7 @@ fn main() -> Result<()> {
         Task::BuildFfmpeg { force } => release_ffmpeg::build(force).map(drop),
         Task::Fixtures => fixtures::generate(),
         Task::Docs { check } => docs::generate(check),
+        Task::Fmt { check } => fmt::format(check),
         Task::Dist => dist::package(),
     }
 }
