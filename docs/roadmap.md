@@ -323,7 +323,7 @@ a migration where noted, and a regenerated `nodes.md`.
   - [ ] **feature** Add Gaussian noise and a smooth noise (Perlin or similar) as new types. Smooth noise takes a
     scale in the usual units and is deterministic across seeks.
 - **Oscillator**
-  - [ ] **chore** Remove the Ramp wave; it is a Saw followed by a Flip. Migration rewrites old Ramp oscillators to
+  - [x] **chore** Remove the Ramp wave; it is a Saw followed by a Flip. Migration rewrites old Ramp oscillators to
     Saw + Flip (so *depends on the Flip rename/split below*).
   - [x] **bug** Audio layout error, same as Beat.
   - [x] **feature** *Pulse width* only shows for the pulse wave (conditional parameter).
@@ -334,7 +334,7 @@ a migration where noted, and a regenerated `nodes.md`.
   - [x] **feature** *Channels* defaults to an integer and is a real integer parameter. Review related structural
     nodes for the same.
 - **Flip**
-  - [ ] **chore** The node's scope does not match its name. Either rename it to say what it does, or split
+  - [x] **chore** The node's scope does not match its name. Either rename it to say what it does, or split
     **Transpose** into its own node so Flip only flips. Migration for old graphs (Flip with transpose becomes
     Transpose).
 

@@ -13,8 +13,6 @@ choice! {
         Square = "square",
         /// Falls from 1 to -1 each cycle.
         Saw = "saw",
-        /// Rises from -1 to 1 each cycle.
-        Ramp = "ramp",
     }
 }
 
@@ -32,7 +30,6 @@ impl Wave {
                 }
             }
             Self::Saw => 1.0 - 2.0 * phase,
-            Self::Ramp => 2.0 * phase - 1.0,
         }
     }
 }
@@ -119,7 +116,7 @@ params! { Oscillator {
 impl NodeKind for Oscillator {
     const KIND: &'static str = "oscillator";
     const SPEC: NodeSpec = NodeSpec::new("Oscillator", Category::Generator)
-        .describe("A sine, triangle, square, saw or ramp wave: stripes in video, a tone in audio")
+        .describe("A sine, triangle, square or saw wave: stripes in video, a tone in audio")
         .params(Self::PARAMS)
         .takes_layout()
         .inputs(&[])
@@ -128,7 +125,7 @@ impl NodeKind for Oscillator {
         r#"{ "wave": "triangle", "freq": 2.5 }"#,
         r#"{ "wave": "square", "pulse_width": 0.25, "phase": 0.3 }"#,
         r#"{ "wave": "saw", "freq": 1, "unit": "frame" }"#,
-        r#"{ "wave": "ramp", "freq": 3000, "unit": "second", "amplitude": 1, "offset": 0 }"#,
+        r#"{ "wave": "saw", "freq": 3000, "unit": "second", "amplitude": -1, "offset": 0 }"#,
         r#"{ "wave": "saw", "freq": 2, "unit": "beat" }"#,
         r#"{ "wave": "square", "freq": 0.25, "unit": "bar" }"#,
     ];
@@ -240,7 +237,7 @@ mod tests {
 
     #[test]
     fn defaults_fill_the_video_range() {
-        let out = wave(r#"{ "wave": "ramp", "freq": 1 }"#, 4);
+        let out = wave(r#"{ "wave": "saw", "freq": 1, "amplitude": -0.5 }"#, 4);
         assert_eq!(out, [0.0, 0.25, 0.5, 0.75]);
     }
 
@@ -269,7 +266,7 @@ mod tests {
 
     #[test]
     fn phase_shifts_the_wave() {
-        let out = wave(r#"{ "wave": "ramp", "freq": 1, "phase": 0.25 }"#, 4);
+        let out = wave(r#"{ "wave": "saw", "freq": 1, "phase": 0.25, "amplitude": -0.5 }"#, 4);
         assert_eq!(out, [0.25, 0.5, 0.75, 0.0]);
     }
 
@@ -278,7 +275,7 @@ mod tests {
     fn beat_ramp(tempo: Tempo, frame: u64) -> Vec<f32> {
         let mut node = node_with_tempo(
             "oscillator",
-            r#"{ "wave": "ramp", "freq": 1, "unit": "beat", "amplitude": 0.5, "offset": 0.5 }"#,
+            r#"{ "wave": "saw", "freq": 1, "unit": "beat", "amplitude": -0.5, "offset": 0.5 }"#,
             1000,
             30_000.0,
             &[],

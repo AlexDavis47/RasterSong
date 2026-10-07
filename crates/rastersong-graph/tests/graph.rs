@@ -332,7 +332,7 @@ fn graph_files_round_trip() {
     let desc = GraphDesc::from_json(PASSTHROUGH).unwrap();
     assert_eq!(GraphDesc::from_json(&desc.to_json()).unwrap(), desc);
     assert!(matches!(
-        GraphDesc::from_json(r#"{ "version": 12, "nodes": [] }"#),
+        GraphDesc::from_json(r#"{ "version": 13, "nodes": [] }"#),
         Err(GraphError::Parse(_))
     ));
 }
@@ -809,7 +809,7 @@ fn nodes_without_inputs_get_their_layout_from_the_host_and_can_be_modulated() {
 fn generators_take_their_layout_from_the_host_and_draw_stripes() {
     // A ramp of one cycle per row on the 4×2 RGB video: each pixel's channels share a value.
     let json = graph_json(
-        r#"{ "id": "ramp", "type": "oscillator", "params": { "wave": "ramp", "freq": 1 } },
+        r#"{ "id": "ramp", "type": "oscillator", "params": { "wave": "saw", "freq": 1, "amplitude": -0.5 } },
            { "id": "out", "type": "output" }"#,
         r#"{ "from": "ramp", "to": "out" }"#,
     );

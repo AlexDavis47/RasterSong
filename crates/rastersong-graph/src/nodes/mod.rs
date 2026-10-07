@@ -84,6 +84,7 @@ nodes! {
         interleave: [Interleave],
         pack: [Pack],
         flip: [Flip],
+        transpose: [Transpose],
         resample: [Resample],
         stretch: [Stretch],
     },

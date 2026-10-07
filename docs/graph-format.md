@@ -5,7 +5,7 @@ or its main input. Unknown parameters are rejected, which catches typos.
 
 ```json
 {
-  "version": 11,
+  "version": 12,
   "nodes": [
     { "id": "video", "type": "video_input" },
     { "id": "audio", "type": "audio_input" },
@@ -40,7 +40,9 @@ parameters as before: both-ways amounts are halved, and a modulation that oversh
 where it reached, within the limits. An amount that came to more than the whole range is held to 100%. Version 10
 made every `mix` start at 1; Reverb, Phaser, Flanger and Chorus, which started lower, get their old mix written out
 when an older graph that never set it is loaded. Version 11 removed the Low Pass node: an old one loads as a Filter
-set to a 6 dB/oct slope, the same one-pole filter with the same cutoff, unit and modulation.
+set to a 6 dB/oct slope, the same one-pole filter with the same cutoff, unit and modulation. Version 12 split Transpose out of Flip and removed the oscillator's Ramp wave: a
+Flip in transpose mode loads as a Transpose node, and a ramp as a saw with the amplitude (and its slider range and
+modulation amount) negated.
 
 Renamed nodes, ports, parameters and options are upgraded on load by `migrate.rs` and `GraphDesc::upgrade`, so old
 files keep loading. **Any roadmap change that renames or reshapes a parameter must add a migration** (for example

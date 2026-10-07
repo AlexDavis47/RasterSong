@@ -300,7 +300,45 @@ impl GraphDesc {
         self.keep_old_mix_defaults(Registry::shared());
         self.modulate_by_one_rule(Registry::shared());
         self.lowpass_becomes_filter();
+        self.split_transpose_from_flip();
+        self.ramp_becomes_a_negative_saw();
         self.version = FORMAT_VERSION;
+    }
+
+    /// Flip's `transpose` mode is the Transpose node now.
+    fn split_transpose_from_flip(&mut self) {
+        for node in self.nodes.iter_mut().filter(|n| n.kind == "flip") {
+            if node.params.get("mode") == Some(&ParamValue::Text("transpose".to_owned())) {
+                node.kind = "transpose".to_owned();
+                node.params.remove("mode");
+            }
+        }
+    }
+
+    /// The oscillator's ramp rises where a saw falls: a saw with the amplitude negated (and the
+    /// slider range and any modulation of the amplitude turned the same way).
+    fn ramp_becomes_a_negative_saw(&mut self) {
+        for node in self.nodes.iter_mut().filter(|n| n.kind == "oscillator") {
+            if node.params.get("wave") != Some(&ParamValue::Text("ramp".to_owned())) {
+                continue;
+            }
+            node.params
+                .insert("wave".to_owned(), ParamValue::Text("saw".to_owned()));
+            let amplitude = match node.params.get("amplitude") {
+                Some(ParamValue::Number(a)) => *a,
+                _ => 0.5,
+            };
+            node.params
+                .insert("amplitude".to_owned(), ParamValue::Number(-amplitude));
+            if let Some(range) = node.ranges.get_mut("amplitude") {
+                *range = [-range[1], -range[0]];
+            } else {
+                node.ranges.insert("amplitude".to_owned(), [-1.0, 0.0]);
+            }
+            if let Some(m) = node.modulation.get_mut("amplitude") {
+                m.amount = -m.amount;
+            }
+        }
     }
 
     /// Low Pass was a Filter without resonance or choices: now the Filter's 6 dB/oct slope, which
@@ -716,6 +754,27 @@ mod tests {
                 .modulation
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn transpose_leaves_flip_and_ramp_becomes_a_negative_saw() {
+        let graph = GraphDesc::from_json(
+            r#"{ "version": 11, "nodes": [
+                { "id": "t", "type": "flip", "params": { "mode": "transpose" } },
+                { "id": "f", "type": "flip", "params": { "mode": "vertical" } },
+                { "id": "o", "type": "oscillator", "params": { "wave": "ramp", "amplitude": 0.8 },
+                  "modulation": { "amplitude": { "amount": 20 } } } ] }"#,
+        )
+        .unwrap();
+        let node = |id: &str| graph.nodes.iter().find(|n| n.id == id).unwrap();
+        assert_eq!(node("t").kind, "transpose");
+        assert!(node("t").params.is_empty());
+        assert_eq!(node("f").kind, "flip");
+        let o = node("o");
+        assert_eq!(o.params["wave"], ParamValue::Text("saw".into()));
+        assert_eq!(o.params["amplitude"], ParamValue::Number(-0.8));
+        assert_eq!(o.ranges["amplitude"], [-1.0, 0.0]);
+        assert_eq!(o.modulation["amplitude"].amount, -20.0);
     }
 
     #[test]

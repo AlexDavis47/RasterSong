@@ -44,7 +44,7 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 | [Beat](#beat) | A 0 to 1 signal locked to the project's beats or bars: phase, decay, pulse or steps |
 | [Constant](#constant) | The same value in every sample: a flat colour, or silence |
 | [Noise](#noise) | Random values in a chosen colour: grain in video, hiss in audio |
-| [Oscillator](#oscillator) | A sine, triangle, square, saw or ramp wave: stripes in video, a tone in audio |
+| [Oscillator](#oscillator) | A sine, triangle, square or saw wave: stripes in video, a tone in audio |
 
 ### `beat`
 
@@ -97,7 +97,7 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 
 ### `oscillator`
 
-**Oscillator**: A sine, triangle, square, saw or ramp wave: stripes in video, a tone in audio
+**Oscillator**: A sine, triangle, square or saw wave: stripes in video, a tone in audio
 
 **Outputs**
 
@@ -107,7 +107,7 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `wave` (Wave) | `sine` | `sine`, `triangle`, `square`, `saw`, `ramp` | no | The shape of one cycle |
+| `wave` (Wave) | `sine` | `sine`, `triangle`, `square`, `saw` | no | The shape of one cycle |
 | `freq` (Frequency) | 8 | 0.01 to 100 (up to 0 to 1000000) | yes | Cycles per unit of time or space: how many stripes fit in a row, or how high the tone is |
 | `unit` (Cycles per) | `row` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the frequency (cycles per unit): Row keeps the look at any resolution |
 | `phase` (Phase) | 0 | 0 to 1 (up to -1000 to 1000) | yes | Where in the cycle the wave starts, as a fraction of a cycle |
@@ -120,12 +120,13 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 | Node | What it does |
 |---|---|
 | [Combine Channels](#combine) | Separate signals into one interleaved signal: R, G, B into RGB, or L, R into stereo |
-| [Flip](#flip) | Mirrors, turns over or transposes the picture |
+| [Flip](#flip) | Mirrors or turns over the picture |
 | [Interleave](#interleave) | Channels as one mono carrier, as many times as wide (R, G, B, R, G, B, …) |
 | [Pack](#pack) | A packed mono carrier back into channels: RGB, stereo, … |
 | [Resample](#resample) | Resizes the picture; effects after it work at the new resolution |
 | [Split Channels](#split) | Each channel of an interleaved signal on its own: R, G, B of video or L, R of stereo |
 | [Stretch to Match](#stretch) | A signal stretched to the length and layout of another |
+| [Transpose](#transpose) | Swaps rows and columns: the picture's width and height trade places |
 
 ### `combine`
 
@@ -150,7 +151,7 @@ Each connected input becomes one channel of the output, in order. The first inpu
 
 ### `flip`
 
-**Flip**: Mirrors, turns over or transposes the picture
+**Flip**: Mirrors or turns over the picture
 
 **Inputs**
 
@@ -164,7 +165,7 @@ Each connected input becomes one channel of the output, in order. The first inpu
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `mode` (Mode) | `horizontal` | `horizontal`, `vertical`, `reverse`, `transpose` | no | horizontal mirrors each row, vertical turns the rows upside down, reverse does both, transpose swaps rows and columns (and the picture's width and height) |
+| `mode` (Mode) | `horizontal` | `horizontal`, `vertical`, `reverse` | no | horizontal mirrors each row, vertical turns the rows upside down, reverse does both,  |
 
 ### `interleave`
 
@@ -251,6 +252,18 @@ The output has `like`'s size and layout and `in`'s values: audio stretched over 
 **Outputs**
 
 - `out`: `in` at the size of `like`
+
+### `transpose`
+
+**Transpose**: Swaps rows and columns: the picture's width and height trade places
+
+**Inputs**
+
+- `in` (main, required): The signal to process
+
+**Outputs**
+
+- `out`: The processed signal
 
 ## Conversion
 

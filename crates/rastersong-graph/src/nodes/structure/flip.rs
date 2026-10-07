@@ -1,5 +1,5 @@
 use crate::nodes::{Category, NodeKind, NodeSpec};
-use crate::{Layout, LayoutContext, Node, ParamSpec, Params, ProcessContext, Signal};
+use crate::{Node, ParamSpec, Params, ProcessContext, Signal};
 
 choice! {
     /// How the picture (or block of audio) is turned around.
@@ -10,12 +10,10 @@ choice! {
         Vertical = "vertical",
         /// Both flips: the picture rotated by 180°.
         Reverse = "reverse",
-        /// Swaps rows and columns, so the width and height swap too.
-        Transpose = "transpose",
     }
 }
 
-/// Flips, reverses or transposes the picture. Works on one frame at a time, so audio is only
+/// Mirrors or turns over the picture. Works on one frame at a time, so audio is only
 /// reversed within each block.
 #[derive(Debug)]
 pub struct Flip {
@@ -28,14 +26,14 @@ params! { Flip {
         "Mode",
         Mode::OPTIONS,
         "horizontal",
-        "horizontal mirrors each row, vertical turns the rows upside down, reverse does both, transpose swaps rows and columns (and the picture's width and height)",
+        "horizontal mirrors each row, vertical turns the rows upside down, reverse does both, ",
     ),
 } }
 
 impl NodeKind for Flip {
     const KIND: &'static str = "flip";
     const SPEC: NodeSpec = NodeSpec::new("Flip", Category::Structure)
-        .describe("Mirrors, turns over or transposes the picture")
+        .describe("Mirrors or turns over the picture")
         .params(Self::PARAMS);
 
     fn new(params: &Params) -> Result<Self, String> {
@@ -46,15 +44,6 @@ impl NodeKind for Flip {
 }
 
 impl Node for Flip {
-    fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
-        let input = ctx.inputs[0];
-        let layout = match self.mode {
-            Mode::Transpose => input.reshaped(input.height, input.width, input.samples_per_pixel),
-            _ => input,
-        };
-        Ok(vec![layout; ctx.output_count])
-    }
-
     fn process(&mut self, _ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
         let input = inputs[0];
         let spp = input.layout.samples_per_pixel as usize;
@@ -66,16 +55,9 @@ impl Node for Flip {
                     Mode::Horizontal => (w - 1 - x, y),
                     Mode::Vertical => (x, h - 1 - y),
                     Mode::Reverse => (w - 1 - x, h - 1 - y),
-                    // The output is `h` wide and `w` tall: its pixel (y, x) is the input's (x, y).
-                    Mode::Transpose => (x, y),
                 };
-                let (dx, dy) = match self.mode {
-                    Mode::Transpose => (y, x),
-                    _ => (x, y),
-                };
-                let dst_width = if self.mode == Mode::Transpose { h } else { w };
                 let src = (sy * w + sx) * spp;
-                let dst = (dy * dst_width + dx) * spp;
+                let dst = (y * w + x) * spp;
                 out[dst..dst + spp].copy_from_slice(&input.data[src..src + spp]);
             }
         }
@@ -149,16 +131,9 @@ mod tests {
     }
 
     #[test]
-    fn transpose_swaps_width_and_height() {
-        let out = flip("transpose", &picture());
-        assert_eq!(out.layout, Layout::mono(2, 3));
-        assert_eq!(out.data, [0.0, 3.0, 1.0, 4.0, 2.0, 5.0]);
-    }
-
-    #[test]
     fn every_mode_twice_is_the_identity() {
         let rgb = Signal::from_data(Layout::rgb(3, 2), (0..18).map(|i| i as f32).collect());
-        for mode in ["horizontal", "vertical", "reverse", "transpose"] {
+        for mode in ["horizontal", "vertical", "reverse"] {
             let once = flip(mode, &rgb);
             assert_eq!(flip(mode, &once), rgb, "{mode}");
         }
