@@ -5,7 +5,7 @@ or its main input. Unknown parameters are rejected, which catches typos.
 
 ```json
 {
-  "version": 12,
+  "version": 0,
   "nodes": [
     { "id": "video", "type": "video_input" },
     { "id": "audio", "type": "audio_input" },
@@ -32,29 +32,17 @@ the default) by the signal either way. The value never leaves the slider's range
 and within the parameter's limits). Without an entry the amount is 25%, one way. How modulation is applied is in
 [Node authoring](node-authoring.md#parameter-modulation).
 
-Format version 3 introduced percentage amounts, version 4 the range limit and version 5 narrower usual ranges for
-some frequencies, version 6 linear frequency modulation (octave amounts are converted at the base value) version 7 the generator `layout` setting, version 8 the `ranges` a user sets on sliders and version 9 the single
-modulation rule above (both-ways amounts used to be peak to peak, and an `"overshoot"` flag let values pass the
-slider; the flag is read from old files and never written). Older graphs are rewritten on load so they move
-parameters as before: both-ways amounts are halved, and a modulation that overshot gets its slider range widened to
-where it reached, within the limits. An amount that came to more than the whole range is held to 100%. Version 10
-made every `mix` start at 1; Reverb, Phaser, Flanger and Chorus, which started lower, get their old mix written out
-when an older graph that never set it is loaded. Version 11 removed the Low Pass node: an old one loads as a Filter
-set to a 6 dB/oct slope, the same one-pole filter with the same cutoff, unit and modulation. Version 12 split Transpose out of Flip and removed the oscillator's Ramp wave: a
-Flip in transpose mode loads as a Transpose node, and a ramp as a saw with the amplitude (and its slider range and
-modulation amount) negated.
-
-Renamed nodes, ports, parameters and options are upgraded on load by `migrate.rs` and `GraphDesc::upgrade`, so old
-files keep loading. **Any roadmap change that renames or reshapes a parameter must add a migration** (for example
-removing `mix` or splitting nodes; the move to percentage modulation amounts is the worked example in
-`migrate.rs`).
+**The format is version 0 until 1.0.** It changes freely: there are no migrations, and a graph or project saved
+by another version is rejected with a message. When 1.0 ships the version becomes 1, and from then on each format
+change bumps it and adds one step file in `crates/rastersong-graph/src/migrate/` (`v1_to_v2.rs`, ...), run in
+order by `GraphDesc::upgrade`; the rename helpers in `migrate/tooling.rs` are ready for them. See
+[Decisions](decisions.md#no-migrations-before-10-october-2026).
 
 ## Projects
 
 Projects are JSON files with the `.rastersong` extension holding the video, the audio tracks (file, name, offset,
 volume, mute), the graph, the tempo and the loop region. Media paths inside the project's folder are saved
-relative to it, so a project folder can be moved or shared. Version 1 projects (one audio file) are upgraded on
-load. Graphs can also be imported and exported on their own. The project also keeps the Audio Output rate and the
+relative to it, so a project folder can be moved or shared. Project files have the same version-0 policy. Graphs can also be imported and exported on their own. The project also keeps the Audio Output rate and the
 *max warmup frames* limit (omitted from the file while at their defaults).
 
 ## Examples

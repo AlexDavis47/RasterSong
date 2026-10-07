@@ -25,7 +25,7 @@ formats them.
 
 Work in the [roadmap](roadmap.md) carries its own test obligations, so they aren't forgotten:
 
-- Every migration (renamed parameter, removed `mix`, merged or split node) has a load test from an old graph.
+- From the first release, every migration step has a load test from an old graph (none exist while the format is version 0).
 - Warmup cap: a seek with a small cap still renders a delay or feedback node's *full* effect length.
 - Integer parameters: the property tests sweep them and assert only whole values reach `process`.
 - Conditional parameters: a hidden parameter keeps its value and still round-trips through files.

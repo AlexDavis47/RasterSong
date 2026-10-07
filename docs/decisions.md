@@ -182,3 +182,12 @@ Filter has a slope (6, 12, 24 or 48 dB/oct) for low and high pass, built from Bu
 default. Resonance is the filter's own Q: 0.707 is flat (the non-resonant setting) and higher peaks the cutoff, at
 every slope except 6 dB, a single pole, which cannot resonate. Low Pass was exactly that one pole, so it is the
 Filter at 6 dB/oct and old graphs are migrated. There is no separate "non-resonant" mode or node.
+
+### No migrations before 1.0 (October 2026)
+
+The graph and project formats are version 0 until the first stable release. Breaking changes happen freely: old files
+may stop loading, and a file with any other version is rejected with a clear message. Only demos exist, and keeping
+every historical rewrite alive (1,100 lines in `migrate.rs`) made renames and merges expensive, and a change made and
+later reverted would have needed migrating twice. The migration tooling stays (`migrate/`, with the rename helpers),
+and from 1.0 each format change bumps the version and adds one step file. Mentions of migrations above describe
+history and no longer apply to the code. Example graphs in `examples/graphs/` are kept current by hand.

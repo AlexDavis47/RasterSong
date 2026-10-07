@@ -1,31 +1,150 @@
 {
-  "version": 1,
+  "version": 0,
   "nodes": [
-    { "id": "video", "type": "video_input" },
-    { "id": "audio", "type": "audio_input" },
-    { "id": "bands", "type": "three_band", "params": { "low_hz": 200, "high_hz": 3000 } },
-    { "id": "split", "type": "split" },
-    { "id": "wave_r", "type": "delay", "params": { "time": 1 }, "modulation": { "time": { "amount": 1.5 } }, "interpolation": "linear" },
-    { "id": "wave_g", "type": "delay", "params": { "time": 1 }, "modulation": { "time": { "amount": 1.5 } }, "interpolation": "linear" },
-    { "id": "wave_b", "type": "delay", "params": { "time": 1 }, "modulation": { "time": { "amount": 1.5 } }, "interpolation": "linear" },
-    { "id": "combine", "type": "combine" },
-    { "id": "smear", "type": "lowpass", "params": { "cutoff": 60 }, "modulation": { "cutoff": { "amount": -3 } }, "interpolation": "linear" },
-    { "id": "out", "type": "output" }
+    {
+      "id": "video",
+      "type": "video_input"
+    },
+    {
+      "id": "audio",
+      "type": "audio_input"
+    },
+    {
+      "id": "bands",
+      "type": "three_band",
+      "params": {
+        "high_hz": 3000.0,
+        "low_hz": 200.0
+      }
+    },
+    {
+      "id": "split",
+      "type": "split"
+    },
+    {
+      "id": "wave_r",
+      "type": "delay",
+      "params": {
+        "time": 1.0
+      },
+      "interpolation": "linear",
+      "modulation": {
+        "time": {
+          "amount": 1.5
+        }
+      }
+    },
+    {
+      "id": "wave_g",
+      "type": "delay",
+      "params": {
+        "time": 1.0
+      },
+      "interpolation": "linear",
+      "modulation": {
+        "time": {
+          "amount": 1.5
+        }
+      }
+    },
+    {
+      "id": "wave_b",
+      "type": "delay",
+      "params": {
+        "time": 1.0
+      },
+      "interpolation": "linear",
+      "modulation": {
+        "time": {
+          "amount": 1.5
+        }
+      }
+    },
+    {
+      "id": "combine",
+      "type": "combine"
+    },
+    {
+      "id": "smear",
+      "type": "filter",
+      "params": {
+        "cutoff": 60.0,
+        "slope": "6"
+      },
+      "interpolation": "linear",
+      "modulation": {
+        "cutoff": {
+          "amount": -79.74683571222562
+        }
+      },
+      "ranges": {
+        "cutoff": [
+          1e-6,
+          296.25
+        ]
+      }
+    },
+    {
+      "id": "out",
+      "type": "output"
+    }
   ],
   "connections": [
-    { "from": "audio", "to": "bands" },
-    { "from": "video", "to": "split" },
-    { "from": "split.c1", "to": "wave_r" },
-    { "from": "split.c2", "to": "wave_g" },
-    { "from": "split.c3", "to": "wave_b" },
-    { "from": "bands.low", "to": "wave_r.@time" },
-    { "from": "bands.low", "to": "wave_g.@time" },
-    { "from": "bands.low", "to": "wave_b.@time" },
-    { "from": "wave_r", "to": "combine.c1" },
-    { "from": "wave_g", "to": "combine.c2" },
-    { "from": "wave_b", "to": "combine.c3" },
-    { "from": "combine", "to": "smear" },
-    { "from": "bands.high", "to": "smear.@cutoff" },
-    { "from": "smear", "to": "out" }
+    {
+      "from": "audio",
+      "to": "bands"
+    },
+    {
+      "from": "video",
+      "to": "split"
+    },
+    {
+      "from": "split.c1",
+      "to": "wave_r"
+    },
+    {
+      "from": "split.c2",
+      "to": "wave_g"
+    },
+    {
+      "from": "split.c3",
+      "to": "wave_b"
+    },
+    {
+      "from": "bands.low",
+      "to": "wave_r.@time"
+    },
+    {
+      "from": "bands.low",
+      "to": "wave_g.@time"
+    },
+    {
+      "from": "bands.low",
+      "to": "wave_b.@time"
+    },
+    {
+      "from": "wave_r",
+      "to": "combine.c1"
+    },
+    {
+      "from": "wave_g",
+      "to": "combine.c2"
+    },
+    {
+      "from": "wave_b",
+      "to": "combine.c3"
+    },
+    {
+      "from": "combine",
+      "to": "smear"
+    },
+    {
+      "from": "bands.high",
+      "to": "smear.@cutoff"
+    },
+    {
+      "from": "smear",
+      "to": "out"
+    }
   ]
 }

@@ -30,7 +30,7 @@ fn a_graph_with_an_audio_output_exports_its_sound() {
     // The music, turned all the way down: a silent, rendered track at 24 kHz.
     std::fs::write(
         &graph,
-        r#"{ "version": 2,
+        r#"{ "version": 0,
           "nodes": [
             { "id": "video", "type": "video_input" }, { "id": "audio", "type": "audio_input" },
             { "id": "mute", "type": "gain", "params": { "gain": -120 } },

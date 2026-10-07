@@ -277,7 +277,7 @@ mod tests {
     #[test]
     fn missing_linked_nodes_are_added() {
         let mut editor =
-            GraphEditor::new(&GraphDesc::from_json(r#"{ "version": 1, "nodes": [] }"#).unwrap());
+            GraphEditor::new(&GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
         editor.set_project_inputs(None, vec!["a".into(), "b".into()]);
         editor.ensure_linked_nodes();
         let kinds: Vec<&str> = editor.nodes.iter().map(|n| n.kind.as_str()).collect();

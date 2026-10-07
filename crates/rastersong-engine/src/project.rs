@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{AudioTrackSpec, DEFAULT_AUDIO_TRACK};
 
-pub const PROJECT_VERSION: u32 = 3;
+/// The project file format version. Like the graph format it stays 0 until 1.0: files change
+/// freely, with no migrations, and projects saved by another version are rejected.
+pub const PROJECT_VERSION: u32 = 0;
 
 /// Conventional extension for project files.
 pub const PROJECT_EXTENSION: &str = "rastersong";
@@ -138,16 +140,6 @@ impl ProjectTrack {
     }
 }
 
-/// The version 1 format: a single audio file.
-#[derive(Deserialize)]
-struct ProjectV1 {
-    video: Option<PathBuf>,
-    audio: Option<PathBuf>,
-    #[serde(default)]
-    audio_offset: f64,
-    graph: GraphDesc,
-}
-
 impl Project {
     pub fn new(graph: GraphDesc) -> Self {
         Self {
@@ -232,41 +224,13 @@ impl Project {
         let value: serde_json::Value = serde_json::from_str(&json)
             .map_err(|e| error(&format!("invalid project file: {e}")))?;
         let invalid = |e: serde_json::Error| error(&format!("invalid project file: {e}"));
-        let mut project = match value.get("version").and_then(serde_json::Value::as_u64) {
-            Some(1) => {
-                let v1: ProjectV1 = serde_json::from_value(value).map_err(invalid)?;
-                Self {
-                    version: PROJECT_VERSION,
-                    video: v1.video,
-                    video_name: None,
-                    audio_tracks: v1
-                        .audio
-                        .map(|path| ProjectTrack {
-                            offset: v1.audio_offset,
-                            ..ProjectTrack::new(DEFAULT_AUDIO_TRACK.to_owned(), path)
-                        })
-                        .into_iter()
-                        .collect(),
-                    graph: v1.graph,
-                    loop_region: None,
-                    tempo: Tempo::default(),
-                    timeline_mode: TimelineMode::default(),
-                    bypass_graph: false,
-                    audio_rate: crate::DEFAULT_AUDIO_RATE,
-                    max_warmup_frames: DEFAULT_MAX_WARMUP_FRAMES,
-                }
-            }
-            // Version 2 lacks only the tempo and timeline mode, which default.
-            Some(v) if v == u64::from(PROJECT_VERSION) || v == 2 => {
-                serde_json::from_value(value).map_err(invalid)?
-            }
-            other => {
-                return Err(error(&format!(
-                    "unsupported project version {other:?} (expected {PROJECT_VERSION})"
-                )));
-            }
-        };
-        project.version = PROJECT_VERSION;
+        let version = value.get("version").and_then(serde_json::Value::as_u64);
+        if version != Some(u64::from(PROJECT_VERSION)) {
+            return Err(error(&format!(
+                "unsupported project version {version:?} (this build reads version {PROJECT_VERSION}; there are no migrations before 1.0)"
+            )));
+        }
+        let mut project: Self = serde_json::from_value(value).map_err(invalid)?;
         project.tempo = project.tempo.sanitized();
         project.max_warmup_frames = project.max_warmup_frames.min(MAX_WARMUP_FRAMES_LIMIT);
         project.graph.upgrade();
@@ -306,7 +270,7 @@ mod tests {
 
     fn graph() -> GraphDesc {
         GraphDesc::from_json(
-            r#"{ "version": 1, "nodes": [ { "id": "v", "type": "video_input", "position": [10, 20] } ] }"#,
+            r#"{ "version": 0, "nodes": [ { "id": "v", "type": "video_input", "position": [10, 20] } ] }"#,
         )
         .unwrap()
     }
@@ -320,7 +284,7 @@ mod tests {
     #[test]
     fn the_video_goes_by_its_file_name_until_named() {
         let mut project =
-            Project::new(GraphDesc::from_json(r#"{ "version": 1, "nodes": [] }"#).unwrap());
+            Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
         assert_eq!(project.video_display_name(), None);
         project.video = Some(PathBuf::from("clips/take 3.mp4"));
         assert_eq!(project.video_display_name().as_deref(), Some("take 3.mp4"));
@@ -341,7 +305,7 @@ mod tests {
     #[test]
     fn tracks_are_named_after_their_files() {
         let mut project =
-            Project::new(GraphDesc::from_json(r#"{ "version": 1, "nodes": [] }"#).unwrap());
+            Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
         let name = project.track_name_for(Path::new("music/Drum Loop.wav"));
         assert_eq!(name, "Drum Loop");
         project.audio_tracks.push(ProjectTrack::new(
@@ -390,33 +354,11 @@ mod tests {
     }
 
     #[test]
-    fn migrates_version_1() {
-        let dir = temp_dir("project-v1");
-        let path = dir.join("old.rastersong");
-        std::fs::write(
-            &path,
-            r#"{ "version": 1, "video": "media/clip.mp4", "audio": "media/song.wav", "audio_offset": 2.5,
-                 "graph": { "version": 1, "nodes": [] } }"#,
-        )
-        .unwrap();
-        let project = Project::load(&path).unwrap();
-        assert_eq!(project.version, PROJECT_VERSION);
-        assert_eq!(project.audio_tracks.len(), 1);
-        let track = &project.audio_tracks[0];
-        assert_eq!(
-            (track.name.as_str(), track.offset, track.volume),
-            ("audio", 2.5, 1.0)
-        );
-        assert_eq!(track.path, dir.join("media/song.wav"));
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
     fn graph_bypass_round_trips_and_defaults_off() {
         let dir = temp_dir("project-bypass");
         let path = dir.join("bypass.rastersong");
         let mut project =
-            Project::new(GraphDesc::from_json(r#"{ "version": 2, "nodes": [] }"#).unwrap());
+            Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
         project.save(&path).unwrap();
         assert!(
             !std::fs::read_to_string(&path)
@@ -430,26 +372,11 @@ mod tests {
     }
 
     #[test]
-    fn loads_version_2_with_default_tempo() {
-        let dir = temp_dir("project-v2");
-        let path = dir.join("old.rastersong");
-        std::fs::write(
-            &path,
-            r#"{ "version": 2, "graph": { "version": 1, "nodes": [] } }"#,
-        )
-        .unwrap();
-        let project = Project::load(&path).unwrap();
-        assert_eq!(project.version, PROJECT_VERSION);
-        assert_eq!(project.tempo, Tempo::default());
-        assert_eq!(project.timeline_mode, TimelineMode::Time);
-    }
-
-    #[test]
     fn tempo_round_trips_and_is_sanitized_on_load() {
         let dir = temp_dir("project-tempo");
         let path = dir.join("tempo.rastersong");
         let mut project =
-            Project::new(GraphDesc::from_json(r#"{ "version": 1, "nodes": [] }"#).unwrap());
+            Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
         project.tempo = Tempo {
             bpm: 133.5,
             beats_per_bar: 3,
@@ -469,7 +396,7 @@ mod tests {
         let dir = temp_dir("project-warmup");
         let path = dir.join("warmup.rastersong");
         let mut project =
-            Project::new(GraphDesc::from_json(r#"{ "version": 1, "nodes": [] }"#).unwrap());
+            Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
         project.save(&path).unwrap();
         assert!(!std::fs::read_to_string(&path).unwrap().contains("warmup"));
         assert_eq!(
@@ -483,7 +410,7 @@ mod tests {
 
         std::fs::write(
             &path,
-            r#"{ "version": 3, "max_warmup_frames": 1000000, "graph": { "version": 1, "nodes": [] } }"#,
+            r#"{ "version": 0, "max_warmup_frames": 1000000, "graph": { "version": 0, "nodes": [] } }"#,
         )
         .unwrap();
         assert_eq!(
