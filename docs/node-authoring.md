@@ -102,12 +102,13 @@ match, as in Substance Designer.
 Any number parameter a spec doesn't mark `fixed` can be driven by a signal, connected like an input as
 `"node.@param"`. The parameter's value is the base, and the signal moves it per sample:
 `base + sweep × signal` (bipolar) or `base + sweep × |signal|` (unipolar, one way), clamped to the parameter's
-limits. The modulation *amount* the user sets is a **percentage of the parameter's span** (`max − min` of its
-usual range): `sweep = amount / 100 × span`, halved both ways so that 100% is the whole swing from the lowest
-point to the highest (`ParamSpec::modulation_sweep`). A negative one-way amount turns the value down. Every parameter is
+slider range. The modulation *amount* the user sets is a **percentage of the size of the slider range** (the user's,
+else `max − min` of the usual range), from −100 to 100: `sweep = amount / 100 × span` in both modes (`ParamSpec::modulation_sweep`),
+so a full-scale signal moves the value `sweep` from its base, either way for bipolar. A negative one-way amount
+turns the value down. Every parameter is
 linear, frequencies included. A newly connected signal starts at 25%, one
-way. Modulated values are kept within the usual range (widened to include the base value) unless the modulation
-sets `overshoot`, when only the parameter's limits apply (`ParamSpec::modulation_bounds`). The compiler resamples the signal to the main input's length (with the node's interpolation
+way. Modulated values are kept within the slider range (widened to include the base value, and within the limits;
+`ParamSpec::modulation_bounds`), so there is no overshoot. The compiler resamples the signal to the main input's length (with the node's interpolation
 and latency compensation, like any secondary input) and hands the node the values through `ctx.param(i)`;
 unmodulated parameters stay constants the node reads from its own fields, so they cost nothing.
 `PrepareContext::modulation(i)` gives the range a modulated parameter can move over, for sizing buffers and warmup.

@@ -140,6 +140,9 @@ struct ParamBinding {
     input: InputBinding,
     base: f64,
     modulation: Modulation,
+    /// The slider range the amount is a percentage of.
+    range: (f64, f64),
+    /// Where the modulated value is held.
     limits: (f64, f64),
     /// Whether each sample's value is rounded to a whole number before clamping.
     integer: bool,
@@ -155,7 +158,7 @@ impl ParamBinding {
         for (v, &s) in self.values.data.iter_mut().zip(&signal.data) {
             let value = self
                 .spec
-                .modulated(self.base, self.modulation, f64::from(s));
+                .modulated(self.base, self.modulation, f64::from(s), self.range);
             let value = if self.integer { value.round() } else { value };
             *v = value.clamp(lo, hi) as f32;
         }
@@ -317,14 +320,31 @@ struct Pending {
     param_wires: Vec<Option<(usize, usize)>>,
 }
 
+/// A modulated parameter's settings, as [`Pending::modulation_of`] works them out.
+struct Modulated {
+    base: f64,
+    modulation: Modulation,
+    range: (f64, f64),
+    bounds: (f64, f64),
+}
+
 impl Pending {
     /// Every connected (node, output port): inputs, then parameters.
     fn sources(&self) -> impl Iterator<Item = &(usize, usize)> {
         self.wires.iter().chain(&self.param_wires).flatten()
     }
 
-    /// How parameter `index` is modulated, if a signal is connected to it.
-    fn modulation_of(&self, index: usize) -> Option<(f64, Modulation, (f64, f64))> {
+    /// The slider range of parameter `index`: the user's, or the usual one.
+    fn slider_range(&self, index: usize) -> (f64, f64) {
+        let spec = &self.specs[index];
+        self.ranges
+            .get(spec.name)
+            .map_or_else(|| spec.usual_range(), |r| (r[0], r[1]))
+    }
+
+    /// How parameter `index` is modulated, if a signal is connected to it: the base value, the
+    /// modulation, the slider range its amount is a percentage of and the bounds it is held to.
+    fn modulation_of(&self, index: usize) -> Option<Modulated> {
         self.param_wires[index]?;
         let spec = &self.specs[index];
         let base = spec.number_value(&self.params)?;
@@ -334,12 +354,13 @@ impl Pending {
             .get(spec.name)
             .copied()
             .unwrap_or_else(|| spec.default_modulation());
-        let slider = self.ranges.get(spec.name).map(|r| (r[0], r[1]));
-        Some((
+        let range = self.slider_range(index);
+        Some(Modulated {
             base,
             modulation,
-            spec.modulation_bounds(base, modulation, slider),
-        ))
+            range,
+            bounds: spec.modulation_bounds(base, range),
+        })
     }
 }
 
@@ -892,9 +913,8 @@ impl<'a> Compiler<'a> {
         let connected: Vec<bool> = p.wires.iter().map(Option::is_some).collect();
         let modulated: Vec<Option<(f64, f64)>> = (0..p.specs.len())
             .map(|i| {
-                p.modulation_of(i).map(|(base, m, _)| {
-                    let slider = p.ranges.get(p.specs[i].name).map(|r| (r[0], r[1]));
-                    let (lo, hi) = p.specs[i].modulated_range(base, m, slider);
+                p.modulation_of(i).map(|m| {
+                    let (lo, hi) = p.specs[i].modulated_range(m.base, m.modulation, m.range);
                     if p.integer[i] {
                         (lo.round(), hi.round())
                     } else {
@@ -1031,7 +1051,12 @@ impl<'a> Compiler<'a> {
         let p = &self.pending[n];
         (0..p.specs.len())
             .filter_map(|index| {
-                let (base, modulation, limits) = p.modulation_of(index)?;
+                let Modulated {
+                    base,
+                    modulation,
+                    range,
+                    bounds,
+                } = p.modulation_of(index)?;
                 let (src, port) = p.param_wires[index]?;
                 Some(ParamBinding {
                     index,
@@ -1046,7 +1071,8 @@ impl<'a> Compiler<'a> {
                     ),
                     base,
                     modulation,
-                    limits,
+                    range,
+                    limits: bounds,
                     integer: p.integer[index],
                     values: Signal::zeros(shape.reference),
                 })

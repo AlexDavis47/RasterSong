@@ -1,6 +1,8 @@
 //! Bringing graphs written for older versions of the nodes up to date.
 
-use crate::desc::{FORMAT_VERSION, GeneratorLayout, GraphDesc, ModMode, Modulation};
+use crate::desc::{
+    FORMAT_VERSION, GeneratorLayout, GraphDesc, MODULATION_AMOUNT_LIMITS, ModMode, Modulation,
+};
 use crate::{ParamKind, ParamSpec, ParamValue, Registry};
 
 // Migrations are idempotent rewrites that recognise old graphs by their shape, so a graph that
@@ -281,6 +283,66 @@ impl GraphDesc {
         self.move_layout_to_settings(Registry::shared());
         self.convert_modulation_inputs(MODULATION_INPUTS);
         self.upgrade_modulation(Registry::shared());
+        self.modulate_by_one_rule(Registry::shared());
+        self.version = FORMAT_VERSION;
+    }
+
+    /// Graphs before version 9 measured a both-ways amount peak to peak and could let a value go
+    /// past the slider's range. Modulation is one rule now: the amount is a percentage of the
+    /// slider range, a full-scale signal moves the value that far (either way for both ways), and
+    /// the value stays inside the range. An old amount becomes the percentage that moves the value
+    /// as far, and an entry that overshot gets the slider range widened to where it used to reach
+    /// (within the parameter's limits), so the graph does what it did.
+    fn modulate_by_one_rule(&mut self, registry: &Registry) {
+        if self.version >= 9 {
+            return;
+        }
+        for node in &mut self.nodes {
+            let Some(kind) = registry.get(&node.kind) else {
+                continue;
+            };
+            for (name, modulation) in &mut node.modulation {
+                let Some(spec) = kind
+                    .spec
+                    .params
+                    .iter()
+                    .find(|s| s.name == *name && s.number_limits().is_some())
+                else {
+                    continue;
+                };
+                let Some(base) = spec.number_value(&node.params) else {
+                    continue;
+                };
+                let (limit_min, limit_max) = spec.number_limits().unwrap_or((f64::MIN, f64::MAX));
+                let half = match modulation.mode {
+                    ModMode::Bipolar => 0.5,
+                    ModMode::Unipolar => 1.0,
+                };
+                // How far a full-scale signal moved the value, in the parameter's unit.
+                let sweep = modulation.amount / 100.0 * spec.modulation_span() * half;
+                let slider = node.ranges.get(name.as_str()).map(|r| (r[0], r[1]));
+                let mut range = slider.unwrap_or_else(|| spec.usual_range());
+                if modulation.overshoot {
+                    let (a, b) = match modulation.mode {
+                        ModMode::Bipolar => (base - sweep.abs(), base + sweep.abs()),
+                        ModMode::Unipolar => (base.min(base + sweep), base.max(base + sweep)),
+                    };
+                    let widened = (range.0.min(a).max(limit_min), range.1.max(b).min(limit_max));
+                    if widened != range {
+                        range = widened;
+                        node.ranges.insert(name.clone(), [range.0, range.1]);
+                    }
+                }
+                let span = crate::range_span(range);
+                modulation.amount = if span > 0.0 {
+                    (sweep * 100.0 / span)
+                        .clamp(MODULATION_AMOUNT_LIMITS.0, MODULATION_AMOUNT_LIMITS.1)
+                } else {
+                    0.0
+                };
+                modulation.overshoot = false;
+            }
+        }
     }
 
     /// Graphs before version 4 let modulation carry values past the slider's range, so their
@@ -291,7 +353,8 @@ impl GraphDesc {
     /// `modulation` entry used to get a default amount that depended on its base value (bipolar in
     /// version 1, unipolar in version 2); that is written out first so it keeps its meaning.
     fn upgrade_modulation(&mut self, registry: &Registry) {
-        if self.version >= FORMAT_VERSION {
+        // Everything from version 6 on keeps its amounts as they are here.
+        if self.version >= 6 {
             return;
         }
         let legacy_amounts = self.version < 3;
@@ -375,7 +438,6 @@ impl GraphDesc {
                 }
             }
         }
-        self.version = FORMAT_VERSION;
     }
 
     fn rename_kinds(&mut self, renames: &[RenamedKind]) {
@@ -526,7 +588,12 @@ mod tests {
         let node = graph.nodes.iter().find(|n| n.id == id).unwrap();
         let kind = Registry::shared().get(&node.kind).unwrap();
         let spec = kind.spec.params.iter().find(|s| s.name == param).unwrap();
-        spec.modulation_sweep(node.modulation[param])
+        spec.modulation_sweep(
+            node.modulation[param],
+            node.ranges
+                .get(param)
+                .map_or_else(|| spec.usual_range(), |r| (r[0], r[1])),
+        )
     }
 
     #[test]
@@ -607,7 +674,7 @@ mod tests {
     }
 
     #[test]
-    fn older_graphs_keep_overshooting_the_slider_range() {
+    fn graphs_that_overshot_get_a_wider_slider_range_instead() {
         let json = r#"{ "version": 3,
             "nodes": [
                 { "id": "a", "type": "audio_input" },
@@ -617,24 +684,43 @@ mod tests {
             "connections": [ { "from": "a", "to": "f.@cutoff" }, { "from": "a", "to": "d.@time" } ] }"#;
         let graph = GraphDesc::from_json(json).unwrap();
         let node = |id: &str| graph.nodes.iter().find(|n| n.id == id).unwrap();
-        assert!(node("f").modulation["cutoff"].overshoot);
-        // A connected parameter without an entry gets the default, written out so it overshoots.
-        let d = node("d").modulation["time"];
-        assert!(d.overshoot && d.amount == 25.0);
         assert_eq!(graph.version, FORMAT_VERSION);
+        // The cutoff used to go as far as 50% of its 23 octave span from 40 (bipolar, so half of
+        // it each way: 5.8 octaves, 40 x 2^5.8), past its 200 slider.
+        let [_, high] = node("f").ranges["cutoff"];
+        assert!(high > 200.0, "the slider now reaches {high}");
+        let m = node("f").modulation["cutoff"];
+        assert!(!m.overshoot && m.amount > 0.0 && m.amount <= 100.0);
+        // A parameter that stayed inside its range keeps it.
+        assert!(node("d").ranges.is_empty());
+        assert_eq!(node("d").modulation["time"].amount, 25.0);
+        assert!(!graph.to_json().contains("overshoot"));
+        // Loading what was written is stable from then on.
+        let once = GraphDesc::from_json(&graph.to_json()).unwrap();
+        assert_eq!(GraphDesc::from_json(&once.to_json()).unwrap(), once);
+    }
 
-        // Current graphs say so themselves: clamped unless the entry allows it.
-        let current =
-            GraphDesc::from_json(&json.replace("\"version\": 3", "\"version\": 4")).unwrap();
-        assert!(
-            !current
-                .nodes
-                .iter()
-                .find(|n| n.id == "f")
-                .unwrap()
-                .modulation["cutoff"]
-                .overshoot
-        );
+    #[test]
+    fn both_ways_amounts_halve_and_slider_ranges_rescale_them() {
+        // Version 8: 40% both ways was 20% either side of a 0..10 range, and the slider's own
+        // range is what amounts are a percentage of now.
+        let json = r#"{ "version": 8,
+            "nodes": [
+                { "id": "a", "type": "audio_input" },
+                { "id": "d", "type": "delay", "ranges": { "time": [0, 5] },
+                  "modulation": { "time": { "amount": 40, "mode": "bipolar" } } }
+            ],
+            "connections": [ { "from": "a", "to": "d.@time" } ] }"#;
+        let graph = GraphDesc::from_json(json).unwrap();
+        let d = &graph.nodes[1];
+        let spec = &Registry::shared().get("delay").unwrap().spec.params[0];
+        let (lo, hi) = (d.ranges["time"][0], d.ranges["time"][1]);
+        // The old reach was 40% of the usual range (0..50), halved: 10 units each way.
+        let usual = spec.modulation_span();
+        let old_sweep = 0.4 * usual * 0.5;
+        // Held to 100% of a 5 wide range, since an amount can't be more.
+        assert_eq!(d.modulation["time"].amount, 100.0);
+        assert!(old_sweep >= hi - lo);
     }
 
     #[test]
@@ -675,7 +761,11 @@ mod tests {
         // 25% of the old (0.01..100000) octave span, from the default 40: 40 x 2^oct - 40.
         let octaves = 0.25 * (100_000.0f64 / 0.01).log2();
         let hertz = 40.0 * (octaves.exp2() - 1.0);
-        assert!((sweep(&graph, "f", "cutoff") - hertz).abs() < 1e-6);
+        assert!(hertz > 200.0, "more than the slider can show");
+        // An amount can't be more than the whole slider range now, which is as far as it ever
+        // reached before.
+        let (lo, hi) = Registry::shared().get("lowpass").unwrap().spec.params[0].usual_range();
+        assert!((sweep(&graph, "f", "cutoff") - (hi - lo)).abs() < 1e-6);
         // Other parameters, and version 4's overshoot setting, are untouched.
         let node = |id: &str| graph.nodes.iter().find(|n| n.id == id).unwrap();
         assert_eq!(node("g").modulation["threshold"].amount, 25.0);

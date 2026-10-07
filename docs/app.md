@@ -65,11 +65,12 @@ A connected (modulated) parameter shows, in the wire's colour:
   frame), while the solid handle stays the base value and can still be dragged;
 - a small knob between the slider and the value box for the amount: drag it (Shift for fine), double-click to
   reset, right-click for the modulator's settings: both ways or one way, the amount, and disconnecting the signal.
-  The amount is a percentage of the parameter's range: 100% sweeps all of it (both ways, from the lowest point to
-  the highest). The tooltip and the settings show what that comes to in the parameter's own unit, and
-  the settings can be typed in either way: as a percentage, or as the distance in the parameter's unit (for
-  example 200 Hz either side). A new connection starts at 25%, one way, and keeps the value
-  between the slider's ends unless **Allow past the slider's range** is ticked.
+  **One rule:** the amount is a percentage of the slider's range (the one you set, or the node's usual one), and a
+  full-scale signal moves the value that far from where it is: up one way (a negative amount turns it down), either
+  way for both ways. The value never leaves the slider's range; widen the slider for more room. The knob, the
+  percentage box and the distance box ("Moves by" / "Either side", in the parameter's own unit, such as 200 Hz) are
+  three views of the one percentage: all run from −100% to 100% and the knob stops at the ends. Typing a
+  distance sets the percentage to distance ÷ range. A new connection starts at 25%, one way.
 
 ## Timeline
 

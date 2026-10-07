@@ -13,7 +13,7 @@
 //! Every control can be reset to its default with Alt+click or from its right-click menu.
 
 use eframe::egui::{self, Color32, CornerRadius, Rect, Response, Sense, Stroke, Ui, pos2, vec2};
-use rastersong_engine::{ModMode, Modulation, ParamSpec};
+use rastersong_engine::{MODULATION_AMOUNT_LIMITS, ModMode, Modulation, ParamSpec, range_span};
 
 use crate::theme::Theme;
 use crate::value_box::ValueBox;
@@ -144,7 +144,7 @@ pub fn param_field(
 
     match modulated.as_mut() {
         Some(m) => {
-            let knob = amount_knob(ui, m);
+            let knob = amount_knob(ui, m, shown);
             response.disconnect = knob.disconnect;
         }
         None => {
@@ -226,7 +226,7 @@ pub fn param_field(
     let x = |v: f64| rail.left() + rail.width() * fraction(v);
     paint_rail(ui, rail, x(*value));
     if let Some(m) = &modulated {
-        let (lo, hi) = m.spec.modulated_range(*value, *m.modulation, Some(shown));
+        let (lo, hi) = m.spec.modulated_range(*value, *m.modulation, shown);
         paint_range(ui, rail, x(lo), x(hi), m.color);
     }
     paint_handle(ui, &track, pos2(x(*value), rect.center().y), rect.height());
@@ -272,6 +272,9 @@ pub fn param_field(
     response
 }
 
+/// The amounts the knob and both boxes accept, in percent of the slider's range.
+const AMOUNT_LIMITS: (f64, f64) = MODULATION_AMOUNT_LIMITS;
+
 /// The amount a full turn of the knob stands for, in percent: the whole span.
 const KNOB_PERCENT: f64 = 100.0;
 
@@ -293,8 +296,8 @@ pub fn amount_text(modulation: Modulation) -> String {
 
 /// What the amount comes to in the parameter's own terms, for a tooltip: how far a full signal
 /// moves the value, `±3.3 bits` or `+2.5 Hz`. Both ways, that is either side of the value.
-pub fn amount_effect(spec: &ParamSpec, modulation: Modulation) -> String {
-    let sweep = spec.modulation_sweep(modulation);
+pub fn amount_effect(spec: &ParamSpec, modulation: Modulation, range: (f64, f64)) -> String {
+    let sweep = spec.modulation_sweep(modulation, range);
     let unit = spec.unit;
     let space = if unit.is_empty() { "" } else { " " };
     let value = format!("{:.2}", sweep.abs()).replace(".00", "");
@@ -314,7 +317,7 @@ struct KnobResponse {
 
 /// The amount knob: an arc showing the amount in the wire's colour. Drag to change it,
 /// double-click to reset it, right-click for the modulator's settings.
-fn amount_knob(ui: &mut Ui, m: &mut Modulated) -> KnobResponse {
+fn amount_knob(ui: &mut Ui, m: &mut Modulated, range: (f64, f64)) -> KnobResponse {
     let mut result = KnobResponse::default();
     let size = vec2(GUTTER_WIDTH, ui.spacing().interact_size.y);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
@@ -327,10 +330,9 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated) -> KnobResponse {
         } else {
             1.0
         };
-        modulation.amount += f64::from(delta.x - delta.y) / 150.0 * KNOB_PERCENT * fine;
-        if modulation.mode == ModMode::Bipolar {
-            modulation.amount = modulation.amount.max(0.0);
-        }
+        modulation.amount = (modulation.amount
+            + f64::from(delta.x - delta.y) / 150.0 * KNOB_PERCENT * fine)
+            .clamp(AMOUNT_LIMITS.0, AMOUNT_LIMITS.1);
     }
     let default_amount = m.spec.default_modulation_amount();
     if response.double_clicked() || alt_clicked(ui, &response) {
@@ -379,7 +381,7 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated) -> KnobResponse {
     let response = response.on_hover_text(format!(
         "Modulation {} of the range, about {}. Drag to change, double-click or Alt+click to reset, right-click for options.",
         amount_text(*modulation),
-        amount_effect(m.spec, *modulation)
+        amount_effect(m.spec, *modulation, range)
     ));
     // Clicks inside don't close it, so its fields can be typed into.
     let menu = egui::Popup::context_menu(&response)
@@ -395,7 +397,6 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated) -> KnobResponse {
             .clicked()
         {
             modulation.mode = ModMode::Bipolar;
-            modulation.amount = modulation.amount.abs();
         }
         if ui
             .radio(!both, "One way")
@@ -408,18 +409,16 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated) -> KnobResponse {
         }
         ui.horizontal(|ui| {
             ui.label("Amount");
-            let range = match modulation.mode {
-                ModMode::Bipolar => 0.0..=f64::INFINITY,
-                ModMode::Unipolar => f64::NEG_INFINITY..=f64::INFINITY,
-            };
             ui.add(
                 ValueBox::new(&mut modulation.amount)
-                    .range(range)
+                    .range(AMOUNT_LIMITS.0..=AMOUNT_LIMITS.1)
                     .speed(0.3)
                     .suffix("%")
                     .max_decimals(1),
             )
-            .on_hover_text("Percent of the parameter's range. Both ways, 100% sweeps all of it.");
+            .on_hover_text(
+                "How far a full signal moves the value, as a percentage of the slider's range.",
+            );
         });
         // The same amount in the parameter's own terms, for when you know the distance you want.
         ui.horizontal(|ui| {
@@ -432,32 +431,25 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated) -> KnobResponse {
             } else {
                 format!(" {}", m.spec.unit)
             };
-            let mut sweep = m.spec.modulation_sweep(*modulation);
-            let range = match modulation.mode {
-                ModMode::Bipolar => 0.0..=f64::INFINITY,
-                ModMode::Unipolar => f64::NEG_INFINITY..=f64::INFINITY,
-            };
+            let mut sweep = m.spec.modulation_sweep(*modulation, range);
+            let span = range_span(range);
             if ui
                 .add(
                     ValueBox::new(&mut sweep)
-                        .range(range)
-                        .speed(m.spec.modulation_span() / 300.0)
+                        .range(-span..=span)
+                        .speed(span / 300.0)
                         .suffix(&unit)
                         .max_decimals(3),
                 )
                 .on_hover_text(
-                    "How far a full signal moves the value, in the parameter's own unit. \
-                     Both ways, this is the distance either side of the value.",
+                    "The same amount in the parameter's own unit: how far a full signal moves \
+                     the value (either side of it, both ways).",
                 )
                 .changed()
             {
-                modulation.amount = m.spec.modulation_amount_for_sweep(sweep, modulation.mode);
+                modulation.amount = m.spec.modulation_amount_for_sweep(sweep, range);
             }
         });
-        ui.checkbox(&mut modulation.overshoot, "Allow past the slider's range")
-            .on_hover_text(
-                "Off: the modulated value stays between the slider's ends. On: it can go as far as the node can work with.",
-            );
         if ui
             .add_enabled(
                 modulation.amount != default_amount,
@@ -581,16 +573,105 @@ mod tests {
         assert_eq!(amount_text(m(25.0, ModMode::Bipolar)), "±25%");
         assert_eq!(amount_text(m(-12.5, ModMode::Unipolar)), "-12.5%");
         assert_eq!(amount_text(m(100.0, ModMode::Unipolar)), "+100%");
-        // Both ways, 100% of a 0..1 span is 0.5 either side; one way it is the whole span.
-        assert_eq!(amount_effect(&feedback, m(100.0, ModMode::Bipolar)), "±0.5");
+        // One rule in both modes: the amount is how far a full signal moves the value, as a share
+        // of the range.
         assert_eq!(
-            amount_effect(&feedback, m(-50.0, ModMode::Unipolar)),
+            amount_effect(&feedback, m(50.0, ModMode::Bipolar), (0.0, 1.0)),
+            "±0.5"
+        );
+        assert_eq!(
+            amount_effect(&feedback, m(-50.0, ModMode::Unipolar), (0.0, 1.0)),
             "-0.5"
         );
         assert_eq!(
-            amount_effect(&bits, m(10.0, ModMode::Unipolar)),
+            amount_effect(&bits, m(10.0, ModMode::Unipolar), (1.0, 24.0)),
             "+2.3 bits"
         );
+        // The slider's own range, not the node's usual one, is what the percentage is of.
+        assert_eq!(
+            amount_effect(&bits, m(50.0, ModMode::Bipolar), (1.0, 5.0)),
+            "±2 bits"
+        );
+    }
+
+    /// The amount knob is the percentage box: dragged far either way it stops at the ends.
+    #[test]
+    fn the_knob_stops_at_the_ends_of_the_percentage() {
+        use eframe::egui::{Event, Modifiers, PointerButton, pos2};
+        use egui_kittest::Harness;
+        use rastersong_engine::{ModMode, Modulation, ParamSpec};
+
+        let spec = ParamSpec::number("time", "Time", 1.0, 0.0, 10.0, "");
+        let state = (
+            5.0f64,
+            Modulation {
+                amount: 25.0,
+                mode: ModMode::Unipolar,
+                overshoot: false,
+            },
+            None::<(f64, f64)>,
+        );
+        let mut harness = Harness::new_ui_state(
+            |ui, (value, modulation, custom)| {
+                let range = NumberRange {
+                    default: 1.0,
+                    soft: (0.0, 10.0),
+                    limits: (0.0, 10.0),
+                    whole: false,
+                };
+                let modulated = Modulated {
+                    spec: &spec,
+                    modulation,
+                    color: Color32::LIGHT_BLUE,
+                    live: None,
+                };
+                ui.horizontal(|ui| {
+                    param_field(
+                        ui,
+                        "t",
+                        value,
+                        range,
+                        (100.0, 40.0),
+                        Some(modulated),
+                        custom,
+                    );
+                });
+            },
+            state,
+        );
+        harness.run();
+        // The knob is the first thing in the row.
+        let top = harness.ctx.content_rect().left_top();
+        let knob = top + vec2(GUTTER_WIDTH / 2.0 + 8.0, 20.0);
+        let drag = |harness: &mut Harness<'_, _>, dy: f32| {
+            harness.event(Event::PointerMoved(knob));
+            harness.run_steps(1);
+            harness.event(Event::PointerButton {
+                pos: knob,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            });
+            harness.run_steps(1);
+            for step in 1..=10 {
+                harness.event(Event::PointerMoved(pos2(
+                    knob.x,
+                    knob.y + dy * step as f32 / 10.0,
+                )));
+                harness.run_steps(1);
+            }
+            harness.event(Event::PointerButton {
+                pos: knob,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            });
+            harness.run_steps(1);
+        };
+        drag(&mut harness, -2000.0);
+        assert_eq!(harness.state().1.amount, 100.0, "up stops at 100%");
+        drag(&mut harness, 8000.0);
+        assert_eq!(harness.state().1.amount, -100.0, "down stops at -100%");
     }
 
     #[test]

@@ -14,8 +14,11 @@ use crate::GraphError;
 /// 6 made frequency modulation linear like every other parameter (it was in octaves), so those
 /// amounts are converted to the equivalent linear amount at the parameter's base value. Version 7
 /// made a generator's `layout` a node setting instead of a parameter. Version 8 saves the
-/// slider ranges the user sets, which limit modulation.
-pub const FORMAT_VERSION: u32 = 8;
+/// slider ranges the user sets, which limit modulation. Version 9 made modulation one rule: the
+/// amount is a percentage of the slider range and the value stays inside it (the overshoot flag
+/// is gone; both-ways amounts are the distance either side, not peak to peak; amounts run
+/// from -100% to 100%).
+pub const FORMAT_VERSION: u32 = 9;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -65,9 +68,9 @@ pub struct NodeDesc {
     /// modulated parameter, the value of every sample after modulation (so a signal steps it).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub integer: Vec<String>,
-    /// Slider ranges the user set, by parameter name: what the slider shows and, unless a
-    /// modulation may overshoot, where a signal can take the value. Parameters without an entry
-    /// use the node type's usual range.
+    /// Slider ranges the user set, by parameter name: what the slider shows, what modulation
+    /// amounts are a percentage of, and where a signal can take the value. Parameters without
+    /// an entry use the node type's usual range.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub ranges: BTreeMap<String, [f64; 2]>,
     /// Parameters whose modulation pins the editor shows, when they differ from the node type's
@@ -76,21 +79,27 @@ pub struct NodeDesc {
     pub exposed: Option<Vec<String>>,
 }
 
-/// How a signal connected to a parameter moves it, clamped to the parameter's limits. The
-/// `amount` is a percentage of the parameter's span (its usual range): one way, the value moves `amount` of the span at full signal; both ways,
-/// `amount` is the whole swing from the lowest point to the highest, so 100% covers the span.
-/// Negative one-way amounts move the value down. The value stays within the parameter's usual
-/// range (widened to include its base value) unless `overshoot` allows it up to the limits.
+/// How a signal connected to a parameter moves it. The `amount` is a percentage of the size of
+/// the parameter's slider range (the node's `ranges` entry, else its usual range), and is the one
+/// thing stored: a full-scale signal moves the value `amount` of that range away from where it
+/// is, up one way (down for a negative one-way amount) or either way for both ways. The value
+/// never leaves the slider's range.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Modulation {
     pub amount: f64,
     #[serde(default, skip_serializing_if = "is_default")]
     pub mode: ModMode,
-    /// Lets the modulated value go past the slider's range, up to the parameter's limits.
-    #[serde(default, skip_serializing_if = "is_default")]
+    /// Graphs before version 9 could let the value go past the slider's range. Read so those
+    /// graphs load (the upgrade widens their slider range instead), never written.
+    #[serde(default, skip_serializing)]
     pub overshoot: bool,
 }
+
+/// The amounts a modulation can have, in percent of the slider range. A negative amount turns
+/// the value down (one way) or inverts the signal (both ways). More than 100% would only reach
+/// past the range, which the value never leaves.
+pub const MODULATION_AMOUNT_LIMITS: (f64, f64) = (-100.0, 100.0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -5,7 +5,7 @@ or its main input. Unknown parameters are rejected, which catches typos.
 
 ```json
 {
-  "version": 8,
+  "version": 9,
   "nodes": [
     { "id": "video", "type": "video_input" },
     { "id": "audio", "type": "audio_input" },
@@ -25,17 +25,19 @@ Nodes may also carry `"position": [x, y]` (their place in the editor), `"label"`
 type's) and `"exposed"` (which parameter pins show, when that differs from the type's defaults). None of these
 affect rendering. A signal connected to a parameter (`{ "from": "audio", "to": "wave.@time" }`) modulates it, with
 `"modulation": { "time": { "amount": 25, "mode": "unipolar" } }` on the node saying how far. The amount is a
-**percentage of the parameter's span** (its usual range): one way, 100% moves the
-value across the whole span; both ways (`"mode": "bipolar"`), 100% is the swing from the lowest point to the
-highest. The value stays between the slider's ends (widened to include the base value) unless the entry says
-`"overshoot": true`, which allows it up to the parameter's limits. "The slider" is the node's `"ranges": { "param": [min, max] }` entry when the user set one, otherwise the node type's usual range. Without an entry the amount is 25%, one way,
-not overshooting. How modulation is applied is in
+**percentage of the slider's range** (the node's `"ranges": { "param": [min, max] }` entry when the user set one,
+otherwise the node type's usual range), from −100 to 100. A full-scale signal moves the value that far from where it
+is: one way (`"mode": "unipolar"`) up by |signal| (down for a negative amount), both ways (`"mode": "bipolar"`,
+the default) by the signal either way. The value never leaves the slider's range (widened to include the base value,
+and within the parameter's limits). Without an entry the amount is 25%, one way. How modulation is applied is in
 [Node authoring](node-authoring.md#parameter-modulation).
 
 Format version 3 introduced percentage amounts, version 4 the range limit and version 5 narrower usual ranges for
-some frequencies, version 6 linear frequency modulation (octave amounts are converted at the base value) version 7 the generator `layout` setting and version 8 the `ranges` a user sets on sliders. Older graphs (amounts in the
-parameter's own unit, the default amount that depended on the base value, and values that could pass the slider's
-ends) are rewritten on load, with `"overshoot": true`, so they move parameters exactly as before.
+some frequencies, version 6 linear frequency modulation (octave amounts are converted at the base value) version 7 the generator `layout` setting, version 8 the `ranges` a user sets on sliders and version 9 the single
+modulation rule above (both-ways amounts used to be peak to peak, and an `"overshoot"` flag let values pass the
+slider; the flag is read from old files and never written). Older graphs are rewritten on load so they move
+parameters as before: both-ways amounts are halved, and a modulation that overshot gets its slider range widened to
+where it reached, within the limits. An amount that came to more than the whole range is held to 100%.
 
 Renamed nodes, ports, parameters and options are upgraded on load by `migrate.rs` and `GraphDesc::upgrade`, so old
 files keep loading. **Any roadmap change that renames or reshapes a parameter must add a migration** (for example

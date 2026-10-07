@@ -332,7 +332,7 @@ fn graph_files_round_trip() {
     let desc = GraphDesc::from_json(PASSTHROUGH).unwrap();
     assert_eq!(GraphDesc::from_json(&desc.to_json()).unwrap(), desc);
     assert!(matches!(
-        GraphDesc::from_json(r#"{ "version": 9, "nodes": [] }"#),
+        GraphDesc::from_json(r#"{ "version": 10, "nodes": [] }"#),
         Err(GraphError::Parse(_))
     ));
 }
@@ -1114,7 +1114,7 @@ fn odd_audio_output_layouts_are_written_as_stereo_with_a_warning() {
 fn modulated_matches_set(kind: &str, set: &str, base: &str, param: &str, amount: f64) {
     let render = |node: String, extra: &str, wire: &str| {
         let json = format!(
-            r#"{{ "version": 7, "nodes": [
+            r#"{{ "version": 9, "nodes": [
                 {{ "id": "video", "type": "video_input" }}, {node}{extra},
                 {{ "id": "out", "type": "output" }} ],
               "connections": [ {wire}{{ "from": "g", "to": "out" }} ] }}"#
@@ -1134,7 +1134,7 @@ fn modulated_matches_set(kind: &str, set: &str, base: &str, param: &str, amount:
     let driven = render(
         format!(
             r#"{{ "id": "g", "type": "{kind}", "params": {base},
-                "modulation": {{ "{param}": {{ "amount": {amount}, "mode": "unipolar", "overshoot": true }} }} }}"#
+                "modulation": {{ "{param}": {{ "amount": {amount}, "mode": "unipolar" }} }} }}"#
         ),
         r#", { "id": "one", "type": "constant", "params": { "value": 1 } }"#,
         &format!(r#"{{ "from": "one", "to": "g.@{param}" }}, "#),
@@ -1201,7 +1201,7 @@ fn modulation_stays_within_the_slider_range_the_user_set() {
     // the top, but the user's slider range ends at 6.
     let render = |ranges: &str| {
         let json = format!(
-            r#"{{ "version": 8, "nodes": [
+            r#"{{ "version": 9, "nodes": [
                 {{ "id": "video", "type": "video_input" }}, {{ "id": "one", "type": "constant", "params": {{ "value": 1 }} }},
                 {{ "id": "crush", "type": "bitcrush", "params": {{ "bits": 2 }},
                    "modulation": {{ "bits": {{ "amount": 100, "mode": "unipolar" }} }}{ranges} }},

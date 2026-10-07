@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::nodes::Choice;
-use crate::{ModMode, Modulation, ParamValue};
+use crate::{MODULATION_AMOUNT_LIMITS, ModMode, Modulation, ParamValue};
 
 /// One parameter of a node type.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -26,6 +26,12 @@ pub struct ParamSpec {
     pub integer: bool,
     /// Why a signal can't modulate it (set by [`Self::fixed`]); empty when it can.
     pub locked: &'static str,
+}
+
+/// The size of a range, zero for one that isn't finite.
+pub fn range_span(range: (f64, f64)) -> f64 {
+    let span = range.1 - range.0;
+    if span.is_finite() { span.max(0.0) } else { 0.0 }
 }
 
 /// How much a newly connected signal moves a parameter, in percent of its span.
@@ -141,14 +147,18 @@ impl ParamSpec {
         self
     }
 
-    /// The size of the usual range, which modulation amounts are a percentage of: in the
-    /// parameter's own unit. Zero for anything that isn't a number.
+    /// The usual range, which the slider shows unless the user has set another; zero-sized for
+    /// anything that isn't a number.
+    pub fn usual_range(&self) -> (f64, f64) {
+        match self.kind {
+            ParamKind::Number { min, max, .. } => (min, max),
+            _ => (0.0, 0.0),
+        }
+    }
+
+    /// The size of the usual range, in the parameter's own unit.
     pub fn modulation_span(&self) -> f64 {
-        let ParamKind::Number { min, max, .. } = self.kind else {
-            return 0.0;
-        };
-        let span = max - min;
-        if span.is_finite() { span.max(0.0) } else { 0.0 }
+        range_span(self.usual_range())
     }
 
     /// The modulation amount a newly connected signal starts with, in percent of the span.
@@ -165,33 +175,30 @@ impl ParamSpec {
         }
     }
 
-    /// The amount (percent of the span) whose sweep is `sweep`, the inverse of
-    /// [`Self::modulation_sweep`]: for typing a distance in the parameter's own unit.
-    pub fn modulation_amount_for_sweep(&self, sweep: f64, mode: ModMode) -> f64 {
-        let reach = match mode {
-            ModMode::Bipolar => 0.5,
-            ModMode::Unipolar => 1.0,
-        };
-        let span = self.modulation_span();
-        if span > 0.0 {
-            sweep * 100.0 / (span * reach)
-        } else {
-            0.0
-        }
+    /// How far a full-scale signal moves the value, in the parameter's unit, for a slider showing
+    /// `range`: the amount, a percentage of that range's size. Both ways it is the distance
+    /// either side of the value.
+    pub fn modulation_sweep(&self, modulation: Modulation, range: (f64, f64)) -> f64 {
+        modulation.amount / 100.0 * range_span(range)
     }
 
-    /// Where a modulated value is kept: the slider's range (`slider`, or the usual range when the
-    /// user hasn't set one), widened to include `base`, or the parameter's limits if the
-    /// modulation may overshoot.
-    pub fn modulation_bounds(
-        &self,
-        base: f64,
-        modulation: Modulation,
-        slider: Option<(f64, f64)>,
-    ) -> (f64, f64) {
+    /// The amount (percent of the range) whose sweep is `sweep`, the inverse of
+    /// [`Self::modulation_sweep`], held to what an amount can be: for typing a distance in the
+    /// parameter's own unit.
+    pub fn modulation_amount_for_sweep(&self, sweep: f64, range: (f64, f64)) -> f64 {
+        let span = range_span(range);
+        let amount = if span > 0.0 {
+            sweep * 100.0 / span
+        } else {
+            0.0
+        };
+        amount.clamp(MODULATION_AMOUNT_LIMITS.0, MODULATION_AMOUNT_LIMITS.1)
+    }
+
+    /// Where a modulated value is kept: the slider's range, widened to include `base` (which
+    /// the editor keeps inside it anyway), and never past the parameter's limits.
+    pub fn modulation_bounds(&self, base: f64, range: (f64, f64)) -> (f64, f64) {
         let ParamKind::Number {
-            min,
-            max,
             limit_min,
             limit_max,
             ..
@@ -199,45 +206,37 @@ impl ParamSpec {
         else {
             return (f64::MIN, f64::MAX);
         };
-        let (min, max) = slider.unwrap_or((min, max));
-        if modulation.overshoot {
-            (limit_min, limit_max)
-        } else {
-            (min.min(base).max(limit_min), max.max(base).min(limit_max))
-        }
+        (
+            range.0.min(base).max(limit_min),
+            range.1.max(base).min(limit_max),
+        )
     }
 
-    /// How far a full-scale signal (1, or -1 and 1 for both ways) moves the value, in the
-    /// parameter's unit. Both ways, the amount is the whole swing from one end to
-    /// the other, so 100% covers the span whichever way the signal moves.
-    pub fn modulation_sweep(&self, modulation: Modulation) -> f64 {
-        let reach = match modulation.mode {
-            ModMode::Bipolar => 0.5,
-            ModMode::Unipolar => 1.0,
-        };
-        modulation.amount / 100.0 * self.modulation_span() * reach
+    /// The value for one sample `signal` of a modulating signal, before clamping to the bounds.
+    pub fn modulated(
+        &self,
+        base: f64,
+        modulation: Modulation,
+        signal: f64,
+        range: (f64, f64),
+    ) -> f64 {
+        let shaped = f64::from(modulation.mode.shape(signal as f32));
+        base + self.modulation_sweep(modulation, range) * shaped
     }
 
-    /// The value for one sample `signal` of a modulating signal, before clamping to the limits.
-    pub fn modulated(&self, base: f64, modulation: Modulation, signal: f64) -> f64 {
-        let offset =
-            self.modulation_sweep(modulation) * f64::from(modulation.mode.shape(signal as f32));
-        base + offset
-    }
-
-    /// The range a modulated value moves over for a signal within `-1..=1`, within the limits.
+    /// The range a modulated value moves over for a signal within `-1..=1`, within the bounds.
     pub fn modulated_range(
         &self,
         base: f64,
         modulation: Modulation,
-        slider: Option<(f64, f64)>,
+        range: (f64, f64),
     ) -> (f64, f64) {
         let ends = match modulation.mode {
             ModMode::Bipolar => [-1.0, 1.0],
             ModMode::Unipolar => [0.0, 1.0],
         };
-        let [a, b] = ends.map(|s| self.modulated(base, modulation, s));
-        let (lo, hi) = self.modulation_bounds(base, modulation, slider);
+        let [a, b] = ends.map(|s| self.modulated(base, modulation, s, range));
+        let (lo, hi) = self.modulation_bounds(base, range);
         (a.min(b).clamp(lo, hi), a.max(b).clamp(lo, hi))
     }
 
@@ -465,8 +464,9 @@ mod tests {
     }
 
     #[test]
-    fn modulation_moves_values_linearly() {
-        let linear = ParamSpec::number("time", "Time", 1.0, 0.0, 10.0, "");
+    fn modulation_is_a_percentage_of_the_slider_range() {
+        let spec = ParamSpec::number("time", "Time", 1.0, 0.0, 10.0, "");
+        let range = spec.usual_range();
         let both = |amount| Modulation {
             amount,
             mode: ModMode::Bipolar,
@@ -477,48 +477,51 @@ mod tests {
             mode: ModMode::Unipolar,
             overshoot: false,
         };
-        // Amounts are percentages of the span (10 here): both ways, 40% swings the value 4 from end
-        // to end, 2 either side of where it is.
-        assert_eq!(linear.modulated(5.0, both(40.0), -0.5), 4.0);
+        // One rule in both modes: a full signal moves the value amount% of the range from where it is.
+        assert_eq!(spec.modulation_sweep(both(40.0), range), 4.0);
+        assert_eq!(spec.modulation_sweep(one_way(40.0), range), 4.0);
+        assert_eq!(spec.modulated(5.0, both(40.0), 1.0, range), 9.0);
+        assert_eq!(spec.modulated(5.0, both(40.0), -1.0, range), 1.0);
         assert_eq!(
-            linear.modulated(5.0, one_way(-20.0), -0.5),
-            4.0,
+            spec.modulated(5.0, one_way(40.0), -0.5, range),
+            7.0,
             "one way uses |signal|"
         );
-        // 100% covers the span whichever way the signal moves.
-        assert_eq!(linear.modulated(0.0, one_way(100.0), 1.0), 10.0);
-        assert_eq!(linear.modulated(5.0, both(100.0), 1.0), 10.0);
-        assert_eq!(linear.modulated(5.0, both(100.0), -1.0), 0.0);
-        // Ranges are clamped to the limits (here the usual range, 0..10).
-        assert_eq!(linear.modulated_range(5.0, both(40.0), None), (3.0, 7.0));
-        assert_eq!(linear.modulated_range(9.0, both(40.0), None), (7.0, 10.0));
         assert_eq!(
-            linear.modulated_range(5.0, one_way(-20.0), None),
-            (3.0, 5.0)
+            spec.modulated(5.0, one_way(-20.0), 1.0, range),
+            3.0,
+            "negative turns it down"
         );
-        // Kept within the usual range (widened to the base) unless it may overshoot.
-        let loud = Modulation {
-            overshoot: true,
-            ..both(400.0)
-        };
-        let wide = ParamSpec::number("t", "T", 1.0, 0.0, 10.0, "").limits(-100.0, 100.0);
-        assert_eq!(wide.modulated_range(5.0, both(400.0), None), (0.0, 10.0));
-        assert_eq!(wide.modulated_range(50.0, both(40.0), None), (48.0, 50.0));
-        assert_eq!(wide.modulated_range(5.0, loud, None), (-15.0, 25.0));
-        // A slider range the user set replaces the usual range, and overshoot still goes to the limits.
+        // The percentage is of the slider's range, so a narrower slider makes the same amount smaller.
+        assert_eq!(spec.modulation_sweep(both(50.0), (0.0, 4.0)), 2.0);
+        // The value stays inside the range, widened to include the base.
+        assert_eq!(spec.modulated_range(5.0, both(40.0), range), (1.0, 9.0));
+        assert_eq!(spec.modulated_range(9.0, both(40.0), range), (5.0, 10.0));
+        assert_eq!(spec.modulated_range(5.0, one_way(-20.0), range), (3.0, 5.0));
+        assert_eq!(spec.modulated_range(5.0, both(100.0), range), (0.0, 10.0));
         assert_eq!(
-            wide.modulated_range(5.0, both(400.0), Some((2.0, 6.0))),
+            spec.modulated_range(5.0, both(100.0), (2.0, 6.0)),
             (2.0, 6.0)
         );
+        let wide = ParamSpec::number("t", "T", 1.0, 0.0, 10.0, "").limits(-100.0, 100.0);
         assert_eq!(
-            wide.modulated_range(5.0, loud, Some((2.0, 6.0))),
-            (-15.0, 25.0)
+            wide.modulated_range(50.0, both(40.0), range),
+            (46.0, 50.0),
+            "a base past the range keeps it"
         );
-        // Typing a number of units back in gives the amount that produces it.
-        let amount = linear.modulation_amount_for_sweep(2.0, ModMode::Bipolar);
-        assert_eq!(linear.modulation_sweep(both(amount)), 2.0);
-        assert_eq!(linear.default_modulation_amount(), 25.0);
-        assert_eq!(linear.default_modulation().mode, ModMode::Unipolar);
+        assert_eq!(
+            wide.modulation_bounds(5.0, (-500.0, 500.0)),
+            (-100.0, 100.0),
+            "never past the limits"
+        );
+        // Typing a distance gives the percentage that makes it, held to what an amount can be.
+        let amount = spec.modulation_amount_for_sweep(2.0, range);
+        assert_eq!(spec.modulation_sweep(both(amount), range), 2.0);
+        assert_eq!(spec.modulation_amount_for_sweep(-20.0, range), -100.0);
+        assert_eq!(spec.modulation_amount_for_sweep(50.0, range), 100.0);
+        assert_eq!(spec.modulation_amount_for_sweep(5.0, (3.0, 3.0)), 0.0);
+        assert_eq!(spec.default_modulation_amount(), 25.0);
+        assert_eq!(spec.default_modulation().mode, ModMode::Unipolar);
     }
 
     #[test]

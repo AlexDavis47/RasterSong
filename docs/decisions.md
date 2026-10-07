@@ -75,6 +75,15 @@ typed beyond them), with a per-modulator toggle to allow overshoot up to the par
 the toggle load with it on, so nothing changes for them. The modulator menu takes the amount as a percentage or as
 a distance in the parameter's unit, kept in step.
 
+### Modulation is one rule (October 2026)
+
+Hands-on use showed too many special cases (peak to peak both ways but full swing one way, an overshoot toggle,
+a knob that could leave its range). Now: the percentage is the only stored amount and is a percentage of the
+slider's range (the user's, else the usual one). A full-scale signal moves the value that far from where it is,
+either way for both ways. The value never leaves the slider's range (widen it for more room), so the overshoot
+toggle is gone. The knob, the percentage box and the distance box are views of the one number, all from −100% to
+100%. This supersedes the peak-to-peak and overshoot decisions above; format 9 migrates old graphs.
+
 ### Logarithmic and exponential sliders are removed (October 2026)
 
 They confuse users. Sliders are linear. Parameters that are naturally multiplicative (frequencies) get that
