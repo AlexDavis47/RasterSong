@@ -1,6 +1,6 @@
 use crate::dsp::{AttackRelease, db_to_gain, gain_to_db};
 use crate::nodes::support::settle_frames;
-use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
+use crate::nodes::{Category, Meter, NodeKind, NodeSpec, Unit};
 use crate::{InputSpec, Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// A feed-forward compressor: turns the signal down by `ratio` above `threshold`, following the
@@ -66,6 +66,7 @@ impl NodeKind for Compressor {
         .params(Self::PARAMS)
         .inputs(&[InputSpec::required("in"), InputSpec::optional("sidechain")])
         .per_channel()
+        .meters(&[Meter::gain_reduction("reduction")])
         .expects(crate::Range::Bipolar);
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "threshold": -12, "ratio": 6, "attack": 2, "release": 20 }"#,
@@ -159,6 +160,10 @@ impl Node for Compressor {
             *out = (f64::from(x) * db_to_gain(reduction + makeup.at64(i))) as f32;
         }
         self.reduction = reduction;
+    }
+
+    fn meters(&self, out: &mut [f32]) {
+        out[0] = (-self.reduction).max(0.0) as f32;
     }
 
     fn reset(&mut self) {

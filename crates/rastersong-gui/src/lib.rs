@@ -13,6 +13,7 @@ pub mod theme;
 pub mod timeline;
 pub mod track_ops;
 pub mod value_box;
+pub mod widgets;
 
 pub use app::{App, STARTER_GRAPH};
 pub use audio_out::AudioOut;

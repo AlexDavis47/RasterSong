@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use eframe::egui::{self, RichText, Ui};
 use rastersong_engine::{AUDIO_INPUT, SOURCE_PARAM};
 use rastersong_engine::{
-    Channels, GeneratorLayout, Grouping, Interpolation, Modulation, NodeStats, NodeType, ParamKind,
-    ParamLevel, ParamSpec, ParamValue, Severity, ShownWhen,
+    Channels, GeneratorLayout, Grouping, Interpolation, MeterKind, Modulation, NodeMeters,
+    NodeStats, NodeType, ParamKind, ParamLevel, ParamSpec, ParamValue, Severity, ShownWhen,
 };
 use rastersong_lang::{tr, tr_args};
 
@@ -22,6 +22,8 @@ pub struct InspectorContext<'a> {
     pub tracks: &'a [String],
     /// Modulated parameters' values at the playhead, for their ghost handles.
     pub params: &'a [ParamLevel],
+    /// What the nodes' meters read at the playhead.
+    pub meters: &'a [NodeMeters],
 }
 
 impl GraphEditor {
@@ -120,6 +122,7 @@ impl GraphEditor {
                 };
             }
             signals(ui, &kind, compiled);
+            node_meters(ui, &kind, ctx.meters, &node.id);
         }
 
         let shared_settings =
@@ -732,4 +735,26 @@ fn diamond_toggle(ui: &mut Ui, on: bool, color: egui::Color32) -> egui::Response
         egui::Stroke::new(1.2, color),
     ));
     response
+}
+
+/// The meters `kind` declares, drawn from what the node `id` published for the last frame.
+fn node_meters(ui: &mut Ui, kind: &NodeType, meters: &[NodeMeters], id: &str) {
+    let spec = kind.spec.meters;
+    let Some(values) = meters.iter().find(|m| &*m.node == id) else {
+        return;
+    };
+    if spec.is_empty() {
+        return;
+    }
+    ui.add_space(6.0);
+    for (meter, &value) in spec.iter().zip(&values.values) {
+        let label = crate::widgets::meter_label(meter.kind);
+        let key = egui::Id::new(("meter", id, meter.id));
+        match meter.kind {
+            MeterKind::Level => crate::widgets::level_meter(ui, key, label, value),
+            MeterKind::GainReduction => {
+                crate::widgets::gain_reduction_meter(ui, key, label, value);
+            }
+        }
+    }
 }

@@ -1,6 +1,6 @@
-use crate::dsp::{AttackRelease, db_to_gain};
+use crate::dsp::{AttackRelease, db_to_gain, gain_to_db};
 use crate::nodes::support::settle_frames;
-use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
+use crate::nodes::{Category, Meter, NodeKind, NodeSpec, Unit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// A peak limiter: the gain drops at once so no sample passes the ceiling, then recovers over the
@@ -39,6 +39,7 @@ impl NodeKind for Limiter {
     const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .per_channel()
+        .meters(&[Meter::gain_reduction("reduction")])
         .expects(crate::Range::Bipolar);
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "ceiling": -12, "release": 10 }"#,
@@ -61,6 +62,10 @@ impl NodeKind for Limiter {
 }
 
 impl Node for Limiter {
+    fn meters(&self, out: &mut [f32]) {
+        out[0] = (-gain_to_db(f64::from(self.gain))).max(0.0) as f32;
+    }
+
     fn prepare(&mut self, ctx: &PrepareContext) {
         self.unit_samples = self.unit.samples(ctx);
         self.times = AttackRelease::new(0.0, self.release, self.unit_samples);

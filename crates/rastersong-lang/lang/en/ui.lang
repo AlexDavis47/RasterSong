@@ -285,3 +285,6 @@ menu.view.performance = Show performance
 settings.performance = Show node processing time
 settings.performance.help = Under each node, show how long it took to process the frame at the playhead and its share of the whole graph; slower nodes are tinted. Times are for the preview resolution and are never part of the render.
 editor.node.cost = {ms} ms · {share}%
+meter.peak = Peak
+meter.reduction = Gain reduction
+meter.db = {value} dB

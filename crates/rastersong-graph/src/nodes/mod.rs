@@ -217,11 +217,29 @@ pub enum MeterKind {
     GainReduction,
 }
 
-/// One value a node publishes. Its label is `node.<kind>.meter.<id>` in the text.
+/// One value a node publishes. Its label comes from its kind.
 #[derive(Debug, Clone, Copy)]
 pub struct Meter {
     pub id: &'static str,
     pub kind: MeterKind,
+}
+
+impl Meter {
+    /// A level meter: the peak of the output, linear.
+    pub const fn level(id: &'static str) -> Self {
+        Self {
+            id,
+            kind: MeterKind::Level,
+        }
+    }
+
+    /// A gain-reduction meter, in decibels of gain taken away.
+    pub const fn gain_reduction(id: &'static str) -> Self {
+        Self {
+            id,
+            kind: MeterKind::GainReduction,
+        }
+    }
 }
 
 impl NodeSpec {

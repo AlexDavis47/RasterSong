@@ -1,11 +1,13 @@
 use crate::dsp::db_to_gain;
-use crate::nodes::{Category, NodeKind, NodeSpec};
+use crate::nodes::{Category, Meter, NodeKind, NodeSpec};
 use crate::{Node, ParamSpec, Params, ProcessContext, Signal};
 
 /// Scales the signal by a gain in decibels. Stateless.
 #[derive(Debug)]
 pub struct Gain {
     gain: f32,
+    /// The largest output sample of the last frame, for the meter.
+    peak: f32,
 }
 
 params! { Gain {
@@ -21,24 +23,33 @@ impl NodeKind for Gain {
     const KIND: &'static str = "gain";
     const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
-        .per_channel();
+        .per_channel()
+        .meters(&[Meter::level("peak")]);
     const TEST_CONFIGS: &'static [&'static str] = &[r#"{ "gain": 6 }"#, r#"{ "gain": -20 }"#];
     const BENCH: Option<&'static str> = Some(r#"{ "gain": 6 }"#);
 
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
             gain: db_to_gain(params.number_at(Self::GAIN)?) as f32,
+            peak: 0.0,
         })
     }
 }
 
 impl Node for Gain {
+    fn meters(&self, out: &mut [f32]) {
+        out[0] = self.peak;
+    }
+
     fn process(&mut self, ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
         let gain = ctx.value(Self::GAIN, f64::from(self.gain));
+        let mut peak = 0.0f32;
         for (i, (out, &x)) in outputs[0].data.iter_mut().zip(&inputs[0].data).enumerate() {
             // The constant is already a gain; a modulating signal is in dB.
             *out = x * gain.at_with(i, |db| db_to_gain(f64::from(db)) as f32);
+            peak = peak.max(out.abs());
         }
+        self.peak = peak;
     }
 }
 

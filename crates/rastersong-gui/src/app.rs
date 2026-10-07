@@ -550,12 +550,14 @@ impl App {
                     .collect();
                 let frame = self.engine.frame(self.clock.frame());
                 let params = frame.as_ref().map_or(&[][..], |f| &f.params[..]);
+                let meters = frame.as_ref().map_or(&[][..], |f| &f.meters[..]);
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     self.editor.show_inspector(
                         ui,
                         &InspectorContext {
                             tracks: &tracks,
                             params,
+                            meters,
                         },
                     );
                 });

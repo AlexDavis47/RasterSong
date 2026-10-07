@@ -23,6 +23,8 @@ node.audio_output.description = The rendered sound: replaces the source audio in
 node.audio_output.doc = Optional. Without it, or with nothing connected, the source audio is used untouched; so is a track wired straight in. Mono and stereo signals are written as they are; any other signal is written as interleaved samples to a stereo track. Each frame's block is resampled from its own rate to the project's audio rate, and clipped to -1 to 1.
 node.audio_output.input.in = The sound to output, from -1 to 1: mono, stereo, or any signal read as samples
 node.audio_output.output.out = The sound as written
+node.audio_output.param.volume.label = Volume
+node.audio_output.param.volume.help = Louder or quieter, in decibels, before the sound is clipped to -1 to 1. 0 changes nothing; the meter shows the peak after the volume, so a peak above 0 dB will clip.
 
 node.beat.label = Beat
 node.beat.description = A 0 to 1 signal locked to the project's beats or bars: phase, decay, pulse or steps

@@ -632,6 +632,27 @@ fn reports_output_levels() {
 }
 
 #[test]
+fn nodes_publish_their_meters() {
+    let json = graph_json(
+        r#"{ "id": "video", "type": "video_input" },
+           { "id": "gain", "type": "gain", "params": { "gain": 6 } },
+           { "id": "lim", "type": "limiter", "params": { "ceiling": -6 } },
+           { "id": "out", "type": "output" }"#,
+        r#"{ "from": "video", "to": "gain" }, { "from": "gain", "to": "lim" },
+           { "from": "lim", "to": "out" }"#,
+    );
+    let mut graph = compile(&json).unwrap();
+    graph.process(0, &sources(|_| 0.5, |_| 0.0)).unwrap();
+    let meters = graph.meters();
+    let of = |id: &str| meters.iter().find(|m| &*m.node == id).unwrap().values[0];
+    // 0.5 at +6 dB is about 1.0.
+    assert!((of("gain") - 0.5 * 1.995_262_3).abs() < 1e-4, "{meters:?}");
+    // Limiting 1.0 to -6 dB (0.5) takes about 6 dB of gain away.
+    assert!((of("lim") - 6.0).abs() < 0.1, "{meters:?}");
+    assert_eq!(meters.len(), 2, "only nodes with meters report");
+}
+
+#[test]
 fn reports_what_each_node_cost() {
     let mut graph = compile(PASSTHROUGH).unwrap();
     graph.process(0, &sources(|_| 0.5, |_| 0.0)).unwrap();

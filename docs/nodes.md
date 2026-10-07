@@ -1053,6 +1053,12 @@ Optional. Without it, or with nothing connected, the source audio is used untouc
 
 - `out` (audio, -1 to 1): The sound as written
 
+**Parameters**
+
+| Name | Default | Range | Modulation | What it does |
+|---|---|---|---|---|
+| `volume` (Volume) | 0 dB | -48 to 12 (up to -120 to 60) | yes | Louder or quieter, in decibels, before the sound is clipped to -1 to 1. 0 changes nothing; the meter shows the peak after the volume, so a peak above 0 dB will clip. |
+
 ### `output`
 
 **Output**: The rendered result: RGB, or mono shown as grayscale
