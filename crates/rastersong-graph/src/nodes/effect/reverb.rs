@@ -164,9 +164,8 @@ impl Node for Reverb {
         for (i, (out, &x)) in outputs[0].data.iter_mut().zip(&inputs[0].data).enumerate() {
             let fed = if self.longest_predelay > 0.0 {
                 self.predelay_line.push(x);
-                self.predelay_line.read(
-                    (predelay.at64(i) * self.unit_samples).clamp(0.0, self.longest_predelay),
-                )
+                self.predelay_line
+                    .read((predelay.at64(i) * self.unit_samples).clamp(0.0, self.longest_predelay))
             } else {
                 x
             };

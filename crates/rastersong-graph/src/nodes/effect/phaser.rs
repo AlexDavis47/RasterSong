@@ -2,7 +2,7 @@ use std::f64::consts::{PI, TAU};
 
 use crate::dsp::mix;
 use crate::nodes::support::UNBOUNDED_WARMUP;
-use crate::nodes::{Category, Unit, NodeKind, NodeSpec};
+use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Most allpass stages a phaser can chain.
@@ -138,8 +138,7 @@ impl Node for Phaser {
             return UNBOUNDED_WARMUP;
         }
         let settle_samples = 7.0 / (TAU * self.slowest);
-        ((settle_samples / ctx.samples_per_frame() as f64).ceil() as u32)
-            .max(1)
+        ((settle_samples / ctx.samples_per_frame() as f64).ceil() as u32).max(1)
     }
 }
 

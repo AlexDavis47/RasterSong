@@ -156,7 +156,7 @@ mod tests {
             sources: &sources,
             output: input,
             layout: Default::default(),
-                output_count: 1,
+            output_count: 1,
         })
         .unwrap()[0]
     }

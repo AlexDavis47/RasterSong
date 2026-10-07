@@ -1,6 +1,6 @@
 use std::f64::consts::TAU;
 
-use crate::nodes::{Category, Unit, NodeKind, NodeSpec, SampleClock};
+use crate::nodes::{Category, NodeKind, NodeSpec, SampleClock, Unit};
 use crate::{Layout, LayoutContext, Node, OutputSpec, ParamSpec, Params, PrepareContext};
 use crate::{ProcessContext, Range, Signal};
 
@@ -266,7 +266,10 @@ mod tests {
 
     #[test]
     fn phase_shifts_the_wave() {
-        let out = wave(r#"{ "wave": "saw", "freq": 1, "phase": 0.25, "amplitude": -0.5 }"#, 4);
+        let out = wave(
+            r#"{ "wave": "saw", "freq": 1, "phase": 0.25, "amplitude": -0.5 }"#,
+            4,
+        );
         assert_eq!(out, [0.25, 0.5, 0.75, 0.0]);
     }
 

@@ -2,7 +2,7 @@ use std::f64::consts::{FRAC_1_SQRT_2, PI, TAU};
 
 use crate::dsp::{Biquad, BiquadKind, DelayLine};
 use crate::nodes::support::UNBOUNDED_WARMUP;
-use crate::nodes::{Category, Unit, NodeKind, NodeSpec};
+use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 choice! {
@@ -178,7 +178,11 @@ impl Filter {
                 for (i, section) in sections.iter_mut().take(stages).enumerate() {
                     // Butterworth stages are maximally flat; the resonance scales the last,
                     // sharpest one (so the default 0.707 is flat at every slope).
-                    let resonance = if i + 1 == stages { q / FRAC_1_SQRT_2 } else { 1.0 };
+                    let resonance = if i + 1 == stages {
+                        q / FRAC_1_SQRT_2
+                    } else {
+                        1.0
+                    };
                     *section =
                         Biquad::design(kind, cutoff, self.slope.butterworth_q(i) * resonance);
                 }
@@ -355,11 +359,17 @@ mod tests {
     fn steeper_slopes_cut_more_and_stay_flat_in_the_pass_band() {
         // Two octaves above the cutoff the response has fallen by about 12 dB per 6 of slope.
         let at = |slope: &str| {
-            gain(&format!(r#"{{ "response": "lowpass", "slope": "{slope}", "cutoff": 8 }}"#), 32.0)
+            gain(
+                &format!(r#"{{ "response": "lowpass", "slope": "{slope}", "cutoff": 8 }}"#),
+                32.0,
+            )
         };
         let (g6, g12, g24, g48) = (at("6"), at("12"), at("24"), at("48"));
         assert!(g6 > g12 && g12 > g24 && g24 > g48, "{g6} {g12} {g24} {g48}");
-        assert!((g24 - 1.0 / 16.0 / 16.0).abs() < 0.01, "24 dB/oct is -48 dB two octaves up: {g24}");
+        assert!(
+            (g24 - 1.0 / 16.0 / 16.0).abs() < 0.01,
+            "24 dB/oct is -48 dB two octaves up: {g24}"
+        );
         for slope in ["6", "12", "24", "48"] {
             let p = format!(r#"{{ "response": "lowpass", "slope": "{slope}", "cutoff": 32 }}"#);
             assert!(gain(&p, 1.0) > 0.97, "{slope} passes the low end");
@@ -372,7 +382,10 @@ mod tests {
     fn resonance_peaks_the_cutoff_at_every_slope() {
         for slope in ["12", "24", "48"] {
             let flat = gain(&format!(r#"{{ "slope": "{slope}", "cutoff": 16 }}"#), 16.0);
-            let peaked = gain(&format!(r#"{{ "slope": "{slope}", "cutoff": 16, "q": 6 }}"#), 16.0);
+            let peaked = gain(
+                &format!(r#"{{ "slope": "{slope}", "cutoff": 16, "q": 6 }}"#),
+                16.0,
+            );
             assert!(peaked > 2.0 * flat, "{slope}: {peaked} vs {flat}");
         }
     }
@@ -381,7 +394,13 @@ mod tests {
     fn the_six_db_slope_is_the_one_pole_low_pass() {
         // One cycle per 32-sample row: coefficient 1 - exp(-2π/32).
         let len = 32;
-        let mut n = node("filter", r#"{ "slope": "6", "cutoff": 1 }"#, len, len as f64, &[true]);
+        let mut n = node(
+            "filter",
+            r#"{ "slope": "6", "cutoff": 1 }"#,
+            len,
+            len as f64,
+            &[true],
+        );
         let out = process_one(n.as_mut(), &[vec![1.0; len]]);
         let a = 1.0 - (-std::f32::consts::TAU / 32.0).exp();
         assert!((out[0] - a).abs() < 1e-6);

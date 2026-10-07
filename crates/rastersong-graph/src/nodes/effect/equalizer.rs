@@ -2,7 +2,7 @@ use std::f64::consts::PI;
 
 use crate::dsp::{Biquad, BiquadKind};
 use crate::nodes::support::UNBOUNDED_WARMUP;
-use crate::nodes::{Category, Unit, NodeKind, NodeSpec};
+use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// A three-band parametric equaliser: a low shelf, a peaking mid band and a high shelf, each

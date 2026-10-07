@@ -95,7 +95,9 @@ impl Node for Slew {
         let mut y = self.level;
         let (rise, fall) = (ctx.param(Self::RISE), ctx.param(Self::FALL));
         let limit = |stream: Option<&[f32]>, i: usize, constant: f32| {
-            stream.map_or(constant, |s| speed(f64::from(s[i]).max(0.0) * self.unit_samples))
+            stream.map_or(constant, |s| {
+                speed(f64::from(s[i]).max(0.0) * self.unit_samples)
+            })
         };
         for (i, (out, &x)) in outputs[0].data.iter_mut().zip(&inputs[0].data).enumerate() {
             let (up, down) = (limit(rise, i, self.up), limit(fall, i, self.down));

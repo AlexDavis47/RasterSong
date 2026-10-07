@@ -76,7 +76,10 @@ impl NodeKind for Envelope {
 impl Node for Envelope {
     fn prepare(&mut self, ctx: &PrepareContext) {
         self.unit_samples = self.unit.samples(ctx);
-        let (attack, release) = (self.attack * self.unit_samples, self.release * self.unit_samples);
+        let (attack, release) = (
+            self.attack * self.unit_samples,
+            self.release * self.unit_samples,
+        );
         self.attack_coefficient = smoothing_coefficient(attack) as f32;
         self.release_coefficient = smoothing_coefficient(release) as f32;
         // The slowest the times can get, when a signal moves them.

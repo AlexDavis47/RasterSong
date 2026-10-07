@@ -2,7 +2,7 @@ use std::f64::consts::TAU;
 
 use crate::dsp::{HILBERT_TAPS, Hilbert, mix};
 use crate::nodes::support::{SampleClock, settle_frames};
-use crate::nodes::{Category, Unit, NodeKind, NodeSpec};
+use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Frequency shifter: moves every frequency in the signal up or down by the same amount, in Hz

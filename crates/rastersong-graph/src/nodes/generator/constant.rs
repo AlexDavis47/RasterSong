@@ -22,10 +22,7 @@ impl NodeKind for Constant {
         .takes_layout()
         .inputs(&[])
         .outputs(&[OutputSpec::new("out", "The constant signal")]);
-    const TEST_CONFIGS: &'static [&'static str] = &[
-        r#"{ "value": 0.25 }"#,
-        r#"{ "value": -1 }"#,
-    ];
+    const TEST_CONFIGS: &'static [&'static str] = &[r#"{ "value": 0.25 }"#, r#"{ "value": -1 }"#];
     const BENCH: Option<&'static str> = Some("{}");
 
     fn new(params: &Params) -> Result<Self, String> {
