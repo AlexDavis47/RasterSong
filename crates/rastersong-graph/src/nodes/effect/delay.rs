@@ -1,6 +1,5 @@
 use crate::dsp::{DelayLine, mix};
-use crate::nodes::support::MAX_WARMUP_FRAMES;
-use crate::nodes::{Category, NodeKind, NodeSpec, TimeUnit};
+use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// A delay line, in rows or frames. Delaying by a fraction of a row and modulating the time with
@@ -8,7 +7,7 @@ use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 #[derive(Debug)]
 pub struct Delay {
     time: f64,
-    unit: TimeUnit,
+    unit: Unit,
     feedback: f32,
     mix: f32,
     /// Set in `prepare`: samples per unit, the largest delay and feedback modulation can reach,
@@ -31,7 +30,7 @@ params! { Delay {
     )
     .exposed()
     .limits(0.0, 1000.0),
-    UNIT: TimeUnit::param("rows", "Unit for the time"),
+    UNIT: Unit::time_param("row", "Unit for the time"),
     FEEDBACK: ParamSpec::number(
         "feedback",
         "Feedback",
@@ -41,14 +40,7 @@ params! { Delay {
         "How much of the delayed signal is fed back in",
     )
     .exposed(),
-    MIX: ParamSpec::number(
-        "mix",
-        "Mix",
-        1.0,
-        0.0,
-        1.0,
-        "0 is the dry input, 1 is only the delayed signal",
-    ),
+    MIX: ParamSpec::mix(),
 } }
 
 impl NodeKind for Delay {
@@ -59,7 +51,7 @@ impl NodeKind for Delay {
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "time": 1.5 }"#,
-        r#"{ "time": 0.5, "unit": "frames" }"#,
+        r#"{ "time": 0.5, "unit": "frame" }"#,
         r#"{ "time": 2.25, "feedback": 0.6, "mix": 0.7 }"#,
         r#"{ "time": 0.3, "feedback": 0.5 }"#,
     ];
@@ -122,7 +114,7 @@ impl Node for Delay {
         } else {
             1.0
         };
-        ((delay_frames * repeats).ceil() as u32).min(MAX_WARMUP_FRAMES)
+        (delay_frames * repeats).ceil() as u32
     }
 }
 

@@ -22,16 +22,19 @@ pub use clock::PlaybackClock;
 pub use error::EngineError;
 pub use offline::{FrameSink, RenderSettings, RenderedFrame, render};
 pub use project::{
-    LoopRegion, PROJECT_EXTENSION, PROJECT_VERSION, Project, ProjectTrack, TimelineMode,
+    DEFAULT_MAX_WARMUP_FRAMES, LoopRegion, MAX_WARMUP_FRAMES_LIMIT, PROJECT_EXTENSION,
+    PROJECT_VERSION, Project, ProjectTrack, TimelineMode,
 };
+pub use rastersong_graph::nodes::support::UNBOUNDED_WARMUP;
 pub use rastersong_graph::nodes::{
     AUDIO_INPUT, CHANNEL_PORTS, COMBINE, MAX_CHANNELS, OUTPUT, SOURCE_PARAM, SPLIT, VIDEO_INPUT,
 };
 pub use rastersong_graph::{
-    Category, ChannelMap, Channels, CompileOptions, Connection, Diagnostic, FORMAT_VERSION, Graph,
-    GraphDesc, GraphError, Grouping, Interpolation, Kind, Layout, ModMode, ModScale, Modulation,
-    NodeDesc, NodeDiagnostic, NodeStats, NodeType, OutputLevel, OutputSpec, ParamKind, ParamLevel,
-    ParamSpec, ParamValue, Part, Range, Registry, Severity, Tag, TagRule, Tempo,
+    Category, ChannelMap, Channels, CompileOptions, Connection, Diagnostic, FORMAT_VERSION,
+    GeneratorLayout, Graph, GraphDesc, GraphError, Grouping, Interpolation, Kind, Layout,
+    MODULATION_AMOUNT_LIMITS, ModMode, Modulation, NodeDesc, NodeDiagnostic, NodeStats, NodeType,
+    OutputLevel, OutputSpec, ParamKind, ParamLevel, ParamSpec, ParamValue, Part, Range, Registry,
+    Severity, ShownWhen, Tag, TagRule, Tempo, range_span,
 };
 pub use rastersong_media::{
     AudioClip, AudioOptions, BackendInfo, FakeBackend, FakeVideo, FfmpegBackend, LibraryInfo,

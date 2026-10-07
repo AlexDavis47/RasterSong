@@ -16,8 +16,8 @@ mod signal;
 pub mod testing;
 
 pub use desc::{
-    Channels, Connection, FORMAT_VERSION, GraphDesc, Grouping, Interpolation, ModMode, Modulation,
-    NodeDesc, ParamValue,
+    Channels, Connection, FORMAT_VERSION, GeneratorLayout, GraphDesc, Grouping, Interpolation,
+    MODULATION_AMOUNT_LIMITS, ModMode, Modulation, NodeDesc, ParamValue,
 };
 pub use error::GraphError;
 pub use graph::{
@@ -29,5 +29,5 @@ pub use node::{
     Severity, Sources, Tempo, Value,
 };
 pub use nodes::{Category, Choice, NodeKind, NodeSpec, NodeType, Registry};
-pub use params::{ModScale, ParamKind, ParamSpec, Params};
+pub use params::{ParamKind, ParamSpec, Params, ShownWhen, range_span};
 pub use signal::{ChannelMap, Kind, Layout, Part, Range, Signal, Tag, TagRule};

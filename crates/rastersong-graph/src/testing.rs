@@ -32,6 +32,7 @@ pub fn node_with_tempo(
         outputs: &vec![layout; spec.outputs.len()],
         connected,
         modulated: &[],
+        pixel_scale: 1.0,
     });
     node
 }

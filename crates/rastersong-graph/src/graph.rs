@@ -3,9 +3,10 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::desc::{Channels, Connection, GraphDesc, Grouping, Interpolation, Modulation, NodeDesc};
+use crate::desc::{
+    Channels, Connection, GeneratorLayout, GraphDesc, Grouping, Interpolation, Modulation, NodeDesc,
+};
 use crate::dsp::{DelayLine, resample};
-use crate::nodes::support::MAX_WARMUP_FRAMES;
 use crate::nodes::{AUDIO_INPUT, AUDIO_OUTPUT, OUTPUT, Registry, VIDEO_INPUT};
 
 use crate::{
@@ -39,6 +40,9 @@ pub struct CompileOptions {
     pub sources: HashMap<String, Layout>,
     /// The layout the output node must produce (the project's RGB frame).
     pub output: Layout,
+    /// The size of a render pixel against a project pixel: 1 at full size, 0.5 for a
+    /// half-resolution preview. The `pixel` unit follows it.
+    pub pixel_scale: f64,
 }
 
 /// The level of one node output in the last processed frame.
@@ -66,11 +70,10 @@ pub struct NodeStats {
     pub node: Arc<str>,
     /// Frames the node itself delays its output by (not counting its inputs' latency).
     pub latency_frames: f64,
-    /// Frames the node needs rendered before a seek for its output to be right.
+    /// Frames the node needs rendered before a seek for its output to be right: its real length,
+    /// whatever the host will actually pre-render. [`crate::nodes::support::UNBOUNDED_WARMUP`]
+    /// for a node that never settles.
     pub warmup_frames: u32,
-    /// Whether the warmup reached [`MAX_WARMUP_FRAMES`], the most the host will render before a
-    /// seek, so the node's output right after a seek may not match a render from the start.
-    pub warmup_truncated: bool,
     /// The layouts (and tags) of the node's inputs as they arrive, before rate matching.
     pub inputs: Vec<Layout>,
     /// The layouts (and tags) of the node's outputs.
@@ -137,6 +140,9 @@ struct ParamBinding {
     input: InputBinding,
     base: f64,
     modulation: Modulation,
+    /// The slider range the amount is a percentage of.
+    range: (f64, f64),
+    /// Where the modulated value is held.
     limits: (f64, f64),
     /// Whether each sample's value is rounded to a whole number before clamping.
     integer: bool,
@@ -152,7 +158,7 @@ impl ParamBinding {
         for (v, &s) in self.values.data.iter_mut().zip(&signal.data) {
             let value = self
                 .spec
-                .modulated(self.base, self.modulation, f64::from(s));
+                .modulated(self.base, self.modulation, f64::from(s), self.range);
             let value = if self.integer { value.round() } else { value };
             *v = value.clamp(lo, hi) as f32;
         }
@@ -297,10 +303,13 @@ struct Pending {
     modulation: BTreeMap<String, Modulation>,
     /// For each parameter, whether it is rounded to whole numbers.
     integer: Vec<bool>,
+    /// Slider ranges the user set, by parameter name.
+    ranges: BTreeMap<String, [f64; 2]>,
     node: Box<dyn Node>,
     interpolation: Interpolation,
     grouping: Grouping,
     channels: Channels,
+    layout: GeneratorLayout,
     /// Whether the node type can run one copy per channel.
     per_channel: bool,
     /// The range the node type is designed for on its main input.
@@ -311,24 +320,47 @@ struct Pending {
     param_wires: Vec<Option<(usize, usize)>>,
 }
 
+/// A modulated parameter's settings, as [`Pending::modulation_of`] works them out.
+struct Modulated {
+    base: f64,
+    modulation: Modulation,
+    range: (f64, f64),
+    bounds: (f64, f64),
+}
+
 impl Pending {
     /// Every connected (node, output port): inputs, then parameters.
     fn sources(&self) -> impl Iterator<Item = &(usize, usize)> {
         self.wires.iter().chain(&self.param_wires).flatten()
     }
 
-    /// How parameter `index` is modulated, if a signal is connected to it.
-    fn modulation_of(&self, index: usize) -> Option<(f64, Modulation, (f64, f64))> {
+    /// The slider range of parameter `index`: the user's, or the usual one.
+    fn slider_range(&self, index: usize) -> (f64, f64) {
+        let spec = &self.specs[index];
+        self.ranges
+            .get(spec.name)
+            .map_or_else(|| spec.usual_range(), |r| (r[0], r[1]))
+    }
+
+    /// How parameter `index` is modulated, if a signal is connected to it: the base value, the
+    /// modulation, the slider range its amount is a percentage of and the bounds it is held to.
+    fn modulation_of(&self, index: usize) -> Option<Modulated> {
         self.param_wires[index]?;
         let spec = &self.specs[index];
         let base = spec.number_value(&self.params)?;
-        let limits = spec.number_limits()?;
+        spec.number_limits()?;
         let modulation = self
             .modulation
             .get(spec.name)
             .copied()
-            .unwrap_or_else(|| spec.default_modulation(base));
-        Some((base, modulation, limits))
+            .unwrap_or_else(|| spec.default_modulation());
+        let range = self.slider_range(index);
+        Some(Modulated {
+            base,
+            modulation,
+            range,
+            bounds: spec.modulation_bounds(base, range),
+        })
     }
 }
 
@@ -444,7 +476,6 @@ impl Graph {
                 node: p.id.as_str().into(),
                 latency_frames: 0.0,
                 warmup_frames: 0,
-                warmup_truncated: false,
                 inputs: shape.input_layouts,
                 outputs: shape.output_layouts.clone(),
                 diagnostics: shape.diagnostics,
@@ -771,6 +802,7 @@ impl<'a> Compiler<'a> {
                     connected: &connected,
                     sources: &self.options.sources,
                     output: self.options.output,
+                    layout: p.layout,
                     output_count: p.outputs.len(),
                 })
                 .map_err(|message| self.node_error(n, message))
@@ -849,6 +881,7 @@ impl<'a> Compiler<'a> {
                 connected: &connected,
                 sources: &self.options.sources,
                 output: self.options.output,
+                layout: p.layout,
                 output_count: p.outputs.len(),
             }));
         }
@@ -880,8 +913,8 @@ impl<'a> Compiler<'a> {
         let connected: Vec<bool> = p.wires.iter().map(Option::is_some).collect();
         let modulated: Vec<Option<(f64, f64)>> = (0..p.specs.len())
             .map(|i| {
-                p.modulation_of(i).map(|(base, m, _)| {
-                    let (lo, hi) = p.specs[i].modulated_range(base, m);
+                p.modulation_of(i).map(|m| {
+                    let (lo, hi) = p.specs[i].modulated_range(m.base, m.modulation, m.range);
                     if p.integer[i] {
                         (lo.round(), hi.round())
                     } else {
@@ -897,6 +930,7 @@ impl<'a> Compiler<'a> {
             outputs: &shape.node_outputs,
             connected: &connected,
             modulated: &modulated,
+            pixel_scale: self.options.pixel_scale,
         };
 
         let mut nodes = vec![std::mem::replace(
@@ -922,7 +956,6 @@ impl<'a> Compiler<'a> {
             node: self.pending[n].id.as_str().into(),
             latency_frames: own_latency,
             warmup_frames: warmup,
-            warmup_truncated: warmup >= MAX_WARMUP_FRAMES,
             inputs: shape.input_layouts.clone(),
             outputs: shape.output_layouts.clone(),
             diagnostics: shape.diagnostics.clone(),
@@ -1018,7 +1051,12 @@ impl<'a> Compiler<'a> {
         let p = &self.pending[n];
         (0..p.specs.len())
             .filter_map(|index| {
-                let (base, modulation, limits) = p.modulation_of(index)?;
+                let Modulated {
+                    base,
+                    modulation,
+                    range,
+                    bounds,
+                } = p.modulation_of(index)?;
                 let (src, port) = p.param_wires[index]?;
                 Some(ParamBinding {
                     index,
@@ -1033,7 +1071,8 @@ impl<'a> Compiler<'a> {
                     ),
                     base,
                     modulation,
-                    limits,
+                    range,
+                    limits: bounds,
                     integer: p.integer[index],
                     values: Signal::zeros(shape.reference),
                 })
@@ -1106,7 +1145,11 @@ fn create_nodes(desc: &GraphDesc, registry: &Registry) -> Result<Vec<Pending>, G
         // Rounded parameters: the node is created with whole numbers, the default included.
         let mut node_params = d.params.clone();
         let mut integer = vec![false; specs.len()];
-        for name in &d.integer {
+        let always_whole = specs
+            .iter()
+            .filter(|s| s.integer && s.number_limits().is_some())
+            .map(|s| s.name);
+        for name in d.integer.iter().map(String::as_str).chain(always_whole) {
             let Some(index) = specs
                 .iter()
                 .position(|s| s.name == name && s.number_limits().is_some())
@@ -1115,7 +1158,7 @@ fn create_nodes(desc: &GraphDesc, registry: &Registry) -> Result<Vec<Pending>, G
             };
             integer[index] = true;
             if let Some(value) = specs[index].number_value(&d.params) {
-                node_params.insert(name.clone(), ParamValue::Number(value.round()));
+                node_params.insert(name.to_owned(), ParamValue::Number(value.round()));
             }
         }
         let node = registry
@@ -1138,6 +1181,7 @@ fn create_nodes(desc: &GraphDesc, registry: &Registry) -> Result<Vec<Pending>, G
             inputs: spec.inputs,
             outputs: spec.outputs,
             modulation: d.modulation.clone(),
+            ranges: d.ranges.clone(),
             integer,
             wires: vec![None; spec.inputs.len()],
             param_wires: vec![None; specs.len()],
@@ -1145,6 +1189,7 @@ fn create_nodes(desc: &GraphDesc, registry: &Registry) -> Result<Vec<Pending>, G
             interpolation: d.interpolation,
             grouping: d.grouping,
             channels: d.channels,
+            layout: d.layout,
             per_channel: spec.per_channel,
             expects: spec.expects,
         });
@@ -1382,11 +1427,13 @@ fn fill_missing_inputs(desc: &GraphDesc, registry: &Registry) -> Option<GraphDes
                 interpolation: Interpolation::default(),
                 grouping: Grouping::default(),
                 channels: Channels::default(),
+                layout: GeneratorLayout::default(),
                 bypass: false,
                 label: None,
                 position: None,
                 modulation: BTreeMap::new(),
                 integer: Vec::new(),
+                ranges: BTreeMap::new(),
                 exposed: None,
             });
         }

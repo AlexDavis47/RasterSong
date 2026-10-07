@@ -28,8 +28,6 @@ const NAME_WIDTH: f32 = HEADER_WIDTH - 112.0;
 const RULER_HEIGHT: f32 = 22.0;
 /// Tall enough for a track header's two rows of widgets.
 pub const LANE_HEIGHT: f32 = 58.0;
-/// Width of the button that fits the whole video.
-const FIT_WIDTH: f32 = 44.0;
 /// Width of the button that switches the ruler between time and tempo.
 const MODE_WIDTH: f32 = 66.0;
 /// Height of the row holding the "add track" button.
@@ -452,12 +450,8 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         view.left -= f64::from(delta.x) / view.px_per_sec;
         view.scroll_y -= delta.y;
     }
-    let fit_button = Rect::from_min_size(
-        pos2(area.left() + HEADER_WIDTH - FIT_WIDTH, area.top() + 1.0),
-        vec2(FIT_WIDTH, RULER_HEIGHT - 2.0),
-    );
     let mode_button = Rect::from_min_size(
-        pos2(fit_button.left() - MODE_WIDTH - 4.0, fit_button.top()),
+        pos2(area.left() + HEADER_WIDTH - MODE_WIDTH, area.top() + 1.0),
         vec2(MODE_WIDTH, RULER_HEIGHT - 2.0),
     );
     let (icon, name, hover) = match model.mode {
@@ -482,16 +476,8 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
     {
         response.toggle_mode = true;
     }
-    let fit_clicked = ui
-        .put(
-            fit_button,
-            egui::Button::new(egui::RichText::new("Fit").small()),
-        )
-        .on_hover_text("Show the whole video (F)")
-        .clicked();
-    let fit_key =
-        over(area) && !ui.ctx().egui_wants_keyboard_input() && ui.input(|i| i.key_pressed(Key::F));
-    if fit_clicked || fit_key {
+    // F shows the whole video.
+    if over(area) && !ui.ctx().egui_wants_keyboard_input() && ui.input(|i| i.key_pressed(Key::F)) {
         view.fit(width, duration);
     }
     view.clamp(width, limits, extent);
@@ -1101,7 +1087,7 @@ fn audio_header(ui: &mut Ui, track: &TrackView, index: usize, response: &mut Tim
             let mut offset = track.offset;
             let edit = ui
                 .add(
-                    egui::DragValue::new(&mut offset)
+                    crate::value_box::ValueBox::new(&mut offset)
                         .speed(0.01)
                         .suffix(" s")
                         .max_decimals(3),

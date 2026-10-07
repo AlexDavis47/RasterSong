@@ -1,5 +1,5 @@
 use crate::nodes::support::{SampleClock, settle_frames};
-use crate::nodes::{Category, NodeKind, NodeSpec, TimeUnit};
+use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Sample and hold with optional quantizing: every `period` the input is sampled and held until
@@ -9,10 +9,13 @@ use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 #[derive(Debug)]
 pub struct SampleHold {
     period: f64,
-    unit: TimeUnit,
+    unit: Unit,
     levels: f32,
-    /// Samples per hold, set in `prepare`.
+    /// Samples in one unit, and per hold at the constant period, set in `prepare`.
+    unit_samples: f64,
     samples: f64,
+    /// The longest a hold can be, for warmup.
+    longest: f64,
     clock: SampleClock,
     /// Index of the hold interval last sampled.
     cell: Option<i64>,
@@ -28,9 +31,8 @@ params! { SampleHold {
         4.0,
         "How long each sampled value is held; 0 samples every sample (no hold)",
     )
-    .fixed()
     .limits(0.0, 1e6),
-    UNIT: TimeUnit::param("rows", "Unit for the period"),
+    UNIT: Unit::time_param("row", "Unit for the period"),
     LEVELS: ParamSpec::number(
         "levels",
         "Levels",
@@ -38,7 +40,7 @@ params! { SampleHold {
         0.0,
         32.0,
         "Rounds each value to this many evenly spaced levels between 0 and 1; 0 or 1 leaves values alone",
-    )
+    ).integer()
     .exposed()
     .limits(0.0, 65_536.0),
 } }
@@ -51,9 +53,9 @@ impl NodeKind for SampleHold {
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "period": 0.5 }"#,
-        r#"{ "period": 2.5, "unit": "frames" }"#,
+        r#"{ "period": 2.5, "unit": "frame" }"#,
         r#"{ "period": 0, "levels": 4 }"#,
-        r#"{ "period": 1.5, "levels": 8, "unit": "rows" }"#,
+        r#"{ "period": 1.5, "levels": 8, "unit": "row" }"#,
     ];
     const BENCH: Option<&'static str> = Some(r#"{ "period": 0.5, "levels": 8 }"#);
 
@@ -62,7 +64,9 @@ impl NodeKind for SampleHold {
             period: params.number_at(Self::PERIOD)?,
             unit: params.choice_as(Self::UNIT)?,
             levels: params.float_at(Self::LEVELS)?,
+            unit_samples: 1.0,
             samples: 0.0,
+            longest: 0.0,
             clock: SampleClock::default(),
             cell: None,
             held: 0.0,
@@ -72,15 +76,23 @@ impl NodeKind for SampleHold {
 
 impl Node for SampleHold {
     fn prepare(&mut self, ctx: &PrepareContext) {
-        self.samples = self.period * self.unit.samples(ctx);
+        self.unit_samples = self.unit.samples(ctx);
+        self.samples = self.period * self.unit_samples;
+        self.longest = ctx.param_max(Self::PERIOD, self.period) * self.unit_samples;
     }
 
     fn process(&mut self, ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
         let levels = ctx.value(Self::LEVELS, f64::from(self.levels));
+        // A modulated period reads the grid with each sample's own hold length, so the same
+        // position always gives the same held value, whatever the render started from.
+        let period = ctx.param(Self::PERIOD);
         let start = self.clock.begin(ctx, inputs[0].data.len());
         for (i, (out, &x)) in outputs[0].data.iter_mut().zip(&inputs[0].data).enumerate() {
-            let held = if self.samples > 1.0 {
-                let cell = ((start + i as u64) as f64 / self.samples) as i64;
+            let samples = period.map_or(self.samples, |p| {
+                f64::from(p[i]).max(0.0) * self.unit_samples
+            });
+            let held = if samples > 1.0 {
+                let cell = ((start + i as u64) as f64 / samples) as i64;
                 if self.cell != Some(cell) {
                     self.cell = Some(cell);
                     self.held = x;
@@ -106,7 +118,7 @@ impl Node for SampleHold {
 
     fn warmup_frames(&self, ctx: &PrepareContext) -> u32 {
         // The value held at a seek position was sampled up to one period earlier.
-        settle_frames(self.samples, ctx)
+        settle_frames(self.longest, ctx)
     }
 }
 

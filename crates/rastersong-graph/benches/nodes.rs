@@ -49,6 +49,7 @@ fn nodes(c: &mut Criterion) {
             outputs: &vec![layout; outputs],
             connected: &vec![true; inputs],
             modulated: &[],
+            pixel_scale: 1.0,
         });
         let signals = [
             Signal::from_data(layout, ramp(layout.len(), 1.0)),
@@ -99,6 +100,7 @@ fn graphs(c: &mut Criterion) {
                 tempo: Default::default(),
                 sources: HashMap::from([("video".to_owned(), video), ("audio".to_owned(), audio)]),
                 output: video,
+                pixel_scale: 1.0,
             },
         )
         .unwrap();

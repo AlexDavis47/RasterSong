@@ -12,6 +12,7 @@ use rastersong_media::{MediaBackend, MediaError, Rational, VideoSource};
 
 use crate::EngineError;
 use crate::audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE, SinkResampler};
+use crate::project::{DEFAULT_MAX_WARMUP_FRAMES, MAX_WARMUP_FRAMES_LIMIT};
 use crate::sources::{Modulator, fill_video, to_rgb8};
 
 /// The source name of the video.
@@ -90,6 +91,8 @@ pub struct Renderer {
     fps: f64,
     latency: usize,
     warmup: usize,
+    /// The most frames to pre-render before a seek, whatever the graph asks for.
+    max_warmup: usize,
     sources: HashMap<String, Signal>,
     have_video: bool,
     /// The next source frame to process, if the graph's state is positioned somewhere.
@@ -148,11 +151,21 @@ impl Renderer {
         for track in &tracks {
             layouts.insert(track.name.clone(), track.modulator.layout(fps));
         }
+        // A generator set to the audio layout needs one even when no track has the default
+        // name: the first track's shape, or silence at the default rate when there is none.
+        if !layouts.contains_key(DEFAULT_AUDIO) {
+            let layout = tracks.first().map_or_else(
+                || Modulator::silent().layout(fps),
+                |track| track.modulator.layout(fps),
+            );
+            layouts.insert(DEFAULT_AUDIO.to_owned(), layout);
+        }
         let options = CompileOptions {
             frame_rate: fps,
             tempo,
             sources: layouts.clone(),
             output: video_layout,
+            pixel_scale: f64::from(width) / f64::from(source.width.max(1)),
         };
         let graph = Graph::compile(graph, registry, &options)?;
         let resampler = Self::resampler(&graph, fps, DEFAULT_AUDIO_RATE);
@@ -169,7 +182,12 @@ impl Renderer {
             fps,
             options,
             latency: graph.latency_frames() as usize,
-            warmup: Self::warmup(&graph, resampler.is_some()),
+            warmup: Self::warmup(
+                &graph,
+                resampler.is_some(),
+                DEFAULT_MAX_WARMUP_FRAMES as usize,
+            ),
+            max_warmup: DEFAULT_MAX_WARMUP_FRAMES as usize,
             graph,
             sources: layouts
                 .into_iter()
@@ -198,17 +216,26 @@ impl Renderer {
         ))
     }
 
-    /// Frames to render before a seek: the graph's, and at least one when rendering sound, so
-    /// the resampler has history and a seek gives the same audio as playing through.
-    fn warmup(graph: &Graph, resampling: bool) -> usize {
-        let warmup = graph.warmup_frames() as usize;
+    /// Frames to render before a seek: the graph's, limited to `cap`, and at least one when
+    /// rendering sound, so the resampler has history and a seek gives the same audio as playing
+    /// through. The cap only limits this pre-render; nodes keep their real memory.
+    fn warmup(graph: &Graph, resampling: bool, cap: usize) -> usize {
+        let warmup = (graph.warmup_frames() as usize).min(cap);
         if resampling { warmup.max(1) } else { warmup }
+    }
+
+    /// Limits the frames pre-rendered before a seek to `frames`. Rendering restarts from the
+    /// next request.
+    pub fn set_max_warmup_frames(&mut self, frames: u32) {
+        self.max_warmup = frames.min(MAX_WARMUP_FRAMES_LIMIT) as usize;
+        self.warmup = Self::warmup(&self.graph, self.resampler.is_some(), self.max_warmup);
+        self.next_source = None;
     }
 
     /// Renders the audio output at `rate` samples a second (48 kHz unless set).
     pub fn set_audio_rate(&mut self, rate: u32) {
         self.resampler = Self::resampler(&self.graph, self.fps, rate.max(1));
-        self.warmup = Self::warmup(&self.graph, self.resampler.is_some());
+        self.warmup = Self::warmup(&self.graph, self.resampler.is_some(), self.max_warmup);
         self.audio = None;
         self.next_source = None;
     }

@@ -13,8 +13,10 @@ use rastersong_engine::playback::{MixTrack, Mixer};
 use rastersong_engine::{
     AudioSink, AudioTrackSpec, BackendInfo, CompileOptions, Engine, EngineConfig, EngineStatus,
     Frame, Graph, GraphDesc, MediaBackend, NodeStats, PROJECT_EXTENSION, PlaybackClock,
-    PreviewScale, Project, ProjectTrack, Registry, Tempo, Thumbnails, TimelineMode,
+    PreviewScale, Project, ProjectTrack, Registry, Thumbnails, TimelineMode,
 };
+
+mod settings_window;
 
 use crate::audio_out::AudioOut;
 
@@ -27,13 +29,13 @@ use crate::editor::{CanvasContext, GraphEditor, InspectorContext, LinkedRename, 
 use crate::history::History;
 use crate::preview::{Feed, PreviewView, clamp_split, split_rects, split_sides};
 use crate::settings::Settings;
-use crate::theme::{Theme, ThemeChoice, WireStyle, apply_style};
+use crate::theme::{Theme, ThemeChoice, apply_style};
 use crate::timeline::{
     Thumbnail, TimelineModel, TimelineView, TrackAction, TrackView, timecode, timeline,
 };
 use crate::track_ops::{SoloState, move_track, toggle_solo};
 
-/// The graph a new project starts with: the basic workflow from docs/design.md.
+/// The graph a new project starts with: the basic workflow from docs/concepts.md.
 pub const STARTER_GRAPH: &str = include_str!("../../../examples/graphs/am_bands.json");
 
 /// What the source engine renders: the video, untouched.
@@ -116,6 +118,8 @@ pub struct App {
     split_position: f32,
     error: Option<String>,
     show_about: bool,
+    show_settings: bool,
+    settings_tab: settings_window::SettingsTab,
     initialized: bool,
     title: String,
 }
@@ -181,6 +185,8 @@ impl App {
             split_position: 0.5,
             error: None,
             show_about: false,
+            show_settings: false,
+            settings_tab: settings_window::SettingsTab::default(),
             initialized: false,
             title: String::new(),
         };
@@ -564,6 +570,8 @@ impl App {
     }
 
     fn graph(&mut self, ui: &mut Ui) {
+        self.editor.keep_connections = self.settings.keep_connections;
+        self.editor.max_warmup_frames = self.project.max_warmup_frames;
         let frame = self.engine.frame(self.clock.frame());
         let failure = match self.engine.status() {
             EngineStatus::Failed(failure) => Some(failure),
@@ -647,7 +655,6 @@ impl App {
                 if let Some(compiled) = stats.iter().find(|s| s.node == node.node) {
                     node.latency_frames = compiled.latency_frames;
                     node.warmup_frames = compiled.warmup_frames;
-                    node.warmup_truncated = compiled.warmup_truncated;
                 }
                 node
             })
@@ -679,6 +686,8 @@ impl App {
         self.engine.set_tempo(self.project.tempo);
         self.engine.set_bypass_all(self.project.bypass_graph);
         self.engine.set_audio_rate(self.project.audio_rate);
+        self.engine
+            .set_max_warmup_frames(self.project.max_warmup_frames);
         self.sync_source_engine();
 
         // Rebuild the playback mix when tracks, offsets or levels change, once decoded, or when
@@ -814,6 +823,9 @@ impl App {
         if redo {
             self.redo();
         }
+        if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Comma)) {
+            self.show_settings = true;
+        }
         let (space, left, right, home, save, repeat) = ui.input(|i| {
             (
                 i.key_pressed(egui::Key::Space),
@@ -874,21 +886,14 @@ impl App {
                     ui.close();
                     self.pick_audio_tracks();
                 }
-                ui.menu_button("Audio Output Rate", |ui| {
-                    ui.label(
-                        RichText::new("Sample rate of the sound an Audio Output node renders")
-                            .weak(),
-                    );
-                    for rate in AUDIO_RATES {
-                        let label = format!("{:.1} kHz", f64::from(rate) / 1000.0);
-                        if ui
-                            .radio_value(&mut self.project.audio_rate, rate, label)
-                            .clicked()
-                        {
-                            ui.close();
-                        }
-                    }
-                });
+                ui.separator();
+                if ui
+                    .add(egui::Button::new("Settings…").shortcut_text("Ctrl+,"))
+                    .clicked()
+                {
+                    ui.close();
+                    self.show_settings = true;
+                }
                 ui.separator();
                 if ui.button("Import Graph…").clicked() {
                     ui.close();
@@ -900,32 +905,6 @@ impl App {
                 }
             });
             ui.menu_button("Edit", |ui| self.edit_menu(ui));
-            ui.menu_button("View", |ui| {
-                ui.label(RichText::new("Theme").weak());
-                for choice in ThemeChoice::ALL {
-                    if ui
-                        .radio_value(&mut self.settings.theme, choice, choice.label())
-                        .clicked()
-                    {
-                        ui.close();
-                    }
-                }
-                ui.separator();
-                ui.checkbox(&mut self.settings.node_stats, "Node latency and warmup")
-                    .on_hover_text(
-                        "Show how many frames each node delays its output and needs to settle after a seek",
-                    );
-                ui.separator();
-                ui.label(RichText::new("Wires").weak());
-                for style in WireStyle::ALL {
-                    if ui
-                        .radio_value(&mut self.settings.wire_style, style, style.label())
-                        .clicked()
-                    {
-                        ui.close();
-                    }
-                }
-            });
             ui.menu_button("Help", |ui| {
                 if ui.button("About RasterSong").clicked() {
                     self.show_about = true;
@@ -964,10 +943,10 @@ impl App {
             && let Some(text) = clipboard
         {
             let at = self.editor.view_center();
-            self.editor.paste(&text, at);
+            self.editor.paste(&text, at, self.settings.keep_connections);
         }
         if item(ui, selected, "Duplicate", "Ctrl+D") {
-            self.editor.duplicate_selection();
+            self.editor.duplicate_selection(false);
         }
         if item(ui, selected, "Delete", "Del") {
             self.editor.delete_selection();
@@ -1477,28 +1456,7 @@ impl App {
         let tempo = &mut self.project.tempo;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            ui.add(
-                egui::DragValue::new(&mut tempo.bpm)
-                    .range(Tempo::MIN_BPM..=Tempo::MAX_BPM)
-                    .speed(0.2)
-                    .max_decimals(2)
-                    .suffix(" bpm"),
-            )
-            .on_hover_text("Beats per minute. Beat and bar units in nodes follow it.");
-            ui.add(
-                egui::DragValue::new(&mut tempo.beats_per_bar)
-                    .range(1..=64)
-                    .suffix(" beats/bar"),
-            )
-            .on_hover_text("Beats in a bar (the time signature's top number)");
-            ui.add(
-                egui::DragValue::new(&mut tempo.offset_secs)
-                    .speed(0.005)
-                    .max_decimals(3)
-                    .prefix("first beat ")
-                    .suffix(" s"),
-            )
-            .on_hover_text("Seconds from the start of the video to the first beat");
+            settings_window::tempo_fields(ui, tempo);
             ui.toggle_value(&mut self.settings.metronome, "Metronome")
                 .on_hover_text(
                     "Click on every beat while playing, higher on the first beat of each bar, \
@@ -1659,6 +1617,7 @@ impl App {
                 }
             });
         self.show_about = open;
+        self.settings_window(ui.ctx());
     }
 
     fn project_name(&self) -> String {

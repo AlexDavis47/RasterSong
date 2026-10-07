@@ -30,8 +30,10 @@ params! { Resample {
         0.0,
         4096.0,
         "New width in pixels; 0 keeps the input's width",
+    ).integer()
+    .fixed(
+        "The size changes the signal's layout, which the graph is compiled for and can't change per sample",
     )
-    .fixed()
     .limits(0.0, 16_384.0),
     HEIGHT: ParamSpec::number(
         "height",
@@ -40,8 +42,10 @@ params! { Resample {
         0.0,
         4096.0,
         "New height in pixels; 0 keeps the input's height",
+    ).integer()
+    .fixed(
+        "The size changes the signal's layout, which the graph is compiled for and can't change per sample",
     )
-    .fixed()
     .limits(0.0, 16_384.0),
     METHOD: ParamSpec::choice(
         "method",
@@ -152,6 +156,7 @@ mod tests {
                 connected: &[true],
                 sources: &sources,
                 output: input.layout,
+                layout: Default::default(),
                 output_count: 1,
             })
             .unwrap();

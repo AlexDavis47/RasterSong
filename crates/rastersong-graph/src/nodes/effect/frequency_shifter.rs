@@ -2,7 +2,7 @@ use std::f64::consts::TAU;
 
 use crate::dsp::{HILBERT_TAPS, Hilbert, mix};
 use crate::nodes::support::{SampleClock, settle_frames};
-use crate::nodes::{Category, FreqUnit, NodeKind, NodeSpec};
+use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Frequency shifter: moves every frequency in the signal up or down by the same amount, in Hz
@@ -15,7 +15,7 @@ use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 #[derive(Debug)]
 pub struct FrequencyShifter {
     shift: f64,
-    unit: FreqUnit,
+    unit: Unit,
     mix: f32,
     /// Cycles per sample of one unit of shift, set in `prepare`.
     scale: f64,
@@ -36,27 +36,21 @@ params! { FrequencyShifter {
     )
     .exposed()
     .limits(-1e9, 1e9),
-    UNIT: FreqUnit::param("Hertz", "Unit for the shift"),
-    MIX: ParamSpec::number(
-        "mix",
-        "Mix",
-        1.0,
-        0.0,
-        1.0,
-        "0 is the dry input, 1 is only the shifted signal; in between beats against the original",
-    ),
+    UNIT: Unit::freq_param("second", "Unit for the shift"),
+    MIX: ParamSpec::mix(),
 } }
 
 impl NodeKind for FrequencyShifter {
     const KIND: &'static str = "frequency_shifter";
     const SPEC: NodeSpec = NodeSpec::new("Frequency Shifter", Category::Effect)
         .describe("Moves every frequency up or down by a fixed amount, giving inharmonic tones")
+        .doc("With Mix between 0 and 1 the shifted signal beats against the original.")
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
-        r#"{ "shift": 5, "unit": "Row" }"#,
+        r#"{ "shift": 5, "unit": "row" }"#,
         r#"{ "shift": -300, "mix": 0.5 }"#,
-        r#"{ "shift": 2, "unit": "Frame", "mix": 0.8 }"#,
+        r#"{ "shift": 2, "unit": "frame", "mix": 0.8 }"#,
     ];
     const BENCH: Option<&'static str> = Some("{}");
 
@@ -131,7 +125,7 @@ mod tests {
 
     fn shifted(shift: f64, input_freq: f64) -> Vec<f32> {
         let len = 2048;
-        // One block is a second at 2048 samples a second, so Hertz are cycles per 1/2048.
+        // One block is a second at 2048 samples a second, so cycles per second are cycles per 1/2048.
         let mut n = node(
             "frequency_shifter",
             &format!(r#"{{ "shift": {shift} }}"#),

@@ -155,6 +155,7 @@ mod tests {
             connected: &[true],
             sources: &sources,
             output: input,
+            layout: Default::default(),
             output_count: 1,
         })
         .unwrap()[0]

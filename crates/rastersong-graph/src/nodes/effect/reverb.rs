@@ -1,6 +1,6 @@
 use crate::dsp::{DelayLine, mix};
-use crate::nodes::support::{MAX_WARMUP_FRAMES, settle_frames};
-use crate::nodes::{Category, NodeKind, NodeSpec, TimeUnit};
+use crate::nodes::support::{UNBOUNDED_WARMUP, settle_frames};
+use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Delay lengths of Freeverb's eight parallel comb filters and four series all-pass filters, in
@@ -80,28 +80,25 @@ pub struct Reverb {
     size: f64,
     damping: f32,
     predelay: f64,
-    unit: TimeUnit,
+    unit: Unit,
     mix: f32,
-    /// Set in `prepare`.
-    feedback: f32,
+    /// Set in `prepare`: samples in one unit, the longest the pre-delay gets, and how long the
+    /// tail rings at its longest.
+    unit_samples: f64,
     tail_samples: f64,
     predelay_line: DelayLine,
-    predelay_samples: f64,
+    longest_predelay: f64,
     combs: Vec<Comb>,
     allpasses: Vec<Allpass>,
 }
 
 params! { Reverb {
-    SIZE: ParamSpec::number("size", "Size", 0.5, 0.0, 1.0, "How long the tail rings: higher is longer")
-        .fixed(),
-    DAMPING: ParamSpec::number("damping", "Damping", 0.5, 0.0, 1.0, "How quickly the tail loses its fast detail: higher is duller")
-        .fixed(),
+    SIZE: ParamSpec::number("size", "Size", 0.5, 0.0, 1.0, "How long the tail rings: higher is longer"),
+    DAMPING: ParamSpec::number("damping", "Damping", 0.5, 0.0, 1.0, "How quickly the tail loses its fast detail: higher is duller"),
     PREDELAY: ParamSpec::number("predelay", "Pre-delay", 0.0, 0.0, 100.0, "Gap before the reverb starts")
-        .fixed()
         .limits(0.0, 10_000.0),
-    UNIT: TimeUnit::param("ms", "Unit for the pre-delay"),
-    MIX: ParamSpec::number("mix", "Mix", 0.3, 0.0, 1.0, "0 is the dry input, 1 is only the reverb")
-        .exposed(),
+    UNIT: Unit::time_param("ms", "Unit for the pre-delay"),
+    MIX: ParamSpec::mix().exposed(),
 } }
 
 impl NodeKind for Reverb {
@@ -113,7 +110,7 @@ impl NodeKind for Reverb {
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "size": 0.8, "damping": 0.2, "mix": 0.5 }"#,
-        r#"{ "size": 0.2, "predelay": 0.5, "unit": "rows", "mix": 1 }"#,
+        r#"{ "size": 0.2, "predelay": 0.5, "unit": "row", "mix": 1 }"#,
     ];
     const BENCH: Option<&'static str> = Some(r#"{ "size": 0.7, "mix": 0.4 }"#);
 
@@ -124,14 +121,19 @@ impl NodeKind for Reverb {
             predelay: params.number_at(Self::PREDELAY)?,
             unit: params.choice_as(Self::UNIT)?,
             mix: params.float_at(Self::MIX)?,
-            feedback: 0.0,
+            unit_samples: 1.0,
             tail_samples: 0.0,
             predelay_line: DelayLine::default(),
-            predelay_samples: 0.0,
+            longest_predelay: 0.0,
             combs: Vec::new(),
             allpasses: Vec::new(),
         })
     }
+}
+
+/// The comb filters' feedback for a size from 0 to 1: how long the tail rings.
+fn feedback_for(size: f64) -> f32 {
+    (0.7 + 0.28 * size.clamp(0.0, 1.0)) as f32
 }
 
 impl Node for Reverb {
@@ -143,29 +145,36 @@ impl Node for Reverb {
             .iter()
             .map(|&len| Allpass::new(scaled(len)))
             .collect();
-        self.feedback = (0.7 + 0.28 * self.size) as f32;
-        self.predelay_samples = self.predelay * self.unit.samples(ctx);
-        self.predelay_line = DelayLine::new(self.predelay_samples.ceil() as usize + 1);
+        self.unit_samples = self.unit.samples(ctx);
+        // The longest pre-delay and the longest tail the settings (or a signal moving them) allow.
+        self.longest_predelay = ctx.param_max(Self::PREDELAY, self.predelay) * self.unit_samples;
+        self.predelay_line = DelayLine::new(self.longest_predelay.ceil() as usize + 1);
         // The slowest comb loses 60 dB after ln(0.001) / ln(feedback) trips around its loop.
         let longest = scaled(COMBS[COMBS.len() - 1]) as f64;
-        let trips = 0.001f64.ln() / f64::from(self.feedback).ln();
-        self.tail_samples = longest * trips + self.predelay_samples;
+        let feedback = feedback_for(ctx.param_max(Self::SIZE, self.size));
+        let trips = 0.001f64.ln() / f64::from(feedback).ln();
+        self.tail_samples = longest * trips + self.longest_predelay;
     }
 
     fn process(&mut self, ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
         let amount = ctx.value(Self::MIX, f64::from(self.mix));
+        let size = ctx.value(Self::SIZE, self.size);
+        let damping = ctx.value(Self::DAMPING, f64::from(self.damping));
+        let predelay = ctx.value(Self::PREDELAY, self.predelay);
         for (i, (out, &x)) in outputs[0].data.iter_mut().zip(&inputs[0].data).enumerate() {
-            let fed = if self.predelay_samples > 0.0 {
+            let fed = if self.longest_predelay > 0.0 {
                 self.predelay_line.push(x);
-                self.predelay_line.read(self.predelay_samples)
+                self.predelay_line
+                    .read((predelay.at64(i) * self.unit_samples).clamp(0.0, self.longest_predelay))
             } else {
                 x
             };
+            let (feedback, damping) = (feedback_for(size.at64(i)), damping.at(i).clamp(0.0, 1.0));
             let input = fed * INPUT_GAIN;
             let mut wet: f32 = self
                 .combs
                 .iter_mut()
-                .map(|c| c.process(input, self.feedback, self.damping))
+                .map(|c| c.process(input, feedback, damping))
                 .sum();
             for allpass in &mut self.allpasses {
                 wet = allpass.process(wet);
@@ -184,7 +193,7 @@ impl Node for Reverb {
         if self.tail_samples.is_finite() {
             settle_frames(self.tail_samples, ctx)
         } else {
-            MAX_WARMUP_FRAMES
+            UNBOUNDED_WARMUP
         }
     }
 }

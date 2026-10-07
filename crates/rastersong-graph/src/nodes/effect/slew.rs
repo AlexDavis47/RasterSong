@@ -1,5 +1,5 @@
 use crate::nodes::support::settle_frames;
-use crate::nodes::{Category, NodeKind, NodeSpec, TimeUnit};
+use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Slew limiter: the output follows the input but can only rise and fall at a set speed, which
@@ -8,8 +8,10 @@ use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 pub struct Slew {
     rise: f64,
     fall: f64,
-    unit: TimeUnit,
-    /// Largest change per sample, up and down, set in `prepare`. Infinite when the time is 0.
+    unit: Unit,
+    /// Samples in one unit, and the largest change per sample, up and down, of the constant
+    /// times: both set in `prepare`. Infinite when the time is 0.
+    unit_samples: f64,
     up: f32,
     down: f32,
     /// Samples to travel a full 0 to 1 span at the slowest speed, for warmup.
@@ -26,7 +28,6 @@ params! { Slew {
         4.0,
         "Time to climb a full 0 to 1 when the input jumps up; 0 is instant",
     )
-    .fixed()
     .limits(0.0, 1e6),
     FALL: ParamSpec::number(
         "fall",
@@ -36,9 +37,8 @@ params! { Slew {
         4.0,
         "Time to fall a full 1 to 0 when the input jumps down; 0 is instant",
     )
-    .fixed()
     .limits(0.0, 1e6),
-    UNIT: TimeUnit::param("rows", "Unit for rise and fall"),
+    UNIT: Unit::time_param("row", "Unit for rise and fall"),
 } }
 
 impl NodeKind for Slew {
@@ -50,7 +50,7 @@ impl NodeKind for Slew {
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "rise": 0.5, "fall": 0.1 }"#,
         r#"{ "rise": 0, "fall": 2 }"#,
-        r#"{ "rise": 3, "fall": 0, "unit": "frames" }"#,
+        r#"{ "rise": 3, "fall": 0, "unit": "frame" }"#,
     ];
     const BENCH: Option<&'static str> = Some("{}");
 
@@ -59,6 +59,7 @@ impl NodeKind for Slew {
             rise: params.number_at(Self::RISE)?,
             fall: params.number_at(Self::FALL)?,
             unit: params.choice_as(Self::UNIT)?,
+            unit_samples: 1.0,
             up: f32::INFINITY,
             down: f32::INFINITY,
             slowest: 0.0,
@@ -67,32 +68,45 @@ impl NodeKind for Slew {
     }
 }
 
+/// The largest change per sample for a time of `samples` to travel a full span: unlimited when
+/// it is under a sample.
+fn speed(samples: f64) -> f32 {
+    if samples >= 1.0 {
+        (1.0 / samples) as f32
+    } else {
+        f32::INFINITY
+    }
+}
+
 impl Node for Slew {
     fn prepare(&mut self, ctx: &PrepareContext) {
-        let unit = self.unit.samples(ctx);
-        let (rise, fall) = (self.rise * unit, self.fall * unit);
-        let speed = |samples: f64| {
-            if samples >= 1.0 {
-                (1.0 / samples) as f32
-            } else {
-                f32::INFINITY
-            }
-        };
-        self.up = speed(rise);
-        self.down = speed(fall);
-        // Audio spans -1 to 1, twice the video range.
-        self.slowest = 2.0 * rise.max(fall);
+        self.unit_samples = self.unit.samples(ctx);
+        self.up = speed(self.rise * self.unit_samples);
+        self.down = speed(self.fall * self.unit_samples);
+        // Audio spans -1 to 1, twice the video range; the times may be as long as a signal makes them.
+        self.slowest = 2.0
+            * ctx
+                .param_max(Self::RISE, self.rise)
+                .max(ctx.param_max(Self::FALL, self.fall))
+            * self.unit_samples;
     }
 
-    fn process(&mut self, _ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
+    fn process(&mut self, ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
         let mut y = self.level;
-        for (out, &x) in outputs[0].data.iter_mut().zip(&inputs[0].data) {
+        let (rise, fall) = (ctx.param(Self::RISE), ctx.param(Self::FALL));
+        let limit = |stream: Option<&[f32]>, i: usize, constant: f32| {
+            stream.map_or(constant, |s| {
+                speed(f64::from(s[i]).max(0.0) * self.unit_samples)
+            })
+        };
+        for (i, (out, &x)) in outputs[0].data.iter_mut().zip(&inputs[0].data).enumerate() {
+            let (up, down) = (limit(rise, i, self.up), limit(fall, i, self.down));
             let step = x - y;
             // Landing on the input exactly, not by adding a difference, keeps it free of rounding.
-            y = if step > self.up {
-                y + self.up
-            } else if step < -self.down {
-                y - self.down
+            y = if step > up {
+                y + up
+            } else if step < -down {
+                y - down
             } else {
                 x
             };

@@ -1,8 +1,8 @@
 use std::f64::consts::PI;
 
 use crate::dsp::{Biquad, BiquadKind};
-use crate::nodes::support::MAX_WARMUP_FRAMES;
-use crate::nodes::{Category, FreqUnit, NodeKind, NodeSpec};
+use crate::nodes::support::UNBOUNDED_WARMUP;
+use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// A three-band parametric equaliser: a low shelf, a peaking mid band and a high shelf, each
@@ -10,7 +10,7 @@ use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 /// signal into three outputs.
 #[derive(Debug)]
 pub struct Equalizer {
-    unit: FreqUnit,
+    unit: Unit,
     low_freq: f64,
     low_gain: f64,
     mid_freq: f64,
@@ -27,26 +27,23 @@ pub struct Equalizer {
 }
 
 params! { Equalizer {
-    UNIT: FreqUnit::param("Row", "Unit for the three frequencies"),
-    LOW_FREQ: ParamSpec::number("low_freq", "Low freq", 5.0, 0.01, 1000.0, "Corner of the low shelf")
-        .limits(1e-06, 1e9)
-        .octaves(),
+    UNIT: Unit::freq_param("row", "Unit for the three frequencies"),
+    LOW_FREQ: ParamSpec::number("low_freq", "Low freq", 5.0, 0.01, 500.0, "Corner of the low shelf")
+        .limits(1e-06, 1e9),
     LOW_GAIN: ParamSpec::number("low_gain", "Low gain", 0.0, -24.0, 24.0, "Boost or cut of everything below the low corner")
         .unit("dB")
         .exposed()
         .limits(-48.0, 48.0),
-    MID_FREQ: ParamSpec::number("mid_freq", "Mid freq", 30.0, 0.01, 1000.0, "Centre of the mid band")
-        .limits(1e-06, 1e9)
-        .octaves(),
+    MID_FREQ: ParamSpec::number("mid_freq", "Mid freq", 30.0, 0.01, 500.0, "Centre of the mid band")
+        .limits(1e-06, 1e9),
     MID_GAIN: ParamSpec::number("mid_gain", "Mid gain", 0.0, -24.0, 24.0, "Boost or cut around the mid frequency")
         .unit("dB")
         .exposed()
         .limits(-48.0, 48.0),
     MID_Q: ParamSpec::number("mid_q", "Mid Q", 1.0, 0.1, 20.0, "Width of the mid band: higher is narrower")
         .limits(0.05, 100.0),
-    HIGH_FREQ: ParamSpec::number("high_freq", "High freq", 150.0, 0.01, 1000.0, "Corner of the high shelf")
-        .limits(1e-06, 1e9)
-        .octaves(),
+    HIGH_FREQ: ParamSpec::number("high_freq", "High freq", 150.0, 0.01, 500.0, "Corner of the high shelf")
+        .limits(1e-06, 1e9),
     HIGH_GAIN: ParamSpec::number("high_gain", "High gain", 0.0, -24.0, 24.0, "Boost or cut of everything above the high corner")
         .unit("dB")
         .exposed()
@@ -163,9 +160,9 @@ impl Node for Equalizer {
     fn warmup_frames(&self, ctx: &PrepareContext) -> u32 {
         let samples = 7.0 * self.mid_q.max(1.0) / (PI * self.slowest.max(1e-9));
         if samples.is_finite() {
-            ((samples / ctx.samples_per_frame() as f64).ceil() as u32).clamp(1, MAX_WARMUP_FRAMES)
+            ((samples / ctx.samples_per_frame() as f64).ceil() as u32).max(1)
         } else {
-            MAX_WARMUP_FRAMES
+            UNBOUNDED_WARMUP
         }
     }
 }

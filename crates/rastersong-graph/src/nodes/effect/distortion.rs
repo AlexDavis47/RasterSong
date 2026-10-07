@@ -67,14 +67,7 @@ params! { Distortion {
         "Offset added before shaping, for uneven distortion",
     )
     .limits(-100.0, 100.0),
-    MIX: ParamSpec::number(
-        "mix",
-        "Mix",
-        1.0,
-        0.0,
-        1.0,
-        "0 is the dry input, 1 is only the distorted signal",
-    ),
+    MIX: ParamSpec::mix(),
 } }
 
 impl NodeKind for Distortion {

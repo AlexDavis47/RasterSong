@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 
 use proptest::prelude::*;
 use rastersong_graph::{
-    Category, Layout, MAX_PARAMS, Node, ParamKind, ParamValue, PrepareContext, ProcessContext,
-    Registry, Signal,
+    Category, GraphDesc, Layout, MAX_PARAMS, Node, ParamKind, ParamSpec, ParamValue,
+    PrepareContext, ProcessContext, Registry, Signal,
 };
 
 /// Samples per row. Blocks are whole rows, so "rows" units mean the same thing in every block.
@@ -86,6 +86,7 @@ impl Harness {
             outputs: &vec![layout; outputs],
             connected: &vec![true; inputs],
             modulated: &modulated,
+            pixel_scale: 1.0,
         });
         Self {
             node,
@@ -277,4 +278,132 @@ fn bitcrush_quantizes_to_levels() {
     let signal = [0.0, 0.2, 0.49, 0.51, 0.9, 1.0];
     let out = harness.run(&[1], &signal, &[0.0; 6]);
     assert_eq!(out[0], [0.0, 0.0, 0.0, 1.0, 1.0, 1.0]);
+}
+
+/// A number that can't be modulated says why, and the reason is a real one: this is datamoshing
+/// software, so modulation is allowed unless it is infeasible.
+#[test]
+fn locked_numbers_state_a_reason() {
+    let mut locked = Vec::new();
+    for t in Registry::shared().types() {
+        for spec in t.spec.params.iter().filter(|s| !s.modulatable) {
+            if !matches!(spec.kind, ParamKind::Number { .. }) {
+                continue;
+            }
+            assert!(
+                spec.locked.len() > 20 && !spec.locked.contains("TODO"),
+                "{}.{} is locked without a reason",
+                t.kind,
+                spec.name
+            );
+            locked.push(format!("{}.{}", t.kind, spec.name));
+        }
+    }
+    // Only what changes the signal's layout stays locked.
+    assert_eq!(
+        locked,
+        ["pack.channels", "resample.width", "resample.height"]
+    );
+}
+
+/// A "shown when" rule names a choice parameter of the same node and only values it offers, and
+/// the controlling parameter is not itself conditional (one level keeps the rules easy to follow).
+#[test]
+fn shown_when_rules_point_at_real_choices() {
+    for t in Registry::shared().types() {
+        for spec in t.spec.params {
+            let Some(when) = spec.when else { continue };
+            let name = format!("{}.{}", t.kind, spec.name);
+            let control = t
+                .spec
+                .params
+                .iter()
+                .find(|p| p.name == when.param)
+                .unwrap_or_else(|| panic!("{name} depends on a missing {}", when.param));
+            let ParamKind::Choice { options, .. } = control.kind else {
+                panic!("{name} depends on {}, which isn't a choice", when.param);
+            };
+            assert!(control.when.is_none(), "{name} depends on a conditional");
+            assert!(!when.values.is_empty(), "{name} is never used");
+            for v in when.values {
+                assert!(
+                    options.contains(v),
+                    "{name}: {v} isn't an option of {}",
+                    when.param
+                );
+            }
+        }
+    }
+}
+
+/// Every `mix` is the shared dry/wet definition (`ParamSpec::mix`), so none can drift in range,
+/// default or wording, and each is a plain 0 to 1 number that starts fully wet.
+#[test]
+fn every_mix_is_the_shared_definition() {
+    for t in Registry::shared().types() {
+        for spec in t.spec.params.iter().filter(|s| s.name == "mix") {
+            let shared = ParamSpec::mix();
+            assert!(
+                spec.kind == shared.kind && spec.label == shared.label && spec.help == shared.help,
+                "{}.mix is not ParamSpec::mix()",
+                t.kind
+            );
+        }
+    }
+}
+
+/// A hidden parameter keeps its value: the rule changes what is shown, never what is stored.
+#[test]
+fn unused_parameters_are_still_read_and_saved() {
+    let json = r#"{ "version": 9, "nodes": [ { "id": "b", "type": "beat", "params": { "shape": "decay", "steps": 7 } } ] }"#;
+    let desc = GraphDesc::from_json(json).unwrap();
+    assert_eq!(desc.nodes[0].params["steps"], ParamValue::Number(7.0));
+    assert_eq!(
+        GraphDesc::from_json(&desc.to_json()).unwrap().nodes[0].params["steps"],
+        ParamValue::Number(7.0)
+    );
+}
+
+/// Whole-number parameters have whole defaults, usual ranges and limits, so nothing between two
+/// integers is ever offered.
+#[test]
+fn integer_parameters_are_whole_throughout() {
+    let mut count = 0;
+    for t in Registry::shared().types() {
+        for spec in t.spec.params.iter().filter(|s| s.integer) {
+            count += 1;
+            let ParamKind::Number {
+                default,
+                min,
+                max,
+                limit_min,
+                limit_max,
+            } = spec.kind
+            else {
+                panic!("{}.{} is an integer but not a number", t.kind, spec.name);
+            };
+            for v in [default, min, max, limit_min, limit_max] {
+                assert_eq!(v, v.round(), "{}.{} has {v}", t.kind, spec.name);
+            }
+        }
+    }
+    assert!(count >= 8, "the audit marks the whole-number parameters");
+}
+
+/// Modulation amounts are percentages of a parameter's span, so every modulatable number needs a
+/// span to take a percentage of.
+#[test]
+fn modulatable_numbers_have_a_span_to_take_a_percentage_of() {
+    let mut problems = Vec::new();
+    for t in Registry::shared().types() {
+        for spec in t.spec.params.iter().filter(|s| s.modulatable) {
+            let ParamKind::Number { min, max, .. } = spec.kind else {
+                continue;
+            };
+            if spec.modulation_span() <= 0.0 {
+                problems.push(format!("{}.{} ({min}..{max})", t.kind, spec.name));
+            }
+        }
+    }
+    assert!(problems.is_empty(), "no span to modulate: {problems:?}");
 }

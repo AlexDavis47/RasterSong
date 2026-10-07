@@ -45,6 +45,27 @@ pub struct Project {
         skip_serializing_if = "is_default_audio_rate"
     )]
     pub audio_rate: u32,
+    /// The most frames the engine pre-renders and discards after a seek so stateful nodes have
+    /// history. It limits only that background pre-render, never what a node does.
+    #[serde(
+        default = "default_max_warmup_frames",
+        skip_serializing_if = "is_default_max_warmup_frames"
+    )]
+    pub max_warmup_frames: u32,
+}
+
+/// The default for [`Project::max_warmup_frames`]: about four seconds of 30 fps video.
+pub const DEFAULT_MAX_WARMUP_FRAMES: u32 = 120;
+
+/// The most [`Project::max_warmup_frames`] can be set to.
+pub const MAX_WARMUP_FRAMES_LIMIT: u32 = 9999;
+
+fn default_max_warmup_frames() -> u32 {
+    DEFAULT_MAX_WARMUP_FRAMES
+}
+
+fn is_default_max_warmup_frames(frames: &u32) -> bool {
+    *frames == DEFAULT_MAX_WARMUP_FRAMES
 }
 
 fn default_audio_rate() -> u32 {
@@ -140,6 +161,7 @@ impl Project {
             timeline_mode: TimelineMode::default(),
             bypass_graph: false,
             audio_rate: crate::DEFAULT_AUDIO_RATE,
+            max_warmup_frames: DEFAULT_MAX_WARMUP_FRAMES,
         }
     }
 
@@ -231,6 +253,7 @@ impl Project {
                     timeline_mode: TimelineMode::default(),
                     bypass_graph: false,
                     audio_rate: crate::DEFAULT_AUDIO_RATE,
+                    max_warmup_frames: DEFAULT_MAX_WARMUP_FRAMES,
                 }
             }
             // Version 2 lacks only the tempo and timeline mode, which default.
@@ -245,6 +268,7 @@ impl Project {
         };
         project.version = PROJECT_VERSION;
         project.tempo = project.tempo.sanitized();
+        project.max_warmup_frames = project.max_warmup_frames.min(MAX_WARMUP_FRAMES_LIMIT);
         project.graph.upgrade();
         let dir = path.parent().unwrap_or(Path::new(""));
         let media = project
@@ -438,6 +462,34 @@ mod tests {
         project.tempo.bpm = 0.0;
         project.save(&path).unwrap();
         assert_eq!(Project::load(&path).unwrap().tempo.bpm, Tempo::MIN_BPM);
+    }
+
+    #[test]
+    fn max_warmup_frames_round_trips_defaults_and_is_limited_on_load() {
+        let dir = temp_dir("project-warmup");
+        let path = dir.join("warmup.rastersong");
+        let mut project =
+            Project::new(GraphDesc::from_json(r#"{ "version": 1, "nodes": [] }"#).unwrap());
+        project.save(&path).unwrap();
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("warmup"));
+        assert_eq!(
+            Project::load(&path).unwrap().max_warmup_frames,
+            DEFAULT_MAX_WARMUP_FRAMES
+        );
+
+        project.max_warmup_frames = 400;
+        project.save(&path).unwrap();
+        assert_eq!(Project::load(&path).unwrap().max_warmup_frames, 400);
+
+        std::fs::write(
+            &path,
+            r#"{ "version": 3, "max_warmup_frames": 1000000, "graph": { "version": 1, "nodes": [] } }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            Project::load(&path).unwrap().max_warmup_frames,
+            MAX_WARMUP_FRAMES_LIMIT
+        );
     }
 
     #[test]

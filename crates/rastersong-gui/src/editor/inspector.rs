@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use eframe::egui::{self, RichText, Ui};
 use rastersong_engine::{AUDIO_INPUT, SOURCE_PARAM};
 use rastersong_engine::{
-    Channels, Grouping, Interpolation, Modulation, NodeStats, NodeType, ParamKind, ParamLevel,
-    ParamSpec, ParamValue, Severity,
+    Channels, GeneratorLayout, Grouping, Interpolation, Modulation, NodeStats, NodeType, ParamKind,
+    ParamLevel, ParamSpec, ParamValue, Severity, ShownWhen,
 };
 
 use super::param_field::{GUTTER_WIDTH, Modulated, NumberRange, param_field, reset_gesture};
@@ -116,7 +116,8 @@ impl GraphEditor {
             signals(ui, &kind, compiled);
         }
 
-        let shared_settings = kind.spec.inputs.len() > 1 || kind.spec.per_channel;
+        let shared_settings =
+            kind.spec.inputs.len() > 1 || kind.spec.per_channel || kind.spec.takes_layout;
         if shared_settings {
             section(ui, "Node settings");
             egui::Grid::new("node-settings")
@@ -145,6 +146,24 @@ impl GraphEditor {
                                 Grouping::Samples,
                                 "Samples",
                                 "Spread over every value, ignoring pixels: a pixel's channels can differ",
+                            ),
+                        ]);
+                        ui.end_row();
+                    }
+                    if kind.spec.takes_layout {
+                        ui.label("Layout").on_hover_text(
+                            "What the generated signal is shaped like: the video's frame, or one block of the audio track",
+                        );
+                        choice(ui, "layout", &mut node.layout, GeneratorLayout::default(), &[
+                            (
+                                GeneratorLayout::Video,
+                                "Video",
+                                "Shaped like the video: RGB pixels in rows",
+                            ),
+                            (
+                                GeneratorLayout::Audio,
+                                "Audio",
+                                "Shaped like one block of the audio track named audio, or of the first track; mono at 48 kHz when the project has none",
                             ),
                         ]);
                         ui.end_row();
@@ -205,14 +224,22 @@ impl GraphEditor {
                     let tracks = (node.kind == AUDIO_INPUT && spec.name == SOURCE_PARAM)
                         .then_some(ctx.tracks);
                     let (exposed, wire) = pins[index];
+                    // A parameter the node's settings leave unused is hidden, unless a signal is
+                    // wired to it (or its pin shown): that stays in view, greyed, with the reason.
+                    let used =
+                        spec.is_used(|name| choice_value(kind.spec.params, &node.params, name));
+                    if !used && !exposed && wire.is_none() {
+                        continue;
+                    }
                     let mut modulation = wire.map(|color| {
                         let current = node.modulation.get(spec.name).copied();
-                        let base = spec.number_value(&node.params).unwrap_or(0.0);
-                        let value = current.unwrap_or_else(|| spec.default_modulation(base));
+                        let value = current.unwrap_or_else(|| spec.default_modulation());
                         (value, current, color)
                     });
                     let mut expose = spec.modulatable.then_some(exposed);
-                    let mut integer = matches!(spec.kind, ParamKind::Number { .. })
+                    // Whole-only parameters are always whole, so they have no toggle.
+                    let mut integer = (matches!(spec.kind, ParamKind::Number { .. })
+                        && !spec.integer)
                         .then(|| node.integer.contains(spec.name));
                     let live = ctx
                         .params
@@ -222,9 +249,13 @@ impl GraphEditor {
                     // Scoped to the node, so same-named parameters of different nodes (and their
                     // stored slider ranges and open menus) never share ids.
                     let node_id = node.id.clone();
+                    let mut slider = node.ranges.get(spec.name).map(|r| (r[0], r[1]));
                     let disconnected = ui
                         .push_id(node_id, |ui| {
-                            param_row(ParamRow {
+                            if !used {
+                                ui.set_opacity(0.5);
+                            }
+                            let disconnected = param_row(ParamRow {
                                 ui,
                                 spec,
                                 params: &mut node.params,
@@ -234,12 +265,28 @@ impl GraphEditor {
                                 expose: expose.as_mut(),
                                 modulation: modulation.as_mut().map(|(m, _, c)| (m, *c)),
                                 live,
-                            })
+                                slider: &mut slider,
+                            });
+                            if !used && let Some(when) = spec.when {
+                                ui.horizontal(|ui| {
+                                    ui.add_space(GUTTER_WIDTH + ui.spacing().item_spacing.x);
+                                    ui.weak(unused_reason(kind.spec.params, &when));
+                                });
+                            }
+                            disconnected
                         })
                         .inner;
                     ui.add_space(PARAM_GAP);
                     if disconnected {
                         disconnect = Some(index);
+                    }
+                    match slider {
+                        Some((lo, hi)) => {
+                            node.ranges.insert(spec.name.to_owned(), [lo, hi]);
+                        }
+                        None => {
+                            node.ranges.remove(spec.name);
+                        }
                     }
                     if let Some(on) = integer {
                         if on {
@@ -276,6 +323,33 @@ impl GraphEditor {
     }
 }
 
+/// A choice parameter's current value: what the node stores, else the default.
+fn choice_value(
+    specs: &[ParamSpec],
+    params: &BTreeMap<String, ParamValue>,
+    name: &str,
+) -> Option<String> {
+    match params.get(name) {
+        Some(ParamValue::Text(s)) => Some(s.clone()),
+        _ => match specs.iter().find(|p| p.name == name)?.default_value() {
+            ParamValue::Text(s) => Some(s),
+            _ => None,
+        },
+    }
+}
+
+/// Why a parameter shown despite its rule isn't being used, in the controlling parameter's words.
+fn unused_reason(specs: &[ParamSpec], when: &ShownWhen) -> String {
+    let label = specs
+        .iter()
+        .find(|p| p.name == when.param)
+        .map_or(when.param, |p| p.label);
+    format!(
+        "Unused: only applies when {label} is {}.",
+        when.values.join(" or ")
+    )
+}
+
 /// What one parameter row shows and edits.
 struct ParamRow<'a, 'u> {
     ui: &'u mut Ui,
@@ -292,6 +366,8 @@ struct ParamRow<'a, 'u> {
     modulation: Option<(&'a mut Modulation, egui::Color32)>,
     /// A modulated parameter's value at the playhead.
     live: Option<f64>,
+    /// The slider range the user set, if any.
+    slider: &'a mut Option<(f64, f64)>,
 }
 
 /// Width a parameter's control line needs besides the slider: the gutter (under the expose
@@ -374,6 +450,7 @@ fn param_row(row: ParamRow) -> bool {
         expose,
         mut modulation,
         live,
+        slider,
     } = row;
     let mut disconnect = false;
     let integer_on = integer.as_ref().is_some_and(|i| **i);
@@ -404,6 +481,12 @@ fn param_row(row: ParamRow) -> bool {
                 {
                     *exposed = !*exposed;
                 }
+            }
+            None if !spec.locked.is_empty() => {
+                locked_diamond(ui).on_hover_text(format!(
+                    "This parameter can't be modulated. {}.",
+                    spec.locked.trim_end_matches('.')
+                ));
             }
             None => {
                 ui.allocate_space(egui::vec2(GUTTER_WIDTH, 14.0));
@@ -448,8 +531,9 @@ fn param_row(row: ParamRow) -> bool {
                 },
                 soft: (min, max),
                 limits: (limit_min, limit_max),
+                whole: integer_on || spec.integer,
             };
-            let rounded = integer_on;
+            let rounded = range.whole;
             ui.horizontal(|ui| {
                 let modulated = modulation.as_mut().map(|(m, color)| Modulated {
                     spec,
@@ -457,8 +541,15 @@ fn param_row(row: ParamRow) -> bool {
                     color: *color,
                     live,
                 });
-                let response =
-                    param_field(ui, spec.name, n, range, track_width, VALUE_WIDTH, modulated);
+                let response = param_field(
+                    ui,
+                    spec.name,
+                    n,
+                    range,
+                    (track_width, VALUE_WIDTH),
+                    modulated,
+                    slider,
+                );
                 disconnect = response.disconnect;
                 if rounded {
                     *n = n.round();
@@ -534,6 +625,30 @@ fn param_row(row: ParamRow) -> bool {
         params.insert(spec.name.to_owned(), value);
     }
     disconnect
+}
+
+/// The mark in place of the expose toggle on a parameter that can't be modulated: the diamond
+/// crossed out and dim, with the reason on hover.
+fn locked_diamond(ui: &mut Ui) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(GUTTER_WIDTH, 14.0), egui::Sense::hover());
+    let c = rect.center();
+    let r = 4.5;
+    let color = ui.visuals().weak_text_color().gamma_multiply(0.6);
+    let stroke = egui::Stroke::new(1.0, color);
+    ui.painter().add(egui::Shape::convex_polygon(
+        vec![
+            c + egui::vec2(0.0, -r),
+            c + egui::vec2(r, 0.0),
+            c + egui::vec2(0.0, r),
+            c + egui::vec2(-r, 0.0),
+        ],
+        egui::Color32::TRANSPARENT,
+        stroke,
+    ));
+    ui.painter()
+        .line_segment([c + egui::vec2(-r, r), c + egui::vec2(r, -r)], stroke);
+    response
 }
 
 /// The expose toggle: a diamond like the parameter pins, filled when the pin is shown. It

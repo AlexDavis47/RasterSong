@@ -15,7 +15,9 @@ use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontId, Key, PointerButton, Pos2, Rect, Response, Sense,
     Stroke, StrokeKind, Ui, pos2, vec2,
 };
-use rastersong_engine::{Category, Failure, Kind, NodeStats, OutputLevel, SPLIT, Severity, Tag};
+use rastersong_engine::{
+    Category, Failure, Kind, NodeStats, OutputLevel, SPLIT, Severity, Tag, UNBOUNDED_WARMUP,
+};
 
 use super::search::{NodeMenu, SearchMenu};
 use super::{GraphEditor, NodeKey};
@@ -611,11 +613,12 @@ impl GraphEditor {
 
         // Keys act when the pointer is over the canvas and no text field has focus.
         if hovered && !ui.ctx().egui_wants_keyboard_input() {
-            let (delete, repair, duplicate, frame, select_all, escape) = ui.input(|i| {
+            let (delete, repair, duplicate, invert, frame, select_all, escape) = ui.input(|i| {
                 (
                     i.key_pressed(Key::Delete),
                     i.key_pressed(Key::Backspace),
                     i.modifiers.command && i.key_pressed(Key::D),
+                    i.modifiers.shift,
                     i.key_pressed(Key::F),
                     i.modifiers.command && i.key_pressed(Key::A),
                     i.key_pressed(Key::Escape),
@@ -628,7 +631,7 @@ impl GraphEditor {
                 self.delete_selection_and_repair();
             }
             if duplicate {
-                self.duplicate_selection();
+                self.duplicate_selection(invert);
             }
             if frame {
                 self.fit(rect, geometry);
@@ -670,7 +673,8 @@ impl GraphEditor {
                         }
                         _ => self.view_center(),
                     };
-                    self.paste(&text, at);
+                    let invert = ui.input(|i| i.modifiers.shift);
+                    self.paste(&text, at, self.keep_connections != invert);
                 }
                 _ => {}
             }
@@ -938,11 +942,15 @@ impl GraphEditor {
             ));
         }
         if stats.warmup_frames > 0 {
-            parts.push(format!("warmup {} fr", stats.warmup_frames));
+            parts.push(if stats.warmup_frames == UNBOUNDED_WARMUP {
+                "warmup never settles".to_owned()
+            } else {
+                format!("warmup {} fr", stats.warmup_frames)
+            });
         }
         let mut text = parts.join(" · ");
-        let color = if stats.warmup_truncated {
-            text = format!("⚠ {text} (limit)");
+        let color = if stats.warmup_frames > self.max_warmup_frames {
+            text = format!("⚠ {text} (above the {} fr limit)", self.max_warmup_frames);
             theme.warning
         } else {
             visuals.weak_text_color()

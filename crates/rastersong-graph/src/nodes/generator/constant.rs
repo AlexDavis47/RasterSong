@@ -1,4 +1,4 @@
-use crate::nodes::{Category, GeneratorLayout, NodeKind, NodeSpec};
+use crate::nodes::{Category, NodeKind, NodeSpec};
 use crate::{Layout, LayoutContext, Node, OutputSpec, ParamSpec, Params};
 use crate::{ProcessContext, Range, Signal};
 
@@ -6,14 +6,11 @@ use crate::{ProcessContext, Range, Signal};
 /// silence at 0 or a DC offset. Unconnected inputs read one with the value 0.
 #[derive(Debug)]
 pub struct Constant {
-    layout: GeneratorLayout,
     value: f32,
 }
 
 params! { Constant {
-    LAYOUT: GeneratorLayout::PARAM,
     VALUE: ParamSpec::number("value", "Value", 0.0, -1.0, 1.0, "The value of every sample")
-        .exposed()
         .limits(-10.0, 10.0),
 } }
 
@@ -22,17 +19,14 @@ impl NodeKind for Constant {
     const SPEC: NodeSpec = NodeSpec::new("Constant", Category::Generator)
         .describe("The same value in every sample: a flat colour, or silence")
         .params(Self::PARAMS)
+        .takes_layout()
         .inputs(&[])
         .outputs(&[OutputSpec::new("out", "The constant signal")]);
-    const TEST_CONFIGS: &'static [&'static str] = &[
-        r#"{ "value": 0.25 }"#,
-        r#"{ "layout": "audio", "value": -1 }"#,
-    ];
+    const TEST_CONFIGS: &'static [&'static str] = &[r#"{ "value": 0.25 }"#, r#"{ "value": -1 }"#];
     const BENCH: Option<&'static str> = Some("{}");
 
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
-            layout: params.choice_as(Self::LAYOUT)?,
             value: params.float_at(Self::VALUE)?,
         })
     }
@@ -40,7 +34,7 @@ impl NodeKind for Constant {
 
 impl Node for Constant {
     fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
-        let nominal = self.layout.nominal();
+        let nominal = ctx.layout.nominal();
         let value = f64::from(self.value);
         let fits = nominal
             .bounds()
@@ -50,7 +44,7 @@ impl Node for Constant {
         } else {
             Range::from_bounds(value, value)
         };
-        self.layout.output_layouts(ctx, range)
+        ctx.layout.output_layouts(ctx, range)
     }
 
     fn process(&mut self, ctx: &ProcessContext, _inputs: &[&Signal], outputs: &mut [Signal]) {

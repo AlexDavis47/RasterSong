@@ -13,9 +13,10 @@
 //! Every control can be reset to its default with Alt+click or from its right-click menu.
 
 use eframe::egui::{self, Color32, CornerRadius, Rect, Response, Sense, Stroke, Ui, pos2, vec2};
-use rastersong_engine::{ModMode, ModScale, Modulation, ParamKind, ParamSpec};
+use rastersong_engine::{MODULATION_AMOUNT_LIMITS, ModMode, Modulation, ParamSpec, range_span};
 
 use crate::theme::Theme;
+use crate::value_box::ValueBox;
 
 /// A number parameter as the field shows it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -26,43 +27,29 @@ pub struct NumberRange {
     pub soft: (f64, f64),
     /// The values the node accepts.
     pub limits: (f64, f64),
+    /// Only whole numbers are offered: the handle jumps between them and typed values round.
+    pub whole: bool,
 }
 
 impl NumberRange {}
 
-/// Whether a track showing `range` maps logarithmically.
-fn is_logarithmic(range: (f64, f64)) -> bool {
-    range.0 > 0.0 && range.1 / range.0 >= 1000.0
-}
-
 /// Position `0..=1` of `value` along a track showing `range`.
-pub fn to_fraction(value: f64, range: (f64, f64), logarithmic: bool) -> f64 {
+pub fn to_fraction(value: f64, range: (f64, f64)) -> f64 {
     let (lo, hi) = range;
     if hi <= lo {
         return 0.0;
     }
-    let t = if logarithmic && lo > 0.0 {
-        (value.max(lo) / lo).ln() / (hi / lo).ln()
-    } else {
-        (value - lo) / (hi - lo)
-    };
-    t.clamp(0.0, 1.0)
+    ((value - lo) / (hi - lo)).clamp(0.0, 1.0)
 }
 
 /// The value at position `t` (`0..=1`) along a track showing `range`, rounded to a precision that
 /// suits the range so dragged values come out tidy.
-pub fn from_fraction(t: f64, range: (f64, f64), logarithmic: bool) -> f64 {
+pub fn from_fraction(t: f64, range: (f64, f64)) -> f64 {
     let (lo, hi) = range;
     let t = t.clamp(0.0, 1.0);
-    if logarithmic && lo > 0.0 {
-        let value = lo * (hi / lo).powf(t);
-        // Three significant digits.
-        round_to_power_of_ten(value, value.log10().floor() as i32 - 2)
-    } else {
-        let value = lo + (hi - lo) * t;
-        let exponent = ((hi - lo) / 1000.0).log10().floor() as i32;
-        round_to_power_of_ten(value, exponent).clamp(lo, hi)
-    }
+    let value = lo + (hi - lo) * t;
+    let exponent = ((hi - lo) / 1000.0).log10().floor() as i32;
+    round_to_power_of_ten(value, exponent).clamp(lo, hi)
 }
 
 /// `value` rounded to a multiple of `10^exponent`. Dividing by a whole power of ten for negative
@@ -138,27 +125,26 @@ pub fn param_field(
     id_salt: &str,
     value: &mut f64,
     range: NumberRange,
-    track_width: f32,
-    value_width: f32,
+    (track_width, value_width): (f32, f32),
     mut modulated: Option<Modulated>,
+    custom: &mut Option<(f64, f64)>,
 ) -> FieldResponse {
     let id = ui.make_persistent_id(id_salt);
-    // The track's range is stored per field. It starts as the usual range, grows to include any
-    // value typed beyond it, and can be set or reset from the track's right-click menu.
-    let range_id = id.with("range");
-    let custom: Option<(f64, f64)> = ui.data_mut(|d| d.get_persisted(range_id));
+    // The track's range is the node's to keep (`custom`, saved in the graph, where modulation
+    // is held to it). It starts as the usual range, grows to include any value typed beyond
+    // it, and can be set or reset from the track's right-click menu.
     let mut shown = custom.unwrap_or(range.soft);
     if *value < shown.0 || *value > shown.1 {
         let v = value.clamp(range.limits.0, range.limits.1);
         shown = (shown.0.min(v), shown.1.max(v));
-        ui.data_mut(|d| d.insert_persisted(range_id, shown));
+        *custom = Some(shown);
     }
     let before = (*value, modulated.as_ref().map(|m| *m.modulation));
     let mut response = FieldResponse::default();
 
     match modulated.as_mut() {
         Some(m) => {
-            let knob = amount_knob(ui, m, *value, shown);
+            let knob = amount_knob(ui, m, shown);
             response.disconnect = knob.disconnect;
         }
         None => {
@@ -192,14 +178,14 @@ pub fn param_field(
             ui.horizontal(|ui| {
                 ui.label("Min");
                 ui.add(
-                    egui::DragValue::new(&mut new_range.0)
+                    ValueBox::new(&mut new_range.0)
                         .range(range.limits.0..=range.limits.1)
                         .speed(((shown.1 - shown.0) / 300.0).max(1e-6))
                         .max_decimals(3),
                 );
                 ui.label("Max");
                 ui.add(
-                    egui::DragValue::new(&mut new_range.1)
+                    ValueBox::new(&mut new_range.1)
                         .range(range.limits.0..=range.limits.1)
                         .speed(((shown.1 - shown.0) / 300.0).max(1e-6))
                         .max_decimals(3),
@@ -217,28 +203,30 @@ pub fn param_field(
         *value = range.default;
     }
     if reset_range {
-        ui.data_mut(|d| d.remove::<(f64, f64)>(range_id));
+        *custom = None;
         shown = range.soft;
     } else if new_range != shown && new_range.0 < new_range.1 {
         shown = new_range;
         *value = value.clamp(shown.0, shown.1);
-        ui.data_mut(|d| d.insert_persisted(range_id, shown));
+        *custom = Some(shown);
     }
-    let logarithmic = is_logarithmic(shown);
     if (track.clicked() || track.dragged())
         && !ui.input(|i| i.modifiers.alt)
         && let Some(p) = track.interact_pointer_pos()
     {
         let t = f64::from((p.x - rect.left()) / rect.width());
-        *value = from_fraction(t, shown, logarithmic);
+        *value = from_fraction(t, shown);
+        if range.whole {
+            *value = value.round().clamp(range.limits.0, range.limits.1);
+        }
     }
 
-    let fraction = |v: f64| to_fraction(v, shown, logarithmic) as f32;
+    let fraction = |v: f64| to_fraction(v, shown) as f32;
     let rail = Rect::from_center_size(rect.center(), vec2(rect.width() - 8.0, 4.0));
     let x = |v: f64| rail.left() + rail.width() * fraction(v);
     paint_rail(ui, rail, x(*value));
     if let Some(m) = &modulated {
-        let (lo, hi) = m.spec.modulated_range(*value, *m.modulation);
+        let (lo, hi) = m.spec.modulated_range(*value, *m.modulation, shown);
         paint_range(ui, rail, x(lo), x(hi), m.color);
     }
     paint_handle(ui, &track, pos2(x(*value), rect.center().y), rect.height());
@@ -262,21 +250,18 @@ pub fn param_field(
         paint_ghost(ui, pos2(x(live.0), rect.center().y), rect.height(), live.1);
     }
 
-    let speed = if logarithmic {
-        value.abs().max(range.soft.0) * 0.01
-    } else {
-        (shown.1 - shown.0) / 300.0
-    };
+    let speed = (shown.1 - shown.0) / 300.0;
     let value_box = ui
-        .add_sized(
-            vec2(value_width, height),
-            egui::DragValue::new(value)
+        .add(
+            ValueBox::new(value)
                 .range(range.limits.0..=range.limits.1)
                 .speed(speed)
-                .max_decimals(3),
+                .max_decimals(if range.whole { 0 } else { 3 })
+                .whole(range.whole)
+                .size(vec2(value_width, height)),
         )
         .on_hover_text(
-            "Drag, or double-click to type. Values beyond the slider are allowed. \
+            "Drag, or click to type. Values beyond the slider are allowed. \
              Alt+click or right-click to reset.",
         );
     if reset_gesture(ui, &value_box, *value != range.default) {
@@ -287,38 +272,42 @@ pub fn param_field(
     response
 }
 
-/// How far the knob turns for a full amount: the usual range for linear parameters, this many
-/// octaves for octave-scaled ones.
-const KNOB_OCTAVES: f64 = 4.0;
+/// The amounts the knob and both boxes accept, in percent of the slider's range.
+const AMOUNT_LIMITS: (f64, f64) = MODULATION_AMOUNT_LIMITS;
 
-/// The amount a full turn of the knob stands for: the field's slider range, so the knob is as
-/// fine or coarse as the slider.
-fn knob_span(spec: &ParamSpec, track: (f64, f64)) -> f64 {
-    match (spec.scale, spec.kind) {
-        (ModScale::Octaves, _) => KNOB_OCTAVES,
-        (_, ParamKind::Number { .. }) => (track.1 - track.0).max(1e-9),
-        _ => 1.0,
-    }
-}
+/// The amount a full turn of the knob stands for, in percent: the whole span.
+const KNOB_PERCENT: f64 = 100.0;
 
-/// The amount as text: `±0.5` both ways, `+0.5` or `-0.5` one way, in octaves where they apply.
-pub fn amount_text(spec: &ParamSpec, modulation: Modulation) -> String {
-    let unit = match spec.scale {
-        ModScale::Octaves => " oct",
-        ModScale::Linear if spec.unit.is_empty() => "",
-        ModScale::Linear => spec.unit,
-    };
-    let sign = match modulation.mode {
+/// The sign a modulation's amount is shown with: `±` both ways, `+` one way up, nothing for a
+/// negative amount, which carries its own minus.
+fn amount_sign(modulation: Modulation) -> &'static str {
+    match modulation.mode {
         ModMode::Bipolar => "±",
         ModMode::Unipolar if modulation.amount >= 0.0 => "+",
         ModMode::Unipolar => "",
+    }
+}
+
+/// The amount as text: a percentage of the parameter's span, `±25%` both ways, `+25%` or `-25%`
+/// one way.
+pub fn amount_text(modulation: Modulation) -> String {
+    format!("{}{:.1}%", amount_sign(modulation), modulation.amount).replace(".0%", "%")
+}
+
+/// What the amount comes to in the parameter's own terms, for a tooltip: how far a full signal
+/// moves the value, `±3.3 bits` or `+2.5 Hz`. Both ways, that is either side of the value.
+pub fn amount_effect(spec: &ParamSpec, modulation: Modulation, range: (f64, f64)) -> String {
+    let sweep = spec.modulation_sweep(modulation, range);
+    let unit = spec.unit;
+    let space = if unit.is_empty() { "" } else { " " };
+    let value = format!("{:.2}", sweep.abs()).replace(".00", "");
+    let value = value.trim_end_matches('0').trim_end_matches('.');
+    let sign = match modulation.mode {
+        ModMode::Bipolar => "±",
+        ModMode::Unipolar if sweep >= 0.0 => "+",
+        ModMode::Unipolar => "-",
     };
-    let space = if unit.is_empty() || unit == " oct" {
-        ""
-    } else {
-        " "
-    };
-    format!("{sign}{:.3}{space}{unit}", modulation.amount).replace(".000", "")
+    format!("{sign}{value}{space}{unit}")
 }
 
 #[derive(Debug, Default)]
@@ -328,11 +317,10 @@ struct KnobResponse {
 
 /// The amount knob: an arc showing the amount in the wire's colour. Drag to change it,
 /// double-click to reset it, right-click for the modulator's settings.
-fn amount_knob(ui: &mut Ui, m: &mut Modulated, base: f64, track: (f64, f64)) -> KnobResponse {
+fn amount_knob(ui: &mut Ui, m: &mut Modulated, range: (f64, f64)) -> KnobResponse {
     let mut result = KnobResponse::default();
     let size = vec2(GUTTER_WIDTH, ui.spacing().interact_size.y);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
-    let span = knob_span(m.spec, track);
     let modulation = &mut *m.modulation;
     if response.dragged_by(egui::PointerButton::Primary) {
         // Right and up turn it up. Shift for fine control.
@@ -342,12 +330,11 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated, base: f64, track: (f64, f64)) -> 
         } else {
             1.0
         };
-        modulation.amount += f64::from(delta.x - delta.y) / 150.0 * span * fine;
-        if modulation.mode == ModMode::Bipolar {
-            modulation.amount = modulation.amount.max(0.0);
-        }
+        modulation.amount = (modulation.amount
+            + f64::from(delta.x - delta.y) / 150.0 * KNOB_PERCENT * fine)
+            .clamp(AMOUNT_LIMITS.0, AMOUNT_LIMITS.1);
     }
-    let default_amount = m.spec.default_modulation_amount(base);
+    let default_amount = m.spec.default_modulation_amount();
     if response.double_clicked() || alt_clicked(ui, &response) {
         modulation.amount = default_amount;
     }
@@ -366,7 +353,7 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated, base: f64, track: (f64, f64)) -> 
         ui.visuals().widgets.inactive.bg_fill,
         Stroke::new(1.0, visuals.bg_stroke.color),
     );
-    let turn = (modulation.amount / span).clamp(-1.0, 1.0) as f32 * KNOB_SWEEP;
+    let turn = (modulation.amount / KNOB_PERCENT).clamp(-1.0, 1.0) as f32 * KNOB_SWEEP;
     let arc = |from: f32, to: f32| {
         let steps = 16;
         (0..=steps)
@@ -392,8 +379,9 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated, base: f64, track: (f64, f64)) -> 
     );
 
     let response = response.on_hover_text(format!(
-        "Modulation {}. Drag to change, double-click or Alt+click to reset, right-click for options.",
-        amount_text(m.spec, *modulation)
+        "Modulation {} of the range, about {}. Drag to change, double-click or Alt+click to reset, right-click for options.",
+        amount_text(*modulation),
+        amount_effect(m.spec, *modulation, range)
     ));
     // Clicks inside don't close it, so its fields can be typed into.
     let menu = egui::Popup::context_menu(&response)
@@ -409,7 +397,6 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated, base: f64, track: (f64, f64)) -> 
             .clicked()
         {
             modulation.mode = ModMode::Bipolar;
-            modulation.amount = modulation.amount.abs();
         }
         if ui
             .radio(!both, "One way")
@@ -422,22 +409,46 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated, base: f64, track: (f64, f64)) -> 
         }
         ui.horizontal(|ui| {
             ui.label("Amount");
-            let unit = match m.spec.scale {
-                ModScale::Octaves => " oct".to_owned(),
-                ModScale::Linear if m.spec.unit.is_empty() => String::new(),
-                ModScale::Linear => format!(" {}", m.spec.unit),
-            };
-            let range = match modulation.mode {
-                ModMode::Bipolar => 0.0..=f64::INFINITY,
-                ModMode::Unipolar => f64::NEG_INFINITY..=f64::INFINITY,
-            };
             ui.add(
-                egui::DragValue::new(&mut modulation.amount)
-                    .range(range)
-                    .speed(span / 300.0)
-                    .suffix(unit)
-                    .max_decimals(3),
+                ValueBox::new(&mut modulation.amount)
+                    .range(AMOUNT_LIMITS.0..=AMOUNT_LIMITS.1)
+                    .speed(0.3)
+                    .suffix("%")
+                    .max_decimals(1),
+            )
+            .on_hover_text(
+                "How far a full signal moves the value, as a percentage of the slider's range.",
             );
+        });
+        // The same amount in the parameter's own terms, for when you know the distance you want.
+        ui.horizontal(|ui| {
+            ui.label(match modulation.mode {
+                ModMode::Bipolar => "Either side",
+                ModMode::Unipolar => "Moves by",
+            });
+            let unit = if m.spec.unit.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", m.spec.unit)
+            };
+            let mut sweep = m.spec.modulation_sweep(*modulation, range);
+            let span = range_span(range);
+            if ui
+                .add(
+                    ValueBox::new(&mut sweep)
+                        .range(-span..=span)
+                        .speed(span / 300.0)
+                        .suffix(&unit)
+                        .max_decimals(3),
+                )
+                .on_hover_text(
+                    "The same amount in the parameter's own unit: how far a full signal moves \
+                     the value (either side of it, both ways).",
+                )
+                .changed()
+            {
+                modulation.amount = m.spec.modulation_amount_for_sweep(sweep, range);
+            }
         });
         if ui
             .add_enabled(
@@ -527,45 +538,147 @@ mod tests {
         default: 40.0,
         soft: (0.01, 100_000.0),
         limits: (1e-6, 1e9),
+        whole: false,
     };
     const DEPTH: NumberRange = NumberRange {
         default: 0.0,
         soft: (-10.0, 10.0),
         limits: (f64::NEG_INFINITY, f64::INFINITY),
+        whole: false,
     };
 
     #[test]
     fn positions_and_values_map_both_ways() {
         let range = DEPTH.soft;
-        assert_eq!(to_fraction(0.0, range, false), 0.5);
-        assert_eq!(from_fraction(0.75, range, false), 5.0);
-        assert_eq!(from_fraction(2.0, range, false), 10.0, "clamped");
+        assert_eq!(to_fraction(0.0, range), 0.5);
+        assert_eq!(from_fraction(0.75, range), 5.0);
+        assert_eq!(from_fraction(2.0, range), 10.0, "clamped");
 
-        assert!(is_logarithmic(CUTOFF.soft) && !is_logarithmic(DEPTH.soft));
         let range = CUTOFF.soft;
-        let middle = from_fraction(0.5, range, true);
-        assert!((middle - 31.6).abs() < 0.05, "{middle}");
-        assert!((to_fraction(middle, range, true) - 0.5).abs() < 1e-3);
+        let middle = from_fraction(0.5, range);
+        assert!((middle - 50_000.0).abs() < 50.0, "{middle}");
+        assert!((to_fraction(middle, range) - 0.5).abs() < 1e-3);
     }
 
     #[test]
     fn amounts_read_with_their_direction_and_unit() {
         use rastersong_engine::{ModMode, Modulation, ParamSpec};
         let feedback = ParamSpec::number("feedback", "Feedback", 0.0, 0.0, 1.0, "");
-        let cutoff = ParamSpec::number("cutoff", "Cutoff", 40.0, 1.0, 1e5, "").octaves();
         let bits = ParamSpec::number("bits", "Bits", 4.0, 1.0, 24.0, "").unit("bits");
-        let m = |amount, mode| Modulation { amount, mode };
-        assert_eq!(amount_text(&feedback, m(0.25, ModMode::Bipolar)), "±0.250");
-        assert_eq!(amount_text(&feedback, m(-0.5, ModMode::Unipolar)), "-0.500");
-        assert_eq!(amount_text(&cutoff, m(1.0, ModMode::Bipolar)), "±1 oct");
-        assert_eq!(amount_text(&bits, m(2.0, ModMode::Unipolar)), "+2 bits");
+        let m = |amount, mode| Modulation {
+            amount,
+            mode,
+            overshoot: false,
+        };
+        assert_eq!(amount_text(m(25.0, ModMode::Bipolar)), "±25%");
+        assert_eq!(amount_text(m(-12.5, ModMode::Unipolar)), "-12.5%");
+        assert_eq!(amount_text(m(100.0, ModMode::Unipolar)), "+100%");
+        // One rule in both modes: the amount is how far a full signal moves the value, as a share
+        // of the range.
+        assert_eq!(
+            amount_effect(&feedback, m(50.0, ModMode::Bipolar), (0.0, 1.0)),
+            "±0.5"
+        );
+        assert_eq!(
+            amount_effect(&feedback, m(-50.0, ModMode::Unipolar), (0.0, 1.0)),
+            "-0.5"
+        );
+        assert_eq!(
+            amount_effect(&bits, m(10.0, ModMode::Unipolar), (1.0, 24.0)),
+            "+2.3 bits"
+        );
+        // The slider's own range, not the node's usual one, is what the percentage is of.
+        assert_eq!(
+            amount_effect(&bits, m(50.0, ModMode::Bipolar), (1.0, 5.0)),
+            "±2 bits"
+        );
+    }
+
+    /// The amount knob is the percentage box: dragged far either way it stops at the ends.
+    #[test]
+    fn the_knob_stops_at_the_ends_of_the_percentage() {
+        use eframe::egui::{Event, Modifiers, PointerButton, pos2};
+        use egui_kittest::Harness;
+        use rastersong_engine::{ModMode, Modulation, ParamSpec};
+
+        let spec = ParamSpec::number("time", "Time", 1.0, 0.0, 10.0, "");
+        let state = (
+            5.0f64,
+            Modulation {
+                amount: 25.0,
+                mode: ModMode::Unipolar,
+                overshoot: false,
+            },
+            None::<(f64, f64)>,
+        );
+        let mut harness = Harness::new_ui_state(
+            |ui, (value, modulation, custom)| {
+                let range = NumberRange {
+                    default: 1.0,
+                    soft: (0.0, 10.0),
+                    limits: (0.0, 10.0),
+                    whole: false,
+                };
+                let modulated = Modulated {
+                    spec: &spec,
+                    modulation,
+                    color: Color32::LIGHT_BLUE,
+                    live: None,
+                };
+                ui.horizontal(|ui| {
+                    param_field(
+                        ui,
+                        "t",
+                        value,
+                        range,
+                        (100.0, 40.0),
+                        Some(modulated),
+                        custom,
+                    );
+                });
+            },
+            state,
+        );
+        harness.run();
+        // The knob is the first thing in the row.
+        let top = harness.ctx.content_rect().left_top();
+        let knob = top + vec2(GUTTER_WIDTH / 2.0 + 8.0, 20.0);
+        let drag = |harness: &mut Harness<'_, _>, dy: f32| {
+            harness.event(Event::PointerMoved(knob));
+            harness.run_steps(1);
+            harness.event(Event::PointerButton {
+                pos: knob,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            });
+            harness.run_steps(1);
+            for step in 1..=10 {
+                harness.event(Event::PointerMoved(pos2(
+                    knob.x,
+                    knob.y + dy * step as f32 / 10.0,
+                )));
+                harness.run_steps(1);
+            }
+            harness.event(Event::PointerButton {
+                pos: knob,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            });
+            harness.run_steps(1);
+        };
+        drag(&mut harness, -2000.0);
+        assert_eq!(harness.state().1.amount, 100.0, "up stops at 100%");
+        drag(&mut harness, 8000.0);
+        assert_eq!(harness.state().1.amount, -100.0, "down stops at -100%");
     }
 
     #[test]
     fn dragged_values_are_tidy() {
-        let value = from_fraction(0.123_456, (0.0, 1.0), false);
+        let value = from_fraction(0.123_456, (0.0, 1.0));
         assert_eq!(value, 0.123);
-        let value = from_fraction(0.123_456, (0.0, 1000.0), false);
+        let value = from_fraction(0.123_456, (0.0, 1000.0));
         assert_eq!(value, 123.0);
     }
 }

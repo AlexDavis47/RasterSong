@@ -18,8 +18,10 @@ params! { Pack {
         1.0,
         MAX_CHANNELS as f64,
         "How many channels each pixel gets: 3 for RGB, 2 for stereo",
+    ).integer()
+    .fixed(
+        "The number of channels changes the signal's layout, which the graph is compiled for and can't change per sample",
     )
-    .fixed()
     .limits(1.0, 64.0),
 } }
 
@@ -77,6 +79,7 @@ mod tests {
                 connected: &[true],
                 sources: &sources,
                 output: Layout::rgb(2, 2),
+                layout: Default::default(),
                 output_count: 1,
             })
         };

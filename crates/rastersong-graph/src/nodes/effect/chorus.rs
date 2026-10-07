@@ -1,6 +1,6 @@
 use crate::dsp::{DelayLine, mix};
 use crate::nodes::support::settle_frames;
-use crate::nodes::{Category, NodeKind, NodeSpec, TimeUnit};
+use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Chorus: the signal mixed with a few slightly delayed copies. It has no oscillator of its own:
@@ -9,7 +9,7 @@ use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 #[derive(Debug)]
 pub struct Chorus {
     time: f64,
-    unit: TimeUnit,
+    unit: Unit,
     voices: usize,
     spread: f64,
     mix: f32,
@@ -30,9 +30,8 @@ params! { Chorus {
     )
     .exposed()
     .limits(0.0, 1000.0),
-    UNIT: TimeUnit::param("ms", "Unit for the time"),
-    VOICES: ParamSpec::number("voices", "Voices", 2.0, 1.0, 4.0, "How many delayed copies are mixed in")
-        .fixed(),
+    UNIT: Unit::time_param("ms", "Unit for the time"),
+    VOICES: ParamSpec::number("voices", "Voices", 2.0, 1.0, 4.0, "How many delayed copies are mixed in").integer(),
     SPREAD: ParamSpec::number(
         "spread",
         "Spread",
@@ -40,16 +39,8 @@ params! { Chorus {
         0.0,
         0.6,
         "How far apart the copies' delays are, as a fraction of the time",
-    )
-    .fixed(),
-    MIX: ParamSpec::number(
-        "mix",
-        "Mix",
-        0.5,
-        0.0,
-        1.0,
-        "0 is the dry input, 1 is only the copies",
     ),
+    MIX: ParamSpec::mix(),
 } }
 
 impl NodeKind for Chorus {
@@ -59,9 +50,9 @@ impl NodeKind for Chorus {
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
-        r#"{ "time": 0.5, "unit": "rows", "voices": 3 }"#,
+        r#"{ "time": 0.5, "unit": "row", "voices": 3 }"#,
         r#"{ "time": 12, "voices": 4, "spread": 0.6, "mix": 0.8 }"#,
-        r#"{ "time": 1, "unit": "rows", "voices": 1 }"#,
+        r#"{ "time": 1, "unit": "row", "voices": 1 }"#,
     ];
     const BENCH: Option<&'static str> = Some(r#"{ "voices": 3 }"#);
 
@@ -79,17 +70,26 @@ impl NodeKind for Chorus {
     }
 }
 
-impl Chorus {
-    /// The factor voice `k` multiplies the time by: evenly spread around 1.
-    fn factor(&self, k: usize) -> f64 {
-        1.0 + self.spread * (k as f64 - (self.voices - 1) as f64 / 2.0)
-    }
+/// The factor voice `k` of `voices` multiplies the time by: evenly spread around 1.
+fn factor(k: usize, voices: usize, spread: f64) -> f64 {
+    1.0 + spread * (k as f64 - (voices - 1) as f64 / 2.0)
 }
+
+/// A voice count from a (possibly modulated) value: whole, from one to the most there is room for.
+fn voice_count(value: f64) -> usize {
+    value.round().clamp(1.0, MAX_VOICES) as usize
+}
+
+/// The most voices there are, which the delay line is sized for.
+const MAX_VOICES: f64 = 4.0;
 
 impl Node for Chorus {
     fn prepare(&mut self, ctx: &PrepareContext) {
         self.unit_samples = self.unit.samples(ctx);
-        let widest = self.factor(self.voices - 1).max(1.0);
+        // The widest any voice reaches, at the most voices and the widest spread either may take.
+        let voices = voice_count(ctx.param_max(Self::VOICES, self.voices as f64));
+        let spread = ctx.param_max(Self::SPREAD, self.spread).max(0.0);
+        let widest = factor(voices - 1, voices, spread).max(1.0);
         self.max_delay = ctx.param_max(Self::TIME, self.time) * self.unit_samples * widest;
         self.line = DelayLine::new(self.max_delay.ceil() as usize + 1);
     }
@@ -97,14 +97,16 @@ impl Node for Chorus {
     fn process(&mut self, ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
         let time = ctx.value(Self::TIME, self.time);
         let amount = ctx.value(Self::MIX, f64::from(self.mix));
-        let weight = 1.0 / self.voices as f32;
+        let voices = ctx.value(Self::VOICES, self.voices as f64);
+        let spread = ctx.value(Self::SPREAD, self.spread);
         for (i, (out, &x)) in outputs[0].data.iter_mut().zip(&inputs[0].data).enumerate() {
             self.line.push(x);
             let base = time.at64(i) * self.unit_samples;
-            let wet: f32 = (0..self.voices)
-                .map(|k| self.line.read(base * self.factor(k)))
+            let (voices, spread) = (voice_count(voices.at64(i)), spread.at64(i));
+            let wet: f32 = (0..voices)
+                .map(|k| self.line.read(base * factor(k, voices, spread)))
                 .sum::<f32>()
-                * weight;
+                / voices as f32;
             *out = mix(x, wet, amount.at(i));
         }
     }
@@ -134,7 +136,7 @@ mod tests {
         // One row is the 8 sample block, so a quarter row is 2 samples.
         let mut n = node(
             "chorus",
-            r#"{ "time": 0.25, "unit": "rows", "voices": 1, "mix": 1 }"#,
+            r#"{ "time": 0.25, "unit": "row", "voices": 1, "mix": 1 }"#,
             8,
             8.0,
             &[true],
@@ -149,7 +151,7 @@ mod tests {
         // Two voices at 1 and 3 samples (time 2, spread 0.5): the average of both delays.
         let mut n = node(
             "chorus",
-            r#"{ "time": 0.25, "unit": "rows", "voices": 2, "spread": 0.5, "mix": 1 }"#,
+            r#"{ "time": 0.25, "unit": "row", "voices": 2, "spread": 0.5, "mix": 1 }"#,
             8,
             8.0,
             &[true],

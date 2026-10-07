@@ -6,9 +6,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{Result, bail};
-use rastersong_graph::{
-    Category, ModScale, NodeType, ParamKind, ParamSpec, Range, Registry, TagRule,
-};
+use rastersong_graph::{Category, NodeType, ParamKind, ParamSpec, Range, Registry, TagRule};
 
 use crate::util::workspace_root;
 
@@ -115,7 +113,7 @@ fn node(out: &mut String, t: &NodeType) {
                 default(p),
                 range(p),
                 modulation(p),
-                p.help
+                help(p)
             );
         }
         out.push('\n');
@@ -185,11 +183,33 @@ fn range(p: &ParamSpec) -> String {
     }
 }
 
-fn modulation(p: &ParamSpec) -> &'static str {
-    match (p.modulatable, p.scale) {
-        (false, _) => "no",
-        (true, ModScale::Linear) => "yes",
-        (true, ModScale::Octaves) => "yes, in octaves",
+/// The help text, with the rule for when the parameter is used, if it has one.
+fn help(p: &ParamSpec) -> String {
+    match p.when {
+        None => p.help.to_owned(),
+        Some(w) => {
+            let values = w
+                .values
+                .iter()
+                .map(|v| format!("`{v}`"))
+                .collect::<Vec<_>>()
+                .join(" or ");
+            format!(
+                "{}. Used when `{}` is {values}.",
+                p.help.trim_end_matches('.'),
+                w.param
+            )
+        }
+    }
+}
+
+fn modulation(p: &ParamSpec) -> String {
+    if p.modulatable {
+        "yes".to_owned()
+    } else if p.locked.is_empty() {
+        "no".to_owned()
+    } else {
+        format!("no: {}", p.locked)
     }
 }
 

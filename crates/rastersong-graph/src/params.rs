@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::nodes::Choice;
-use crate::{ModMode, Modulation, ParamValue};
+use crate::{MODULATION_AMOUNT_LIMITS, ModMode, Modulation, ParamValue};
 
 /// One parameter of a node type.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -21,20 +21,33 @@ pub struct ParamSpec {
     pub modulatable: bool,
     /// Whether the editor shows its modulation pin on the node until the user hides it.
     pub exposed: bool,
-    /// How a modulation amount applies to the value.
-    pub scale: ModScale,
+    /// Whether only whole numbers make sense (counts, divisions, steps): the slider and value box
+    /// snap to them, loaded values are rounded, and a modulated value is rounded at every sample.
+    pub integer: bool,
+    /// Why a signal can't modulate it (set by [`Self::fixed`]); empty when it can.
+    pub locked: &'static str,
+    /// When the parameter means something: the editor hides it (and the docs say so) while
+    /// the rule fails. A hidden parameter keeps its value and still saves.
+    pub when: Option<ShownWhen>,
 }
 
-/// How a modulation amount applies to a parameter's value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ModScale {
-    /// The amount is in the parameter's own unit: `base + amount × signal`.
-    #[default]
-    Linear,
-    /// The amount is in octaves: `base × 2^(amount × signal)`. For frequencies and other
-    /// parameters heard or seen on a logarithmic scale.
-    Octaves,
+/// A parameter that only matters while another, a choice, has one of some values.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShownWhen {
+    /// Name of the choice parameter that decides.
+    pub param: &'static str,
+    /// The choices of that parameter for which this one is used.
+    pub values: &'static [&'static str],
 }
+
+/// The size of a range, zero for one that isn't finite.
+pub fn range_span(range: (f64, f64)) -> f64 {
+    let span = range.1 - range.0;
+    if span.is_finite() { span.max(0.0) } else { 0.0 }
+}
+
+/// How much a newly connected signal moves a parameter, in percent of its span.
+pub const DEFAULT_MODULATION_PERCENT: f64 = 25.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ParamKind {
@@ -80,8 +93,24 @@ impl ParamSpec {
             },
             modulatable: true,
             exposed: false,
-            scale: ModScale::Linear,
+            integer: false,
+            locked: "",
+            when: None,
         }
+    }
+
+    /// The dry/wet blend every effect with a `mix` shares: 0 is the node's input untouched, 1 is
+    /// only what the node made of it, and in between crossfades the two ([`crate::dsp::mix`]).
+    /// Always starts at 1, fully processed.
+    pub const fn mix() -> Self {
+        Self::number(
+            "mix",
+            "Mix",
+            1.0,
+            0.0,
+            1.0,
+            "0 is the dry input, 1 is only the processed signal; in between crossfades the two",
+        )
     }
 
     pub const fn choice(
@@ -99,7 +128,9 @@ impl ParamSpec {
             kind: ParamKind::Choice { options, default },
             modulatable: false,
             exposed: false,
-            scale: ModScale::Linear,
+            integer: false,
+            locked: "",
+            when: None,
         }
     }
 
@@ -117,7 +148,9 @@ impl ParamSpec {
             kind: ParamKind::Text { default },
             modulatable: false,
             exposed: false,
-            scale: ModScale::Linear,
+            integer: false,
+            locked: "",
+            when: None,
         }
     }
 
@@ -127,56 +160,130 @@ impl ParamSpec {
         self
     }
 
-    /// Can't be modulated: for parameters that are too costly or meaningless to change while
-    /// rendering, such as filter crossovers.
-    pub const fn fixed(mut self) -> Self {
+    /// A number that can only be whole. The usual range and limits should be whole too.
+    pub const fn integer(mut self) -> Self {
+        self.integer = true;
+        self
+    }
+
+    /// Only used while the choice parameter `param` is one of `values`. The editor hides it the
+    /// rest of the time, unless a signal is connected to it, and says why it is unused.
+    pub const fn shown_when(
+        mut self,
+        param: &'static str,
+        values: &'static [&'static str],
+    ) -> Self {
+        self.when = Some(ShownWhen { param, values });
+        self
+    }
+
+    /// Whether the parameter is used, given the node's parameters (`value_of` gives a choice
+    /// parameter's current value by name). Always true for one without a rule.
+    pub fn is_used(&self, value_of: impl Fn(&str) -> Option<String>) -> bool {
+        self.when
+            .is_none_or(|w| value_of(w.param).is_some_and(|v| w.values.contains(&v.as_str())))
+    }
+
+    /// Can't be modulated, for the stated reason, which the editor shows on the parameter.
+    /// Modulation is the default and a lock needs a real reason: the value changes the shape of
+    /// what the graph is compiled for, say, not "nobody wrote it".
+    pub const fn fixed(mut self, reason: &'static str) -> Self {
         self.modulatable = false;
         self.exposed = false;
+        self.locked = reason;
         self
     }
 
-    /// Modulation amounts are in octaves.
-    pub const fn octaves(mut self) -> Self {
-        self.scale = ModScale::Octaves;
-        self
-    }
-
-    /// The modulation amount a newly connected signal starts with, around a base value of
-    /// `base`: one octave, or half the base, or a tenth of the usual range when the base is zero.
-    pub fn default_modulation_amount(&self, base: f64) -> f64 {
+    /// The usual range, which the slider shows unless the user has set another; zero-sized for
+    /// anything that isn't a number.
+    pub fn usual_range(&self) -> (f64, f64) {
         match self.kind {
-            ParamKind::Number { .. } if self.scale == ModScale::Octaves => 1.0,
-            ParamKind::Number { min, max, .. } if base == 0.0 => (max - min) / 10.0,
-            ParamKind::Number { .. } => base.abs() / 2.0,
-            _ => 0.0,
+            ParamKind::Number { min, max, .. } => (min, max),
+            _ => (0.0, 0.0),
         }
+    }
+
+    /// The size of the usual range, in the parameter's own unit.
+    pub fn modulation_span(&self) -> f64 {
+        range_span(self.usual_range())
+    }
+
+    /// The modulation amount a newly connected signal starts with, in percent of the span.
+    pub fn default_modulation_amount(&self) -> f64 {
+        DEFAULT_MODULATION_PERCENT
     }
 
     /// The modulation a newly connected signal gets: the default amount, one way.
-    pub fn default_modulation(&self, base: f64) -> Modulation {
+    pub fn default_modulation(&self) -> Modulation {
         Modulation {
-            amount: self.default_modulation_amount(base),
+            amount: self.default_modulation_amount(),
             mode: ModMode::Unipolar,
+            overshoot: false,
         }
     }
 
-    /// The value for one sample `signal` of a modulating signal, before clamping to the limits.
-    pub fn modulated(&self, base: f64, modulation: Modulation, signal: f64) -> f64 {
-        let offset = modulation.amount * f64::from(modulation.mode.shape(signal as f32));
-        match self.scale {
-            ModScale::Linear => base + offset,
-            ModScale::Octaves => base * offset.exp2(),
-        }
+    /// How far a full-scale signal moves the value, in the parameter's unit, for a slider showing
+    /// `range`: the amount, a percentage of that range's size. Both ways it is the distance
+    /// either side of the value.
+    pub fn modulation_sweep(&self, modulation: Modulation, range: (f64, f64)) -> f64 {
+        modulation.amount / 100.0 * range_span(range)
     }
 
-    /// The range a modulated value moves over for a signal within `-1..=1`, within the limits.
-    pub fn modulated_range(&self, base: f64, modulation: Modulation) -> (f64, f64) {
+    /// The amount (percent of the range) whose sweep is `sweep`, the inverse of
+    /// [`Self::modulation_sweep`], held to what an amount can be: for typing a distance in the
+    /// parameter's own unit.
+    pub fn modulation_amount_for_sweep(&self, sweep: f64, range: (f64, f64)) -> f64 {
+        let span = range_span(range);
+        let amount = if span > 0.0 {
+            sweep * 100.0 / span
+        } else {
+            0.0
+        };
+        amount.clamp(MODULATION_AMOUNT_LIMITS.0, MODULATION_AMOUNT_LIMITS.1)
+    }
+
+    /// Where a modulated value is kept: the slider's range, widened to include `base` (which
+    /// the editor keeps inside it anyway), and never past the parameter's limits.
+    pub fn modulation_bounds(&self, base: f64, range: (f64, f64)) -> (f64, f64) {
+        let ParamKind::Number {
+            limit_min,
+            limit_max,
+            ..
+        } = self.kind
+        else {
+            return (f64::MIN, f64::MAX);
+        };
+        (
+            range.0.min(base).max(limit_min),
+            range.1.max(base).min(limit_max),
+        )
+    }
+
+    /// The value for one sample `signal` of a modulating signal, before clamping to the bounds.
+    pub fn modulated(
+        &self,
+        base: f64,
+        modulation: Modulation,
+        signal: f64,
+        range: (f64, f64),
+    ) -> f64 {
+        let shaped = f64::from(modulation.mode.shape(signal as f32));
+        base + self.modulation_sweep(modulation, range) * shaped
+    }
+
+    /// The range a modulated value moves over for a signal within `-1..=1`, within the bounds.
+    pub fn modulated_range(
+        &self,
+        base: f64,
+        modulation: Modulation,
+        range: (f64, f64),
+    ) -> (f64, f64) {
         let ends = match modulation.mode {
             ModMode::Bipolar => [-1.0, 1.0],
             ModMode::Unipolar => [0.0, 1.0],
         };
-        let [a, b] = ends.map(|s| self.modulated(base, modulation, s));
-        let (lo, hi) = self.number_limits().unwrap_or((f64::MIN, f64::MAX));
+        let [a, b] = ends.map(|s| self.modulated(base, modulation, s, range));
+        let (lo, hi) = self.modulation_bounds(base, range);
         (a.min(b).clamp(lo, hi), a.max(b).clamp(lo, hi))
     }
 
@@ -404,33 +511,64 @@ mod tests {
     }
 
     #[test]
-    fn modulation_moves_values_linearly_or_in_octaves() {
-        let linear = ParamSpec::number("time", "Time", 1.0, 0.0, 10.0, "");
-        let octaves = ParamSpec::number("cutoff", "Cutoff", 40.0, 1.0, 1000.0, "").octaves();
+    fn modulation_is_a_percentage_of_the_slider_range() {
+        let spec = ParamSpec::number("time", "Time", 1.0, 0.0, 10.0, "");
+        let range = spec.usual_range();
         let both = |amount| Modulation {
             amount,
             mode: ModMode::Bipolar,
+            overshoot: false,
         };
         let one_way = |amount| Modulation {
             amount,
             mode: ModMode::Unipolar,
+            overshoot: false,
         };
-        assert_eq!(linear.modulated(5.0, both(2.0), -0.5), 4.0);
+        // One rule in both modes: a full signal moves the value amount% of the range from where it is.
+        assert_eq!(spec.modulation_sweep(both(40.0), range), 4.0);
+        assert_eq!(spec.modulation_sweep(one_way(40.0), range), 4.0);
+        assert_eq!(spec.modulated(5.0, both(40.0), 1.0, range), 9.0);
+        assert_eq!(spec.modulated(5.0, both(40.0), -1.0, range), 1.0);
         assert_eq!(
-            linear.modulated(5.0, one_way(-2.0), -0.5),
-            4.0,
+            spec.modulated(5.0, one_way(40.0), -0.5, range),
+            7.0,
             "one way uses |signal|"
         );
-        assert_eq!(octaves.modulated(40.0, both(1.0), 1.0), 80.0);
-        assert_eq!(octaves.modulated(40.0, both(1.0), -1.0), 20.0);
-        // Ranges are clamped to the limits (here the usual range, 0..10).
-        assert_eq!(linear.modulated_range(5.0, both(2.0)), (3.0, 7.0));
-        assert_eq!(linear.modulated_range(9.0, both(2.0)), (7.0, 10.0));
-        assert_eq!(linear.modulated_range(5.0, one_way(-2.0)), (3.0, 5.0));
-        assert_eq!(octaves.modulated_range(40.0, both(2.0)), (10.0, 160.0));
-        assert_eq!(octaves.default_modulation_amount(40.0), 1.0);
-        assert_eq!(linear.default_modulation_amount(4.0), 2.0);
-        assert_eq!(linear.default_modulation_amount(0.0), 1.0);
+        assert_eq!(
+            spec.modulated(5.0, one_way(-20.0), 1.0, range),
+            3.0,
+            "negative turns it down"
+        );
+        // The percentage is of the slider's range, so a narrower slider makes the same amount smaller.
+        assert_eq!(spec.modulation_sweep(both(50.0), (0.0, 4.0)), 2.0);
+        // The value stays inside the range, widened to include the base.
+        assert_eq!(spec.modulated_range(5.0, both(40.0), range), (1.0, 9.0));
+        assert_eq!(spec.modulated_range(9.0, both(40.0), range), (5.0, 10.0));
+        assert_eq!(spec.modulated_range(5.0, one_way(-20.0), range), (3.0, 5.0));
+        assert_eq!(spec.modulated_range(5.0, both(100.0), range), (0.0, 10.0));
+        assert_eq!(
+            spec.modulated_range(5.0, both(100.0), (2.0, 6.0)),
+            (2.0, 6.0)
+        );
+        let wide = ParamSpec::number("t", "T", 1.0, 0.0, 10.0, "").limits(-100.0, 100.0);
+        assert_eq!(
+            wide.modulated_range(50.0, both(40.0), range),
+            (46.0, 50.0),
+            "a base past the range keeps it"
+        );
+        assert_eq!(
+            wide.modulation_bounds(5.0, (-500.0, 500.0)),
+            (-100.0, 100.0),
+            "never past the limits"
+        );
+        // Typing a distance gives the percentage that makes it, held to what an amount can be.
+        let amount = spec.modulation_amount_for_sweep(2.0, range);
+        assert_eq!(spec.modulation_sweep(both(amount), range), 2.0);
+        assert_eq!(spec.modulation_amount_for_sweep(-20.0, range), -100.0);
+        assert_eq!(spec.modulation_amount_for_sweep(50.0, range), 100.0);
+        assert_eq!(spec.modulation_amount_for_sweep(5.0, (3.0, 3.0)), 0.0);
+        assert_eq!(spec.default_modulation_amount(), 25.0);
+        assert_eq!(spec.default_modulation().mode, ModMode::Unipolar);
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use crate::nodes::support::settle_frames;
-use crate::nodes::{Category, GeneratorLayout, NodeKind, NodeSpec, SampleClock};
+use crate::nodes::{Category, NodeKind, NodeSpec, SampleClock};
 use crate::{Layout, LayoutContext, Node, OutputSpec, ParamSpec, Params, PrepareContext};
 use crate::{ProcessContext, Range, Signal};
 
@@ -37,7 +37,6 @@ fn white(seed: u64, index: u64) -> f32 {
 #[derive(Debug)]
 pub struct Noise {
     color: Color,
-    layout: GeneratorLayout,
     seed: u64,
     amplitude: f32,
     offset: f32,
@@ -55,9 +54,7 @@ params! { Noise {
         "white",
         "How the noise is spread over frequencies: white is sharp grain, brown is slow drift, violet is the finest grain",
     ),
-    LAYOUT: GeneratorLayout::PARAM,
-    SEED: ParamSpec::number("seed", "Seed", 0.0, 0.0, 999.0, "Picks which noise; the same seed always gives the same noise")
-        .fixed()
+    SEED: ParamSpec::number("seed", "Seed", 0.0, 0.0, 999.0, "Picks which noise; the same seed always gives the same noise").integer()
         .limits(0.0, 4_000_000_000.0),
     AMPLITUDE: ParamSpec::number(
         "amplitude",
@@ -85,6 +82,7 @@ impl NodeKind for Noise {
     const SPEC: NodeSpec = NodeSpec::new("Noise", Category::Generator)
         .describe("Random values in a chosen colour: grain in video, hiss in audio")
         .params(Self::PARAMS)
+        .takes_layout()
         .inputs(&[])
         .outputs(&[OutputSpec::new("out", "The noise")]);
     const TEST_CONFIGS: &'static [&'static str] = &[
@@ -98,7 +96,6 @@ impl NodeKind for Noise {
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
             color: params.choice_as(Self::COLOR)?,
-            layout: params.choice_as(Self::LAYOUT)?,
             seed: params.number_at(Self::SEED)? as u64,
             amplitude: params.float_at(Self::AMPLITUDE)?,
             offset: params.float_at(Self::OFFSET)?,
@@ -110,9 +107,9 @@ impl NodeKind for Noise {
 }
 
 impl Noise {
-    /// The next noise value in `-1..1` for sample `index`, advancing any filter state.
-    fn next(&mut self, index: u64) -> f32 {
-        let w = white(self.seed, index);
+    /// The next noise value in `-1..1` for sample `index` of the noise picked by `seed`, advancing any filter state.
+    fn next(&mut self, seed: u64, index: u64) -> f32 {
+        let w = white(seed, index);
         match self.color {
             Color::White => w,
             Color::Pink => {
@@ -126,11 +123,11 @@ impl Noise {
                 self.brown = (self.brown + 0.02 * w) / 1.02;
                 (self.brown * 3.5).clamp(-1.0, 1.0)
             }
-            Color::Blue => (w - white(self.seed, index.wrapping_sub(1))) * 0.5,
+            Color::Blue => (w - white(seed, index.wrapping_sub(1))) * 0.5,
             Color::Violet => {
                 let (a, b) = (
-                    white(self.seed, index.wrapping_sub(1)),
-                    white(self.seed, index.wrapping_sub(2)),
+                    white(seed, index.wrapping_sub(1)),
+                    white(seed, index.wrapping_sub(2)),
                 );
                 (w - 2.0 * a + b) * 0.25
             }
@@ -140,7 +137,7 @@ impl Noise {
 
 impl Node for Noise {
     fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
-        self.layout.output_layouts(
+        ctx.layout.output_layouts(
             ctx,
             Range::from_bounds(
                 f64::from(self.offset - self.amplitude.abs()),
@@ -154,8 +151,10 @@ impl Node for Noise {
         let start = self.clock.begin(ctx, data.len());
         let amplitude = ctx.value(Self::AMPLITUDE, f64::from(self.amplitude));
         let offset = ctx.value(Self::OFFSET, f64::from(self.offset));
+        // A seed moved by a signal picks a different noise at every sample.
+        let seed = ctx.value(Self::SEED, self.seed as f64);
         for (i, out) in data.iter_mut().enumerate() {
-            let noise = self.next(start + i as u64);
+            let noise = self.next(seed.at64(i).round().max(0.0) as u64, start + i as u64);
             *out = noise * amplitude.at(i) + offset.at(i);
         }
     }

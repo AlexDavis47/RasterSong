@@ -14,6 +14,11 @@ use rastersong_engine::{
 use rastersong_gui::{App, AudioOut, STARTER_GRAPH};
 
 fn app() -> App {
+    app_with(|_| {})
+}
+
+/// The app with the starter graph changed by `edit`.
+fn app_with(edit: impl FnOnce(&mut GraphDesc)) -> App {
     let backend = FakeBackend::new()
         .with_video(
             "clip",
@@ -32,7 +37,9 @@ fn app() -> App {
                 samples: (0..16_000).map(|i| (i as f32 * 0.05).sin()).collect(),
             },
         );
-    let mut project = Project::new(GraphDesc::from_json(STARTER_GRAPH).unwrap());
+    let mut graph = GraphDesc::from_json(STARTER_GRAPH).unwrap();
+    edit(&mut graph);
+    let mut project = Project::new(graph);
     project.video = Some(PathBuf::from("clip"));
     project
         .audio_tracks
@@ -550,8 +557,8 @@ fn add_node(harness: &mut Harness<'_, App>, search: &str) {
 fn the_inspector_keeps_its_width() {
     // Long units and modulated values used to widen the inspector a little every frame.
     let mut harness = loaded();
-    add_node(&mut harness, "low pass");
-    let lowpass = key(&harness, "lowpass");
+    add_node(&mut harness, "filter");
+    let filter = key(&harness, "filter");
     let audio = key(&harness, "audio");
     let from = harness
         .state()
@@ -561,7 +568,7 @@ fn the_inspector_keeps_its_width() {
     let to = harness
         .state()
         .editor()
-        .pin_screen_pos(lowpass, true, rastersong_gui::editor::param_port(0))
+        .pin_screen_pos(filter, true, rastersong_gui::editor::param_port(2))
         .unwrap();
     drag(&mut harness, from, to);
     let before = harness.state().inspector_rect().width();
@@ -569,9 +576,47 @@ fn the_inspector_keeps_its_width() {
         before < 400.0,
         "the inspector is {before} wide; it starts at 340"
     );
-    select(&mut harness, "lowpass");
+    select(&mut harness, "filter");
     for _ in 0..6 {
         harness.run_steps(10);
+        let width = harness.state().inspector_rect().width();
+        assert!(width <= before + 1.0, "grew from {before} to {width}");
+    }
+}
+
+#[test]
+fn typing_a_very_long_number_keeps_the_inspector_width() {
+    let mut harness = loaded();
+    add_node(&mut harness, "filter");
+    select(&mut harness, "filter");
+    harness.run_steps(3);
+    let panel = harness.state().inspector_rect();
+    let before = panel.width();
+    let center = harness
+        .query_all_by_role(egui::accesskit::Role::SpinButton)
+        .map(|n| n.rect())
+        .find(|r| r.min.x >= panel.left())
+        .expect("a numeric value box in the inspector")
+        .center();
+    // A click turns the value into a text field.
+    press(&mut harness, center, PointerButton::Primary, true);
+    press(&mut harness, center, PointerButton::Primary, false);
+    harness.event(Event::Text(
+        "1234567890123456789012345678901234567890".into(),
+    ));
+    harness.run_steps(3);
+    let field = harness
+        .query_all_by_role(egui::accesskit::Role::TextInput)
+        .find(|n| n.value().is_some_and(|v| v.contains("1234567890")))
+        .expect("the value box is being edited");
+    let (chars, width) = (field.value().unwrap().chars().count(), field.rect().width());
+    assert!(
+        chars <= rastersong_gui::value_box::MAX_CHARS,
+        "{chars} characters"
+    );
+    assert!(width <= 60.0, "the box is {width} wide while typing");
+    for _ in 0..4 {
+        harness.run_steps(5);
         let width = harness.state().inspector_rect().width();
         assert!(width <= before + 1.0, "grew from {before} to {width}");
     }
@@ -746,4 +791,106 @@ fn opening_a_video_with_sound_adds_its_audio_track() {
     // Opening it again doesn't add the track twice.
     app.open_video(PathBuf::from("movie.mp4"));
     assert_eq!(app.project().audio_tracks.len(), 1);
+}
+
+#[test]
+fn ctrl_comma_opens_the_settings_window_with_both_pages() {
+    let mut harness = loaded();
+    assert!(harness.query_by_label("Application").is_none());
+    shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Comma);
+    harness.run_steps(2);
+    harness.get_by_label("Application");
+    harness.get_by_label("Keep input connections when duplicating and pasting");
+    harness.get_by_label("Project").click();
+    harness.run_steps(3);
+    harness.get_by_label("Audio output rate");
+}
+
+#[test]
+fn the_warmup_limit_is_a_project_setting_that_reaches_the_project() {
+    let mut harness = loaded();
+    shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Comma);
+    harness.get_by_label("Project").click();
+    harness.run_steps(3);
+    harness.get_by_label("Max warmup frames");
+    assert_eq!(harness.state().project().max_warmup_frames, 120);
+}
+
+#[test]
+fn whole_number_parameters_round_what_is_typed() {
+    use rastersong_engine::ParamValue;
+    let mut harness = loaded();
+    add_node(&mut harness, "beat");
+    select(&mut harness, "beat");
+    harness.run_steps(3);
+    let panel = harness.state().inspector_rect();
+    // The first number in a Beat's settings is its division, which only makes sense whole.
+    let center = harness
+        .query_all_by_role(egui::accesskit::Role::SpinButton)
+        .map(|n| n.rect())
+        .find(|r| r.min.x >= panel.left())
+        .expect("a numeric value box in the inspector")
+        .center();
+    press(&mut harness, center, PointerButton::Primary, true);
+    press(&mut harness, center, PointerButton::Primary, false);
+    harness.event(Event::Text("3.4".into()));
+    harness.run_steps(2);
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(3);
+    let node = key(&harness, "beat");
+    let value = harness.state().editor().node(node).unwrap().params["division"].clone();
+    assert_eq!(value, ParamValue::Number(3.0));
+}
+
+#[test]
+fn generators_have_a_layout_setting_next_to_the_shared_ones() {
+    let mut harness = loaded();
+    add_node(&mut harness, "beat");
+    select(&mut harness, "beat");
+    harness.run_steps(3);
+    harness.get_by_label("Layout");
+}
+
+fn beat_with(extra: &str) -> impl FnOnce(&mut GraphDesc) {
+    let node = format!(r#"{{ "id": "beat", "type": "beat" {extra} }}"#);
+    move |graph| graph.nodes.push(serde_json::from_str(&node).unwrap())
+}
+
+#[test]
+fn parameters_a_setting_leaves_unused_are_hidden() {
+    // A Beat defaults to the decay shape, which uses neither width nor steps.
+    let mut harness = harness(app_with(beat_with("")));
+    harness.run_steps(3);
+    select(&mut harness, "beat");
+    harness.run_steps(3);
+    harness.get_by_label("Division");
+    assert!(harness.query_by_label("Width").is_none());
+    assert!(harness.query_by_label("Steps").is_none());
+}
+
+#[test]
+fn a_parameter_appears_when_its_setting_makes_it_matter() {
+    let mut harness = harness(app_with(beat_with(r#", "params": { "shape": "pulse" }"#)));
+    harness.run_steps(3);
+    select(&mut harness, "beat");
+    harness.run_steps(3);
+    harness.get_by_label("Width");
+    assert!(harness.query_by_label("Steps").is_none());
+    assert!(harness.query_by_label_contains("Unused").is_none());
+}
+
+#[test]
+fn an_unused_parameter_with_a_wire_stays_visible_and_says_why() {
+    let graph = |graph: &mut GraphDesc| {
+        beat_with("")(graph);
+        graph
+            .connections
+            .push(serde_json::from_str(r#"{ "from": "audio", "to": "beat.@width" }"#).unwrap());
+    };
+    let mut harness = harness(app_with(graph));
+    harness.run_steps(3);
+    select(&mut harness, "beat");
+    harness.run_steps(3);
+    harness.get_by_label("Width");
+    harness.get_by_label_contains("Unused: only applies when Shape is pulse");
 }

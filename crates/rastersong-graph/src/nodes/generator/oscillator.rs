@@ -1,6 +1,6 @@
 use std::f64::consts::TAU;
 
-use crate::nodes::{Category, FreqUnit, GeneratorLayout, NodeKind, NodeSpec, SampleClock};
+use crate::nodes::{Category, NodeKind, NodeSpec, SampleClock, Unit};
 use crate::{Layout, LayoutContext, Node, OutputSpec, ParamSpec, Params, PrepareContext};
 use crate::{ProcessContext, Range, Signal};
 
@@ -13,8 +13,6 @@ choice! {
         Square = "square",
         /// Falls from 1 to -1 each cycle.
         Saw = "saw",
-        /// Rises from -1 to 1 each cycle.
-        Ramp = "ramp",
     }
 }
 
@@ -32,7 +30,6 @@ impl Wave {
                 }
             }
             Self::Saw => 1.0 - 2.0 * phase,
-            Self::Ramp => 2.0 * phase - 1.0,
         }
     }
 }
@@ -46,9 +43,8 @@ impl Wave {
 #[derive(Debug)]
 pub struct Oscillator {
     wave: Wave,
-    layout: GeneratorLayout,
     freq: f64,
-    unit: FreqUnit,
+    unit: Unit,
     phase: f64,
     amplitude: f32,
     offset: f32,
@@ -67,19 +63,17 @@ pub struct Oscillator {
 
 params! { Oscillator {
     WAVE: ParamSpec::choice("wave", "Wave", Wave::OPTIONS, "sine", "The shape of one cycle"),
-    LAYOUT: GeneratorLayout::PARAM,
     FREQ: ParamSpec::number(
         "freq",
         "Frequency",
         8.0,
-        0.0,
+        0.01,
         100.0,
         "Cycles per unit of time or space: how many stripes fit in a row, or how high the tone is",
     )
     .exposed()
-    .limits(0.0, 1_000_000.0)
-    .octaves(),
-    UNIT: FreqUnit::param("Row", "Unit for the frequency (cycles per unit): Row keeps the look at any resolution"),
+    .limits(0.0, 1_000_000.0),
+    UNIT: Unit::freq_param("row", "Unit for the frequency (cycles per unit): Row keeps the look at any resolution"),
     PHASE: ParamSpec::number(
         "phase",
         "Phase",
@@ -88,7 +82,6 @@ params! { Oscillator {
         1.0,
         "Where in the cycle the wave starts, as a fraction of a cycle",
     )
-    .fixed()
     .limits(-1000.0, 1000.0),
     AMPLITUDE: ParamSpec::number(
         "amplitude",
@@ -116,30 +109,31 @@ params! { Oscillator {
         0.0,
         1.0,
         "For the square wave, the fraction of the cycle it stays high",
-    ),
+    )
+    .shown_when("wave", &["square"]),
 } }
 
 impl NodeKind for Oscillator {
     const KIND: &'static str = "oscillator";
     const SPEC: NodeSpec = NodeSpec::new("Oscillator", Category::Generator)
-        .describe("A sine, triangle, square, saw or ramp wave: stripes in video, a tone in audio")
+        .describe("A sine, triangle, square or saw wave: stripes in video, a tone in audio")
         .params(Self::PARAMS)
+        .takes_layout()
         .inputs(&[])
         .outputs(&[OutputSpec::new("out", "The wave")]);
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "wave": "triangle", "freq": 2.5 }"#,
         r#"{ "wave": "square", "pulse_width": 0.25, "phase": 0.3 }"#,
-        r#"{ "wave": "saw", "freq": 1, "unit": "Frame" }"#,
-        r#"{ "wave": "ramp", "freq": 3000, "unit": "Hertz", "amplitude": 1, "offset": 0 }"#,
-        r#"{ "wave": "saw", "freq": 2, "unit": "Beat" }"#,
-        r#"{ "wave": "square", "freq": 0.25, "unit": "Bar" }"#,
+        r#"{ "wave": "saw", "freq": 1, "unit": "frame" }"#,
+        r#"{ "wave": "saw", "freq": 3000, "unit": "second", "amplitude": -1, "offset": 0 }"#,
+        r#"{ "wave": "saw", "freq": 2, "unit": "beat" }"#,
+        r#"{ "wave": "square", "freq": 0.25, "unit": "bar" }"#,
     ];
     const BENCH: Option<&'static str> = Some(r#"{ "wave": "sine", "freq": 12 }"#);
 
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
             wave: params.choice_as(Self::WAVE)?,
-            layout: params.choice_as(Self::LAYOUT)?,
             freq: params.number_at(Self::FREQ)?,
             unit: params.choice_as(Self::UNIT)?,
             phase: params.number_at(Self::PHASE)?,
@@ -158,7 +152,7 @@ impl NodeKind for Oscillator {
 
 impl Node for Oscillator {
     fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
-        self.layout.output_layouts(
+        ctx.layout.output_layouts(
             ctx,
             Range::from_bounds(
                 f64::from(self.offset - self.amplitude.abs()),
@@ -171,7 +165,7 @@ impl Node for Oscillator {
         self.group = ctx.main().samples_per_pixel.max(1) as usize;
         self.unit_step = self.unit.per_sample(1.0, ctx) * self.group as f64;
         self.origin = match self.unit {
-            FreqUnit::Beat | FreqUnit::Bar => ctx.beat_offset_samples() / self.group as f64,
+            Unit::Beat | Unit::Bar => ctx.beat_offset_samples() / self.group as f64,
             _ => 0.0,
         };
         self.modulated = ctx.modulation(Self::FREQ).is_some();
@@ -183,9 +177,11 @@ impl Node for Oscillator {
         let start = self.clock.begin(ctx, data.len());
         let amplitude = ctx.value(Self::AMPLITUDE, f64::from(self.amplitude));
         let offset = ctx.value(Self::OFFSET, f64::from(self.offset));
-        let (wave, width, group) = (self.wave, self.width, self.group);
+        let phase = ctx.value(Self::PHASE, self.phase);
+        let width = ctx.value(Self::PULSE_WIDTH, self.width);
+        let (wave, group) = (self.wave, self.group);
         let emit = |phase: f64, i: usize| {
-            let v = wave.at(phase.rem_euclid(1.0), width);
+            let v = wave.at(phase.rem_euclid(1.0), width.at64(i));
             (v * amplitude.at64(i) + offset.at64(i)) as f32
         };
         match ctx.param(Self::FREQ).filter(|_| self.modulated) {
@@ -193,7 +189,9 @@ impl Node for Oscillator {
                 // Phase accumulates once per pixel, at the frequency in force at its first sample.
                 for (pixel, chunk) in data.chunks_mut(group).enumerate() {
                     let i = pixel * group;
-                    chunk.fill(emit(self.accumulated, i));
+                    // The accumulated phase started at the constant phase; a modulated phase
+                    // moves the wave from there.
+                    chunk.fill(emit(self.accumulated + phase.at64(i) - self.phase, i));
                     self.accumulated =
                         (self.accumulated + f64::from(freq[i]) * self.unit_step).rem_euclid(1.0);
                 }
@@ -203,7 +201,8 @@ impl Node for Oscillator {
                 let first_pixel = start / group as u64;
                 for (pixel, chunk) in data.chunks_mut(group).enumerate() {
                     let cycles = ((first_pixel + pixel as u64) as f64 - self.origin) * step;
-                    chunk.fill(emit(self.phase + cycles.fract(), pixel * group));
+                    let i = pixel * group;
+                    chunk.fill(emit(phase.at64(i) + cycles.fract(), i));
                 }
             }
         }
@@ -238,7 +237,7 @@ mod tests {
 
     #[test]
     fn defaults_fill_the_video_range() {
-        let out = wave(r#"{ "wave": "ramp", "freq": 1 }"#, 4);
+        let out = wave(r#"{ "wave": "saw", "freq": 1, "amplitude": -0.5 }"#, 4);
         assert_eq!(out, [0.0, 0.25, 0.5, 0.75]);
     }
 
@@ -267,7 +266,10 @@ mod tests {
 
     #[test]
     fn phase_shifts_the_wave() {
-        let out = wave(r#"{ "wave": "ramp", "freq": 1, "phase": 0.25 }"#, 4);
+        let out = wave(
+            r#"{ "wave": "saw", "freq": 1, "phase": 0.25, "amplitude": -0.5 }"#,
+            4,
+        );
         assert_eq!(out, [0.25, 0.5, 0.75, 0.0]);
     }
 
@@ -276,7 +278,7 @@ mod tests {
     fn beat_ramp(tempo: Tempo, frame: u64) -> Vec<f32> {
         let mut node = node_with_tempo(
             "oscillator",
-            r#"{ "wave": "ramp", "freq": 1, "unit": "Beat", "amplitude": 0.5, "offset": 0.5 }"#,
+            r#"{ "wave": "saw", "freq": 1, "unit": "beat", "amplitude": -0.5, "offset": 0.5 }"#,
             1000,
             30_000.0,
             &[],

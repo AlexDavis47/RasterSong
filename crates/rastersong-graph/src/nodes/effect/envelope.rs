@@ -1,6 +1,6 @@
 use crate::dsp::smoothing_coefficient;
 use crate::nodes::support::settle_frames;
-use crate::nodes::{Category, NodeKind, NodeSpec, TimeUnit};
+use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 choice! {
@@ -20,8 +20,9 @@ pub struct Envelope {
     detector: Detector,
     attack: f64,
     release: f64,
-    unit: TimeUnit,
-    /// Smoothing coefficients, set in `prepare`.
+    unit: Unit,
+    /// Samples in one unit, and the smoothing coefficients of the constant times, set in `prepare`.
+    unit_samples: f64,
     attack_coefficient: f32,
     release_coefficient: f32,
     /// Longest time constant in samples, for warmup.
@@ -38,12 +39,10 @@ params! { Envelope {
         "peak follows each sample's magnitude, rms follows average power and is smoother",
     ),
     ATTACK: ParamSpec::number("attack", "Attack", 5.0, 0.0, 1000.0, "How quickly the output rises when the input gets stronger")
-        .fixed()
         .limits(0.0, 1e6),
     RELEASE: ParamSpec::number("release", "Release", 50.0, 0.0, 5000.0, "How quickly the output falls when the input gets weaker")
-        .fixed()
         .limits(0.0, 1e6),
-    UNIT: TimeUnit::param("ms", "Unit for attack and release"),
+    UNIT: Unit::time_param("ms", "Unit for attack and release"),
 } }
 
 impl NodeKind for Envelope {
@@ -54,7 +53,7 @@ impl NodeKind for Envelope {
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "detector": "rms", "attack": 2, "release": 10 }"#,
-        r#"{ "attack": 0.5, "release": 0.5, "unit": "rows" }"#,
+        r#"{ "attack": 0.5, "release": 0.5, "unit": "row" }"#,
         r#"{ "attack": 0, "release": 0 }"#,
     ];
     const BENCH: Option<&'static str> = Some("{}");
@@ -65,6 +64,7 @@ impl NodeKind for Envelope {
             attack: params.number_at(Self::ATTACK)?,
             release: params.number_at(Self::RELEASE)?,
             unit: params.choice_as(Self::UNIT)?,
+            unit_samples: 1.0,
             attack_coefficient: 0.0,
             release_coefficient: 0.0,
             slowest: 0.0,
@@ -75,25 +75,39 @@ impl NodeKind for Envelope {
 
 impl Node for Envelope {
     fn prepare(&mut self, ctx: &PrepareContext) {
-        let unit = self.unit.samples(ctx);
-        let (attack, release) = (self.attack * unit, self.release * unit);
+        self.unit_samples = self.unit.samples(ctx);
+        let (attack, release) = (
+            self.attack * self.unit_samples,
+            self.release * self.unit_samples,
+        );
         self.attack_coefficient = smoothing_coefficient(attack) as f32;
         self.release_coefficient = smoothing_coefficient(release) as f32;
-        self.slowest = attack.max(release);
+        // The slowest the times can get, when a signal moves them.
+        self.slowest = (ctx.param_max(Self::ATTACK, self.attack))
+            .max(ctx.param_max(Self::RELEASE, self.release))
+            * self.unit_samples;
     }
 
-    fn process(&mut self, _: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
+    fn process(&mut self, ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
         let mut level = self.level;
-        for (out, &x) in outputs[0].data.iter_mut().zip(&inputs[0].data) {
+        // A modulated time gets its coefficient from every sample's value.
+        let attack = ctx.param(Self::ATTACK);
+        let release = ctx.param(Self::RELEASE);
+        let coefficient = |stream: Option<&[f32]>, i: usize, constant: f32| {
+            stream.map_or(constant, |s| {
+                smoothing_coefficient(f64::from(s[i]).max(0.0) * self.unit_samples) as f32
+            })
+        };
+        for (i, (out, &x)) in outputs[0].data.iter_mut().zip(&inputs[0].data).enumerate() {
             // RMS smooths the power and takes the root afterwards.
             let target = match self.detector {
                 Detector::Peak => x.abs(),
                 Detector::Rms => x * x,
             };
             let c = if target > level {
-                self.attack_coefficient
+                coefficient(attack, i, self.attack_coefficient)
             } else {
-                self.release_coefficient
+                coefficient(release, i, self.release_coefficient)
             };
             level = target + c * (level - target);
             *out = match self.detector {

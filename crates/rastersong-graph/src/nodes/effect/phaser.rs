@@ -1,8 +1,8 @@
 use std::f64::consts::{PI, TAU};
 
 use crate::dsp::mix;
-use crate::nodes::support::MAX_WARMUP_FRAMES;
-use crate::nodes::{Category, FreqUnit, NodeKind, NodeSpec};
+use crate::nodes::support::UNBOUNDED_WARMUP;
+use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Most allpass stages a phaser can chain.
@@ -15,7 +15,7 @@ const MAX_STAGES: usize = 12;
 pub struct Phaser {
     stages: usize,
     freq: f64,
-    unit: FreqUnit,
+    unit: Unit,
     feedback: f32,
     mix: f32,
     /// Cycles per sample of one unit of frequency, set in `prepare`.
@@ -37,19 +37,18 @@ params! { Phaser {
         12.0,
         "How many allpass filters are chained; every two add a notch",
     )
-    .fixed(),
+    .integer(),
     FREQ: ParamSpec::number(
         "freq",
         "Frequency",
         1000.0,
         20.0,
-        20_000.0,
+        5_000.0,
         "Where the notches sit; wire an oscillator in here to sweep them",
     )
     .exposed()
-    .limits(1e-06, 1e9)
-    .octaves(),
-    UNIT: FreqUnit::param("Hertz", "Unit for the frequency"),
+    .limits(1e-06, 1e9),
+    UNIT: Unit::freq_param("second", "Unit for the frequency"),
     FEEDBACK: ParamSpec::number(
         "feedback",
         "Feedback",
@@ -58,24 +57,18 @@ params! { Phaser {
         0.95,
         "How much of the chain's output is fed back in, which sharpens the notches",
     ),
-    MIX: ParamSpec::number(
-        "mix",
-        "Mix",
-        0.5,
-        0.0,
-        1.0,
-        "0 is the dry input, 1 is only the phased signal; around 0.5 gives the deepest notches",
-    ),
+    MIX: ParamSpec::mix(),
 } }
 
 impl NodeKind for Phaser {
     const KIND: &'static str = "phaser";
     const SPEC: NodeSpec = NodeSpec::new("Phaser", Category::Effect)
         .describe("Sweeps notches through the signal with allpass filters; modulate the frequency")
+        .doc("Mix is fully wet by default; around 0.5 the notches are deepest, because the filtered signal then cancels the dry one.")
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
-        r#"{ "stages": 2, "freq": 3, "unit": "Row" }"#,
+        r#"{ "stages": 2, "freq": 3, "unit": "row" }"#,
         r#"{ "stages": 8, "freq": 400, "feedback": -0.8, "mix": 0.7 }"#,
         r#"{ "stages": 12, "freq": 20000, "feedback": 0.95 }"#,
     ];
@@ -114,6 +107,7 @@ impl Node for Phaser {
         let freq = ctx.value(Self::FREQ, self.freq);
         let feedback = ctx.value(Self::FEEDBACK, f64::from(self.feedback));
         let amount = ctx.value(Self::MIX, f64::from(self.mix));
+        let stages = ctx.value(Self::STAGES, self.stages as f64);
         // Without modulation the coefficient is the same for every sample.
         let fixed = ctx
             .param(Self::FREQ)
@@ -122,7 +116,8 @@ impl Node for Phaser {
         for (i, (out, &x)) in outputs[0].data.iter_mut().zip(&inputs[0].data).enumerate() {
             let a = fixed.unwrap_or_else(|| Self::coefficient(freq.at64(i) * self.scale));
             let mut v = x + feedback.at(i) * self.last;
-            for z in &mut self.state[..self.stages] {
+            let stages = (stages.at64(i).round() as usize).clamp(1, MAX_STAGES);
+            for z in &mut self.state[..stages] {
                 let y = a * v + *z;
                 *z = v - a * y;
                 v = y;
@@ -140,11 +135,10 @@ impl Node for Phaser {
     fn warmup_frames(&self, ctx: &PrepareContext) -> u32 {
         // The chain settles about as slowly as a one-pole low pass at the lowest frequency.
         if self.slowest <= 0.0 {
-            return MAX_WARMUP_FRAMES;
+            return UNBOUNDED_WARMUP;
         }
         let settle_samples = 7.0 / (TAU * self.slowest);
-        ((settle_samples / ctx.samples_per_frame() as f64).ceil() as u32)
-            .clamp(1, MAX_WARMUP_FRAMES)
+        ((settle_samples / ctx.samples_per_frame() as f64).ceil() as u32).max(1)
     }
 }
 
@@ -170,7 +164,7 @@ mod tests {
             .map(|n| (std::f64::consts::TAU * 0.02 * f64::from(n)).sin() as f32)
             .collect();
         let out = run(
-            r#"{ "mix": 1, "feedback": 0, "freq": 0.05, "unit": "Row" }"#,
+            r#"{ "mix": 1, "feedback": 0, "freq": 0.05, "unit": "row" }"#,
             &input,
         );
         let peak = out[2000..].iter().fold(0.0f32, |m, x| m.max(x.abs()));

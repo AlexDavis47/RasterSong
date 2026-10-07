@@ -6,7 +6,7 @@
 
 use std::collections::BTreeSet;
 
-use rastersong_engine::{ModMode, Modulation, ParamSpec};
+use rastersong_engine::{Modulation, ParamSpec};
 
 use super::{EditorNode, GraphEditor, NodeKey};
 
@@ -99,11 +99,7 @@ impl GraphEditor {
         if node.modulation.contains_key(spec.name) {
             return;
         }
-        let base = spec.number_value(&node.params).unwrap_or(0.0);
-        let modulation = Modulation {
-            amount: spec.default_modulation_amount(base),
-            mode: ModMode::Unipolar,
-        };
+        let modulation = spec.default_modulation();
         let name = spec.name;
         self.node_mut(to.0)
             .unwrap()
@@ -114,17 +110,16 @@ impl GraphEditor {
     /// How parameter `index` of the node is modulated: its entry, or the default amount.
     pub fn modulation_of(&self, node: &EditorNode, index: usize) -> Modulation {
         let spec = &self.specs_of(node)[index];
-        let base = spec.number_value(&node.params).unwrap_or(0.0);
         node.modulation
             .get(spec.name)
             .copied()
-            .unwrap_or_else(|| spec.default_modulation(base))
+            .unwrap_or_else(|| spec.default_modulation())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use rastersong_engine::GraphDesc;
+    use rastersong_engine::{GraphDesc, ModMode};
 
     use super::*;
 
@@ -175,6 +170,7 @@ mod tests {
         let node = editor.node(delay).unwrap();
         let entry = node.modulation.values().next().unwrap();
         assert_eq!(entry.mode, ModMode::Unipolar);
+        assert_eq!(entry.amount, 25.0, "a quarter of the span to start with");
     }
 
     #[test]
@@ -187,6 +183,7 @@ mod tests {
             Modulation {
                 amount: 0.4,
                 mode: ModMode::Unipolar,
+                overshoot: false,
             },
         );
         let desc = editor.to_desc();

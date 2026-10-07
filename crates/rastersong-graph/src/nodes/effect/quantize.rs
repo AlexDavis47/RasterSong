@@ -51,14 +51,7 @@ params! { Quantize {
         "nearest",
         "nearest picks the closest step, floor the one below, ceil the one above",
     ),
-    MIX: ParamSpec::number(
-        "mix",
-        "Mix",
-        1.0,
-        0.0,
-        1.0,
-        "0 is the dry input, 1 is only the quantized signal",
-    ),
+    MIX: ParamSpec::mix(),
 } }
 
 impl NodeKind for Quantize {

@@ -231,7 +231,7 @@ impl GraphEditor {
                         close = true;
                     }
                     if ui.button(format!("Duplicate{plural}")).clicked() {
-                        self.duplicate(&selection);
+                        self.duplicate(&selection, self.keep_connections);
                         close = true;
                     }
                     let bypassable = selection
@@ -282,7 +282,7 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(labels("del")[0], "Delay");
-        assert_eq!(labels("low")[0], "Low Pass");
+        assert_eq!(labels("fil")[0], "Filter");
         // "split" matches Split Channels by prefix and Three-Band Split by substring.
         assert_eq!(labels("split")[..2], ["Split Channels", "Three-Band Split"]);
         assert!(labels("zzz").is_empty());

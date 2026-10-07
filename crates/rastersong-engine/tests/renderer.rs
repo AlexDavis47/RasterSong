@@ -42,6 +42,64 @@ fn seeking_is_close_for_infinite_memory_graphs() {
     }
 }
 
+/// Generators set to the audio layout work whatever the project's audio tracks are called, and
+/// even when it has none.
+#[test]
+fn the_audio_layout_exists_without_a_track_named_audio() {
+    use common::{AUDIO, VIDEO, backend};
+    use rastersong_engine::sources::Modulator;
+    use rastersong_engine::{AudioTrack, GraphDesc};
+    use std::path::Path;
+    use std::sync::Arc;
+    let graph = GraphDesc::from_json(
+        r#"{ "version": 7,
+          "nodes": [
+            { "id": "video", "type": "video_input" },
+            { "id": "beat", "type": "beat", "layout": "audio", "params": { "shape": "phase" } },
+            { "id": "crush", "type": "bitcrush" },
+            { "id": "out", "type": "output" }
+          ],
+          "connections": [
+            { "from": "video", "to": "crush" }, { "from": "beat", "to": "crush.@bits" },
+            { "from": "crush", "to": "out" }
+          ] }"#,
+    )
+    .unwrap();
+    let song = || AudioTrack {
+        name: AUDIO.into(),
+        modulator: Arc::new(Modulator::new(&common::audio())),
+        offset: 0.0,
+    };
+    for tracks in [vec![song()], vec![]] {
+        let mut r = rastersong_engine::Renderer::new(
+            &backend(),
+            Path::new(VIDEO),
+            &tracks,
+            &graph,
+            Default::default(),
+            &Registry::default(),
+            OutputSize::Native,
+        )
+        .expect("compiles with an audio layout");
+        assert!(r.render(3, &|| false).unwrap().is_some());
+    }
+}
+
+#[test]
+fn the_pixel_unit_scales_with_the_preview() {
+    let render = |size| renderer_with(FINITE, &Registry::default(), size);
+    assert_eq!(
+        render(OutputSize::Native).compile_options().pixel_scale,
+        1.0
+    );
+    assert_eq!(
+        render(OutputSize::Scaled(0.5))
+            .compile_options()
+            .pixel_scale,
+        0.5
+    );
+}
+
 #[test]
 fn scaled_output_is_smaller() {
     let mut r = renderer_with(FINITE, &Registry::default(), OutputSize::Scaled(0.5));
@@ -314,4 +372,34 @@ fn tracks_at_different_rates_meet_in_one_graph() {
         "{:?}",
         &left[100..110]
     );
+}
+
+#[test]
+fn the_warmup_cap_limits_only_the_pre_render_never_the_effect() {
+    let expected = sequential(INFINITE, OutputSize::Native);
+
+    // Played from the start, the graph renders the same whatever the cap is.
+    for cap in [0, 3, 120, 9999] {
+        let mut r = renderer(INFINITE);
+        r.set_max_warmup_frames(cap);
+        assert!(r.warmup_frames() <= cap as usize);
+        for (i, want) in expected.iter().enumerate() {
+            let frame = r.render(i, &|| false).unwrap().unwrap();
+            assert_eq!(frame, *want, "cap {cap}, frame {i}");
+        }
+    }
+
+    // Only a seek is affected: a smaller cap pre-renders less, so it is further from exact.
+    let seek_error = |cap: u32| {
+        let mut r = renderer(INFINITE);
+        r.set_max_warmup_frames(cap);
+        let frame = r.render(40, &|| false).unwrap().unwrap();
+        frame
+            .iter()
+            .zip(&expected[40])
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap()
+    };
+    assert!(seek_error(0) > seek_error(9999));
 }

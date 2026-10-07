@@ -18,6 +18,7 @@ fn options() -> CompileOptions {
             ("audio".to_owned(), Layout::audio(AUDIO)),
         ]),
         output: Layout::rgb(W, H),
+        pixel_scale: 1.0,
     }
 }
 
@@ -331,7 +332,7 @@ fn graph_files_round_trip() {
     let desc = GraphDesc::from_json(PASSTHROUGH).unwrap();
     assert_eq!(GraphDesc::from_json(&desc.to_json()).unwrap(), desc);
     assert!(matches!(
-        GraphDesc::from_json(r#"{ "version": 3, "nodes": [] }"#),
+        GraphDesc::from_json(r#"{ "version": 13, "nodes": [] }"#),
         Err(GraphError::Parse(_))
     ));
 }
@@ -563,7 +564,7 @@ fn separate_channels_work_on_stereo() {
         graph_json(
             &format!(
                 r#"{{ "id": "audio", "type": "audio_input" }},
-                   {{ "id": "d", "type": "delay", "params": {{ "time": 1, "unit": "rows" }}, "channels": "{channels}" }},
+                   {{ "id": "d", "type": "delay", "params": {{ "time": 1, "unit": "row" }}, "channels": "{channels}" }},
                    {{ "id": "v", "type": "video_input" }}, {{ "id": "am", "type": "am" }}, {{ "id": "out", "type": "output" }}"#
             ),
             r#"{ "from": "audio", "to": "d" }, { "from": "v", "to": "am.carrier" },
@@ -712,7 +713,20 @@ fn parameter_connections_are_checked() {
     };
     let error = |json: String| compile(&json).unwrap_err().to_string();
     assert!(error(graph("am.@nope", "{}")).contains("no parameter `nope`"));
-    assert!(error(graph("bands.@low_hz", "{}")).contains("no parameter `low_hz`"));
+    assert!(
+        compile(&graph("bands.@low_hz", "{}")).is_ok(),
+        "crossovers can be modulated"
+    );
+    // What still can't be modulated is rejected, as a parameter that isn't there.
+    let resize = compile(&graph_json(
+        r#"{ "id": "video", "type": "video_input" }, { "id": "audio", "type": "audio_input" },
+           { "id": "r", "type": "resample" }, { "id": "out", "type": "output" }"#,
+        r#"{ "from": "video", "to": "r" }, { "from": "audio", "to": "r.@width" },
+           { "from": "r", "to": "out" }"#,
+    ))
+    .unwrap_err()
+    .to_string();
+    assert!(resize.contains("no parameter `width`"), "{resize}");
     assert!(error(graph("am.@depth", r#"{ "nope": { "amount": 1 } }"#)).contains("`nope`"));
     assert!(compile(&graph("am.@depth", "{}")).is_ok());
 }
@@ -776,12 +790,13 @@ fn nodes_without_inputs_get_their_layout_from_the_host_and_can_be_modulated() {
     assert!(out.data.iter().all(|&x| x == 0.25));
 
     // A signal connected to the parameter reaches a node that has no main input to measure it by.
-    let modulated = graph_json(
-        r#"{ "id": "gen", "type": "level", "modulation": { "level": { "amount": 1 } } },
-           { "id": "audio", "type": "audio_input" }, { "id": "out", "type": "output" }"#,
-        r#"{ "from": "audio", "to": "gen.@level" }, { "from": "gen", "to": "out" }"#,
-    );
-    let mut graph = compile_with(&modulated, &registry).unwrap();
+    // (Custom node types aren't known to the upgrade, so this graph is written in the current
+    // format: 100% one way moves the level across its whole 0..1 span.)
+    let modulated = r#"{ "version": 6, "nodes": [
+        { "id": "gen", "type": "level", "modulation": { "level": { "amount": 100, "mode": "unipolar" } } },
+        { "id": "audio", "type": "audio_input" }, { "id": "out", "type": "output" } ],
+        "connections": [ { "from": "audio", "to": "gen.@level" }, { "from": "gen", "to": "out" } ] }"#;
+    let mut graph = compile_with(modulated, &registry).unwrap();
     let out = graph.process(0, &sources(|_| 0.0, |_| 0.5)).unwrap();
     assert!(
         out.data.iter().all(|&x| (x - 0.75).abs() < 1e-6),
@@ -794,7 +809,7 @@ fn nodes_without_inputs_get_their_layout_from_the_host_and_can_be_modulated() {
 fn generators_take_their_layout_from_the_host_and_draw_stripes() {
     // A ramp of one cycle per row on the 4×2 RGB video: each pixel's channels share a value.
     let json = graph_json(
-        r#"{ "id": "ramp", "type": "oscillator", "params": { "wave": "ramp", "freq": 1 } },
+        r#"{ "id": "ramp", "type": "oscillator", "params": { "wave": "saw", "freq": 1, "amplitude": -0.5 } },
            { "id": "out", "type": "output" }"#,
         r#"{ "from": "ramp", "to": "out" }"#,
     );
@@ -931,7 +946,7 @@ fn time_units_mean_the_same_together_and_separate() {
         graph_json(
             &format!(
                 r#"{{ "id": "video", "type": "video_input" }},
-                   {{ "id": "d", "type": "delay", "params": {{ "time": 1, "unit": "rows" }}, "channels": "{channels}" }},
+                   {{ "id": "d", "type": "delay", "params": {{ "time": 1, "unit": "row" }}, "channels": "{channels}" }},
                    {{ "id": "out", "type": "output" }}"#
             ),
             r#"{ "from": "video", "to": "d" }, { "from": "d", "to": "out" }"#,
@@ -1093,4 +1108,113 @@ fn odd_audio_output_layouts_are_written_as_stereo_with_a_warning() {
     let warnings = graph.diagnostics();
     assert_eq!(warnings.len(), 1, "{warnings:?}");
     assert!(warnings[0].message.contains("stereo"));
+}
+
+/// A generator's parameter driven by a constant signal gives what the same value set by hand does.
+fn modulated_matches_set(kind: &str, set: &str, base: &str, param: &str, amount: f64) {
+    let render = |node: String, extra: &str, wire: &str| {
+        let json = format!(
+            r#"{{ "version": 9, "nodes": [
+                {{ "id": "video", "type": "video_input" }}, {node}{extra},
+                {{ "id": "out", "type": "output" }} ],
+              "connections": [ {wire}{{ "from": "g", "to": "out" }} ] }}"#
+        );
+        let mut graph = compile(&json).unwrap();
+        graph
+            .process(0, &sources(|_| 0.0, |_| 0.0))
+            .unwrap()
+            .data
+            .clone()
+    };
+    let by_hand = render(
+        format!(r#"{{ "id": "g", "type": "{kind}", "params": {set} }}"#),
+        "",
+        "",
+    );
+    let driven = render(
+        format!(
+            r#"{{ "id": "g", "type": "{kind}", "params": {base},
+                "modulation": {{ "{param}": {{ "amount": {amount}, "mode": "unipolar" }} }} }}"#
+        ),
+        r#", { "id": "one", "type": "constant", "params": { "value": 1 } }"#,
+        &format!(r#"{{ "from": "one", "to": "g.@{param}" }}, "#),
+    );
+    assert!(
+        by_hand
+            .iter()
+            .zip(&driven)
+            .all(|(a, b)| (a - b).abs() < 1e-5)
+    );
+    // And the modulation did something: the base value alone gives other output.
+    let untouched = render(
+        format!(r#"{{ "id": "g", "type": "{kind}", "params": {base} }}"#),
+        "",
+        "",
+    );
+    assert!(
+        untouched
+            .iter()
+            .zip(&driven)
+            .any(|(a, b)| (a - b).abs() > 1e-3)
+    );
+}
+
+#[test]
+fn generators_take_modulation_of_their_timing_and_shape() {
+    // Beat division: 1 + 20% of its 15 wide span is 4.
+    modulated_matches_set(
+        "beat",
+        r#"{ "shape": "phase", "division": 4 }"#,
+        r#"{ "shape": "phase", "division": 1 }"#,
+        "division",
+        20.0,
+    );
+    // Beat steps: 4 + 3 more.
+    modulated_matches_set(
+        "beat",
+        r#"{ "shape": "step", "steps": 7, "division": 8 }"#,
+        r#"{ "shape": "step", "steps": 4, "division": 8 }"#,
+        "steps",
+        3.0 / 31.0 * 100.0,
+    );
+    // Oscillator phase: a quarter cycle.
+    modulated_matches_set(
+        "oscillator",
+        r#"{ "freq": 3, "phase": 0.25 }"#,
+        r#"{ "freq": 3, "phase": 0 }"#,
+        "phase",
+        25.0,
+    );
+    // Noise seed: seed 5 is 5 of its 999 wide span.
+    modulated_matches_set(
+        "noise",
+        r#"{ "seed": 5 }"#,
+        r#"{ "seed": 0 }"#,
+        "seed",
+        5.0 / 999.0 * 100.0,
+    );
+}
+
+#[test]
+fn modulation_stays_within_the_slider_range_the_user_set() {
+    // Bit crush bits go 1 to 24 usually; a signal at full scale with a huge amount would reach
+    // the top, but the user's slider range ends at 6.
+    let render = |ranges: &str| {
+        let json = format!(
+            r#"{{ "version": 9, "nodes": [
+                {{ "id": "video", "type": "video_input" }}, {{ "id": "one", "type": "constant", "params": {{ "value": 1 }} }},
+                {{ "id": "crush", "type": "bitcrush", "params": {{ "bits": 2 }},
+                   "modulation": {{ "bits": {{ "amount": 100, "mode": "unipolar" }} }}{ranges} }},
+                {{ "id": "out", "type": "output" }} ],
+              "connections": [ {{ "from": "video", "to": "crush" }}, {{ "from": "one", "to": "crush.@bits" }},
+                               {{ "from": "crush", "to": "out" }} ] }}"#
+        );
+        let mut graph = compile(&json).unwrap();
+        graph
+            .process(0, &sources(|i| i as f32 / 24.0, |_| 0.0))
+            .unwrap();
+        graph.param_levels().first().map(|p| p.value)
+    };
+    assert_eq!(render(""), Some(24.0), "the usual range, 1 to 24");
+    assert_eq!(render(r#", "ranges": { "bits": [1, 6] }"#), Some(6.0));
 }
