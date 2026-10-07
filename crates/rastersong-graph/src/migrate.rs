@@ -254,6 +254,12 @@ const RENAMED_CHOICES: &[RenamedChoice] = &[
     },
 ];
 
+/// The node type the current registry knows an old type as, for the steps that read its parameter
+/// specs before `lowpass_becomes_filter` renames it.
+fn current_kind(kind: &str) -> &str {
+    if kind == "lowpass" { "filter" } else { kind }
+}
+
 /// The `mix` default of effects that started below 1 before version 10.
 const OLD_MIX_DEFAULTS: &[(&str, f64)] = &[
     ("reverb", 0.3),
@@ -293,7 +299,19 @@ impl GraphDesc {
         self.upgrade_modulation(Registry::shared());
         self.keep_old_mix_defaults(Registry::shared());
         self.modulate_by_one_rule(Registry::shared());
+        self.lowpass_becomes_filter();
         self.version = FORMAT_VERSION;
+    }
+
+    /// Low Pass was a Filter without resonance or choices: now the Filter's 6 dB/oct slope, which
+    /// is the same one-pole filter, with the same cutoff, unit and modulation. This runs last, so
+    /// the steps above still see the node under the name they were written for.
+    fn lowpass_becomes_filter(&mut self) {
+        for node in self.nodes.iter_mut().filter(|n| n.kind == "lowpass") {
+            node.kind = "filter".to_owned();
+            node.params
+                .insert("slope".to_owned(), ParamValue::Text("6".to_owned()));
+        }
     }
 
     /// Before version 10 these effects started at a partial mix. Every `mix` starts fully wet now,
@@ -305,7 +323,7 @@ impl GraphDesc {
         }
         for node in &mut self.nodes {
             if let Some((_, old)) = OLD_MIX_DEFAULTS.iter().find(|(kind, _)| *kind == node.kind)
-                && registry.get(&node.kind).is_some()
+                && registry.get(current_kind(&node.kind)).is_some()
             {
                 node.params
                     .entry("mix".to_owned())
@@ -325,7 +343,7 @@ impl GraphDesc {
             return;
         }
         for node in &mut self.nodes {
-            let Some(kind) = registry.get(&node.kind) else {
+            let Some(kind) = registry.get(current_kind(&node.kind)) else {
                 continue;
             };
             for (name, modulation) in &mut node.modulation {
@@ -406,7 +424,7 @@ impl GraphDesc {
             let Some(node) = self.nodes.iter_mut().find(|n| n.id == id) else {
                 continue;
             };
-            let Some(spec) = registry.get(&node.kind).and_then(|t| {
+            let Some(spec) = registry.get(current_kind(&node.kind)).and_then(|t| {
                 t.spec
                     .params
                     .iter()
@@ -432,7 +450,7 @@ impl GraphDesc {
             }
         }
         for node in &mut self.nodes {
-            let kind = registry.get(&node.kind);
+            let kind = registry.get(current_kind(&node.kind));
             for (name, modulation) in &mut node.modulation {
                 let spec = kind.and_then(|k| k.spec.params.iter().find(|s| s.name == *name));
                 if let (Some(spec), Some(o)) = (spec, octave(&node.kind, name)) {
@@ -532,7 +550,7 @@ impl GraphDesc {
     /// rounded (and kept within the limits, which a node like Beat division may have raised).
     fn round_whole_parameters(&mut self, registry: &Registry) {
         for node in &mut self.nodes {
-            let Some(kind) = registry.get(&node.kind) else {
+            let Some(kind) = registry.get(current_kind(&node.kind)) else {
                 continue;
             };
             for spec in kind.spec.params.iter().filter(|s| s.integer) {
@@ -549,7 +567,7 @@ impl GraphDesc {
     fn move_layout_to_settings(&mut self, registry: &Registry) {
         for node in &mut self.nodes {
             if !registry
-                .get(&node.kind)
+                .get(current_kind(&node.kind))
                 .is_some_and(|t| t.spec.takes_layout)
             {
                 continue;
@@ -565,7 +583,7 @@ impl GraphDesc {
     fn rename_units(&mut self, registry: &Registry) {
         for node in &mut self.nodes {
             let has_unit = registry
-                .get(&node.kind)
+                .get(current_kind(&node.kind))
                 .is_some_and(|t| t.spec.params.iter().any(|p| p.name == "unit"));
             if !has_unit {
                 continue;
@@ -701,6 +719,25 @@ mod tests {
     }
 
     #[test]
+    fn low_pass_becomes_a_six_db_filter_with_the_same_cutoff_and_modulation() {
+        let mut graph = GraphDesc::from_json(
+            r#"{ "version": 10, "nodes": [
+                { "id": "lp", "type": "lowpass", "params": { "cutoff": 12, "unit": "beat" },
+                  "modulation": { "cutoff": { "amount": 30 } } } ] }"#,
+        )
+        .unwrap();
+        let node = &graph.nodes[0];
+        assert_eq!(node.kind, "filter");
+        assert_eq!(node.params["slope"], ParamValue::Text("6".into()));
+        assert_eq!(node.params["cutoff"], ParamValue::Number(12.0));
+        assert_eq!(node.params["unit"], ParamValue::Text("beat".into()));
+        assert_eq!(node.modulation["cutoff"].amount, 30.0);
+        let once = graph.clone();
+        graph.upgrade();
+        assert_eq!(graph, once, "upgrading again changes nothing");
+    }
+
+    #[test]
     fn effects_that_started_part_wet_keep_their_old_mix() {
         let mut graph = GraphDesc::from_json(
             r#"{ "version": 9, "nodes": [
@@ -817,7 +854,15 @@ mod tests {
         assert!(hertz > 200.0, "more than the slider can show");
         // An amount can't be more than the whole slider range now, which is as far as it ever
         // reached before.
-        let (lo, hi) = Registry::shared().get("lowpass").unwrap().spec.params[0].usual_range();
+        let (lo, hi) = Registry::shared()
+            .get("filter")
+            .unwrap()
+            .spec
+            .params
+            .iter()
+            .find(|p| p.name == "cutoff")
+            .unwrap()
+            .usual_range();
         assert!((sweep(&graph, "f", "cutoff") - (hi - lo)).abs() < 1e-6);
         // Other parameters, and version 4's overshoot setting, are untouched.
         let node = |id: &str| graph.nodes.iter().find(|n| n.id == id).unwrap();

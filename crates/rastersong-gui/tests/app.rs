@@ -557,8 +557,8 @@ fn add_node(harness: &mut Harness<'_, App>, search: &str) {
 fn the_inspector_keeps_its_width() {
     // Long units and modulated values used to widen the inspector a little every frame.
     let mut harness = loaded();
-    add_node(&mut harness, "low pass");
-    let lowpass = key(&harness, "lowpass");
+    add_node(&mut harness, "filter");
+    let filter = key(&harness, "filter");
     let audio = key(&harness, "audio");
     let from = harness
         .state()
@@ -568,7 +568,7 @@ fn the_inspector_keeps_its_width() {
     let to = harness
         .state()
         .editor()
-        .pin_screen_pos(lowpass, true, rastersong_gui::editor::param_port(0))
+        .pin_screen_pos(filter, true, rastersong_gui::editor::param_port(2))
         .unwrap();
     drag(&mut harness, from, to);
     let before = harness.state().inspector_rect().width();
@@ -576,7 +576,7 @@ fn the_inspector_keeps_its_width() {
         before < 400.0,
         "the inspector is {before} wide; it starts at 340"
     );
-    select(&mut harness, "lowpass");
+    select(&mut harness, "filter");
     for _ in 0..6 {
         harness.run_steps(10);
         let width = harness.state().inspector_rect().width();
@@ -587,8 +587,8 @@ fn the_inspector_keeps_its_width() {
 #[test]
 fn typing_a_very_long_number_keeps_the_inspector_width() {
     let mut harness = loaded();
-    add_node(&mut harness, "low pass");
-    select(&mut harness, "lowpass");
+    add_node(&mut harness, "filter");
+    select(&mut harness, "filter");
     harness.run_steps(3);
     let panel = harness.state().inspector_rect();
     let before = panel.width();

@@ -6,7 +6,7 @@ node definitions by `cargo xtask docs`, and CI fails if it is out of date.
 
 Roughly: inputs (`video_input`, `audio_input`), the `output`, channel structure (`split`, `combine`, `interleave`,
 `pack`, `stretch`), conversion (`to_audio`, `to_video`, `relabel`), generators (`beat`, `constant`, `noise`,
-`oscillator`) and many effects (`three_band`, `am`, `delay`, `bitcrush`, `lowpass`, `filter`, `compressor`, `gate`,
+`oscillator`) and many effects (`three_band`, `am`, `delay`, `bitcrush`, `filter`, `compressor`, `gate`,
 `distortion`, and more).
 
 ## Shared node settings

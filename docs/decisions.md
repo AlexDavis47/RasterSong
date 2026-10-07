@@ -175,3 +175,10 @@ Value ranges (video `0..1`, audio `-1..1`) and mono-only modulators are still to
 - **License review:** the custom LICENSE is a first draft. Have it reviewed, or switch to an established source-available license (e.g. PolyForm Strict), before any paid release.
 - **Snapshots:** memory budget and spacing for state snapshots.
 - **Hardware encoder fallback:** what to offer for H.264 export on machines with no usable OS/hardware encoder.
+
+### One Filter node; Low Pass removed (October 2026)
+
+Filter has a slope (6, 12, 24 or 48 dB/oct) for low and high pass, built from Butterworth stages so it is flat by
+default. Resonance is the filter's own Q: 0.707 is flat (the non-resonant setting) and higher peaks the cutoff, at
+every slope except 6 dB, a single pole, which cannot resonate. Low Pass was exactly that one pole, so it is the
+Filter at 6 dB/oct and old graphs are migrated. There is no separate "non-resonant" mode or node.

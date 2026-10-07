@@ -1,4 +1,4 @@
-use std::f64::consts::PI;
+use std::f64::consts::{FRAC_1_SQRT_2, PI, TAU};
 
 use crate::dsp::{Biquad, BiquadKind, DelayLine};
 use crate::nodes::support::UNBOUNDED_WARMUP;
@@ -23,11 +23,45 @@ choice! {
     }
 }
 
+choice! {
+    /// How steeply a low or high pass cuts beyond the cutoff, in dB per octave.
+    pub enum Slope {
+        /// A single pole: a gentle, smooth roll-off with no resonance.
+        Six = "6",
+        /// Two poles: the classic resonant filter.
+        Twelve = "12",
+        /// Four poles: two cascaded stages.
+        TwentyFour = "24",
+        /// Eight poles: four cascaded stages, a very sharp cut.
+        FortyEight = "48",
+    }
+}
+
+impl Slope {
+    /// The number of biquad stages (the one-pole slope has none).
+    fn stages(self) -> usize {
+        match self {
+            Self::Six => 0,
+            Self::Twelve => 1,
+            Self::TwentyFour => 2,
+            Self::FortyEight => 4,
+        }
+    }
+
+    /// The quality factor of stage `index` (0-based) of a Butterworth filter of this slope. The
+    /// last stage has the highest, and carries the resonance.
+    fn butterworth_q(self, index: usize) -> f64 {
+        let order = (self.stages() * 2) as f64;
+        1.0 / (2.0 * ((2 * index + 1) as f64 * PI / (2.0 * order)).cos())
+    }
+}
+
 /// A resonant filter with a choice of responses, running across rows and frames like an audio
 /// filter. The cutoff is in cycles per row by default, so the look is the same at any resolution.
 #[derive(Debug)]
 pub struct Filter {
     kind: Kind,
+    slope: Slope,
     cutoff: f64,
     unit: Unit,
     q: f64,
@@ -38,10 +72,16 @@ pub struct Filter {
     /// The largest and smallest cutoff in cycles per sample that modulation can reach.
     fastest: f64,
     slowest: f64,
-    sections: [Biquad; 2],
+    sections: [Biquad; MAX_STAGES],
+    /// The 6 dB slope's state, and its smoothing coefficient while the cutoff isn't modulated.
+    pole: f32,
+    coefficient: f32,
     /// Comb filter state: the output history.
     line: DelayLine,
 }
+
+/// The most biquad stages any response uses (the 48 dB/oct slope).
+const MAX_STAGES: usize = 4;
 
 params! { Filter {
     RESPONSE: ParamSpec::choice(
@@ -51,6 +91,14 @@ params! { Filter {
         "lowpass",
         "lowpass, highpass, bandpass, allpass, tilt (gain dB of low-versus-high balance) or comb (echo every cutoff cycle)",
     ),
+    SLOPE: ParamSpec::choice(
+        "slope",
+        "Slope (dB/oct)",
+        Slope::OPTIONS,
+        "12",
+        "How sharply the cut falls off past the cutoff: 6 is a gentle one-pole roll-off, 48 a brick wall",
+    )
+    .shown_when("response", &["lowpass", "highpass"]),
     CUTOFF: ParamSpec::number("cutoff", "Cutoff", 40.0, 0.01, 200.0, "Frequency of the filter's corner or centre")
         .exposed()
         .limits(1e-06, 1e9),
@@ -61,7 +109,7 @@ params! { Filter {
         0.707,
         0.1,
         20.0,
-        "Sharpness: 0.707 is flat, higher rings or narrows. For a comb, higher repeats more",
+        "Sharpness: 0.707 is flat (no resonance), higher rings or narrows. For a comb, higher repeats more. The 6 dB slope has none",
     )
     .limits(0.05, 100.0),
     GAIN: ParamSpec::number("gain", "Gain", 0.0, -24.0, 24.0, "For tilt: dB boost of lows and cut of highs (negative reverses)")
@@ -82,12 +130,17 @@ impl NodeKind for Filter {
         r#"{ "response": "allpass", "cutoff": 0.5 }"#,
         r#"{ "response": "tilt", "cutoff": 1, "gain": 9 }"#,
         r#"{ "response": "comb", "cutoff": 0.5, "q": 3 }"#,
+        r#"{ "response": "lowpass", "slope": "6", "cutoff": 0.7 }"#,
+        r#"{ "response": "highpass", "slope": "6", "cutoff": 0.7 }"#,
+        r#"{ "response": "lowpass", "slope": "24", "cutoff": 0.7, "q": 2 }"#,
+        r#"{ "response": "highpass", "slope": "48", "cutoff": 0.9 }"#,
     ];
     const BENCH: Option<&'static str> = Some(r#"{ "response": "lowpass", "cutoff": 40, "q": 2 }"#);
 
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
             kind: params.choice_as(Self::RESPONSE)?,
+            slope: params.choice_as(Self::SLOPE)?,
             cutoff: params.number_at(Self::CUTOFF)?,
             unit: params.choice_as(Self::UNIT)?,
             q: params.number_at(Self::Q)?,
@@ -96,7 +149,9 @@ impl NodeKind for Filter {
             modulated: false,
             fastest: 0.0,
             slowest: 0.0,
-            sections: [Biquad::default(); 2],
+            sections: [Biquad::default(); MAX_STAGES],
+            pole: 0.0,
+            coefficient: 1.0,
             line: DelayLine::default(),
         })
     }
@@ -109,23 +164,48 @@ impl Filter {
     }
 
     /// The biquad sections for a cutoff in cycles per sample.
-    fn design(&self, cutoff: f64, q: f64, gain: f64) -> [Biquad; 2] {
+    fn design(&self, cutoff: f64, q: f64, gain: f64) -> [Biquad; MAX_STAGES] {
         let one = |kind| Biquad::design(kind, cutoff, q);
+        let mut sections = [Biquad::default(); MAX_STAGES];
         match self.kind {
-            Kind::LowPass => [one(BiquadKind::LowPass), Biquad::default()],
-            Kind::HighPass => [one(BiquadKind::HighPass), Biquad::default()],
-            Kind::BandPass => [one(BiquadKind::BandPass), Biquad::default()],
-            Kind::AllPass => [one(BiquadKind::AllPass), Biquad::default()],
-            Kind::Tilt => [
-                one(BiquadKind::LowShelf {
+            Kind::LowPass | Kind::HighPass => {
+                let kind = if self.kind == Kind::LowPass {
+                    BiquadKind::LowPass
+                } else {
+                    BiquadKind::HighPass
+                };
+                let stages = self.slope.stages();
+                for (i, section) in sections.iter_mut().take(stages).enumerate() {
+                    // Butterworth stages are maximally flat; the resonance scales the last,
+                    // sharpest one (so the default 0.707 is flat at every slope).
+                    let resonance = if i + 1 == stages { q / FRAC_1_SQRT_2 } else { 1.0 };
+                    *section =
+                        Biquad::design(kind, cutoff, self.slope.butterworth_q(i) * resonance);
+                }
+            }
+            Kind::BandPass => sections[0] = one(BiquadKind::BandPass),
+            Kind::AllPass => sections[0] = one(BiquadKind::AllPass),
+            Kind::Tilt => {
+                sections[0] = one(BiquadKind::LowShelf {
                     gain_db: gain / 2.0,
-                }),
-                one(BiquadKind::HighShelf {
+                });
+                sections[1] = one(BiquadKind::HighShelf {
                     gain_db: -gain / 2.0,
-                }),
-            ],
-            Kind::Comb => [Biquad::default(); 2],
+                });
+            }
+            Kind::Comb => {}
         }
+        sections
+    }
+
+    /// Whether this is the gentle one-pole low or high pass, which has its own simple loop.
+    fn one_pole(&self) -> bool {
+        matches!(self.kind, Kind::LowPass | Kind::HighPass) && self.slope == Slope::Six
+    }
+
+    /// Smoothing coefficient of the one-pole filter for a cutoff in cycles per sample.
+    fn pole_coefficient(cycles_per_sample: f64) -> f32 {
+        (1.0 - (-TAU * cycles_per_sample.min(0.5)).exp()) as f32
     }
 
     fn cutoff_per_sample(&self, value: f64) -> f64 {
@@ -135,11 +215,12 @@ impl Filter {
 
 /// A `Biquad` with the identity response: what an unused second section is. `process` of a
 /// default (all-zero) biquad would output silence, so unused sections are skipped instead.
-fn sections_used(kind: Kind) -> usize {
+fn sections_used(kind: Kind, slope: Slope) -> usize {
     match kind {
+        Kind::LowPass | Kind::HighPass => slope.stages(),
         Kind::Tilt => 2,
         Kind::Comb => 0,
-        _ => 1,
+        Kind::BandPass | Kind::AllPass => 1,
     }
 }
 
@@ -150,6 +231,7 @@ impl Node for Filter {
         self.fastest = self.cutoff_per_sample(ctx.param_max(Self::CUTOFF, self.cutoff));
         self.slowest = self.cutoff_per_sample(ctx.param_min(Self::CUTOFF, self.cutoff));
         self.sections = self.design(self.cutoff_per_sample(self.cutoff), self.q, self.gain);
+        self.coefficient = Self::pole_coefficient(self.cutoff_per_sample(self.cutoff));
         // A comb's period is at most this long; the line also holds the one-sample feedback delay.
         let longest = (1.0 / self.slowest.max(1e-9)).min(4.0 * ctx.samples_per_frame() as f64);
         self.line = DelayLine::new(longest.ceil() as usize + 2);
@@ -172,7 +254,22 @@ impl Node for Filter {
             }
             return;
         }
-        let used = sections_used(self.kind);
+        if self.one_pole() {
+            let high = self.kind == Kind::HighPass;
+            let mut y = self.pole;
+            for (i, (out, &x)) in outputs[0].data.iter_mut().zip(input).enumerate() {
+                let a = if modulated {
+                    Self::pole_coefficient(self.cutoff_per_sample(cutoff.at64(i)))
+                } else {
+                    self.coefficient
+                };
+                y += a * (x - y);
+                *out = if high { x - y } else { y };
+            }
+            self.pole = y;
+            return;
+        }
+        let used = sections_used(self.kind, self.slope);
         for (i, (out, &x)) in outputs[0].data.iter_mut().zip(input).enumerate() {
             if modulated {
                 let designed =
@@ -193,6 +290,7 @@ impl Node for Filter {
         for s in &mut self.sections {
             s.reset();
         }
+        self.pole = 0.0;
         self.line.reset();
     }
 
@@ -205,7 +303,12 @@ impl Node for Filter {
                 repeats / self.slowest.max(1e-9)
             }
             // A resonant section rings for about 7 time constants of Q / (π f).
-            _ => 7.0 * self.q.max(1.0) / (PI * self.slowest.max(1e-9)),
+            _ if self.one_pole() => 7.0 / (TAU * self.slowest.max(1e-9)),
+            // Cascaded stages ring for longer, roughly in proportion to their number.
+            _ => {
+                let stages = sections_used(self.kind, self.slope).max(1) as f64;
+                7.0 * self.q.max(1.0) * stages / (PI * self.slowest.max(1e-9))
+            }
         };
         if samples.is_finite() {
             ((samples / frame).ceil() as u32).max(1)
@@ -246,6 +349,43 @@ mod tests {
         let p = r#"{ "response": "highpass", "cutoff": 8 }"#;
         assert!(gain(p, 1.0) < 0.05);
         assert!(gain(p, 100.0) > 0.95);
+    }
+
+    #[test]
+    fn steeper_slopes_cut_more_and_stay_flat_in_the_pass_band() {
+        // Two octaves above the cutoff the response has fallen by about 12 dB per 6 of slope.
+        let at = |slope: &str| {
+            gain(&format!(r#"{{ "response": "lowpass", "slope": "{slope}", "cutoff": 8 }}"#), 32.0)
+        };
+        let (g6, g12, g24, g48) = (at("6"), at("12"), at("24"), at("48"));
+        assert!(g6 > g12 && g12 > g24 && g24 > g48, "{g6} {g12} {g24} {g48}");
+        assert!((g24 - 1.0 / 16.0 / 16.0).abs() < 0.01, "24 dB/oct is -48 dB two octaves up: {g24}");
+        for slope in ["6", "12", "24", "48"] {
+            let p = format!(r#"{{ "response": "lowpass", "slope": "{slope}", "cutoff": 32 }}"#);
+            assert!(gain(&p, 1.0) > 0.97, "{slope} passes the low end");
+            let p = format!(r#"{{ "response": "highpass", "slope": "{slope}", "cutoff": 8 }}"#);
+            assert!(gain(&p, 120.0) > 0.9, "{slope} passes the high end");
+        }
+    }
+
+    #[test]
+    fn resonance_peaks_the_cutoff_at_every_slope() {
+        for slope in ["12", "24", "48"] {
+            let flat = gain(&format!(r#"{{ "slope": "{slope}", "cutoff": 16 }}"#), 16.0);
+            let peaked = gain(&format!(r#"{{ "slope": "{slope}", "cutoff": 16, "q": 6 }}"#), 16.0);
+            assert!(peaked > 2.0 * flat, "{slope}: {peaked} vs {flat}");
+        }
+    }
+
+    #[test]
+    fn the_six_db_slope_is_the_one_pole_low_pass() {
+        // One cycle per 32-sample row: coefficient 1 - exp(-2π/32).
+        let len = 32;
+        let mut n = node("filter", r#"{ "slope": "6", "cutoff": 1 }"#, len, len as f64, &[true]);
+        let out = process_one(n.as_mut(), &[vec![1.0; len]]);
+        let a = 1.0 - (-std::f32::consts::TAU / 32.0).exp();
+        assert!((out[0] - a).abs() < 1e-6);
+        assert!((out[1] - (a + a * (1.0 - a))).abs() < 1e-6);
     }
 
     #[test]

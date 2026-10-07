@@ -92,7 +92,7 @@ Using utility and effect nodes, you can create a variety of effects:
 
 - **Delay node** - Offsets each line of video slightly from the next, creating a wave effect that follows your bass notes. A rising bass note causes the waving to morph and change rates.
 - **Bit crush node** - Reduces the bit depth of the carrier, creating a sort of posterization effect that can be tied to a modulator.
-- **Low pass filter node** - Smooths the carrier signal, creating a sort of blur effect that can be tied to a modulator.
+- **Filter node (low pass)** - Set to a low pass, it smooths the carrier signal, creating a sort of blur effect that can be tied to a modulator. A 6 dB/oct slope is the gentlest blur; steeper slopes cut harder.
 
 ### What Makes It Unique
 

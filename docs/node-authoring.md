@@ -141,6 +141,6 @@ stays exact; a changing division moves the shape against the beat grid instead o
 picks a different noise at every sample; Sample & Hold's period reads the hold grid with each sample's own length.
 
 Nodes only have their own inputs for signals that are part of what they do: Amplitude Modulation's modulator and
-the compressor's and gate's sidechain. Delay, Bit Crush and Low Pass used to have a `modulation` input and a
+the compressor's and gate's sidechain. Delay, Bit Crush and Filter (then Low Pass) used to have a `modulation` input and a
 `depth` parameter; parameter modulation replaced them, and graphs that still use them are upgraded when loaded
 (`GraphDesc::upgrade`: the wire moves to `@time`, `@bits` or `@cutoff`, and the depth becomes its amount).

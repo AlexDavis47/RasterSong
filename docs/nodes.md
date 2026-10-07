@@ -342,7 +342,6 @@ Signals carry a tag (video or audio, which channels, the range of values) that c
 | [Gate](#gate) | Silences the signal while it, or a sidechain, is quiet |
 | [Invert](#invert) | Flips the signal: negative for video, upside down for audio |
 | [Limiter](#limiter) | Stops the signal from passing a ceiling by pulling the gain down |
-| [Low Pass](#lowpass) | Smooths the signal along rows, a horizontal blur |
 | [Offset](#offset) | Adds a constant to every sample |
 | [Phaser](#phaser) | Sweeps notches through the signal with allpass filters; modulate the frequency |
 | [Quantize](#quantize) | Snaps every sample to a grid of evenly spaced levels |
@@ -649,9 +648,10 @@ Can process R, G and B separately.
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
 | `response` (Type) | `lowpass` | `lowpass`, `highpass`, `bandpass`, `allpass`, `tilt`, `comb` | no | lowpass, highpass, bandpass, allpass, tilt (gain dB of low-versus-high balance) or comb (echo every cutoff cycle) |
+| `slope` (Slope (dB/oct)) | `12` | `6`, `12`, `24`, `48` | no | How sharply the cut falls off past the cutoff: 6 is a gentle one-pole roll-off, 48 a brick wall. Used when `response` is `lowpass` or `highpass`. |
 | `cutoff` (Cutoff) | 40 | 0.01 to 200 (up to 0.000001 to 1000000000) | yes | Frequency of the filter's corner or centre |
 | `unit` (Cycles per) | `row` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the cutoff |
-| `q` (Resonance) | 0.707 | 0.1 to 20 (up to 0.05 to 100) | yes | Sharpness: 0.707 is flat, higher rings or narrows. For a comb, higher repeats more |
+| `q` (Resonance) | 0.707 | 0.1 to 20 (up to 0.05 to 100) | yes | Sharpness: 0.707 is flat (no resonance), higher rings or narrows. For a comb, higher repeats more. The 6 dB slope has none |
 | `gain` (Gain) | 0 dB | -24 to 24 (up to -48 to 48) | yes | For tilt: dB boost of lows and cut of highs (negative reverses) |
 
 ### `flanger`
@@ -789,27 +789,6 @@ Can process R, G and B separately.
 | `ceiling` (Ceiling) | -6 dB | -48 to 0 (up to -120 to 24) | yes | The loudest any sample may get: 0 dB is full scale, 1.0 |
 | `release` (Release) | 50 | 0 to 1000 (up to 0 to 1000000) | yes | How slowly the gain recovers after a peak; longer is smoother |
 | `unit` (Unit) | `ms` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the release |
-
-### `lowpass`
-
-**Low Pass**: Smooths the signal along rows, a horizontal blur
-
-Can process R, G and B separately.
-
-**Inputs**
-
-- `in` (main, required): The signal to process
-
-**Outputs**
-
-- `out`: The processed signal
-
-**Parameters**
-
-| Name | Default | Range | Modulation | What it does |
-|---|---|---|---|---|
-| `cutoff` (Cutoff) | 40 | 0.01 to 200 (up to 0.000001 to 1000000000) | yes | Cutoff; lower is smoother |
-| `unit` (Cycles per) | `row` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the cutoff |
 
 ### `offset`
 

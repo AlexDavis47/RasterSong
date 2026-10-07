@@ -361,12 +361,12 @@ a migration where noted, and a regenerated `nodes.md`.
   - [ ] **chore** Rename the "Index" parameter to something that explains itself (candidate: *Depth*, with help
     text saying it is how far the modulator pushes the carrier's frequency). Migration for the old name.
 - **Filter**
-  - [ ] **feature** Adjustable Q **and** a slope in dB/octave for sharper cuts (12, 24, 48, … dB/oct by cascading
-    stages). Shared with Three-Band Split and Equalizer.
-  - [ ] **feature** A non-resonant version: either a response option on Filter, or a "resonance off" mode that gives
+  - [x] **feature** Adjustable Q **and** a slope in dB/octave for sharper cuts (12, 24, 48, … dB/oct by cascading
+    stages). Filter has it; sharing it with Three-Band Split and Equalizer is still to do.
+  - [x] **feature** A non-resonant version: either a response option on Filter, or a "resonance off" mode that gives
     a maximally flat (Butterworth) response. Prefer one node with conditional parameters over two nodes.
 - **Low Pass**
-  - [ ] **chore** Redundant in favor of Filter. Deprecate and remove once Filter has a non-resonant mode and a
+  - [x] **chore** Redundant in favor of Filter. Deprecate and remove once Filter has a non-resonant mode and a
     slope; migration maps an old Low Pass to a Filter set to low pass. Update the "low pass as blur" examples in
     [Concepts](concepts.md#advanced-effects) and `examples/graphs/`. *Depends on the Filter items above.*
 - **DC Filter** (new)

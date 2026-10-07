@@ -18,7 +18,7 @@ use crate::GraphError;
 /// amount is a percentage of the slider range and the value stays inside it (the overshoot flag
 /// is gone; both-ways amounts are the distance either side, not peak to peak; amounts run
 /// from -100% to 100%).
-pub const FORMAT_VERSION: u32 = 10;
+pub const FORMAT_VERSION: u32 = 11;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

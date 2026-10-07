@@ -97,7 +97,6 @@ nodes! {
         am: [Am],
         delay: [Delay],
         bitcrush: [Bitcrush],
-        lowpass: [Lowpass],
         compressor: [Compressor],
         gate: [Gate],
         distortion: [Distortion],
