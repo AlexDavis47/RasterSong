@@ -343,6 +343,7 @@ Signals carry a tag (video or audio, which channels, the range of values) that c
 | [Clamp](#clamp) | Limits every sample to a range |
 | [Compressor](#compressor) | Turns loud parts down, following the input or a sidechain |
 | [Crossfade](#crossfade) | Fades or cuts between two signals |
+| [DC Filter](#dc_filter) | Removes the constant offset of a signal with a very slow high pass |
 | [Delay](#delay) | Delays the signal by rows or frames; modulating the time bends rows into waves |
 | [Distortion](#distortion) | Drives the signal into a waveshaper: soft, hard, folding or wrapping |
 | [Envelope](#envelope) | Follows how strong the signal is, as a smooth curve from 0 up (Slew limits the signal itself instead) |
@@ -523,6 +524,27 @@ Can process R, G and B separately.
 | `curve` (Curve) | `fade` | `fade`, `switch` | no | fade blends smoothly, switch cuts from `a` to `b` at the middle |
 | `position` (Position) | 0.5 | 0 to 1 | yes | 0 is only `a`, 1 is only `b` |
 
+### `dc_filter`
+
+**DC Filter**: Removes the constant offset of a signal with a very slow high pass
+
+Can process R, G and B separately.
+
+**Inputs**
+
+- `in` (main, required): The signal to process
+
+**Outputs**
+
+- `out`: The signal with its offset removed
+
+**Parameters**
+
+| Name | Default | Range | Modulation | What it does |
+|---|---|---|---|---|
+| `cutoff` (Cutoff) | 10 | 0.1 to 100 (up to 0.000001 to 1000000000) | yes | Below this frequency the signal is removed. Keep it far below anything you want to keep; the default suits audio |
+| `unit` (Cycles per) | `second` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the cutoff |
+
 ### `delay`
 
 **Delay**: Delays the signal by rows or frames; modulating the time bends rows into waves
@@ -636,8 +658,8 @@ Can process R, G and B separately.
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `index` (Index) | 0.5 | 0 to 10 (up to 0 to 1000) | yes | How far the modulator moves the carrier, in rows or frames: the modulator at +1 reads twice this far back, at -1 not at all |
-| `unit` (Unit) | `row` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the index |
+| `depth` (Depth) | 0.5 | 0 to 10 (up to 0 to 1000) | yes | How far the modulator pushes the carrier, in rows or frames: the modulator at +1 reads twice this far back, at -1 not at all |
+| `unit` (Unit) | `row` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the depth |
 | `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
 
 ### `filter`
@@ -1029,6 +1051,7 @@ Can process R, G and B separately.
 | `low_hz` (Low / mid) | 250 | 1 to 100000 (up to 0.001 to 1000000000) | yes | Crossover between the low and mid bands |
 | `high_hz` (Mid / high) | 4000 | 1 to 100000 (up to 0.001 to 1000000000) | yes | Crossover between the mid and high bands |
 | `unit` (Cycles per) | `second` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the crossovers |
+| `slope` (Slope (dB/oct)) | `12` | `12`, `24`, `48` | no | How sharply each crossover separates the bands. The mid band is what remains, so the three bands always add back up to the input at any slope |
 
 ## Output
 

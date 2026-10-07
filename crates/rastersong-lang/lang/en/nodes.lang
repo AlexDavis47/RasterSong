@@ -220,10 +220,10 @@ node.fm.description = Bends the carrier by reading it through a delay the modula
 node.fm.input.carrier = The signal that gets bent
 node.fm.input.modulator = The signal that sets how far back the carrier is read
 node.fm.output.out = The processed signal
-node.fm.param.index.label = Index
-node.fm.param.index.help = How far the modulator moves the carrier, in rows or frames: the modulator at +1 reads twice this far back, at -1 not at all
+node.fm.param.depth.label = Depth
+node.fm.param.depth.help = How far the modulator pushes the carrier, in rows or frames: the modulator at +1 reads twice this far back, at -1 not at all
 node.fm.param.unit.label = Unit
-node.fm.param.unit.help = Unit for the index
+node.fm.param.unit.help = Unit for the depth
 
 node.frequency_shifter.label = Frequency Shifter
 node.frequency_shifter.description = Moves every frequency up or down by a fixed amount, giving inharmonic tones
@@ -235,6 +235,14 @@ node.frequency_shifter.param.shift.help = How far every frequency moves: positiv
 node.frequency_shifter.param.unit.label = Cycles per
 node.frequency_shifter.param.unit.help = Unit for the shift
 
+node.dc_filter.label = DC Filter
+node.dc_filter.description = Removes the constant offset of a signal with a very slow high pass
+node.dc_filter.input.in = The signal to process
+node.dc_filter.output.out = The signal with its offset removed
+node.dc_filter.param.cutoff.label = Cutoff
+node.dc_filter.param.cutoff.help = Below this frequency the signal is removed. Keep it far below anything you want to keep; the default suits audio
+node.dc_filter.param.unit.label = Cycles per
+node.dc_filter.param.unit.help = Unit for the cutoff
 node.gain.label = Gain
 node.gain.description = Makes the signal louder or quieter, in decibels
 node.gain.input.in = The signal to process
@@ -511,3 +519,5 @@ node.video_input.output.out = The video, as RGB from 0 to 1
 node.video_input.param.source.label = Source
 node.video_input.param.source.help = Name of the host-supplied video signal
 
+node.three_band.param.slope.label = Slope (dB/oct)
+node.three_band.param.slope.help = How sharply each crossover separates the bands. The mid band is what remains, so the three bands always add back up to the input at any slope

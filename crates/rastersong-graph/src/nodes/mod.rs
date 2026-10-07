@@ -107,6 +107,7 @@ nodes! {
         envelope: [Envelope],
         filter: [Filter],
         equalizer: [Equalizer],
+        dc_filter: [DcFilter],
         fm: [Fm],
         reverb: [Reverb],
         gain: [Gain],
