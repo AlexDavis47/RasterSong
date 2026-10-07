@@ -12,7 +12,7 @@ use rastersong_graph::{Interpolation, Kind, Layout, Range, Signal};
 /// The longest side of the picture a tap makes.
 pub const PICTURE_SIDE: u32 = 320;
 /// Samples above which a signal that isn't audio is not kept as samples, only as a picture.
-const MAX_KEPT_SAMPLES: usize = 1 << 16;
+const MAX_KEPT_SAMPLES: usize = 1 << 18;
 
 /// Which connection to look at, and when: the output `output` of node `node` while rendering
 /// output frame `frame`.
@@ -37,8 +37,10 @@ pub struct Tap {
     pub request: TapRequest,
     /// The layout (and so the tag) of the signal.
     pub layout: Layout,
-    /// The signal stretched over a picture, for anything that isn't audio.
+    /// The signal stretched over a picture, whatever it is.
     pub picture: Option<Picture>,
+    /// Samples a second per channel the signal runs at: its frame's length times the frame rate.
+    pub rate: f64,
     /// The signal's samples, for audio and for any other signal small enough to keep.
     pub samples: Option<Arc<[f32]>>,
 }
@@ -94,12 +96,14 @@ fn picture(signal: &Signal, project: (u32, u32)) -> Picture {
 }
 
 /// What a tap of `signal` shows. `project` is the size of the rendered picture.
-pub fn read(request: TapRequest, signal: &Signal, project: (u32, u32)) -> Tap {
+pub fn read(request: TapRequest, signal: &Signal, project: (u32, u32), frame_rate: f64) -> Tap {
     let audio = signal.layout.tag.kind == Kind::Audio;
     Tap {
         request,
         layout: signal.layout,
-        picture: (!audio).then(|| picture(signal, project)),
+        rate: signal.layout.len() as f64 / f64::from(signal.layout.samples_per_pixel.max(1))
+            * frame_rate,
+        picture: Some(picture(signal, project)),
         samples: (audio || signal.data.len() <= MAX_KEPT_SAMPLES)
             .then(|| signal.data.clone().into()),
     }
@@ -127,12 +131,12 @@ mod tests {
     #[test]
     fn an_audio_signal_is_kept_as_samples_and_a_mono_picture_is_gray() {
         let audio = Signal::from_data(Layout::audio(4), vec![0.1, 0.2, 0.3, 0.4]);
-        let tap = read(request(), &audio, (4, 2));
-        assert!(tap.picture.is_none());
+        let tap = read(request(), &audio, (4, 2), 30.0);
+        assert!(tap.picture.is_some(), "audio can be seen as a picture too");
         assert_eq!(tap.samples.as_deref(), Some(&[0.1, 0.2, 0.3, 0.4][..]));
 
         let mono = Signal::from_data(Layout::mono(2, 1), vec![1.0, 0.0]);
-        let tap = read(request(), &mono, (2, 1));
+        let tap = read(request(), &mono, (2, 1), 30.0);
         let picture = tap.picture.unwrap();
         assert_eq!(picture.rgb, [255, 255, 255, 0, 0, 0]);
     }

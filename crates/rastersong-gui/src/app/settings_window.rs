@@ -2,7 +2,9 @@
 //! in the project file), each with a line of help.
 
 use eframe::egui::{self, RichText, Ui};
-use rastersong_engine::{MAX_WARMUP_FRAMES_LIMIT, PreviewScale, Tempo, UNBOUNDED_WARMUP};
+use rastersong_engine::{
+    INSPECT_RATE_RANGE, MAX_WARMUP_FRAMES_LIMIT, PreviewScale, Tempo, UNBOUNDED_WARMUP,
+};
 use rastersong_lang::{tr, tr_args};
 
 use super::{AUDIO_RATES, App};
@@ -212,16 +214,16 @@ impl App {
 
         section(ui, tr("settings.graph_editor"));
         ui.horizontal(|ui| {
-            ui.label(tr("settings.default_tool"));
-            egui::ComboBox::from_id_salt("settings-default-tool")
-                .selected_text(self.settings.default_tool.label())
+            ui.label(tr("settings.inspect_mode"));
+            egui::ComboBox::from_id_salt("settings-inspect-mode")
+                .selected_text(self.settings.inspect_mode.label())
                 .show_ui(ui, |ui| {
-                    for tool in crate::editor::Tool::ALL {
-                        ui.selectable_value(&mut self.settings.default_tool, tool, tool.label());
+                    for mode in crate::editor::InspectMode::ALL {
+                        ui.selectable_value(&mut self.settings.inspect_mode, mode, mode.label());
                     }
                 });
         });
-        help(ui, tr("settings.default_tool.help"));
+        help(ui, tr("settings.inspect_mode.help"));
         ui.checkbox(&mut self.settings.node_stats, tr("settings.node_stats"));
         help(ui, tr("settings.node_stats.help"));
         ui.checkbox(
@@ -290,6 +292,19 @@ impl App {
         });
         help(ui, tr("settings.warmup.help"));
         self.warmup_warning(ui);
+
+        section(ui, tr("settings.inspect"));
+        ui.horizontal(|ui| {
+            ui.label(tr("settings.inspect_rate"));
+            ui.add(
+                ValueBox::new(&mut self.project.inspect_rate)
+                    .range(INSPECT_RATE_RANGE)
+                    .max_decimals(0)
+                    .speed(0.2)
+                    .suffix(tr("settings.inspect_rate.suffix")),
+            );
+        });
+        help(ui, tr("settings.inspect_rate.help"));
 
         section(ui, tr("settings.audio"));
         ui.horizontal(|ui| {

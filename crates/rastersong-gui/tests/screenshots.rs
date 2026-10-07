@@ -644,33 +644,94 @@ fn meter_screenshots() {
     }
     save(&mut harness, "dark-22-video-wire-tooltip");
 
-    // The Look tool: the same wires with a picture and a scope.
-    let mut settings = harness.state().settings().clone();
-    settings.default_tool = rastersong_gui::editor::Tool::Look;
-    harness.state_mut().set_settings(settings);
-    for (name, mid) in [
-        ("video", a + (b - a) * 0.5),
-        ("audio", {
-            let from = harness
-                .state()
-                .editor()
-                .pin_screen_pos(comp, false, 0)
-                .unwrap();
-            let to = harness
-                .state()
-                .editor()
-                .pin_screen_pos(eq, true, 0)
-                .unwrap();
-            from + (to - from) * 0.5
-        }),
-    ] {
+    // Inspecting a connection in each view, and with the inspect key held.
+    let audio_mid = {
+        let from = harness
+            .state()
+            .editor()
+            .pin_screen_pos(comp, false, 0)
+            .unwrap();
+        let to = harness
+            .state()
+            .editor()
+            .pin_screen_pos(eq, true, 0)
+            .unwrap();
+        from + (to - from) * 0.5
+    };
+    let views = [
+        (
+            "video",
+            a + (b - a) * 0.5,
+            rastersong_gui::editor::InspectMode::Auto,
+            false,
+        ),
+        (
+            "video-scope",
+            a + (b - a) * 0.5,
+            rastersong_gui::editor::InspectMode::Scope,
+            false,
+        ),
+        (
+            "video-spectrum",
+            a + (b - a) * 0.5,
+            rastersong_gui::editor::InspectMode::Spectrum,
+            false,
+        ),
+        (
+            "audio",
+            audio_mid,
+            rastersong_gui::editor::InspectMode::Auto,
+            false,
+        ),
+        (
+            "audio-spectrum",
+            audio_mid,
+            rastersong_gui::editor::InspectMode::Spectrum,
+            false,
+        ),
+        (
+            "audio-picture",
+            audio_mid,
+            rastersong_gui::editor::InspectMode::Picture,
+            false,
+        ),
+        (
+            "audio-keys",
+            audio_mid,
+            rastersong_gui::editor::InspectMode::Spectrum,
+            true,
+        ),
+    ];
+    for (name, mid, mode, key) in views {
+        let mut settings = harness.state().settings().clone();
+        settings.inspect_mode = mode;
+        harness.state_mut().set_settings(settings);
         harness.event(egui::Event::PointerMoved(mid - egui::vec2(40.0, 40.0)));
         harness.run_steps(2);
         harness.event(egui::Event::PointerMoved(mid));
+        if key {
+            harness.event(egui::Event::Key {
+                key: egui::Key::I,
+                physical_key: Some(egui::Key::I),
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
         for _ in 0..40 {
             harness.run_steps(1);
             std::thread::sleep(Duration::from_millis(25));
         }
-        save(&mut harness, &format!("dark-23-look-{name}"));
+        save(&mut harness, &format!("dark-23-inspect-{name}"));
+        if key {
+            harness.event(egui::Event::Key {
+                key: egui::Key::I,
+                physical_key: Some(egui::Key::I),
+                pressed: false,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.run_steps(2);
+        }
     }
 }

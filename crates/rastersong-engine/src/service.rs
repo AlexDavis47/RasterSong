@@ -988,6 +988,7 @@ impl Worker {
                         request.clone(),
                         signal,
                         (info.width, info.height),
+                        info.frame_rate.as_f64(),
                     ))),
                     None => TapOutcome::NotRendered,
                 },

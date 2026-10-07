@@ -104,6 +104,8 @@ pub struct App {
     sent_mix: Option<(AudioSink, Vec<MixEntry>)>,
     /// The connection being listened to with the Listen tool, and from when.
     listening: Option<Listening>,
+    /// Scrolled distance not yet worth a step of the inspection view.
+    inspect_scroll: f32,
     clock: PlaybackClock,
     /// Frame count and rate the clock was made for.
     clock_shape: Option<(usize, f64)>,
@@ -178,6 +180,7 @@ impl App {
             inspected: Vec::new(),
             sent_mix: None,
             listening: None,
+            inspect_scroll: 0.0,
             waiting_since: None,
             selected_track: (!project.audio_tracks.is_empty()).then_some(0),
             solo: None,
@@ -599,7 +602,7 @@ impl App {
         let levels = frame.as_ref().map_or(&[][..], |f| &f.levels[..]);
         let params = frame.as_ref().map_or(&[][..], |f| &f.params[..]);
         let costs = frame.as_ref().map_or(&[][..], |f| &f.costs[..]);
-        let tool = crate::editor::active_tool(ui, self.settings.default_tool);
+        self.update_inspect_view(ui);
         let engine = &self.engine;
         let tap = |request: &rastersong_engine::TapRequest| engine.tap(request);
         let canvas = self.editor.show(
@@ -612,14 +615,15 @@ impl App {
                 show_stats: self.settings.node_stats,
                 costs,
                 show_performance: self.settings.show_performance,
-                look: (tool == crate::editor::Tool::Look).then(|| crate::editor::LookContext {
+                inspect: Some(crate::editor::InspectContext {
                     frame: self.clock.frame(),
                     tap: &tap,
+                    refresh: 1.0 / self.project.inspect_rate.max(0.1),
+                    mode: self.settings.inspect_mode,
                 }),
             },
         );
-        self.tool_bar(ui, canvas.rect, tool);
-        self.update_listening(ui, tool);
+        self.update_listening(ui);
         self.bypass_all_button(ui, canvas.rect);
     }
 
@@ -632,10 +636,29 @@ impl App {
         }
     }
 
-    /// Starts, moves and stops the Listen tool's sound as the pointer moves over connections.
-    fn update_listening(&mut self, ui: &Ui, tool: crate::editor::Tool) {
+    /// Holding the inspect key over a connection turns the wheel into a way to change the view.
+    fn update_inspect_view(&mut self, ui: &Ui) {
+        let inspecting = self.editor.hovered_output().is_some()
+            && crate::editor::key_held(ui, crate::editor::INSPECT_KEY);
+        self.editor.scroll_reserved = inspecting;
+        if !inspecting {
+            self.inspect_scroll = 0.0;
+            return;
+        }
+        // Down the wheel is down the list.
+        self.inspect_scroll -= ui.input_mut(|i| std::mem::take(&mut i.smooth_scroll_delta.y));
+        let steps = (self.inspect_scroll / crate::editor::SCROLL_STEP).trunc();
+        if steps != 0.0 {
+            self.inspect_scroll -= steps * crate::editor::SCROLL_STEP;
+            self.settings.inspect_mode = self.settings.inspect_mode.stepped(steps as i32);
+        }
+    }
+
+    /// Starts, moves and stops the sound of the connection under the pointer while the listen
+    /// key is held.
+    fn update_listening(&mut self, ui: &Ui) {
         let fps = self.clock_shape.map_or(30.0, |s| s.1);
-        let wanted = (tool == crate::editor::Tool::Listen)
+        let wanted = crate::editor::key_held(ui, crate::editor::LISTEN_KEY)
             .then(|| self.editor.hovered_output())
             .flatten()
             .map(|(node, output)| rastersong_engine::ListenTarget {
@@ -665,20 +688,6 @@ impl App {
                 .listen(Some(l.target.clone()), (now.max(0.0) * fps) as usize);
             ui.ctx().request_repaint();
         }
-    }
-
-    /// The buttons in the canvas's corner that choose the default tool.
-    fn tool_bar(&mut self, ui: &mut Ui, canvas: egui::Rect, active: crate::editor::Tool) {
-        let id = ui.id().with("tool-bar");
-        egui::Area::new(id)
-            .order(egui::Order::Foreground)
-            .fixed_pos(canvas.left_top() + egui::vec2(8.0, 8.0))
-            .show(ui.ctx(), |ui| {
-                if let Some(tool) = crate::editor::tool_bar(ui, self.settings.default_tool, active)
-                {
-                    self.settings.default_tool = tool;
-                }
-            });
     }
 
     /// The toggle in the canvas's corner that skips the whole graph.

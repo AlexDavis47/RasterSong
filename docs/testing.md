@@ -31,4 +31,4 @@ Work in the [roadmap](roadmap.md) carries its own test obligations, so they aren
 - Conditional parameters: a hidden parameter keeps its value and still round-trips through files.
 - Percentage-based modulation: the same percentage gives the same fraction of the span on any parameter.
 - New filters and distortion types: frequency-response or transfer-curve unit tests, plus `TEST_CONFIGS` and `BENCH`.
-- Look/Listen taps never change the rendered output or the cache (they are read-only probes).
+- Taps (inspection and listening) never change the rendered output or the cache (they are read-only probes).

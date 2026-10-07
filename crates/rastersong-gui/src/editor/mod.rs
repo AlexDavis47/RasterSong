@@ -2,14 +2,13 @@
 //! canvas. The project's [`GraphDesc`] stays the model; the editor converts to and from it.
 
 mod canvas;
+mod inspect;
 mod inspector;
 mod linked;
-mod look;
 mod modulation;
 mod param_field;
 mod performance;
 mod search;
-mod tools;
 mod tooltips;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -22,11 +21,10 @@ use rastersong_engine::{
 };
 
 pub use canvas::CanvasContext;
+pub use inspect::{INSPECT_KEY, InspectContext, InspectMode, LISTEN_KEY, SCROLL_STEP, key_held};
 pub use inspector::InspectorContext;
 pub use linked::LinkedRename;
-pub use look::LookContext;
 pub use modulation::{PARAM_PORT, as_param, param_port};
-pub use tools::{Tool, active as active_tool, tool_bar};
 
 /// Identifies a node in the editor, stable across renames.
 pub type NodeKey = u64;
@@ -103,6 +101,8 @@ pub struct GraphEditor {
     last_canvas: Rect,
     /// The node output the pointer is over (a wire or an output pin), for the Listen tool.
     hovered_output: Option<(String, usize)>,
+    /// Whether the wheel is for something other than zooming (changing the inspection view).
+    pub scroll_reserved: bool,
     last_geometry: Vec<canvas::Geometry>,
     /// Text last copied, for the Edit menu's Paste (keyboard paste reads the system clipboard).
     clipboard: Option<String>,
@@ -154,6 +154,7 @@ impl GraphEditor {
             node_menu: None,
             last_canvas: Rect::NOTHING,
             hovered_output: None,
+            scroll_reserved: false,
             last_geometry: Vec::new(),
             clipboard: None,
             keep_connections: true,

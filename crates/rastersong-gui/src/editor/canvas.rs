@@ -57,8 +57,8 @@ pub struct CanvasContext<'a> {
     pub costs: &'a [NodeCost],
     /// Whether to show node processing times and tint the slow nodes.
     pub show_performance: bool,
-    /// What the Look tool needs, while it is the tool in use.
-    pub look: Option<super::look::LookContext<'a>>,
+    /// How inspecting a connection works; none in tests that have no engine.
+    pub inspect: Option<super::inspect::InspectContext<'a>>,
 }
 
 /// How deep [`GraphEditor::output_color`] follows inherited colours upstream.
@@ -450,7 +450,7 @@ impl GraphEditor {
         let readings = super::tooltips::Readings {
             levels: ctx.levels,
             params: ctx.params,
-            look: ctx.look.as_ref(),
+            inspect: ctx.inspect.as_ref(),
         };
         self.hover_tooltips(ui, rect, &geometry, &to_screen, hovered_pin, &readings);
 
@@ -511,7 +511,11 @@ impl GraphEditor {
         let hovered = response.hovered();
 
         // Zoom around the pointer.
-        if hovered && let Some(p) = pointer {
+        // Scrolling while inspecting changes the view instead.
+        if hovered
+            && !self.scroll_reserved
+            && let Some(p) = pointer
+        {
             let (scroll, pinch) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
             let factor = (scroll * 0.0015).exp() * pinch;
             if factor != 1.0 {

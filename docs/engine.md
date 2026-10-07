@@ -121,8 +121,8 @@ source audio is used untouched; a track wired straight into it is also used as i
 
 ## Taps and listening
 
-A **tap** reads one connection (the output of a node) at one frame, for the editor's Look tool. **Listening**
-renders a connection's sound ahead of a position, for the Listen tool. Both are read-only:
+A **tap** reads one connection (the output of a node) at one frame, for the editor's inspection popup. **Listening**
+renders a connection's sound ahead of a position, for the listen key. Both are read-only:
 
 - They are answered by a second renderer the service builds on demand, with its own video decoder and graph
   state, so a tap never moves the render-ahead, never touches the frame cache and is never part of the cache key.
@@ -139,7 +139,8 @@ renders a connection's sound ahead of a position, for the Listen tool. Both are 
   like the rendered sound of a graph. Frames of a connection that isn't rendered are silent.
 - The tap renderer renders one frame at a time on the render thread, ahead of render-ahead, so taps and
   listening make the cache wait a moment; the editor rate-limits its requests (the pointer rests on a
-  connection first; while the playhead moves, a new frame is asked for a few times a second at most).
+  connection first; while the playhead moves, a new frame is asked for at most as often as the project's
+  `inspect_rate`, 5 a second by default).
 
 ## Export / Offline Rendering
 

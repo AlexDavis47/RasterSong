@@ -5,7 +5,7 @@ use rastersong_engine::{Layout, OutputLevel, ParamLevel};
 use rastersong_lang::{tr, tr_args};
 
 use super::canvas::{Geometry, Pin, wire_points};
-use super::look::{LookContext, LookView};
+use super::inspect::{INSPECT_KEY, InspectContext, InspectMode, LISTEN_KEY, Visual, key_held};
 use super::{GraphEditor, NodeKey, Wire, modulation};
 
 /// How close (in screen pixels) the pointer must be to a wire for its tooltip.
@@ -18,8 +18,8 @@ const WIRE_SAMPLES: usize = 32;
 pub struct Readings<'a> {
     pub levels: &'a [OutputLevel],
     pub params: &'a [ParamLevel],
-    /// The Look tool, while it is in use.
-    pub look: Option<&'a LookContext<'a>>,
+    /// How inspecting works, when the app gave the editor a way to ask the engine.
+    pub inspect: Option<&'a InspectContext<'a>>,
 }
 
 /// How far `p` is from the cubic curve through `points`.
@@ -140,8 +140,12 @@ impl GraphEditor {
             return;
         }
         self.hovered_output = tip.source.clone();
-        if let (Some(look), Some((node, output))) = (readings.look, &tip.source) {
-            tip.look = Some(super::look::look(ui, node, *output, tip.audio, look));
+        if let (Some(inspect), Some((node, output))) = (readings.inspect, &tip.source) {
+            tip.selected = inspect.mode;
+            tip.mode = inspect.mode.resolved(tip.audio);
+            if tip.mode != InspectMode::Readings {
+                tip.visual = Some(super::inspect::inspect(ui, node, *output, inspect));
+            }
         }
         let spot = Rect::from_center_size(pointer, egui::vec2(2.0, 2.0));
         ui.interact(spot, ui.id().with("canvas-tooltip"), Sense::hover())
@@ -231,8 +235,11 @@ struct Tip {
     /// The node output the tip is about, and whether it carries audio.
     source: Option<(String, usize)>,
     audio: bool,
-    /// The Look tool's picture or scope.
-    look: Option<LookView>,
+    /// The picture, scope or spectrum of the signal, and which it is.
+    visual: Option<Visual>,
+    mode: InspectMode,
+    /// The view the user chose, before `Auto` is resolved.
+    selected: InspectMode,
     level: Option<OutputLevel>,
     /// How the level is metered, from the signal's tag.
     scale: Option<crate::widgets::Scale>,
@@ -251,6 +258,26 @@ impl Tip {
     /// Lays the tip out: text first, then a grid whose rows are a label and a fixed-width
     /// value, so changing numbers never move anything.
     fn show(&self, ui: &mut Ui) {
+        // With the inspect key held, the views are listed beside the tip, the current one marked.
+        if self.source.is_some() && key_held(ui, INSPECT_KEY) {
+            let items: Vec<_> = InspectMode::ALL
+                .iter()
+                .map(|mode| (mode.icon(), mode.label()))
+                .collect();
+            let selected = InspectMode::ALL
+                .iter()
+                .position(|mode| *mode == self.selected)
+                .unwrap_or(0);
+            ui.horizontal_top(|ui| {
+                crate::widgets::icon_list(ui, &items, selected);
+                ui.vertical(|ui| self.content(ui));
+            });
+        } else {
+            self.content(ui);
+        }
+    }
+
+    fn content(&self, ui: &mut Ui) {
         ui.set_min_width(TIP_WIDTH);
         if let Some(title) = &self.title {
             ui.label(egui::RichText::new(title).strong());
@@ -258,16 +285,34 @@ impl Tip {
         for fact in &self.facts {
             ui.label(egui::RichText::new(fact).weak());
         }
-        if let Some(look) = &self.look {
+        if let Some(visual) = &self.visual {
             ui.add_space(2.0);
-            look.show(ui);
+            visual.show(ui, self.mode);
         }
-        if self.level.is_none() && self.value.is_none() {
-            return;
+        if self.level.is_some() || self.value.is_some() {
+            if self.title.is_some() || !self.facts.is_empty() || self.visual.is_some() {
+                ui.separator();
+            }
+            self.readings(ui);
         }
-        if self.title.is_some() || !self.facts.is_empty() || self.look.is_some() {
-            ui.separator();
+        if self.source.is_some() {
+            ui.add_space(2.0);
+            ui.label(
+                egui::RichText::new(tr_args(
+                    "inspect.hint",
+                    &[
+                        ("inspect", INSPECT_KEY.name()),
+                        ("listen", LISTEN_KEY.name()),
+                    ],
+                ))
+                .weak()
+                .small(),
+            );
         }
+    }
+
+    /// The meter and the numbers, in a grid so they stay in their columns.
+    fn readings(&self, ui: &mut Ui) {
         egui::Grid::new("tip-readings")
             .num_columns(2)
             .spacing([10.0, 3.0])

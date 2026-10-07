@@ -594,3 +594,128 @@ mod tests {
         assert_eq!(line.read(1.0), 0.0);
     }
 }
+
+/// A radix-2 fast Fourier transform of a fixed power-of-two size, for analysis (the spectrum
+/// analyzer) and for any node that works on spectra.
+#[derive(Debug, Clone)]
+pub struct Fft {
+    size: usize,
+    /// `cos` and `sin` of `-2πk/size` for `k < size/2`.
+    twiddles: Vec<(f32, f32)>,
+    window: Vec<f32>,
+    re: Vec<f32>,
+    im: Vec<f32>,
+}
+
+impl Fft {
+    /// A transform of `size` points, rounded up to a power of two (at least 2).
+    pub fn new(size: usize) -> Self {
+        let size = size.max(2).next_power_of_two();
+        let twiddles = (0..size / 2)
+            .map(|k| {
+                let a = -TAU * k as f64 / size as f64;
+                (a.cos() as f32, a.sin() as f32)
+            })
+            .collect();
+        // Periodic Hann: the usual window for spectrum display.
+        let window = (0..size)
+            .map(|i| (0.5 - 0.5 * (TAU * i as f64 / size as f64).cos()) as f32)
+            .collect();
+        Self {
+            size,
+            twiddles,
+            window,
+            re: vec![0.0; size],
+            im: vec![0.0; size],
+        }
+    }
+
+    pub fn size(&self) -> usize {
+        self.size
+    }
+
+    /// In-place transform of `re` and `im`, which must be `size` long.
+    fn transform(&mut self) {
+        let n = self.size;
+        let bits = n.trailing_zeros();
+        for i in 0..n {
+            let j = i.reverse_bits() >> (usize::BITS - bits);
+            if j > i {
+                self.re.swap(i, j);
+                self.im.swap(i, j);
+            }
+        }
+        let mut half = 1;
+        while half < n {
+            let step = n / (half * 2);
+            for start in (0..n).step_by(half * 2) {
+                for k in 0..half {
+                    let (c, s) = self.twiddles[k * step];
+                    let (a, b) = (start + k, start + k + half);
+                    let tr = self.re[b] * c - self.im[b] * s;
+                    let ti = self.re[b] * s + self.im[b] * c;
+                    self.re[b] = self.re[a] - tr;
+                    self.im[b] = self.im[a] - ti;
+                    self.re[a] += tr;
+                    self.im[a] += ti;
+                }
+            }
+            half *= 2;
+        }
+    }
+
+    /// The magnitude of each frequency bin from 0 to the Nyquist frequency (`size / 2 + 1` bins)
+    /// of the Hann-windowed `samples`, scaled so a full-scale sine reads about `1`. Input
+    /// shorter than the transform is zero-padded; longer input is cut to its first `size`
+    /// samples.
+    pub fn magnitudes(&mut self, samples: &[f32], out: &mut Vec<f32>) {
+        for (i, (re, im)) in self.re.iter_mut().zip(&mut self.im).enumerate() {
+            *re = samples.get(i).copied().unwrap_or(0.0) * self.window[i];
+            *im = 0.0;
+        }
+        self.transform();
+        // A Hann window has a coherent gain of one half; a real sine splits across two bins.
+        let scale = 4.0 / self.size as f32;
+        out.clear();
+        out.extend(
+            (0..=self.size / 2).map(|k| (self.re[k].hypot(self.im[k]) * scale).min(f32::MAX)),
+        );
+    }
+}
+
+#[cfg(test)]
+mod fft_tests {
+    use super::*;
+
+    #[test]
+    fn a_sine_peaks_in_its_bin_at_its_level() {
+        let size = 256;
+        let mut fft = Fft::new(size);
+        let sine: Vec<f32> = (0..size)
+            .map(|i| (0.5 * (TAU * 20.0 * i as f64 / size as f64).sin()) as f32)
+            .collect();
+        let mut out = Vec::new();
+        fft.magnitudes(&sine, &mut out);
+        assert_eq!(out.len(), size / 2 + 1);
+        let peak = out
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.total_cmp(b.1))
+            .unwrap();
+        assert_eq!(peak.0, 20);
+        assert!((*peak.1 - 0.5).abs() < 0.02, "{}", peak.1);
+        // Far from the tone there is almost nothing.
+        assert!(out[100] < 0.001);
+    }
+
+    #[test]
+    fn size_rounds_up_and_short_input_is_padded() {
+        let mut fft = Fft::new(100);
+        assert_eq!(fft.size(), 128);
+        let mut out = Vec::new();
+        fft.magnitudes(&[1.0; 10], &mut out);
+        assert_eq!(out.len(), 65);
+        fft.magnitudes(&[], &mut out);
+        assert!(out.iter().all(|&m| m == 0.0));
+    }
+}

@@ -53,7 +53,7 @@ are defects, **feature** is new behavior, **chore** is cleanup or refactoring wi
 - [x] Node parameter inputs (modulation)
 - [ ] Automation clips (see [Timeline](#timeline))
 - [ ] The foundation workstream below (parameter types, units, modulation, text), since most node work depends on it
-- [ ] The settings page (the Look/Listen tools are done; their keys are not rebindable yet)
+- [ ] The settings page (connection inspection is done; its keys are not rebindable yet)
 
 ## Suggested order
 
@@ -238,27 +238,22 @@ Renames, merges, splits and removals need **no migration** while the format is v
   cost as time per frame and as a share of the graph's total, at the current preview resolution. The numbers are
   advisory and never part of the cache key. Feeds the benchmarks workflow in [benchmarks.md](benchmarks.md).
 
-### Look and Listen tools
+### Inspecting connections
 
-This **supersedes the earlier Probe/Inspect tool** (see [Decisions](decisions.md#looklisten-replaces-the-probeinspect-tool-october-2026)).
+This **supersedes the earlier Probe/Inspect tool** (see [Decisions](decisions.md#looklisten-replaces-the-probeinspect-tool-october-2026)),
+and the separate Look and Listen tools tried first: hands-on testing showed a mode switch got in the way when the
+meters already show on hover.
 
-- [x] **feature** **Look tool.** *(done: hold L; a picture or scope above the readings)* While its key is held, hovering a connection opens a tooltip-style popup showing the
-  output of that connection at the playhead: a picture for video-like signals, a waveform for audio-like ones.
-  Pictures use **implicit stretch to match the project's video size**, exactly as the Video Output node does with
-  its stretch toggle (see [Nodes](#nodes)), so any signal is visible whatever its layout. One shared stretch
-  implementation serves both. *Needs: a read-only engine tap, shared preview widgets.*
-- [x] **feature** **Listen tool.** *(done: hold H)* A separate key; while held, hovering a connection plays that connection's output
-  as audio. It reuses the Audio Output sink (resampling to the project audio rate, sanitizing, clipping) so what
-  you hear is what an Audio Output node would play. Fades in and out so there are no clicks when the pointer
-  moves between connections. The master playback is ducked while listening.
-- [x] **feature** **Tool bar and default tool.** *(done; the keys are fixed until the Settings page can rebind them)* A new toolbar in the graph for choosing the default tool: Select
-  (today's behavior), Look, Listen. Holding the key for another tool temporarily overrides the default. Keys are
-  rebindable once the Settings page exists.
+- [x] **feature** **Inspection on hover.** Hovering a connection shows its meter, readings and a view of the signal at
+  the playhead; hold **I** and scroll to go through the views (automatic, picture, scope, spectrum, readings only),
+  any signal in any view. The view is a setting; the update rate while the playhead moves is a project setting.
+- [x] **feature** **Listen key.** Hold **H** over a connection to hear it through the Audio Output sink path, with the
+  playback ducked and fades in and out.
+- [ ] **feature** Keys are fixed (I and H) until the Settings page can rebind them.
 - [x] **feature** **Engine taps.** *(done: see [Engine](engine.md#taps-and-listening); a dropped connection answers "not rendered")* The engine can be asked for the output of any connection at one frame without
   changing the render or the cache: the request is read-only, rate-limited, and dropped when the playhead moves or
-  the graph is edited. A tap never enters the cache key and never changes deterministic output. The design has to
-  say what happens for a tap on a connection the graph dropped (not feeding the output): either compute it on
-  demand or show "not rendered".
+  the graph is edited. A tap never enters the cache key and never changes deterministic output.
+- [ ] **feature** More views: histogram, vectorscope, and a view of a signal's mean level over time.
 - [x] **chore** Remove the Probe tool item and its distance-based master-fade mixer from the backlog; they are not
   being built.
 
@@ -271,12 +266,12 @@ Reusable widgets, built once in `rastersong-gui` (a `widgets/` module) and used 
 
 - [x] **feature** **Level meter** *(done for Audio Output and Gain; the preview volume control and timeline headers still to do)* (peak and RMS, with hold and clip indicator), used by Audio Output, Gain,
   Compressor, Limiter, the preview's volume control and the timeline's audio headers.
-- [ ] **feature** **Spectrum analyzer** (FFT-based, log frequency axis, smoothing), for Equalizer, Filter, Three-Band
+- [x] **feature** **Spectrum analyzer** *(done as a shared widget, `dsp::Fft` underneath, in the inspection popup; the Equalizer, Filter, Three-Band Split and DC Filter inspectors don't show one yet)* (FFT-based, log frequency axis, smoothing), for Equalizer, Filter, Three-Band
   Split, DC Filter and the Look/Listen popup. FFT through a permissively licensed crate (checked by `cargo-deny`),
   computed only for visible meters.
 - [x] **feature** **Gain-reduction meter**, so the Compressor, Gate and Limiter show how much reduction is being
   applied right now.
-- [ ] **feature** **Waveform / scope** and a **picture thumbnail** widget *(the Look popup draws both itself; the shared widgets and node previews are still to do)* (shared by the Look tool and node previews).
+- [x] **feature** **Waveform / scope** and a **picture thumbnail** widget *(shared in `widgets/`; node previews still to do)* (shared by the Look tool and node previews).
 - [x] **feature** **Node telemetry.** A way for a node to publish a few meter values per frame (gain reduction,
   peak, band energy) without allocation in `process` and without affecting output; the editor reads the last
   rendered frame, the same way it reads modulated values. Declared in the node's `SPEC` so the inspector draws the
