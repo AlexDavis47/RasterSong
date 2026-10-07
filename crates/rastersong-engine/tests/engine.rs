@@ -146,7 +146,7 @@ fn reports_errors_and_recovers() {
     // Valid JSON, but the graph has no output node.
     load(
         &engine,
-        r#"{ "version": 1, "nodes": [ { "id": "v", "type": "video_input" } ] }"#,
+        r#"{ "version": 0, "nodes": [ { "id": "v", "type": "video_input" } ] }"#,
     );
     wait_until("the failure", || {
         matches!(engine.status(), EngineStatus::Failed(_))
@@ -232,7 +232,7 @@ fn audio_offset_changes_the_render_and_back() {
 }
 
 /// AM driven only by the `drums` track.
-const DRUMS: &str = r#"{ "version": 1,
+const DRUMS: &str = r#"{ "version": 0,
   "nodes": [
     { "id": "video", "type": "video_input" },
     { "id": "drums", "type": "audio_input", "params": { "source": "drums" } },
@@ -271,7 +271,7 @@ fn failures_name_the_node_at_fault() {
     let engine = engine();
     load(
         &engine,
-        r#"{ "version": 1, "nodes": [ { "id": "v", "type": "video_input" }, { "id": "c", "type": "pack", "params": { "channels": 7 } }, { "id": "o", "type": "output" } ],
+        r#"{ "version": 0, "nodes": [ { "id": "v", "type": "video_input" }, { "id": "c", "type": "pack", "params": { "channels": 7 } }, { "id": "o", "type": "output" } ],
             "connections": [ { "from": "v", "to": "c" }, { "from": "c", "to": "o" } ] }"#,
     );
     wait_until("the failure", || {
@@ -308,7 +308,7 @@ fn graph_failures_keep_the_video_info() {
     let engine = engine();
     load(
         &engine,
-        r#"{ "version": 1, "nodes": [ { "id": "v", "type": "video_input" } ] }"#,
+        r#"{ "version": 0, "nodes": [ { "id": "v", "type": "video_input" } ] }"#,
     );
     wait_until("the failure", || {
         matches!(engine.status(), EngineStatus::Failed(_))
@@ -325,7 +325,7 @@ fn cached_frames_carry_rendered_sound_that_playback_reads() {
     let engine = engine();
     load(
         &engine,
-        r#"{ "version": 2,
+        r#"{ "version": 0,
           "nodes": [
             { "id": "video", "type": "video_input" }, { "id": "audio", "type": "audio_input" },
             { "id": "gain", "type": "gain", "params": { "gain": -6 } },

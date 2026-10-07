@@ -565,11 +565,7 @@ mod tests {
         use rastersong_engine::{ModMode, Modulation, ParamSpec};
         let feedback = ParamSpec::number("feedback", "Feedback", 0.0, 0.0, 1.0, "");
         let bits = ParamSpec::number("bits", "Bits", 4.0, 1.0, 24.0, "").unit("bits");
-        let m = |amount, mode| Modulation {
-            amount,
-            mode,
-            overshoot: false,
-        };
+        let m = |amount, mode| Modulation { amount, mode };
         assert_eq!(amount_text(m(25.0, ModMode::Bipolar)), "±25%");
         assert_eq!(amount_text(m(-12.5, ModMode::Unipolar)), "-12.5%");
         assert_eq!(amount_text(m(100.0, ModMode::Unipolar)), "+100%");
@@ -607,7 +603,6 @@ mod tests {
             Modulation {
                 amount: 25.0,
                 mode: ModMode::Unipolar,
-                overshoot: false,
             },
             None::<(f64, f64)>,
         );

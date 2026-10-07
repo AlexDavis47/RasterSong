@@ -6,19 +6,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::GraphError;
 
-/// Version 2 made a connected parameter with no `modulation` entry unipolar; version 1 meant
-/// bipolar. Version 3 made modulation amounts percentages of the parameter's span instead of
-/// numbers in its own unit. Version 4 keeps modulated values within the slider's range unless an
-/// entry sets `overshoot`; older graphs are rewritten on load, with explicit entries that
-/// overshoot as they always did. Version 5 narrowed the usual range of some frequencies. Version
-/// 6 made frequency modulation linear like every other parameter (it was in octaves), so those
-/// amounts are converted to the equivalent linear amount at the parameter's base value. Version 7
-/// made a generator's `layout` a node setting instead of a parameter. Version 8 saves the
-/// slider ranges the user sets, which limit modulation. Version 9 made modulation one rule: the
-/// amount is a percentage of the slider range and the value stays inside it (the overshoot flag
-/// is gone; both-ways amounts are the distance either side, not peak to peak; amounts run
-/// from -100% to 100%).
-pub const FORMAT_VERSION: u32 = 12;
+/// The graph file format version. It stays 0 until 1.0: the format changes freely, with no
+/// migrations, and graphs saved by another version are rejected. From the first stable release each
+/// change bumps it and adds a step in `migrate/`.
+pub const FORMAT_VERSION: u32 = 0;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -90,10 +81,6 @@ pub struct Modulation {
     pub amount: f64,
     #[serde(default, skip_serializing_if = "is_default")]
     pub mode: ModMode,
-    /// Graphs before version 9 could let the value go past the slider's range. Read so those
-    /// graphs load (the upgrade widens their slider range instead), never written.
-    #[serde(default, skip_serializing)]
-    pub overshoot: bool,
 }
 
 /// The amounts a modulation can have, in percent of the slider range. A negative amount turns
@@ -191,9 +178,9 @@ impl GraphDesc {
     pub fn from_json(json: &str) -> Result<Self, GraphError> {
         let desc: Self =
             serde_json::from_str(json).map_err(|e| GraphError::Parse(e.to_string()))?;
-        if !(1..=FORMAT_VERSION).contains(&desc.version) {
+        if desc.version != FORMAT_VERSION {
             return Err(GraphError::Parse(format!(
-                "unsupported graph format version {} (expected {FORMAT_VERSION})",
+                "unsupported graph format version {} (this build reads version {FORMAT_VERSION}; there are no migrations before 1.0)",
                 desc.version
             )));
         }

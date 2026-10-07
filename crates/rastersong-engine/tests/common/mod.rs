@@ -41,42 +41,42 @@ pub fn backend() -> FakeBackend {
 }
 
 /// A graph whose nodes all have finite memory, so seeking with warmup is exact.
-pub const FINITE: &str = r#"{ "version": 1,
+pub const FINITE: &str = r#"{ "version": 0,
   "nodes": [
     { "id": "video", "type": "video_input" },
     { "id": "audio", "type": "audio_input" },
-    { "id": "delay", "type": "delay", "params": { "time": 1.5, "depth": 0.5, "unit": "frame" }, "interpolation": "linear" },
-    { "id": "crush", "type": "bitcrush", "params": { "bits": 5, "depth": 1 } },
+    { "id": "delay", "type": "delay", "params": { "time": 1.5, "unit": "frame" }, "modulation": { "time": { "amount": 5, "mode": "bipolar" } }, "interpolation": "linear" },
+    { "id": "crush", "type": "bitcrush", "params": { "bits": 5 }, "modulation": { "bits": { "amount": 20, "mode": "bipolar" } } },
     { "id": "out", "type": "output" }
   ],
   "connections": [
-    { "from": "video", "to": "delay" }, { "from": "audio", "to": "delay.modulation" },
-    { "from": "delay", "to": "crush" }, { "from": "audio", "to": "crush.modulation" },
+    { "from": "video", "to": "delay" }, { "from": "audio", "to": "delay.@time" },
+    { "from": "delay", "to": "crush" }, { "from": "audio", "to": "crush.@bits" },
     { "from": "crush", "to": "out" }
   ] }"#;
 
 /// Video straight to the output.
-pub const FINITE_PASSTHROUGH: &str = r#"{ "version": 1,
+pub const FINITE_PASSTHROUGH: &str = r#"{ "version": 0,
   "nodes": [ { "id": "video", "type": "video_input" }, { "id": "out", "type": "output" } ],
   "connections": [ { "from": "video", "to": "out" } ] }"#;
 
 /// A graph with infinite memory (feedback and an IIR filter): seeking is approximate.
-pub const INFINITE: &str = r#"{ "version": 1,
+pub const INFINITE: &str = r#"{ "version": 0,
   "nodes": [
     { "id": "video", "type": "video_input" },
     { "id": "audio", "type": "audio_input" },
-    { "id": "smooth", "type": "lowpass", "params": { "cutoff": 0.5, "depth": 1 } },
+    { "id": "smooth", "type": "filter", "params": { "cutoff": 0.5, "slope": "6" }, "modulation": { "cutoff": { "amount": 20, "mode": "bipolar" } } },
     { "id": "echo", "type": "delay", "params": { "time": 0.5, "unit": "frame", "feedback": 0.5, "mix": 0.5 } },
     { "id": "out", "type": "output" }
   ],
   "connections": [
-    { "from": "video", "to": "smooth" }, { "from": "audio", "to": "smooth.modulation" },
+    { "from": "video", "to": "smooth" }, { "from": "audio", "to": "smooth.@cutoff" },
     { "from": "smooth", "to": "echo" }, { "from": "echo", "to": "out" }
   ] }"#;
 
 pub fn crush(bits: u32) -> String {
     format!(
-        r#"{{ "version": 1,
+        r#"{{ "version": 0,
   "nodes": [ {{ "id": "video", "type": "video_input" }}, {{ "id": "crush", "type": "bitcrush", "params": {{ "bits": {bits} }} }}, {{ "id": "out", "type": "output" }} ],
   "connections": [ {{ "from": "video", "to": "crush" }}, {{ "from": "crush", "to": "out" }} ] }}"#
     )

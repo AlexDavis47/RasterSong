@@ -75,7 +75,7 @@ mod tests {
 
     fn project(video: &str) -> Project {
         let mut project =
-            Project::new(GraphDesc::from_json(r#"{ "version": 1, "nodes": [] }"#).unwrap());
+            Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
         project.video = Some(PathBuf::from(video));
         project
     }

@@ -912,7 +912,7 @@ mod tests {
 
     #[test]
     fn slider_ranges_survive_the_editor() {
-        let json = r#"{ "version": 8, "nodes": [ { "id": "d", "type": "delay", "ranges": { "time": [0, 3] } } ] }"#;
+        let json = r#"{ "version": 0, "nodes": [ { "id": "d", "type": "delay", "ranges": { "time": [0, 3] } } ] }"#;
         let editor = GraphEditor::new(&GraphDesc::from_json(json).unwrap());
         let key = editor.key_of("d").unwrap();
         assert_eq!(editor.node(key).unwrap().ranges["time"], [0.0, 3.0]);
@@ -922,7 +922,7 @@ mod tests {
     #[test]
     fn integer_parameters_survive_the_editor() {
         let graph = GraphDesc::from_json(
-            r#"{ "version": 2, "nodes": [ { "id": "d", "type": "delay", "integer": ["time"] } ] }"#,
+            r#"{ "version": 0, "nodes": [ { "id": "d", "type": "delay", "integer": ["time"] } ] }"#,
         )
         .unwrap();
         let editor = GraphEditor::new(&graph);
@@ -934,7 +934,7 @@ mod tests {
     #[test]
     fn drops_connections_to_unknown_ports() {
         let graph = GraphDesc::from_json(
-            r#"{ "version": 1, "nodes": [ { "id": "v", "type": "video_input" }, { "id": "o", "type": "output" } ],
+            r#"{ "version": 0, "nodes": [ { "id": "v", "type": "video_input" }, { "id": "o", "type": "output" } ],
                  "connections": [ { "from": "v.nope", "to": "o" } ] }"#,
         )
         .unwrap();
@@ -946,7 +946,7 @@ mod tests {
     #[test]
     fn new_nodes_get_unique_ids() {
         let mut editor =
-            GraphEditor::new(&GraphDesc::from_json(r#"{ "version": 1, "nodes": [] }"#).unwrap());
+            GraphEditor::new(&GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
         let a = editor.add_node("delay", Pos2::ZERO).unwrap();
         let b = editor.add_node("delay", Pos2::ZERO).unwrap();
         assert_eq!(editor.node(a).unwrap().id, "delay");
@@ -1106,7 +1106,7 @@ mod tests {
 
         // Pasting where the sources don't exist skips the connections without failing.
         let mut other =
-            GraphEditor::new(&GraphDesc::from_json(r#"{ "version": 1, "nodes": [] }"#).unwrap());
+            GraphEditor::new(&GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
         assert!(other.paste(&text, pos2(0.0, 0.0), true));
         assert_eq!(other.wires().len(), 0);
     }

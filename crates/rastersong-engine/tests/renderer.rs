@@ -52,7 +52,7 @@ fn the_audio_layout_exists_without_a_track_named_audio() {
     use std::path::Path;
     use std::sync::Arc;
     let graph = GraphDesc::from_json(
-        r#"{ "version": 7,
+        r#"{ "version": 0,
           "nodes": [
             { "id": "video", "type": "video_input" },
             { "id": "beat", "type": "beat", "layout": "audio", "params": { "shape": "phase" } },
@@ -153,7 +153,7 @@ fn out_of_range_frames_are_an_error() {
     assert!(renderer(FINITE).render(FRAMES, &|| false).is_err());
 }
 
-const LATENCY_GRAPH: &str = r#"{ "version": 1,
+const LATENCY_GRAPH: &str = r#"{ "version": 0,
   "nodes": [
     { "id": "video", "type": "video_input" }, { "id": "look", "type": "lookahead" },
     { "id": "sum", "type": "sum" }, { "id": "half", "type": "am", "params": { "depth": -0.5 } },
@@ -198,7 +198,7 @@ fn stereo_tracks_reach_the_graph_interleaved() {
         channels: 2,
         samples: [0.5, -0.5].repeat(9000 * 3),
     };
-    let graph = r#"{ "version": 2,
+    let graph = r#"{ "version": 0,
       "nodes": [
         { "id": "video", "type": "video_input" }, { "id": "audio", "type": "audio_input" },
         { "id": "split", "type": "split" }, { "id": "am", "type": "am" }, { "id": "out", "type": "output" }
@@ -242,7 +242,7 @@ fn stereo_tracks_reach_the_graph_interleaved() {
 }
 
 /// The test video with its audio inverted into an Audio Output.
-const SOUND: &str = r#"{ "version": 2,
+const SOUND: &str = r#"{ "version": 0,
   "nodes": [
     { "id": "video", "type": "video_input" }, { "id": "audio", "type": "audio_input" },
     { "id": "inv", "type": "invert", "params": { "mode": "audio" } },
@@ -329,7 +329,7 @@ fn tracks_at_different_rates_meet_in_one_graph() {
         modulator: Arc::new(Modulator::new(clip)),
         offset: 0.0,
     };
-    let graph = r#"{ "version": 2,
+    let graph = r#"{ "version": 0,
       "nodes": [
         { "id": "video", "type": "video_input" },
         { "id": "a", "type": "audio_input", "params": { "source": "low" } },

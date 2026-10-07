@@ -39,7 +39,7 @@ use crate::track_ops::{SoloState, move_track, toggle_solo};
 pub const STARTER_GRAPH: &str = include_str!("../../../examples/graphs/am_bands.json");
 
 /// What the source engine renders: the video, untouched.
-const SOURCE_GRAPH: &str = r#"{ "version": 2,
+const SOURCE_GRAPH: &str = r#"{ "version": 0,
     "nodes": [ { "id": "video", "type": "video_input" }, { "id": "out", "type": "output" } ],
     "connections": [ { "from": "video", "to": "out" } ] }"#;
 
@@ -161,7 +161,7 @@ impl App {
             history: History::new(project.clone()),
             confirm: None,
             allow_close: false,
-            sent_graph: GraphDesc::from_json(r#"{ "version": 1, "nodes": [] }"#).unwrap(),
+            sent_graph: GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap(),
             inspected_for: None,
             inspected: Vec::new(),
             sent_mix: None,

@@ -244,7 +244,7 @@ fn capture(theme: ThemeChoice, theme_name: &str) {
 
     // A delay whose time and feedback are modulated by the audio, selected.
     let graph = GraphDesc::from_json(
-        r#"{ "version": 1,
+        r#"{ "version": 0,
             "nodes": [
                 { "id": "video", "type": "video_input", "position": [0, 0] },
                 { "id": "audio", "type": "audio_input", "position": [0, 120] },

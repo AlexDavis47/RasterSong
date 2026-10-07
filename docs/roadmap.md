@@ -69,8 +69,8 @@ Many items depend on others. Doing them in this order avoids reworking nodes twi
 5. **Node work**, starting with shared DSP (filter slope, detectors) so Filter, EQ, Three-Band Split, DC Filter and
    the dynamics nodes use one implementation.
 
-Every change that renames or reshapes a parameter, or merges, splits or removes a node, needs a **migration** in
-`migrate.rs` so existing graphs keep loading (see [Graph files](graph-format.md)).
+Renames, merges, splits and removals need **no migration** while the format is version 0 (see
+[Decisions](decisions.md#no-migrations-before-10-october-2026)); migrations start at 1.0.
 
 ---
 
@@ -298,8 +298,8 @@ Reusable widgets, built once in `rastersong-gui` (a `widgets/` module) and used 
 
 ## Nodes
 
-Reference for what exists today is [nodes.md](nodes.md). Items here change that reference; each one needs tests,
-a migration where noted, and a regenerated `nodes.md`.
+Reference for what exists today is [nodes.md](nodes.md). Items here change that reference; each one needs tests
+and a regenerated `nodes.md`.
 
 ### Inputs and outputs
 
@@ -345,21 +345,20 @@ a migration where noted, and a regenerated `nodes.md`.
     harmonic character. Needs oversampling or a note about aliasing at low signal rates.
 - **Envelope / Slew**
   - [ ] **chore** Investigate. Envelope (detector + attack/release, `peak` or `rms`) and Slew (rise/fall rate
-    limit) look like the same effect except for RMS. If they are, combine into one node (keeping RMS) and migrate
+    limit) look like the same effect except for RMS. If they are, combine into one node (keeping RMS) and remove
     the other. If they differ (slew limits the signal's own rate; envelope follows its magnitude), document the
     difference in both descriptions and share the smoothing code. Either way it is one smoothing implementation.
 - **Equalizer**
   - [ ] **feature** Make Equalizer a **single band**: any number of bands in series or parallel are equivalent, so
     users add several nodes instead. A band has a type (peak, low shelf, high shelf, low cut, high cut, notch,
-    band pass), adjustable frequency, adjustable Q, and gain where it applies. Migration turns the old three-band
-    node into three chained bands.
+    band pass), adjustable frequency, adjustable Q, and gain where it applies. The old three-band node is replaced by chained bands.
 - **Dynamic Equalizer Band** (new)
   - [ ] **feature** Same controls as the single-band Equalizer, plus a dynamics response (threshold, ratio,
     attack, release, optional sidechain). Shows its gain change on a gain-reduction meter. Shares the band design
     code with Equalizer and the detector with the Compressor.
 - **Frequency Modulation (FM)**
   - [ ] **chore** Rename the "Index" parameter to something that explains itself (candidate: *Depth*, with help
-    text saying it is how far the modulator pushes the carrier's frequency). Migration for the old name.
+    text saying it is how far the modulator pushes the carrier's frequency).
 - **Filter**
   - [x] **feature** Adjustable Q **and** a slope in dB/octave for sharper cuts (12, 24, 48, … dB/oct by cascading
     stages). Filter has it; sharing it with Three-Band Split and Equalizer is still to do.

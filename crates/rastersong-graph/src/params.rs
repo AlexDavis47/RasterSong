@@ -218,7 +218,6 @@ impl ParamSpec {
         Modulation {
             amount: self.default_modulation_amount(),
             mode: ModMode::Unipolar,
-            overshoot: false,
         }
     }
 
@@ -517,12 +516,10 @@ mod tests {
         let both = |amount| Modulation {
             amount,
             mode: ModMode::Bipolar,
-            overshoot: false,
         };
         let one_way = |amount| Modulation {
             amount,
             mode: ModMode::Unipolar,
-            overshoot: false,
         };
         // One rule in both modes: a full signal moves the value amount% of the range from where it is.
         assert_eq!(spec.modulation_sweep(both(40.0), range), 4.0);

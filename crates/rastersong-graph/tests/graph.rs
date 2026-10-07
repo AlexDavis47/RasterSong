@@ -46,10 +46,10 @@ fn sources(video: impl Fn(usize) -> f32, audio: impl Fn(usize) -> f32) -> HashMa
 }
 
 fn graph_json(nodes: &str, connections: &str) -> String {
-    format!(r#"{{ "version": 1, "nodes": [{nodes}], "connections": [{connections}] }}"#)
+    format!(r#"{{ "version": 0, "nodes": [{nodes}], "connections": [{connections}] }}"#)
 }
 
-const PASSTHROUGH: &str = r#"{ "version": 1,
+const PASSTHROUGH: &str = r#"{ "version": 0,
     "nodes": [ { "id": "video", "type": "video_input" }, { "id": "out", "type": "output" } ],
     "connections": [ { "from": "video", "to": "out" } ] }"#;
 
@@ -65,13 +65,13 @@ fn passthrough_returns_the_video() {
 
 #[test]
 fn split_and_combine_round_trip_with_swapped_channels() {
-    // Written with the old RGB port names, which load as numbered channels.
+    // Swapping the first and last channel.
     let json = graph_json(
         r#"{ "id": "video", "type": "video_input" }, { "id": "split", "type": "split" },
            { "id": "combine", "type": "combine" }, { "id": "out", "type": "output" }"#,
         r#"{ "from": "video", "to": "split" },
-           { "from": "split.b", "to": "combine.r" }, { "from": "split.g", "to": "combine.g" },
-           { "from": "split.r", "to": "combine.b" }, { "from": "combine", "to": "out" }"#,
+           { "from": "split.c3", "to": "combine.c1" }, { "from": "split.c2", "to": "combine.c2" },
+           { "from": "split.c1", "to": "combine.c3" }, { "from": "combine", "to": "out" }"#,
     );
     let mut graph = compile(&json).unwrap();
     let input = sources(|i| i as f32, |_| 0.0);
@@ -155,7 +155,7 @@ fn render_form_of(json: &str, bypass_all: bool) -> GraphDesc {
     )
 }
 
-const CHAIN: &str = r#"{ "version": 2,
+const CHAIN: &str = r#"{ "version": 0,
     "nodes": [
         { "id": "video", "type": "video_input" },
         { "id": "d", "type": "delay", "params": { "time": 1 } },
@@ -304,11 +304,13 @@ fn latency_is_compensated_across_branches() {
 fn reset_reproduces_output() {
     let json = graph_json(
         r#"{ "id": "video", "type": "video_input" }, { "id": "audio", "type": "audio_input" },
-           { "id": "lp", "type": "lowpass", "params": { "cutoff": 2, "depth": 1 } },
-           { "id": "d", "type": "delay", "params": { "time": 0.5, "depth": 0.25, "feedback": 0.5 } },
+           { "id": "lp", "type": "filter", "params": { "cutoff": 2 },
+             "modulation": { "cutoff": { "amount": 20 } } },
+           { "id": "d", "type": "delay", "params": { "time": 0.5, "feedback": 0.5 },
+             "modulation": { "time": { "amount": 0.25 } } },
            { "id": "out", "type": "output" }"#,
-        r#"{ "from": "video", "to": "lp" }, { "from": "audio", "to": "lp.modulation" },
-           { "from": "lp", "to": "d" }, { "from": "audio", "to": "d.modulation" }, { "from": "d", "to": "out" }"#,
+        r#"{ "from": "video", "to": "lp" }, { "from": "audio", "to": "lp.@cutoff" },
+           { "from": "lp", "to": "d" }, { "from": "audio", "to": "d.@time" }, { "from": "d", "to": "out" }"#,
     );
     let mut graph = compile(&json).unwrap();
     let run = |graph: &mut Graph| -> Vec<Vec<f32>> {
@@ -332,7 +334,7 @@ fn graph_files_round_trip() {
     let desc = GraphDesc::from_json(PASSTHROUGH).unwrap();
     assert_eq!(GraphDesc::from_json(&desc.to_json()).unwrap(), desc);
     assert!(matches!(
-        GraphDesc::from_json(r#"{ "version": 13, "nodes": [] }"#),
+        GraphDesc::from_json(r#"{ "version": 99, "nodes": [] }"#),
         Err(GraphError::Parse(_))
     ));
 }
@@ -343,20 +345,24 @@ fn separate_channels_match_splitting_by_hand() {
     // including the modulation input, which is shared by all three channels.
     let separate = graph_json(
         r#"{ "id": "video", "type": "video_input" }, { "id": "audio", "type": "audio_input" },
-           { "id": "lp", "type": "lowpass", "params": { "cutoff": 0.7, "depth": 1 }, "channels": "separate" },
+           { "id": "lp", "type": "filter", "params": { "cutoff": 0.7 }, "channels": "separate",
+             "modulation": { "cutoff": { "amount": 20 } } },
            { "id": "out", "type": "output" }"#,
-        r#"{ "from": "video", "to": "lp" }, { "from": "audio", "to": "lp.modulation" }, { "from": "lp", "to": "out" }"#,
+        r#"{ "from": "video", "to": "lp" }, { "from": "audio", "to": "lp.@cutoff" }, { "from": "lp", "to": "out" }"#,
     );
     let by_hand = graph_json(
         r#"{ "id": "video", "type": "video_input" }, { "id": "audio", "type": "audio_input" },
            { "id": "split", "type": "split" }, { "id": "combine", "type": "combine" },
-           { "id": "r", "type": "lowpass", "params": { "cutoff": 0.7, "depth": 1 } },
-           { "id": "g", "type": "lowpass", "params": { "cutoff": 0.7, "depth": 1 } },
-           { "id": "b", "type": "lowpass", "params": { "cutoff": 0.7, "depth": 1 } },
+           { "id": "r", "type": "filter", "params": { "cutoff": 0.7 },
+             "modulation": { "cutoff": { "amount": 20 } } },
+           { "id": "g", "type": "filter", "params": { "cutoff": 0.7 },
+             "modulation": { "cutoff": { "amount": 20 } } },
+           { "id": "b", "type": "filter", "params": { "cutoff": 0.7 },
+             "modulation": { "cutoff": { "amount": 20 } } },
            { "id": "out", "type": "output" }"#,
         r#"{ "from": "video", "to": "split" },
            { "from": "split.c1", "to": "r" }, { "from": "split.c2", "to": "g" }, { "from": "split.c3", "to": "b" },
-           { "from": "audio", "to": "r.modulation" }, { "from": "audio", "to": "g.modulation" }, { "from": "audio", "to": "b.modulation" },
+           { "from": "audio", "to": "r.@cutoff" }, { "from": "audio", "to": "g.@cutoff" }, { "from": "audio", "to": "b.@cutoff" },
            { "from": "r", "to": "combine.c1" }, { "from": "g", "to": "combine.c2" }, { "from": "b", "to": "combine.c3" },
            { "from": "combine", "to": "out" }"#,
     );
@@ -649,7 +655,7 @@ fn held_audio(pixel: usize) -> f32 {
 #[test]
 fn a_signal_connected_to_a_parameter_modulates_it_per_sample() {
     // Bipolar: depth = 1 + 0.5 × a.
-    let out = am_with_modulated_depth(r#"{ "amount": 0.5 }"#, "together");
+    let out = am_with_modulated_depth(r#"{ "amount": 2.5, "mode": "bipolar" }"#, "together");
     for (pixel, rgb) in out.chunks(3).enumerate() {
         let expected = 1.0 + (1.0 + 0.5 * held_audio(pixel));
         assert!(
@@ -658,7 +664,7 @@ fn a_signal_connected_to_a_parameter_modulates_it_per_sample() {
         );
     }
     // Unipolar with a negative amount turns it down by the magnitude: depth = 1 - 2 × |a|.
-    let out = am_with_modulated_depth(r#"{ "amount": -2, "mode": "unipolar" }"#, "together");
+    let out = am_with_modulated_depth(r#"{ "amount": -10, "mode": "unipolar" }"#, "together");
     for (pixel, rgb) in out.chunks(3).enumerate() {
         let expected = 1.0 + (1.0 - 2.0 * held_audio(pixel));
         assert!((rgb[0] - expected).abs() < 1e-6, "pixel {pixel}: {rgb:?}");
@@ -668,8 +674,8 @@ fn a_signal_connected_to_a_parameter_modulates_it_per_sample() {
 #[test]
 fn modulated_parameters_work_with_separate_channels() {
     // AM is per-sample, so processing channels separately must give the same result.
-    let together = am_with_modulated_depth(r#"{ "amount": 0.5 }"#, "together");
-    let separate = am_with_modulated_depth(r#"{ "amount": 0.5 }"#, "separate");
+    let together = am_with_modulated_depth(r#"{ "amount": 2.5, "mode": "bipolar" }"#, "together");
+    let separate = am_with_modulated_depth(r#"{ "amount": 2.5, "mode": "bipolar" }"#, "separate");
     assert_eq!(together, separate);
 }
 
@@ -792,7 +798,7 @@ fn nodes_without_inputs_get_their_layout_from_the_host_and_can_be_modulated() {
     // A signal connected to the parameter reaches a node that has no main input to measure it by.
     // (Custom node types aren't known to the upgrade, so this graph is written in the current
     // format: 100% one way moves the level across its whole 0..1 span.)
-    let modulated = r#"{ "version": 6, "nodes": [
+    let modulated = r#"{ "version": 0, "nodes": [
         { "id": "gen", "type": "level", "modulation": { "level": { "amount": 100, "mode": "unipolar" } } },
         { "id": "audio", "type": "audio_input" }, { "id": "out", "type": "output" } ],
         "connections": [ { "from": "audio", "to": "gen.@level" }, { "from": "gen", "to": "out" } ] }"#;
@@ -917,7 +923,7 @@ fn integer_parameters_are_rounded() {
 #[test]
 fn modulated_integer_parameters_step_after_modulation() {
     let out = am_with_integer_depth(
-        r#""integer": ["depth"], "modulation": { "depth": { "amount": 5 } }"#,
+        r#""integer": ["depth"], "modulation": { "depth": { "amount": 25 } }"#,
         true,
     );
     for (pixel, rgb) in out.chunks(3).enumerate() {
@@ -1114,7 +1120,7 @@ fn odd_audio_output_layouts_are_written_as_stereo_with_a_warning() {
 fn modulated_matches_set(kind: &str, set: &str, base: &str, param: &str, amount: f64) {
     let render = |node: String, extra: &str, wire: &str| {
         let json = format!(
-            r#"{{ "version": 9, "nodes": [
+            r#"{{ "version": 0, "nodes": [
                 {{ "id": "video", "type": "video_input" }}, {node}{extra},
                 {{ "id": "out", "type": "output" }} ],
               "connections": [ {wire}{{ "from": "g", "to": "out" }} ] }}"#
@@ -1201,7 +1207,7 @@ fn modulation_stays_within_the_slider_range_the_user_set() {
     // the top, but the user's slider range ends at 6.
     let render = |ranges: &str| {
         let json = format!(
-            r#"{{ "version": 9, "nodes": [
+            r#"{{ "version": 0, "nodes": [
                 {{ "id": "video", "type": "video_input" }}, {{ "id": "one", "type": "constant", "params": {{ "value": 1 }} }},
                 {{ "id": "crush", "type": "bitcrush", "params": {{ "bits": 2 }},
                    "modulation": {{ "bits": {{ "amount": 100, "mode": "unipolar" }} }}{ranges} }},

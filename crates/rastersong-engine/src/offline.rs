@@ -138,7 +138,7 @@ mod tests {
         }
     }
 
-    const PASSTHROUGH: &str = r#"{ "version": 1,
+    const PASSTHROUGH: &str = r#"{ "version": 0,
         "nodes": [ { "id": "v", "type": "video_input" }, { "id": "o", "type": "output" } ],
         "connections": [ { "from": "v", "to": "o" } ] }"#;
 

@@ -355,7 +355,7 @@ fn every_mix_is_the_shared_definition() {
 /// A hidden parameter keeps its value: the rule changes what is shown, never what is stored.
 #[test]
 fn unused_parameters_are_still_read_and_saved() {
-    let json = r#"{ "version": 9, "nodes": [ { "id": "b", "type": "beat", "params": { "shape": "decay", "steps": 7 } } ] }"#;
+    let json = r#"{ "version": 0, "nodes": [ { "id": "b", "type": "beat", "params": { "shape": "decay", "steps": 7 } } ] }"#;
     let desc = GraphDesc::from_json(json).unwrap();
     assert_eq!(desc.nodes[0].params["steps"], ParamValue::Number(7.0));
     assert_eq!(
