@@ -20,33 +20,22 @@ pub struct Chorus {
 }
 
 params! { Chorus {
-    TIME: ParamSpec::number(
-        "time",
-        "Time",
-        20.0,
+    TIME: ParamSpec::number("time", 20.0,
         0.0,
-        50.0,
-        "Delay of the copies; wire an oscillator in here to make them drift",
-    )
+        50.0)
     .exposed()
     .limits(0.0, 1000.0),
-    UNIT: Unit::time_param("ms", "Unit for the time"),
-    VOICES: ParamSpec::number("voices", "Voices", 2.0, 1.0, 4.0, "How many delayed copies are mixed in").integer(),
-    SPREAD: ParamSpec::number(
-        "spread",
-        "Spread",
-        0.3,
+    UNIT: Unit::time_param("ms"),
+    VOICES: ParamSpec::number("voices", 2.0, 1.0, 4.0).integer(),
+    SPREAD: ParamSpec::number("spread", 0.3,
         0.0,
-        0.6,
-        "How far apart the copies' delays are, as a fraction of the time",
-    ),
+        0.6),
     MIX: ParamSpec::mix(),
 } }
 
 impl NodeKind for Chorus {
     const KIND: &'static str = "chorus";
-    const SPEC: NodeSpec = NodeSpec::new("Chorus", Category::Effect)
-        .describe("Thickens the signal with delayed copies; modulate the time to make them drift")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[

@@ -31,14 +31,14 @@ choice! {
 
 impl Unit {
     /// The `unit` parameter of a node with time parameters.
-    pub const fn time_param(default: &'static str, help: &'static str) -> crate::ParamSpec {
-        crate::ParamSpec::choice("unit", "Unit", Self::OPTIONS, default, help)
+    pub const fn time_param(default: &'static str) -> crate::ParamSpec {
+        crate::ParamSpec::choice("unit", Self::OPTIONS, default)
     }
 
     /// The `unit` parameter of a node with frequency parameters: the same units, read as
     /// "cycles per".
-    pub const fn freq_param(default: &'static str, help: &'static str) -> crate::ParamSpec {
-        crate::ParamSpec::choice("unit", "Cycles per", Self::OPTIONS, default, help)
+    pub const fn freq_param(default: &'static str) -> crate::ParamSpec {
+        crate::ParamSpec::choice("unit", Self::OPTIONS, default)
     }
 
     /// Samples in one of this unit.
@@ -149,13 +149,8 @@ choice! {
 
 impl Mapping {
     /// The parameters of both conversion nodes.
-    pub const MAPPING_PARAM: crate::ParamSpec = crate::ParamSpec::choice(
-        "mapping",
-        "Mapping",
-        Self::OPTIONS,
-        "accurate",
-        "accurate maps black to -1 and white to 1; bugged reproduces the signed/unsigned misread, wrapping at mid-gray",
-    );
+    pub const MAPPING_PARAM: crate::ParamSpec =
+        crate::ParamSpec::choice("mapping", Self::OPTIONS, "accurate");
 }
 
 /// The largest signed 8-bit sample, 127/128.
@@ -280,8 +275,6 @@ mod tests {
         ] {
             assert!(Unit::from_option(name).is_some(), "{name}");
         }
-        assert_eq!(Unit::time_param("row", "").label, "Unit");
-        assert_eq!(Unit::freq_param("row", "").label, "Cycles per");
     }
 
     #[test]

@@ -34,67 +34,38 @@ pub struct Gate {
 }
 
 params! { Gate {
-    THRESHOLD: ParamSpec::number(
-        "threshold",
-        "Threshold",
-        -40.0,
+    THRESHOLD: ParamSpec::number("threshold", -40.0,
         -80.0,
-        0.0,
-        "Level the signal must reach to open the gate",
-    )
+        0.0)
     .unit("dB")
     .exposed()
     .limits(-200.0, 60.0),
-    ATTACK: ParamSpec::number(
-        "attack",
-        "Attack",
-        1.0,
+    ATTACK: ParamSpec::number("attack", 1.0,
         0.01,
-        1000.0,
-        "How quickly the gate opens",
-    )
+        1000.0)
     .limits(0.0, 1e6),
-    HOLD: ParamSpec::number(
-        "hold",
-        "Hold",
-        50.0,
+    HOLD: ParamSpec::number("hold", 50.0,
         0.0,
-        5000.0,
-        "How long the gate stays open after the signal drops below the threshold",
-    )
+        5000.0)
     .limits(0.0, 1e6),
-    RELEASE: ParamSpec::number(
-        "release",
-        "Release",
-        100.0,
+    RELEASE: ParamSpec::number("release", 100.0,
         0.1,
-        5000.0,
-        "How quickly the gate closes",
-    )
+        5000.0)
     .limits(0.0, 1e6),
-    UNIT: Unit::time_param("ms", "Unit for attack, hold and release"),
-    RANGE: ParamSpec::number(
-        "range",
-        "Range",
-        -80.0,
+    UNIT: Unit::time_param("ms"),
+    RANGE: ParamSpec::number("range", -80.0,
         SILENT_RANGE,
-        0.0,
-        "How far a closed gate turns the signal down; -80 dB is silence",
-    )
+        0.0)
     .unit("dB"),
 } }
 
 impl NodeKind for Gate {
     const KIND: &'static str = "gate";
-    const SPEC: NodeSpec = NodeSpec::new("Gate", Category::Effect)
-        .describe("Silences the signal while it, or a sidechain, is quiet")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .inputs(&[
-            InputSpec::required("in", "The signal to gate"),
-            InputSpec::optional(
-                "sidechain",
-                "A signal whose level opens the gate instead of the input's own",
-            ),
+            InputSpec::required("in"),
+            InputSpec::optional("sidechain"),
         ])
         .per_channel()
         .expects(crate::Range::Bipolar);

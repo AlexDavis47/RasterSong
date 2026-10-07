@@ -15,6 +15,7 @@ use rastersong_engine::{
     Frame, Graph, GraphDesc, MediaBackend, NodeStats, PROJECT_EXTENSION, PlaybackClock,
     PreviewScale, Project, ProjectTrack, Registry, Thumbnails, TimelineMode,
 };
+use rastersong_lang::{tr, tr_args};
 
 mod settings_window;
 
@@ -247,6 +248,7 @@ impl App {
 
     pub fn set_settings(&mut self, settings: Settings) {
         self.settings = settings;
+        self.settings.apply_language();
         self.engine.set_preview_scale(self.settings.preview_scale());
     }
 
@@ -346,7 +348,7 @@ impl App {
         let path = match (&self.project_path, choose_path) {
             (Some(path), false) => Some(path.clone()),
             _ => rfd::FileDialog::new()
-                .add_filter("RasterSong project", &[PROJECT_EXTENSION])
+                .add_filter(tr("dialog.filter.project"), &[PROJECT_EXTENSION])
                 .set_file_name(format!("untitled.{PROJECT_EXTENSION}"))
                 .save_file(),
         };
@@ -381,7 +383,7 @@ impl App {
             }
             Pending::OpenProject => {
                 if let Some(path) = rfd::FileDialog::new()
-                    .add_filter("RasterSong project", &[PROJECT_EXTENSION])
+                    .add_filter(tr("dialog.filter.project"), &[PROJECT_EXTENSION])
                     .pick_file()
                 {
                     self.open_project(&path);
@@ -397,18 +399,20 @@ impl App {
         let mut choice = None;
         egui::Modal::new(egui::Id::new("save-changes")).show(ui.ctx(), |ui| {
             ui.set_width(340.0);
-            ui.heading(format!("Save changes to {name}?"));
+            ui.heading(tr_args("dialog.save_changes.title", &[("name", &name)]));
             ui.add_space(4.0);
-            ui.label("Your changes will be lost if you don't save them.");
+            ui.label(tr("dialog.save_changes.body"));
             ui.add_space(12.0);
             ui.horizontal(|ui| {
-                if ui.button("Save").clicked() {
+                if ui.button(tr("dialog.save")).clicked() {
                     choice = Some(true);
                 }
-                if ui.button("Don't Save").clicked() {
+                if ui.button(tr("dialog.dont_save")).clicked() {
                     choice = Some(false);
                 }
-                if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                if ui.button(tr("dialog.cancel")).clicked()
+                    || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                {
                     self.confirm = None;
                 }
             });
@@ -599,9 +603,9 @@ impl App {
             .pivot(egui::Align2::RIGHT_TOP)
             .show(ui.ctx(), |ui| {
                 let on = self.project.bypass_graph;
-                let response = ui.selectable_label(on, "Bypass graph").on_hover_text(
-                    "Skip every node: the video goes straight to the output, to compare with the original",
-                );
+                let response = ui
+                    .selectable_label(on, tr("editor.bypass_graph"))
+                    .on_hover_text(tr("editor.bypass_graph.help"));
                 if response.clicked() {
                     self.project.bypass_graph = !on;
                 }
@@ -860,53 +864,53 @@ impl App {
 
     fn menu_bar(&mut self, ui: &mut Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| {
-                if ui.button("New Project").clicked() {
+            ui.menu_button(tr("menu.file"), |ui| {
+                if ui.button(tr("menu.file.new")).clicked() {
                     ui.close();
                     self.request(ui, Pending::NewProject);
                 }
-                if ui.button("Open Project…").clicked() {
+                if ui.button(tr("menu.file.open")).clicked() {
                     ui.close();
                     self.request(ui, Pending::OpenProject);
                 }
-                if ui.button("Save Project").clicked() {
+                if ui.button(tr("menu.file.save")).clicked() {
                     ui.close();
                     self.save(false);
                 }
-                if ui.button("Save Project As…").clicked() {
+                if ui.button(tr("menu.file.save_as")).clicked() {
                     ui.close();
                     self.save(true);
                 }
                 ui.separator();
-                if ui.button("Open Video…").clicked() {
+                if ui.button(tr("menu.file.open_video")).clicked() {
                     ui.close();
                     self.pick_video();
                 }
-                if ui.button("Add Audio Tracks…").clicked() {
+                if ui.button(tr("menu.file.add_audio")).clicked() {
                     ui.close();
                     self.pick_audio_tracks();
                 }
                 ui.separator();
                 if ui
-                    .add(egui::Button::new("Settings…").shortcut_text("Ctrl+,"))
+                    .add(egui::Button::new(tr("menu.file.settings")).shortcut_text("Ctrl+,"))
                     .clicked()
                 {
                     ui.close();
                     self.show_settings = true;
                 }
                 ui.separator();
-                if ui.button("Import Graph…").clicked() {
+                if ui.button(tr("menu.file.import_graph")).clicked() {
                     ui.close();
                     self.import_graph();
                 }
-                if ui.button("Export Graph…").clicked() {
+                if ui.button(tr("menu.file.export_graph")).clicked() {
                     ui.close();
                     self.export_graph();
                 }
             });
-            ui.menu_button("Edit", |ui| self.edit_menu(ui));
-            ui.menu_button("Help", |ui| {
-                if ui.button("About RasterSong").clicked() {
+            ui.menu_button(tr("menu.edit"), |ui| self.edit_menu(ui));
+            ui.menu_button(tr("menu.help"), |ui| {
+                if ui.button(tr("menu.help.about")).clicked() {
                     self.show_about = true;
                     ui.close();
                 }
@@ -919,47 +923,52 @@ impl App {
             ui.add_enabled(enabled, egui::Button::new(label).shortcut_text(keys))
                 .clicked()
         };
-        if item(ui, self.can_undo(), "Undo", "Ctrl+Z") {
+        if item(ui, self.can_undo(), tr("menu.edit.undo"), "Ctrl+Z") {
             self.undo();
         }
-        if item(ui, self.can_redo(), "Redo", "Ctrl+Shift+Z") {
+        if item(ui, self.can_redo(), tr("menu.edit.redo"), "Ctrl+Shift+Z") {
             self.redo();
         }
         ui.separator();
         let selected = !self.editor.selected().is_empty();
-        if item(ui, selected, "Cut", "Ctrl+X")
+        if item(ui, selected, tr("menu.edit.cut"), "Ctrl+X")
             && let Some(text) = self.editor.copy_selection()
         {
             ui.ctx().copy_text(text);
             self.editor.delete_selection();
         }
-        if item(ui, selected, "Copy", "Ctrl+C")
+        if item(ui, selected, tr("menu.edit.copy"), "Ctrl+C")
             && let Some(text) = self.editor.copy_selection()
         {
             ui.ctx().copy_text(text);
         }
         let clipboard = self.editor.clipboard().map(str::to_owned);
-        if item(ui, clipboard.is_some(), "Paste", "Ctrl+V")
+        if item(ui, clipboard.is_some(), tr("menu.edit.paste"), "Ctrl+V")
             && let Some(text) = clipboard
         {
             let at = self.editor.view_center();
             self.editor.paste(&text, at, self.settings.keep_connections);
         }
-        if item(ui, selected, "Duplicate", "Ctrl+D") {
+        if item(ui, selected, tr("menu.edit.duplicate"), "Ctrl+D") {
             self.editor.duplicate_selection(false);
         }
-        if item(ui, selected, "Delete", "Del") {
+        if item(ui, selected, tr("menu.edit.delete"), "Del") {
             self.editor.delete_selection();
         }
         ui.separator();
-        if item(ui, self.editor.node_count() > 0, "Select All", "Ctrl+A") {
+        if item(
+            ui,
+            self.editor.node_count() > 0,
+            tr("menu.edit.select_all"),
+            "Ctrl+A",
+        ) {
             self.editor.select_all();
         }
     }
 
     fn pick_video(&mut self) {
         if let Some(path) = rfd::FileDialog::new()
-            .add_filter("Video", VIDEO_EXTENSIONS)
+            .add_filter(tr("dialog.filter.video"), VIDEO_EXTENSIONS)
             .pick_file()
         {
             self.open_video(path);
@@ -968,7 +977,7 @@ impl App {
 
     fn pick_audio_tracks(&mut self) {
         if let Some(paths) = rfd::FileDialog::new()
-            .add_filter("Audio", AUDIO_EXTENSIONS)
+            .add_filter(tr("dialog.filter.audio"), AUDIO_EXTENSIONS)
             .pick_files()
         {
             self.add_audio_tracks(paths);
@@ -977,7 +986,7 @@ impl App {
 
     fn import_graph(&mut self) {
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("Graph", &["json"])
+            .add_filter(tr("dialog.filter.graph"), &["json"])
             .pick_file()
         else {
             return;
@@ -998,7 +1007,7 @@ impl App {
 
     fn export_graph(&mut self) {
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("Graph", &["json"])
+            .add_filter(tr("dialog.filter.graph"), &["json"])
             .set_file_name("graph.json")
             .save_file()
         else {
@@ -1185,38 +1194,46 @@ impl App {
                         .layout(egui::Layout::top_down(egui::Align::Center)),
                     |ui| {
                         ui.label(
-                            RichText::new("Open a video to start")
+                            RichText::new(tr("preview.empty"))
                                 .color(theme.text_dim)
                                 .size(15.0),
                         );
                         ui.add_space(4.0);
                         open_video = ui
-                            .button("Open Video…")
-                            .on_hover_text("Choose the video to process")
+                            .button(tr("menu.file.open_video"))
+                            .on_hover_text(tr("preview.open_video.help"))
                             .clicked();
                     },
                 );
             }
             EngineStatus::Loading => busy_centered(ui, rect, None),
             // The graph panel explains failures; the picture just stays as it was.
-            EngineStatus::Failed(_) if self.preview.is_none() => message(
-                ui,
-                "The graph can't render; see the bottom of the graph panel",
-            ),
+            EngineStatus::Failed(_) if self.preview.is_none() => {
+                message(ui, tr("preview.graph_failed"))
+            }
             EngineStatus::Ready if self.engine.frame(self.clock.frame()).is_none() => {
                 let waited = self.waiting_since.map_or(0.0, |since| now - since);
-                let warming = self
-                    .engine
-                    .progress()
-                    .filter(|p| p.warming)
-                    .map(|p| format!("Warming up {}/{}", p.done, p.total));
+                let warming = self.engine.progress().filter(|p| p.warming).map(|p| {
+                    tr_args(
+                        "preview.warming",
+                        &[
+                            ("done", &p.done.to_string()),
+                            ("total", &p.total.to_string()),
+                        ],
+                    )
+                });
                 if self.preview.is_none() {
                     // Nothing to show yet: the spinner stays where "loading" put it.
                     busy_centered(ui, rect, warming.as_deref());
                 } else if waited > BUSY_DELAY_SECS {
                     // The last frame stays up; say what's happening, but only once it's a wait
                     // rather than a flicker.
-                    busy_badge(ui, rect, warming.as_deref().unwrap_or("Rendering"), theme);
+                    busy_badge(
+                        ui,
+                        rect,
+                        warming.as_deref().unwrap_or(tr("preview.rendering")),
+                        theme,
+                    );
                 }
                 ui.ctx()
                     .request_repaint_after(std::time::Duration::from_millis(100));
@@ -1239,18 +1256,18 @@ impl App {
                 egui::Button::new(RichText::new(label).size(16.0)).min_size(egui::vec2(34.0, 26.0));
             if ui
                 .add_enabled(info.is_some(), play)
-                .on_hover_text("Play / pause (Space)")
+                .on_hover_text(tr("controls.play.help"))
                 .clicked()
             {
                 self.clock.toggle();
             }
             let looping = self.project.loop_region.is_some_and(|l| l.enabled);
-            let loop_button =
-                egui::Button::selectable(looping, "Loop").min_size(egui::vec2(0.0, 26.0));
+            let loop_button = egui::Button::selectable(looping, tr("controls.loop"))
+                .min_size(egui::vec2(0.0, 26.0));
             let hover = if self.project.loop_region.is_some() {
-                "Repeat the loop region (R)"
+                tr("controls.loop.help")
             } else {
-                "Ctrl+drag along the timeline's ruler to make a loop region"
+                tr("controls.loop.help_none")
             };
             if ui
                 .add_enabled(self.project.loop_region.is_some(), loop_button)
@@ -1268,14 +1285,14 @@ impl App {
                     timecode(frame as f64 / fps),
                     timecode(info.frames as f64 / fps)
                 ));
-                ui.weak(format!("frame {frame}"));
+                ui.weak(tr_args("controls.frame", &[("frame", &frame.to_string())]));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     self.cache_status(ui, info.frames, fps);
                 });
             }
         });
         ui.horizontal(|ui| {
-            ui.label("Preview");
+            ui.label(tr("controls.preview"));
             let mut scale = self.settings.preview_scale();
             egui::ComboBox::from_id_salt("preview-scale")
                 .selected_text(scale.label())
@@ -1286,39 +1303,43 @@ impl App {
                     }
                 })
                 .response
-                .on_hover_text("Preview resolution. Lower is faster; export is always full size.");
+                .on_hover_text(tr("controls.preview.help"));
             if scale != self.settings.preview_scale() {
                 self.settings.set_preview_scale(scale);
                 self.engine.set_preview_scale(scale);
             }
             let unprocessed = self.preview_feed == Feed::Unprocessed;
             if ui
-                .add(egui::Button::selectable(unprocessed, "Unprocessed"))
-                .on_hover_text(
-                    "Show the original video instead of the processed one. Processing carries on.",
-                )
+                .add(egui::Button::selectable(
+                    unprocessed,
+                    tr("controls.unprocessed"),
+                ))
+                .on_hover_text(tr("controls.unprocessed.help"))
                 .clicked()
             {
                 self.preview_feed = self.preview_feed.other();
             }
             if ui
-                .add(egui::Button::selectable(self.preview_split, "Split"))
-                .on_hover_text(
-                    "Compare both side by side. Drag the divider; switching Unprocessed swaps the sides.",
-                )
+                .add(egui::Button::selectable(
+                    self.preview_split,
+                    tr("controls.split"),
+                ))
+                .on_hover_text(tr("controls.split.help"))
                 .clicked()
             {
                 self.preview_split = !self.preview_split;
             }
             if let (Some(project), Some(preview)) = (self.thumbnails.info(), info) {
-                ui.weak(format!(
-                    "{}×{} of {}×{}",
-                    preview.width, preview.height, project.width, project.height
+                ui.weak(tr_args(
+                    "controls.resolution",
+                    &[
+                        ("width", &preview.width.to_string()),
+                        ("height", &preview.height.to_string()),
+                        ("project_width", &project.width.to_string()),
+                        ("project_height", &project.height.to_string()),
+                    ],
                 ))
-                .on_hover_text(
-                    "Preview resolution, out of the project's resolution (the video's, which \
-                     is what gets exported)",
-                );
+                .on_hover_text(tr("controls.resolution.help"));
             }
         });
         ui.horizontal(|ui| {
@@ -1326,7 +1347,10 @@ impl App {
             ui.spacing_mut().slider_width = 110.0;
             let volume = self.settings.volume;
             ui.add(egui::Slider::new(&mut self.settings.volume, 0.0..=1.0).show_value(false))
-                .on_hover_text(format!("Playback volume {:.0}%", volume * 100.0));
+                .on_hover_text(tr_args(
+                    "controls.volume",
+                    &[("percent", &format!("{:.0}", volume * 100.0))],
+                ));
         });
     }
 
@@ -1337,12 +1361,17 @@ impl App {
         if let Some(progress) = self.engine.progress().filter(|p| p.warming) {
             ui.colored_label(
                 theme.warning,
-                format!("Warming up {}/{}", progress.done, progress.total),
+                tr_args(
+                    "preview.warming",
+                    &[
+                        ("done", &progress.done.to_string()),
+                        ("total", &progress.total.to_string()),
+                    ],
+                ),
             )
-            .on_hover_text(format!(
-                "Rebuilding the history that delays and filters in the graph need before \
-                 frame {} can be shown. Graphs with a lot of memory take longer after a seek.",
-                progress.frame
+            .on_hover_text(tr_args(
+                "preview.warming.help",
+                &[("frame", &progress.frame.to_string())],
             ));
             return;
         }
@@ -1356,26 +1385,31 @@ impl App {
             .active_loop()
             .is_some_and(|lp| buffered_frames >= lp.end - frame.min(lp.start));
         let ahead = if round_loop {
-            "loop rendered".to_owned()
+            tr("cache.loop_rendered").to_owned()
         } else if to_end {
-            "rendered to the end".to_owned()
+            tr("cache.rendered_to_end").to_owned()
         } else {
-            format!("{buffered:.1} s ahead")
+            tr_args("cache.ahead", &[("seconds", &format!("{buffered:.1}"))])
         };
         let (text, color) = if !self.clock.is_playing() || speed >= 1.0 {
             (ahead, ui.visuals().weak_text_color())
         } else {
-            (format!("{speed:.2}× · {ahead}"), theme.warning)
+            (
+                tr_args(
+                    "cache.slowed",
+                    &[("speed", &format!("{speed:.2}")), ("ahead", &ahead)],
+                ),
+                theme.warning,
+            )
         };
-        ui.colored_label(color, text).on_hover_text(
-            "Rendered ahead of the playhead. Playback slows to what rendering can keep up with.",
-        );
+        ui.colored_label(color, text)
+            .on_hover_text(tr("cache.help"));
     }
 
     fn timeline(&mut self, ui: &mut Ui) {
         let Some(info) = self.engine.info() else {
-            ui.weak("The timeline appears once a video is loaded.");
-            if ui.button("+ Audio track").clicked() {
+            ui.weak(tr("timeline.empty"));
+            if ui.button(tr("timeline.track.add")).clicked() {
                 self.pick_audio_tracks();
             }
             return;
@@ -1457,11 +1491,8 @@ impl App {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             settings_window::tempo_fields(ui, tempo);
-            ui.toggle_value(&mut self.settings.metronome, "Metronome")
-                .on_hover_text(
-                    "Click on every beat while playing, higher on the first beat of each bar, \
-                     to check the tempo and first beat by ear",
-                );
+            ui.toggle_value(&mut self.settings.metronome, tr("tempo.metronome"))
+                .on_hover_text(tr("tempo.metronome.help"));
         });
     }
 
@@ -1576,11 +1607,11 @@ impl App {
     fn windows(&mut self, ui: &Ui) {
         if let Some(e) = self.audio.error.take() {
             self.error
-                .get_or_insert_with(|| format!("Audio playback is unavailable: {e}"));
+                .get_or_insert_with(|| tr_args("error.audio_unavailable", &[("error", &e)]));
         }
         if let Some(message) = self.error.clone() {
             let mut open = true;
-            egui::Window::new("Problem")
+            egui::Window::new(tr("dialog.problem"))
                 .collapsible(false)
                 .open(&mut open)
                 .show(ui.ctx(), |ui| ui.label(message));
@@ -1590,25 +1621,29 @@ impl App {
         }
 
         let mut open = self.show_about;
-        egui::Window::new("About RasterSong")
+        egui::Window::new(tr("about.title"))
             .open(&mut open)
             .collapsible(false)
             .show(ui.ctx(), |ui| {
-                ui.heading(format!("RasterSong {}", env!("CARGO_PKG_VERSION")));
-                ui.label("Copyright © 2025-2026 Alexander Davis. Source-available; see LICENSE.");
+                ui.heading(tr_args(
+                    "about.heading",
+                    &[("version", env!("CARGO_PKG_VERSION"))],
+                ));
+                ui.label(tr("about.copyright"));
                 ui.separator();
-                ui.label(
-                    "This software uses libraries from the FFmpeg project under the GNU LGPL.",
-                );
+                ui.label(tr("about.ffmpeg"));
                 ui.hyperlink_to("ffmpeg.org", "https://ffmpeg.org");
                 ui.hyperlink_to("GNU LGPL", "https://www.gnu.org/licenses/lgpl-3.0.html");
                 if let Some(info) = &self.backend_info {
-                    ui.label(format!("FFmpeg license: {}", info.license()));
-                    egui::CollapsingHeader::new("FFmpeg libraries").show(ui, |ui| {
+                    ui.label(tr_args(
+                        "about.ffmpeg_license",
+                        &[("license", info.license())],
+                    ));
+                    egui::CollapsingHeader::new(tr("about.ffmpeg_libraries")).show(ui, |ui| {
                         for lib in &info.libraries {
                             ui.monospace(format!("{:<11} {}", lib.name, lib.version));
                         }
-                        ui.label("Configuration:");
+                        ui.label(tr("about.configuration"));
                         ui.add(
                             egui::Label::new(RichText::new(info.configuration).monospace().small())
                                 .wrap(),
@@ -1625,16 +1660,20 @@ impl App {
             .as_ref()
             .and_then(|p| p.file_stem())
             .map_or_else(
-                || "Untitled".to_owned(),
+                || tr("project.untitled").to_owned(),
                 |n| n.to_string_lossy().into_owned(),
             )
     }
 
     fn update_title(&mut self, ui: &Ui) {
         let name = self.project_name();
-        let title = format!(
-            "{name}{} — RasterSong",
-            if self.is_dirty() { " •" } else { "" }
+        let title = tr_args(
+            if self.is_dirty() {
+                "window.title_dirty"
+            } else {
+                "window.title"
+            },
+            &[("name", &name)],
         );
         if title != self.title {
             ui.ctx()

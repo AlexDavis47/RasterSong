@@ -1,3 +1,4 @@
+use rastersong_lang::{tr};
 use crate::nodes::{Category, NodeKind, NodeSpec};
 use crate::{
     Diagnostic, InputSpec, Layout, LayoutContext, Node, OutputSpec, Params, ProcessContext, Signal,
@@ -12,13 +13,9 @@ pub struct Interleave;
 
 impl NodeKind for Interleave {
     const KIND: &'static str = "interleave";
-    const SPEC: NodeSpec = NodeSpec::new("Interleave", Category::Structure)
-        .describe("Channels as one mono carrier, as many times as wide (R, G, B, R, G, B, …)")
-        .inputs(&[InputSpec::required("in", "An interleaved signal, such as RGB video, to flatten")])
-        .outputs(&[OutputSpec::new(
-            "out",
-            "The channels in sequence, as one mono signal as many times as wide as there are channels",
-        )]);
+    const SPEC: NodeSpec = NodeSpec::new(Category::Structure)
+        .inputs(&[InputSpec::required("in")])
+        .outputs(&[OutputSpec::new("out")]);
 
     fn new(_: &Params) -> Result<Self, String> {
         Ok(Self)
@@ -37,9 +34,7 @@ impl Node for Interleave {
 
     fn diagnostics(&self, ctx: &LayoutContext) -> Vec<Diagnostic> {
         if ctx.inputs[0].samples_per_pixel == 1 {
-            vec![Diagnostic::note(
-                "The input already has one channel, so it passes through unchanged.",
-            )]
+            vec![Diagnostic::note(tr("diagnostic.interleave.one_channel"))]
         } else {
             Vec::new()
         }

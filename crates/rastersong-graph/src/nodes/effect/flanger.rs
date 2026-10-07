@@ -19,34 +19,21 @@ pub struct Flanger {
 }
 
 params! { Flanger {
-    TIME: ParamSpec::number(
-        "time",
-        "Time",
-        2.0,
+    TIME: ParamSpec::number("time", 2.0,
         0.0,
-        10.0,
-        "Delay length; wire an oscillator in here to sweep the comb",
-    )
+        10.0)
     .exposed()
     .limits(0.0, 1000.0),
-    UNIT: Unit::time_param("ms", "Unit for the time"),
-    FEEDBACK: ParamSpec::number(
-        "feedback",
-        "Feedback",
-        0.5,
+    UNIT: Unit::time_param("ms"),
+    FEEDBACK: ParamSpec::number("feedback", 0.5,
         -0.95,
-        0.95,
-        "How much of the delayed signal is fed back in; negative flips its sign",
-    ),
+        0.95),
     MIX: ParamSpec::mix(),
 } }
 
 impl NodeKind for Flanger {
     const KIND: &'static str = "flanger";
-    const SPEC: NodeSpec = NodeSpec::new("Flanger", Category::Effect)
-        .describe(
-            "A short delay with feedback that combs the signal; modulate the time to sweep it",
-        )
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[

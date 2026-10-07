@@ -21,6 +21,8 @@ use rastersong_engine::{
 
 use super::search::{NodeMenu, SearchMenu};
 use super::{GraphEditor, NodeKey};
+use rastersong_lang::{tr, tr_args};
+
 use crate::effects::Glow;
 use crate::theme::{Theme, WireStyle};
 
@@ -140,8 +142,8 @@ impl GraphEditor {
                     .or_else(|| self.linked_title(node))
                     .unwrap_or_else(|| {
                         kind.map_or_else(
-                            || format!("{} (unknown)", node.kind),
-                            |k| k.spec.label.to_owned(),
+                            || tr_args("editor.node.unknown_kind", &[("kind", &node.kind)]),
+                            |k| k.label().to_owned(),
                         )
                     });
                 // (name, required, port, parameter): inputs, then exposed parameters.
@@ -424,7 +426,10 @@ impl GraphEditor {
                         Severity::Note => "ℹ",
                         Severity::Warning => "⚠",
                     };
-                    ui.label(format!("{mark} {}", warning.message));
+                    ui.label(tr_args(
+                        "editor.node.warning_line",
+                        &[("mark", mark), ("message", &warning.message)],
+                    ));
                 }
             });
         }
@@ -465,7 +470,7 @@ impl GraphEditor {
             painter.text(
                 rect.center(),
                 Align2::CENTER_CENTER,
-                "Right-click to add a node",
+                tr("editor.canvas.empty_hint"),
                 FontId::proportional(14.0),
                 visuals.weak_text_color(),
             );
@@ -853,7 +858,7 @@ impl GraphEditor {
                 painter.text(
                     rect.left_top() - vec2(-PAD * zoom * 0.5, 4.0 * zoom),
                     Align2::LEFT_BOTTOM,
-                    "Bypassed",
+                    tr("editor.node.bypassed"),
                     FontId::proportional(LABEL_FONT * zoom * 1.1),
                     text.gamma_multiply(0.75),
                 );
@@ -936,21 +941,30 @@ impl GraphEditor {
         }
         let mut parts = Vec::new();
         if stats.latency_frames > 0.0 {
-            parts.push(format!(
-                "latency {} fr",
-                format_frames(stats.latency_frames)
+            parts.push(tr_args(
+                "editor.node.latency",
+                &[("frames", &format_frames(stats.latency_frames))],
             ));
         }
         if stats.warmup_frames > 0 {
             parts.push(if stats.warmup_frames == UNBOUNDED_WARMUP {
-                "warmup never settles".to_owned()
+                tr("editor.node.warmup_never").to_owned()
             } else {
-                format!("warmup {} fr", stats.warmup_frames)
+                tr_args(
+                    "editor.node.warmup",
+                    &[("frames", &stats.warmup_frames.to_string())],
+                )
             });
         }
         let mut text = parts.join(" · ");
         let color = if stats.warmup_frames > self.max_warmup_frames {
-            text = format!("⚠ {text} (above the {} fr limit)", self.max_warmup_frames);
+            text = tr_args(
+                "editor.node.warmup_over_limit",
+                &[
+                    ("text", &text),
+                    ("limit", &self.max_warmup_frames.to_string()),
+                ],
+            );
             theme.warning
         } else {
             visuals.weak_text_color()
@@ -988,22 +1002,20 @@ impl GraphEditor {
             failure.node.as_deref(),
             node.and_then(|k| geometry.iter().find(|g| g.key == k)),
         ) {
-            (Some(id), Some(g)) => {
-                let detail = failure
-                    .message
-                    .strip_prefix(&format!("node `{id}`: "))
-                    .unwrap_or(&failure.message);
-                format!("{}: {detail}", g.title)
-            }
+            (Some(_), Some(g)) => tr_args(
+                "editor.error_bar.node_message",
+                &[("node", &g.title), ("detail", &failure.detail)],
+            ),
             _ => failure.message.clone(),
         };
-        let text = egui::RichText::new(format!("⚠  {message}")).color(theme.error_bar_text);
+        let text = egui::RichText::new(tr_args("editor.error_bar", &[("message", &message)]))
+            .color(theme.error_bar_text);
         ui.put(
             bar.shrink2(vec2(10.0, 0.0)),
             egui::Label::new(text).truncate(),
         );
         if node.is_some() {
-            response.clone().on_hover_text("Click to show the node");
+            response.clone().on_hover_text(tr("editor.error_bar.hover"));
         }
         if response.clicked()
             && let Some(key) = node

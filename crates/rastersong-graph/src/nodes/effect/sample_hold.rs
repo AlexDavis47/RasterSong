@@ -23,32 +23,21 @@ pub struct SampleHold {
 }
 
 params! { SampleHold {
-    PERIOD: ParamSpec::number(
-        "period",
-        "Period",
-        0.25,
+    PERIOD: ParamSpec::number("period", 0.25,
         0.0,
-        4.0,
-        "How long each sampled value is held; 0 samples every sample (no hold)",
-    )
+        4.0)
     .limits(0.0, 1e6),
-    UNIT: Unit::time_param("row", "Unit for the period"),
-    LEVELS: ParamSpec::number(
-        "levels",
-        "Levels",
+    UNIT: Unit::time_param("row"),
+    LEVELS: ParamSpec::number("levels", 0.0,
         0.0,
-        0.0,
-        32.0,
-        "Rounds each value to this many evenly spaced levels between 0 and 1; 0 or 1 leaves values alone",
-    ).integer()
+        32.0).integer()
     .exposed()
     .limits(0.0, 65_536.0),
 } }
 
 impl NodeKind for SampleHold {
     const KIND: &'static str = "sample_hold";
-    const SPEC: NodeSpec = NodeSpec::new("Sample & Hold", Category::Effect)
-        .describe("Holds each sampled value for a while and optionally rounds it to a few levels")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[

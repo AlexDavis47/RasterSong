@@ -22,29 +22,22 @@ pub struct Remap {
 }
 
 params! { Remap {
-    IN_LOW: ParamSpec::number("in_low", "In low", 0.0, -1.0, 1.0, "The input value that becomes `out_low`")
+    IN_LOW: ParamSpec::number("in_low", 0.0, -1.0, 1.0)
         .exposed()
         .limits(-100.0, 100.0),
-    IN_HIGH: ParamSpec::number("in_high", "In high", 1.0, -1.0, 1.0, "The input value that becomes `out_high`")
+    IN_HIGH: ParamSpec::number("in_high", 1.0, -1.0, 1.0)
         .exposed()
         .limits(-100.0, 100.0),
-    OUT_LOW: ParamSpec::number("out_low", "Out low", 0.0, -1.0, 1.0, "What `in_low` becomes")
+    OUT_LOW: ParamSpec::number("out_low", 0.0, -1.0, 1.0)
         .limits(-100.0, 100.0),
-    OUT_HIGH: ParamSpec::number("out_high", "Out high", 1.0, -1.0, 1.0, "What `in_high` becomes")
+    OUT_HIGH: ParamSpec::number("out_high", 1.0, -1.0, 1.0)
         .limits(-100.0, 100.0),
-    OUTSIDE: ParamSpec::choice(
-        "outside",
-        "Outside",
-        Outside::OPTIONS,
-        "clamp",
-        "clamp stops at the output range, extend continues the line beyond it",
-    ),
+    OUTSIDE: ParamSpec::choice("outside", Outside::OPTIONS, "clamp"),
 } }
 
 impl NodeKind for Remap {
     const KIND: &'static str = "remap";
-    const SPEC: NodeSpec = NodeSpec::new("Remap", Category::Effect)
-        .describe("Stretches one range of values onto another: contrast, inversion, levels")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[

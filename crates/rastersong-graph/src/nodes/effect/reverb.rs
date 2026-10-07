@@ -93,19 +93,17 @@ pub struct Reverb {
 }
 
 params! { Reverb {
-    SIZE: ParamSpec::number("size", "Size", 0.5, 0.0, 1.0, "How long the tail rings: higher is longer"),
-    DAMPING: ParamSpec::number("damping", "Damping", 0.5, 0.0, 1.0, "How quickly the tail loses its fast detail: higher is duller"),
-    PREDELAY: ParamSpec::number("predelay", "Pre-delay", 0.0, 0.0, 100.0, "Gap before the reverb starts")
+    SIZE: ParamSpec::number("size", 0.5, 0.0, 1.0),
+    DAMPING: ParamSpec::number("damping", 0.5, 0.0, 1.0),
+    PREDELAY: ParamSpec::number("predelay", 0.0, 0.0, 100.0)
         .limits(0.0, 10_000.0),
-    UNIT: Unit::time_param("ms", "Unit for the pre-delay"),
+    UNIT: Unit::time_param("ms"),
     MIX: ParamSpec::mix().exposed(),
 } }
 
 impl NodeKind for Reverb {
     const KIND: &'static str = "reverb";
-    const SPEC: NodeSpec = NodeSpec::new("Reverb", Category::Effect)
-        .describe("A dense decaying wash of echoes")
-        .doc("Uses 12 internal delay lines whose lengths follow the signal's sample rate. On video the tail is long in samples, so the node uses a lot of memory and asks the host to render up to 120 frames of warmup before a seek.")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[

@@ -21,29 +21,17 @@ pub struct Rectify {
 }
 
 params! { Rectify {
-    KIND: ParamSpec::choice(
-        "kind",
-        "Kind",
-        Kind::OPTIONS,
-        "full",
-        "full flips the negative half up, half drops it, negative keeps only the negative half",
-    ),
-    CENTER: ParamSpec::number(
-        "center",
-        "Center",
-        0.0,
+    KIND: ParamSpec::choice("kind", Kind::OPTIONS, "full"),
+    CENTER: ParamSpec::number("center", 0.0,
         -1.0,
-        1.0,
-        "The value the wave is rectified around: 0 for audio, 0.5 to fold video around mid-gray",
-    )
+        1.0)
     .exposed()
     .limits(-100.0, 100.0),
 } }
 
 impl NodeKind for Rectify {
     const KIND: &'static str = "rectify";
-    const SPEC: NodeSpec = NodeSpec::new("Rectify", Category::Effect)
-        .describe("Folds or drops one half of the wave around a centre value")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[

@@ -9,14 +9,12 @@ pub struct Stretch;
 
 impl NodeKind for Stretch {
     const KIND: &'static str = "stretch";
-    const SPEC: NodeSpec = NodeSpec::new("Stretch to Match", Category::Structure)
-        .describe("A signal stretched to the length and layout of another")
-        .doc("The output has `like`'s size and layout and `in`'s values: audio stretched over a picture, or a picture squeezed into an audio block. With pixel grouping (the default), a mono signal stretched over RGB moves each pixel's channels together; per sample, it is spread over every channel value.")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Structure)
         .inputs(&[
-            InputSpec::required("like", "The signal whose size and layout the result takes"),
-            InputSpec::required("in", "The signal to stretch"),
+            InputSpec::required("like"),
+            InputSpec::required("in"),
         ])
-        .outputs(&[OutputSpec::new("out", "`in` at the size of `like`")]);
+        .outputs(&[OutputSpec::new("out")]);
 
     fn new(_: &Params) -> Result<Self, String> {
         Ok(Self)

@@ -21,33 +21,22 @@ pub struct Limiter {
 }
 
 params! { Limiter {
-    CEILING: ParamSpec::number(
-        "ceiling",
-        "Ceiling",
-        -6.0,
+    CEILING: ParamSpec::number("ceiling", -6.0,
         -48.0,
-        0.0,
-        "The loudest any sample may get: 0 dB is full scale, 1.0",
-    )
+        0.0)
     .unit("dB")
     .exposed()
     .limits(-120.0, 24.0),
-    RELEASE: ParamSpec::number(
-        "release",
-        "Release",
-        50.0,
+    RELEASE: ParamSpec::number("release", 50.0,
         0.0,
-        1000.0,
-        "How slowly the gain recovers after a peak; longer is smoother",
-    )
+        1000.0)
     .limits(0.0, 1e6),
-    UNIT: Unit::time_param("ms", "Unit for the release"),
+    UNIT: Unit::time_param("ms"),
 } }
 
 impl NodeKind for Limiter {
     const KIND: &'static str = "limiter";
-    const SPEC: NodeSpec = NodeSpec::new("Limiter", Category::Effect)
-        .describe("Stops the signal from passing a ceiling by pulling the gain down")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .per_channel()
         .expects(crate::Range::Bipolar);

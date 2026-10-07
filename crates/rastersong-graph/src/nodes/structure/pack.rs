@@ -1,3 +1,4 @@
+use rastersong_lang::{tr_args};
 use crate::nodes::{Category, MAX_CHANNELS, NodeKind, NodeSpec};
 use crate::{
     InputSpec, Layout, LayoutContext, Node, OutputSpec, ParamSpec, Params, ProcessContext, Signal,
@@ -11,30 +12,19 @@ pub struct Pack {
 }
 
 params! { Pack {
-    CHANNELS: ParamSpec::number(
-        "channels",
-        "Channels",
-        3.0,
+    CHANNELS: ParamSpec::number("channels", 3.0,
         1.0,
-        MAX_CHANNELS as f64,
-        "How many channels each pixel gets: 3 for RGB, 2 for stereo",
-    ).integer()
-    .fixed(
-        "The number of channels changes the signal's layout, which the graph is compiled for and can't change per sample",
-    )
+        MAX_CHANNELS as f64).integer()
+    .fixed()
     .limits(1.0, 64.0),
 } }
 
 impl NodeKind for Pack {
     const KIND: &'static str = "pack";
-    const SPEC: NodeSpec = NodeSpec::new("Pack", Category::Structure)
-        .describe("A packed mono carrier back into channels: RGB, stereo, …")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Structure)
         .params(Self::PARAMS)
-        .inputs(&[InputSpec::required(
-            "in",
-            "A mono signal as many times as wide as the picture as there are channels, as Interleave makes",
-        )])
-        .outputs(&[OutputSpec::new("out", "The interleaved signal")]);
+        .inputs(&[InputSpec::required("in")])
+        .outputs(&[OutputSpec::new("out")]);
 
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
@@ -50,8 +40,13 @@ impl Node for Pack {
         let samples_per_row = input.width * input.samples_per_pixel;
         // A row has to hold whole pixels; that's a fact about the shape, not the signal's type.
         if !samples_per_row.is_multiple_of(n) {
-            return Err(format!(
-                "a row of {input} has {samples_per_row} samples, which doesn't divide into pixels of {n} channels"
+            return Err(tr_args(
+                "error.pack.row",
+                &[
+                    ("input", &input.to_string()),
+                    ("samples", &samples_per_row.to_string()),
+                    ("channels", &n.to_string()),
+                ],
             ));
         }
         Ok(vec![input.reshaped(samples_per_row / n, input.height, n)])

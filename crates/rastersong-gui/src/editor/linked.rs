@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 
 use eframe::egui::{Pos2, pos2, vec2};
 use rastersong_engine::{DEFAULT_AUDIO_TRACK, NodeType, ParamValue};
+use rastersong_lang::{tr, tr_args};
 
 use super::{EditorNode, GraphEditor, NodeKey};
 
@@ -65,7 +66,11 @@ impl GraphEditor {
     /// track's. `None` for other nodes, which keep their names to themselves.
     pub(super) fn linked_name(&self, node: &EditorNode) -> Option<String> {
         match node.kind.as_str() {
-            VIDEO_INPUT => Some(self.project_video.clone().unwrap_or_else(|| "Video".into())),
+            VIDEO_INPUT => Some(
+                self.project_video
+                    .clone()
+                    .unwrap_or_else(|| tr("editor.linked.video_default").to_owned()),
+            ),
             AUDIO_INPUT if self.node_is_linked(node) => Some(track_of(node).to_owned()),
             _ => None,
         }
@@ -86,16 +91,21 @@ impl GraphEditor {
     /// The title a linked node shows unless the user named it: what it's linked to.
     pub(super) fn linked_title(&self, node: &EditorNode) -> Option<String> {
         match node.kind.as_str() {
-            VIDEO_INPUT => Some(format!(
-                "▣ {}",
-                self.project_video.as_deref().unwrap_or("Video")
+            VIDEO_INPUT => Some(tr_args(
+                "editor.linked.video_title",
+                &[(
+                    "name",
+                    self.project_video
+                        .as_deref()
+                        .unwrap_or(tr("editor.linked.video_default")),
+                )],
             )),
             AUDIO_INPUT => {
                 let track = track_of(node);
                 Some(if self.project_tracks.iter().any(|t| t == track) {
-                    format!("♪ {track}")
+                    tr_args("editor.linked.track_title", &[("track", track)])
                 } else {
-                    format!("♪ {track} (no track)")
+                    tr_args("editor.linked.track_missing", &[("track", track)])
                 })
             }
             _ => None,

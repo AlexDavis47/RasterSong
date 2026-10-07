@@ -8,22 +8,16 @@ pub struct Offset {
 }
 
 params! { Offset {
-    AMOUNT: ParamSpec::number(
-        "amount",
-        "Amount",
-        0.0,
+    AMOUNT: ParamSpec::number("amount", 0.0,
         -1.0,
-        1.0,
-        "Added to every sample: brightens video, shifts audio up",
-    )
+        1.0)
     .exposed()
     .limits(-100.0, 100.0),
 } }
 
 impl NodeKind for Offset {
     const KIND: &'static str = "offset";
-    const SPEC: NodeSpec = NodeSpec::new("Offset", Category::Effect)
-        .describe("Adds a constant to every sample")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[r#"{ "amount": 0.25 }"#, r#"{ "amount": -1 }"#];

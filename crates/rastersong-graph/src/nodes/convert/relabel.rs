@@ -58,31 +58,17 @@ pub struct Relabel {
 }
 
 params! { Relabel {
-    KIND: ParamSpec::choice("kind", "Kind", KindChoice::OPTIONS, "keep", "What the signal is meant to be"),
-    CHANNELS: ParamSpec::choice(
-        "channels",
-        "Channels",
-        ChannelsChoice::OPTIONS,
-        "keep",
-        "named gives the channels their usual names (RGB, stereo), numbered just counts them",
-    ),
-    RANGE: ParamSpec::choice("range", "Range", RangeChoice::OPTIONS, "keep", "The range the values are meant to span"),
-    PART: ParamSpec::choice(
-        "part",
-        "Part",
-        PartChoice::OPTIONS,
-        "keep",
-        "whole stops treating the signal as one channel or band of another",
-    ),
+    KIND: ParamSpec::choice("kind", KindChoice::OPTIONS, "keep"),
+    CHANNELS: ParamSpec::choice("channels", ChannelsChoice::OPTIONS, "keep"),
+    RANGE: ParamSpec::choice("range", RangeChoice::OPTIONS, "keep"),
+    PART: ParamSpec::choice("part", PartChoice::OPTIONS, "keep"),
 } }
 
 impl NodeKind for Relabel {
     const KIND: &'static str = "relabel";
-    const SPEC: NodeSpec = NodeSpec::new("Relabel", Category::Convert)
-        .describe("Changes what a signal is said to be (kind, channels, range), not its samples")
-        .doc("Signals carry a tag (video or audio, which channels, the range of values) that colours wires and drives warnings. Nothing converts a signal because of its tag; this node only rewrites it, for when a signal is reused on purpose as something else.")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Convert)
         .params(Self::PARAMS)
-        .outputs(&[OutputSpec::new("out", "The same samples, relabelled")]);
+        .outputs(&[OutputSpec::new("out")]);
 
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {

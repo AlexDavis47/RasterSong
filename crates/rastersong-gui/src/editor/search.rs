@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 
 use eframe::egui::{self, Key, Pos2, Ui};
 use rastersong_engine::NodeType;
+use rastersong_lang::{tr, tr_args};
 
 use super::canvas::{Geometry, Pin};
 use super::linked;
@@ -75,13 +76,13 @@ pub(super) fn matches<'a>(
         .filter(|t| GraphEditor::user_addable(t))
         .filter(|t| fits(t))
         .filter_map(|&t| {
-            let label = t.spec.label.to_lowercase();
+            let label = t.label().to_lowercase();
             let rank = if query.is_empty() || label.starts_with(&query) {
                 0
             } else if label.contains(&query) || t.kind.contains(&query) {
                 1
             } else if t.spec.category.label().to_lowercase().contains(&query)
-                || (query.len() >= 3 && t.spec.description.to_lowercase().contains(&query))
+                || (query.len() >= 3 && t.description().to_lowercase().contains(&query))
             {
                 2
             } else {
@@ -90,7 +91,7 @@ pub(super) fn matches<'a>(
             Some((rank, t))
         })
         .collect();
-    found.sort_by_key(|&(rank, t)| (rank, t.spec.category, t.spec.label));
+    found.sort_by_key(|&(rank, t)| (rank, t.spec.category, t.label()));
     found.into_iter().map(|(_, t)| t).collect()
 }
 
@@ -130,7 +131,7 @@ impl GraphEditor {
                     ui.set_width(240.0);
                     let edit = ui.add(
                         egui::TextEdit::singleline(&mut menu.query)
-                            .hint_text("Search nodes…")
+                            .hint_text(tr("editor.search.hint"))
                             .desired_width(f32::INFINITY),
                     );
                     if !menu.opened {
@@ -147,7 +148,7 @@ impl GraphEditor {
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             if found.is_empty() {
-                                ui.weak("No matching nodes");
+                                ui.weak(tr("editor.search.none"));
                             }
                             for (i, t) in found.iter().enumerate() {
                                 let row = ui.horizontal(|ui| {
@@ -160,12 +161,11 @@ impl GraphEditor {
                                         3.5,
                                         Theme::of(ui.ctx()).category(Some(t.spec.category)),
                                     );
-                                    let label =
-                                        ui.selectable_label(i == menu.selected, t.spec.label);
+                                    let label = ui.selectable_label(i == menu.selected, t.label());
                                     ui.weak(t.spec.category.label());
                                     label
                                 });
-                                let label = row.inner.on_hover_text(t.spec.description);
+                                let label = row.inner.on_hover_text(t.description());
                                 if i == menu.selected && (up || down) {
                                     label.scroll_to_me(None);
                                 }
@@ -211,10 +211,14 @@ impl GraphEditor {
         } else {
             BTreeSet::from([menu.node])
         };
-        let plural = if selection.len() > 1 {
-            format!(" {} nodes", selection.len())
-        } else {
-            String::new()
+        // One node's wording, or the many-nodes wording with the count.
+        let count = selection.len().to_string();
+        let words = |one: &str, many: &str| {
+            if selection.len() > 1 {
+                tr_args(many, &[("count", &count)])
+            } else {
+                tr(one).to_owned()
+            }
         };
         let area = egui::Area::new(ui.id().with("node-menu"))
             .order(egui::Order::Foreground)
@@ -223,14 +227,20 @@ impl GraphEditor {
             .show(ui.ctx(), |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui: &mut Ui| {
                     ui.set_min_width(140.0);
-                    if ui.button(format!("Copy{plural}")).clicked() {
+                    if ui
+                        .button(words("editor.menu.copy", "editor.menu.copy_many"))
+                        .clicked()
+                    {
                         self.selected = selection.clone();
                         if let Some(text) = self.copy_selection() {
                             ui.ctx().copy_text(text);
                         }
                         close = true;
                     }
-                    if ui.button(format!("Duplicate{plural}")).clicked() {
+                    if ui
+                        .button(words("editor.menu.duplicate", "editor.menu.duplicate_many"))
+                        .clicked()
+                    {
                         self.duplicate(&selection, self.keep_connections);
                         close = true;
                     }
@@ -242,14 +252,20 @@ impl GraphEditor {
                     if !bypassable.is_empty() {
                         let mut bypassed = bypassable.iter().all(|n| n.bypass);
                         if ui
-                            .checkbox(&mut bypassed, format!("Bypass{plural}"))
+                            .checkbox(
+                                &mut bypassed,
+                                words("editor.menu.bypass", "editor.menu.bypass_many"),
+                            )
                             .clicked()
                         {
                             self.toggle_bypass(&selection);
                             close = true;
                         }
                     }
-                    if ui.button(format!("Delete{plural}")).clicked() {
+                    if ui
+                        .button(words("editor.menu.delete", "editor.menu.delete_many"))
+                        .clicked()
+                    {
                         self.remove_nodes(&selection);
                         close = true;
                     }
@@ -278,7 +294,7 @@ mod tests {
         let labels = |q: &str| {
             matches(&types, q, None)
                 .iter()
-                .map(|t| t.spec.label)
+                .map(|t| t.label())
                 .collect::<Vec<_>>()
         };
         assert_eq!(labels("del")[0], "Delay");

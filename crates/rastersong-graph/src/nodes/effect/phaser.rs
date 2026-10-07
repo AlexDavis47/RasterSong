@@ -29,42 +29,25 @@ pub struct Phaser {
 }
 
 params! { Phaser {
-    STAGES: ParamSpec::number(
-        "stages",
-        "Stages",
-        4.0,
+    STAGES: ParamSpec::number("stages", 4.0,
         1.0,
-        12.0,
-        "How many allpass filters are chained; every two add a notch",
-    )
+        12.0)
     .integer(),
-    FREQ: ParamSpec::number(
-        "freq",
-        "Frequency",
-        1000.0,
+    FREQ: ParamSpec::number("freq", 1000.0,
         20.0,
-        5_000.0,
-        "Where the notches sit; wire an oscillator in here to sweep them",
-    )
+        5_000.0)
     .exposed()
     .limits(1e-06, 1e9),
-    UNIT: Unit::freq_param("second", "Unit for the frequency"),
-    FEEDBACK: ParamSpec::number(
-        "feedback",
-        "Feedback",
-        0.3,
+    UNIT: Unit::freq_param("second"),
+    FEEDBACK: ParamSpec::number("feedback", 0.3,
         -0.95,
-        0.95,
-        "How much of the chain's output is fed back in, which sharpens the notches",
-    ),
+        0.95),
     MIX: ParamSpec::mix(),
 } }
 
 impl NodeKind for Phaser {
     const KIND: &'static str = "phaser";
-    const SPEC: NodeSpec = NodeSpec::new("Phaser", Category::Effect)
-        .describe("Sweeps notches through the signal with allpass filters; modulate the frequency")
-        .doc("Mix is fully wet by default; around 0.5 the notches are deepest, because the filtered signal then cancels the dry one.")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[

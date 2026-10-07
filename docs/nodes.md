@@ -165,7 +165,7 @@ Each connected input becomes one channel of the output, in order. The first inpu
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `mode` (Mode) | `horizontal` | `horizontal`, `vertical`, `reverse` | no | horizontal mirrors each row, vertical turns the rows upside down, reverse does both,  |
+| `mode` (Mode) | `horizontal` | `horizontal`, `vertical`, `reverse` | no | horizontal mirrors each row, vertical turns the rows upside down, reverse does both, |
 
 ### `interleave`
 

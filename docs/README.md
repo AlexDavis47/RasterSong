@@ -19,6 +19,7 @@ leans on them.
 | Look up a node's ports and parameters | [Node reference](nodes.md) (generated) |
 | Edit graph or project files by hand | [Graph files](graph-format.md) |
 | Work on the desktop app | [Desktop app](app.md) |
+| Change wording or add a language | [Text and languages](text.md) |
 | Build, test or package | [Development](development.md), [Testing](testing.md) |
 | Check licensing | [Licensing](licensing.md) |
 | See what is planned | [Roadmap](roadmap.md), [Decisions](decisions.md) |
@@ -45,6 +46,7 @@ leans on them.
 **Application**
 
 - [Desktop app](app.md): preview, node editor, inspector, timeline, keys, projects.
+- [Text and languages](text.md): where every user-facing string lives, the key scheme, adding a language.
 
 **Project**
 

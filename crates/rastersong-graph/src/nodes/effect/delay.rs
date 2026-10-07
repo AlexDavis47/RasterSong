@@ -20,33 +20,22 @@ pub struct Delay {
 }
 
 params! { Delay {
-    TIME: ParamSpec::number(
-        "time",
-        "Time",
-        0.05,
+    TIME: ParamSpec::number("time", 0.05,
         0.0,
-        100.0,
-        "Delay length, in rows or frames. Small fractions of a row give the finest waves",
-    )
+        100.0)
     .exposed()
     .limits(0.0, 1000.0),
-    UNIT: Unit::time_param("row", "Unit for the time"),
-    FEEDBACK: ParamSpec::number(
-        "feedback",
-        "Feedback",
+    UNIT: Unit::time_param("row"),
+    FEEDBACK: ParamSpec::number("feedback", 0.0,
         0.0,
-        0.0,
-        0.99,
-        "How much of the delayed signal is fed back in",
-    )
+        0.99)
     .exposed(),
     MIX: ParamSpec::mix(),
 } }
 
 impl NodeKind for Delay {
     const KIND: &'static str = "delay";
-    const SPEC: NodeSpec = NodeSpec::new("Delay", Category::Effect)
-        .describe("Delays the signal by rows or frames; modulating the time bends rows into waves")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[

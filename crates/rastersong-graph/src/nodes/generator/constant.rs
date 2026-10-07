@@ -10,18 +10,17 @@ pub struct Constant {
 }
 
 params! { Constant {
-    VALUE: ParamSpec::number("value", "Value", 0.0, -1.0, 1.0, "The value of every sample")
+    VALUE: ParamSpec::number("value", 0.0, -1.0, 1.0)
         .limits(-10.0, 10.0),
 } }
 
 impl NodeKind for Constant {
     const KIND: &'static str = "constant";
-    const SPEC: NodeSpec = NodeSpec::new("Constant", Category::Generator)
-        .describe("The same value in every sample: a flat colour, or silence")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Generator)
         .params(Self::PARAMS)
         .takes_layout()
         .inputs(&[])
-        .outputs(&[OutputSpec::new("out", "The constant signal")]);
+        .outputs(&[OutputSpec::new("out")]);
     const TEST_CONFIGS: &'static [&'static str] = &[r#"{ "value": 0.25 }"#, r#"{ "value": -1 }"#];
     const BENCH: Option<&'static str> = Some("{}");
 

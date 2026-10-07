@@ -26,25 +26,18 @@ pub struct FrequencyShifter {
 }
 
 params! { FrequencyShifter {
-    SHIFT: ParamSpec::number(
-        "shift",
-        "Shift",
-        100.0,
+    SHIFT: ParamSpec::number("shift", 100.0,
         -1000.0,
-        1000.0,
-        "How far every frequency moves: positive shifts up, negative down",
-    )
+        1000.0)
     .exposed()
     .limits(-1e9, 1e9),
-    UNIT: Unit::freq_param("second", "Unit for the shift"),
+    UNIT: Unit::freq_param("second"),
     MIX: ParamSpec::mix(),
 } }
 
 impl NodeKind for FrequencyShifter {
     const KIND: &'static str = "frequency_shifter";
-    const SPEC: NodeSpec = NodeSpec::new("Frequency Shifter", Category::Effect)
-        .describe("Moves every frequency up or down by a fixed amount, giving inharmonic tones")
-        .doc("With Mix between 0 and 1 the shifted signal beats against the original.")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[

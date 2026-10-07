@@ -1,3 +1,4 @@
+use rastersong_lang::{tr_args};
 use crate::nodes::{Category, NodeKind, NodeSpec};
 use crate::{Layout, LayoutContext, Node, ParamSpec, Params, ProcessContext, Signal};
 
@@ -23,43 +24,22 @@ pub struct Resample {
 }
 
 params! { Resample {
-    WIDTH: ParamSpec::number(
-        "width",
-        "Width",
+    WIDTH: ParamSpec::number("width", 0.0,
         0.0,
-        0.0,
-        4096.0,
-        "New width in pixels; 0 keeps the input's width",
-    ).integer()
-    .fixed(
-        "The size changes the signal's layout, which the graph is compiled for and can't change per sample",
-    )
+        4096.0).integer()
+    .fixed()
     .limits(0.0, 16_384.0),
-    HEIGHT: ParamSpec::number(
-        "height",
-        "Height",
+    HEIGHT: ParamSpec::number("height", 0.0,
         0.0,
-        0.0,
-        4096.0,
-        "New height in pixels; 0 keeps the input's height",
-    ).integer()
-    .fixed(
-        "The size changes the signal's layout, which the graph is compiled for and can't change per sample",
-    )
+        4096.0).integer()
+    .fixed()
     .limits(0.0, 16_384.0),
-    METHOD: ParamSpec::choice(
-        "method",
-        "Method",
-        Method::OPTIONS,
-        "linear",
-        "nearest picks the closest pixel, linear blends the four closest",
-    ),
+    METHOD: ParamSpec::choice("method", Method::OPTIONS, "linear"),
 } }
 
 impl NodeKind for Resample {
     const KIND: &'static str = "resample";
-    const SPEC: NodeSpec = NodeSpec::new("Resample", Category::Structure)
-        .describe("Resizes the picture; effects after it work at the new resolution")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Structure)
         .params(Self::PARAMS);
 
     fn new(params: &Params) -> Result<Self, String> {
@@ -87,7 +67,7 @@ impl Node for Resample {
         let target = self.target(ctx.inputs[0]);
         // Rows are samples of one block; keep the block small enough to be a picture.
         if target.len() > 1 << 28 {
-            return Err(format!("{target} is too large"));
+            return Err(tr_args("error.resample.too_large", &[("size", &target.to_string())]));
         }
         Ok(vec![target; ctx.output_count])
     }

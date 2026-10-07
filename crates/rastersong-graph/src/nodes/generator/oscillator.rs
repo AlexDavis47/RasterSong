@@ -62,65 +62,39 @@ pub struct Oscillator {
 }
 
 params! { Oscillator {
-    WAVE: ParamSpec::choice("wave", "Wave", Wave::OPTIONS, "sine", "The shape of one cycle"),
-    FREQ: ParamSpec::number(
-        "freq",
-        "Frequency",
-        8.0,
+    WAVE: ParamSpec::choice("wave", Wave::OPTIONS, "sine"),
+    FREQ: ParamSpec::number("freq", 8.0,
         0.01,
-        100.0,
-        "Cycles per unit of time or space: how many stripes fit in a row, or how high the tone is",
-    )
+        100.0)
     .exposed()
     .limits(0.0, 1_000_000.0),
-    UNIT: Unit::freq_param("row", "Unit for the frequency (cycles per unit): Row keeps the look at any resolution"),
-    PHASE: ParamSpec::number(
-        "phase",
-        "Phase",
+    UNIT: Unit::freq_param("row"),
+    PHASE: ParamSpec::number("phase", 0.0,
         0.0,
-        0.0,
-        1.0,
-        "Where in the cycle the wave starts, as a fraction of a cycle",
-    )
+        1.0)
     .limits(-1000.0, 1000.0),
-    AMPLITUDE: ParamSpec::number(
-        "amplitude",
-        "Amplitude",
-        0.5,
+    AMPLITUDE: ParamSpec::number("amplitude", 0.5,
         0.0,
-        1.0,
-        "Half the peak-to-peak height; with the offset it places the wave in the signal's range",
-    )
+        1.0)
     .exposed()
     .limits(-10.0, 10.0),
-    OFFSET: ParamSpec::number(
-        "offset",
-        "Offset",
-        0.5,
+    OFFSET: ParamSpec::number("offset", 0.5,
         -1.0,
-        1.0,
-        "Added to the wave: 0.5 with amplitude 0.5 fills the video range 0 to 1, 0 suits audio",
-    )
+        1.0)
     .limits(-10.0, 10.0),
-    PULSE_WIDTH: ParamSpec::number(
-        "pulse_width",
-        "Pulse width",
-        0.5,
+    PULSE_WIDTH: ParamSpec::number("pulse_width", 0.5,
         0.0,
-        1.0,
-        "For the square wave, the fraction of the cycle it stays high",
-    )
+        1.0)
     .shown_when("wave", &["square"]),
 } }
 
 impl NodeKind for Oscillator {
     const KIND: &'static str = "oscillator";
-    const SPEC: NodeSpec = NodeSpec::new("Oscillator", Category::Generator)
-        .describe("A sine, triangle, square or saw wave: stripes in video, a tone in audio")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Generator)
         .params(Self::PARAMS)
         .takes_layout()
         .inputs(&[])
-        .outputs(&[OutputSpec::new("out", "The wave")]);
+        .outputs(&[OutputSpec::new("out")]);
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "wave": "triangle", "freq": 2.5 }"#,
         r#"{ "wave": "square", "pulse_width": 0.25, "phase": 0.3 }"#,

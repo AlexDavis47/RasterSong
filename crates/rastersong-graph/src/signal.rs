@@ -1,3 +1,5 @@
+use rastersong_lang::{tr, tr_args};
+
 /// Describes how a signal's samples map onto an image, and what they are meant to be. Effect nodes
 /// ignore it; structural nodes and unit conversion (e.g. "one row") use the shape, and editors and
 /// compile warnings use the [`Tag`].
@@ -200,7 +202,7 @@ impl std::fmt::Display for Tag {
             words.push(label.to_owned());
         }
         if words.is_empty() {
-            f.write_str("untagged")
+            f.write_str(tr("signal.untagged"))
         } else {
             f.write_str(&words.join(", "))
         }
@@ -219,9 +221,9 @@ pub enum Kind {
 impl Kind {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Unknown => "unknown",
-            Self::Video => "video",
-            Self::Audio => "audio",
+            Self::Unknown => tr("signal.kind.unknown"),
+            Self::Video => tr("signal.kind.video"),
+            Self::Audio => tr("signal.kind.audio"),
         }
     }
 }
@@ -275,10 +277,10 @@ impl ChannelMap {
     pub fn label(self) -> Option<&'static str> {
         match self {
             Self::Unknown => None,
-            Self::Mono => Some("mono"),
-            Self::Stereo => Some("stereo"),
-            Self::Rgb => Some("RGB"),
-            Self::Numbered => Some("interleaved channels"),
+            Self::Mono => Some(tr("signal.channels.mono")),
+            Self::Stereo => Some(tr("signal.channels.stereo")),
+            Self::Rgb => Some(tr("signal.channels.rgb")),
+            Self::Numbered => Some(tr("signal.channels.numbered")),
         }
     }
 }
@@ -304,15 +306,18 @@ impl Part {
     pub fn label(self) -> Option<String> {
         Some(match self {
             Self::Whole => return None,
-            Self::Red => "red channel".into(),
-            Self::Green => "green channel".into(),
-            Self::Blue => "blue channel".into(),
-            Self::Left => "left channel".into(),
-            Self::Right => "right channel".into(),
-            Self::Channel(i) => format!("channel {}", u32::from(i) + 1),
-            Self::Low => "low band".into(),
-            Self::Mid => "mid band".into(),
-            Self::High => "high band".into(),
+            Self::Red => tr("signal.part.red").into(),
+            Self::Green => tr("signal.part.green").into(),
+            Self::Blue => tr("signal.part.blue").into(),
+            Self::Left => tr("signal.part.left").into(),
+            Self::Right => tr("signal.part.right").into(),
+            Self::Channel(i) => tr_args(
+                "signal.part.channel",
+                &[("number", &(u32::from(i) + 1).to_string())],
+            ),
+            Self::Low => tr("signal.part.low").into(),
+            Self::Mid => tr("signal.part.mid").into(),
+            Self::High => tr("signal.part.high").into(),
         })
     }
 }
@@ -359,8 +364,8 @@ impl Range {
     pub fn label(self) -> Option<&'static str> {
         match self {
             Self::Unknown => None,
-            Self::Unipolar => Some("0 to 1"),
-            Self::Bipolar => Some("-1 to 1"),
+            Self::Unipolar => Some(tr("signal.range.unipolar")),
+            Self::Bipolar => Some(tr("signal.range.bipolar")),
         }
     }
 }

@@ -30,24 +30,17 @@ pub struct Envelope {
 }
 
 params! { Envelope {
-    DETECTOR: ParamSpec::choice(
-        "detector",
-        "Detector",
-        Detector::OPTIONS,
-        "peak",
-        "peak follows each sample's magnitude, rms follows average power and is smoother",
-    ),
-    ATTACK: ParamSpec::number("attack", "Attack", 5.0, 0.0, 1000.0, "How quickly the output rises when the input gets stronger")
+    DETECTOR: ParamSpec::choice("detector", Detector::OPTIONS, "peak"),
+    ATTACK: ParamSpec::number("attack", 5.0, 0.0, 1000.0)
         .limits(0.0, 1e6),
-    RELEASE: ParamSpec::number("release", "Release", 50.0, 0.0, 5000.0, "How quickly the output falls when the input gets weaker")
+    RELEASE: ParamSpec::number("release", 50.0, 0.0, 5000.0)
         .limits(0.0, 1e6),
-    UNIT: Unit::time_param("ms", "Unit for attack and release"),
+    UNIT: Unit::time_param("ms"),
 } }
 
 impl NodeKind for Envelope {
     const KIND: &'static str = "envelope";
-    const SPEC: NodeSpec = NodeSpec::new("Envelope", Category::Effect)
-        .describe("Follows how strong the signal is, as a smooth curve from 0 up (Slew limits the signal itself instead)")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[

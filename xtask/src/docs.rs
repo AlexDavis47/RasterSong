@@ -57,7 +57,9 @@ pub fn render(registry: &Registry) -> String {
             let _ = writeln!(
                 out,
                 "| [{}](#{}) | {} |",
-                t.spec.label, t.kind, t.spec.description
+                t.label(),
+                t.kind,
+                t.description()
             );
         }
         out.push('\n');
@@ -71,9 +73,9 @@ pub fn render(registry: &Registry) -> String {
 fn node(out: &mut String, t: &NodeType) {
     let spec = &t.spec;
     let _ = writeln!(out, "### `{}`\n", t.kind);
-    let _ = writeln!(out, "**{}**: {}\n", spec.label, spec.description);
-    if !spec.doc.is_empty() {
-        let _ = writeln!(out, "{}\n", spec.doc.trim());
+    let _ = writeln!(out, "**{}**: {}\n", t.label(), t.description());
+    if !t.doc().is_empty() {
+        let _ = writeln!(out, "{}\n", t.doc().trim());
     }
     if spec.per_channel {
         out.push_str("Can process R, G and B separately.\n\n");
@@ -87,7 +89,12 @@ fn node(out: &mut String, t: &NodeType) {
                 (_, true) => "required",
                 (_, false) => "optional",
             };
-            let _ = writeln!(out, "- `{}` ({kind}): {}", input.name, input.help);
+            let _ = writeln!(
+                out,
+                "- `{}` ({kind}): {}",
+                input.name,
+                t.input_help(input.name)
+            );
         }
         out.push('\n');
     }
@@ -98,7 +105,12 @@ fn node(out: &mut String, t: &NodeType) {
         } else {
             format!(" ({})", tag_rule_name(output.tag))
         };
-        let _ = writeln!(out, "- `{}`{carries}: {}", output.name, output.help);
+        let _ = writeln!(
+            out,
+            "- `{}`{carries}: {}",
+            output.name,
+            t.output_help(output.name)
+        );
     }
     out.push('\n');
 
@@ -109,11 +121,11 @@ fn node(out: &mut String, t: &NodeType) {
                 out,
                 "| `{}` ({}) | {} | {} | {} | {} |",
                 p.name,
-                p.label,
+                t.param_label(p.name),
                 default(p),
                 range(p),
-                modulation(p),
-                help(p)
+                modulation(t, p),
+                help(t, p)
             );
         }
         out.push('\n');
@@ -184,9 +196,10 @@ fn range(p: &ParamSpec) -> String {
 }
 
 /// The help text, with the rule for when the parameter is used, if it has one.
-fn help(p: &ParamSpec) -> String {
+fn help(t: &NodeType, p: &ParamSpec) -> String {
+    let text = t.param_help(p.name);
     match p.when {
-        None => p.help.to_owned(),
+        None => text.to_owned(),
         Some(w) => {
             let values = w
                 .values
@@ -196,20 +209,20 @@ fn help(p: &ParamSpec) -> String {
                 .join(" or ");
             format!(
                 "{}. Used when `{}` is {values}.",
-                p.help.trim_end_matches('.'),
+                text.trim_end_matches('.'),
                 w.param
             )
         }
     }
 }
 
-fn modulation(p: &ParamSpec) -> String {
+fn modulation(t: &NodeType, p: &ParamSpec) -> String {
     if p.modulatable {
         "yes".to_owned()
-    } else if p.locked.is_empty() {
+    } else if !p.locked {
         "no".to_owned()
     } else {
-        format!("no: {}", p.locked)
+        format!("no: {}", t.param_locked(p))
     }
 }
 

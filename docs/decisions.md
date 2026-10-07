@@ -191,3 +191,12 @@ every historical rewrite alive (1,100 lines in `migrate.rs`) made renames and me
 later reverted would have needed migrating twice. The migration tooling stays (`migrate/`, with the rename helpers),
 and from 1.0 each format change bumps the version and adds one step file. Mentions of migrations above describe
 history and no longer apply to the code. Example graphs in `examples/graphs/` are kept current by hand.
+
+### Text lives in lang files (October 2026)
+
+Every user-facing string is in a `key = value` table keyed by a stable id, English embedded and other languages
+loaded from folders next to the program. The format is a plain line-based file rather than Fluent or JSON: no new
+dependency, comments, wrapped lines, a diff that reads well, and `{name}` placeholders cover what the interface
+needs (a plural gets one key per form). Node specs no longer carry text; the node's label, help and port notes are
+in `nodes.lang`, which a test checks against the registry so nothing is missing or stale. See
+[Text and languages](text.md).

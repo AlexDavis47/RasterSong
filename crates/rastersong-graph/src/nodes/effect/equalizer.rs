@@ -27,24 +27,24 @@ pub struct Equalizer {
 }
 
 params! { Equalizer {
-    UNIT: Unit::freq_param("row", "Unit for the three frequencies"),
-    LOW_FREQ: ParamSpec::number("low_freq", "Low freq", 5.0, 0.01, 500.0, "Corner of the low shelf")
+    UNIT: Unit::freq_param("row"),
+    LOW_FREQ: ParamSpec::number("low_freq", 5.0, 0.01, 500.0)
         .limits(1e-06, 1e9),
-    LOW_GAIN: ParamSpec::number("low_gain", "Low gain", 0.0, -24.0, 24.0, "Boost or cut of everything below the low corner")
+    LOW_GAIN: ParamSpec::number("low_gain", 0.0, -24.0, 24.0)
         .unit("dB")
         .exposed()
         .limits(-48.0, 48.0),
-    MID_FREQ: ParamSpec::number("mid_freq", "Mid freq", 30.0, 0.01, 500.0, "Centre of the mid band")
+    MID_FREQ: ParamSpec::number("mid_freq", 30.0, 0.01, 500.0)
         .limits(1e-06, 1e9),
-    MID_GAIN: ParamSpec::number("mid_gain", "Mid gain", 0.0, -24.0, 24.0, "Boost or cut around the mid frequency")
+    MID_GAIN: ParamSpec::number("mid_gain", 0.0, -24.0, 24.0)
         .unit("dB")
         .exposed()
         .limits(-48.0, 48.0),
-    MID_Q: ParamSpec::number("mid_q", "Mid Q", 1.0, 0.1, 20.0, "Width of the mid band: higher is narrower")
+    MID_Q: ParamSpec::number("mid_q", 1.0, 0.1, 20.0)
         .limits(0.05, 100.0),
-    HIGH_FREQ: ParamSpec::number("high_freq", "High freq", 150.0, 0.01, 500.0, "Corner of the high shelf")
+    HIGH_FREQ: ParamSpec::number("high_freq", 150.0, 0.01, 500.0)
         .limits(1e-06, 1e9),
-    HIGH_GAIN: ParamSpec::number("high_gain", "High gain", 0.0, -24.0, 24.0, "Boost or cut of everything above the high corner")
+    HIGH_GAIN: ParamSpec::number("high_gain", 0.0, -24.0, 24.0)
         .unit("dB")
         .exposed()
         .limits(-48.0, 48.0),
@@ -52,8 +52,7 @@ params! { Equalizer {
 
 impl NodeKind for Equalizer {
     const KIND: &'static str = "equalizer";
-    const SPEC: NodeSpec = NodeSpec::new("Equalizer", Category::Effect)
-        .describe("Boosts or cuts low, mid and high ranges with a shelf, a peak and a shelf")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[

@@ -14,6 +14,8 @@ use std::collections::BTreeMap;
 
 pub use support::{SampleClock, Unit};
 
+use rastersong_lang::tr;
+
 use crate::graph::{MAX_INPUTS, MAX_PARAMS};
 use crate::{InputSpec, Node, OutputSpec, ParamSpec, ParamValue, Params, Range, TagRule};
 
@@ -154,12 +156,12 @@ impl Category {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Input => "Inputs",
-            Self::Generator => "Generators",
-            Self::Structure => "Channels",
-            Self::Convert => "Conversion",
-            Self::Effect => "Effects",
-            Self::Output => "Output",
+            Self::Input => tr("category.input"),
+            Self::Generator => tr("category.generator"),
+            Self::Structure => tr("category.structure"),
+            Self::Convert => tr("category.convert"),
+            Self::Effect => tr("category.effect"),
+            Self::Output => tr("category.output"),
         }
     }
 
@@ -171,18 +173,15 @@ impl Category {
 }
 
 /// The main input of a node that doesn't say otherwise.
-const MAIN_INPUT: &[InputSpec] = &[InputSpec::required("in", "The signal to process")];
-const MAIN_OUTPUT: &[OutputSpec] = &[OutputSpec::new("out", "The processed signal")];
+const MAIN_INPUT: &[InputSpec] = &[InputSpec::required("in")];
+const MAIN_OUTPUT: &[OutputSpec] = &[OutputSpec::new("out")];
 
 /// How a node type presents itself and what it connects to.
 #[derive(Debug, Clone, Copy)]
 pub struct NodeSpec {
-    pub label: &'static str,
+    /// The label, description and longer documentation are in the node's text (`node.<kind>.label`,
+    /// `.description`, `.doc`), not here.
     pub category: Category,
-    /// One sentence for menus and tooltips.
-    pub description: &'static str,
-    /// Longer explanation for the generated reference. May be empty.
-    pub doc: &'static str,
     pub params: &'static [ParamSpec],
     /// Input ports. The first is the main input. Source nodes have none.
     pub inputs: &'static [InputSpec],
@@ -205,12 +204,9 @@ pub struct NodeSpec {
 
 impl NodeSpec {
     /// A node with one input, `in`, and one output, `out`.
-    pub const fn new(label: &'static str, category: Category) -> Self {
+    pub const fn new(category: Category) -> Self {
         Self {
-            label,
             category,
-            description: "",
-            doc: "",
             params: &[],
             inputs: MAIN_INPUT,
             outputs: MAIN_OUTPUT,
@@ -240,16 +236,6 @@ impl NodeSpec {
 
     pub const fn expects(mut self, range: Range) -> Self {
         self.expects = range;
-        self
-    }
-
-    pub const fn describe(mut self, description: &'static str) -> Self {
-        self.description = description;
-        self
-    }
-
-    pub const fn doc(mut self, doc: &'static str) -> Self {
-        self.doc = doc;
         self
     }
 
@@ -323,6 +309,91 @@ pub struct NodeType {
 }
 
 impl NodeType {
+    /// The node's own text key, e.g. `node.delay.label`.
+    fn key(&self, rest: &str) -> String {
+        format!("node.{}.{rest}", self.kind)
+    }
+
+    /// The name shown to the user.
+    pub fn label(&self) -> &'static str {
+        rastersong_lang::tr(&self.key("label"))
+    }
+
+    /// One sentence for menus and tooltips.
+    pub fn description(&self) -> &'static str {
+        rastersong_lang::tr(&self.key("description"))
+    }
+
+    /// Longer explanation for the generated reference; empty when there isn't one.
+    pub fn doc(&self) -> &'static str {
+        rastersong_lang::try_tr(&self.key("doc")).unwrap_or("")
+    }
+
+    /// What input port `name` takes.
+    pub fn input_help(&self, name: &str) -> &'static str {
+        rastersong_lang::tr(&self.key(&format!("input.{name}")))
+    }
+
+    /// What output port `name` carries.
+    pub fn output_help(&self, name: &str) -> &'static str {
+        rastersong_lang::tr(&self.key(&format!("output.{name}")))
+    }
+
+    /// A parameter's text for `field` (`label`, `help` or `locked`): the node's own entry, else
+    /// the shared one for that parameter name (like `mix`).
+    fn param_text(&self, name: &str, field: &str) -> &'static str {
+        let own = self.key(&format!("param.{name}.{field}"));
+        rastersong_lang::try_tr(&own)
+            .or_else(|| rastersong_lang::try_tr(&format!("param.{name}.{field}")))
+            .unwrap_or_else(|| rastersong_lang::tr(&own))
+    }
+
+    /// The name shown for parameter `name`.
+    pub fn param_label(&self, name: &str) -> &'static str {
+        self.param_text(name, "label")
+    }
+
+    /// One sentence for parameter `name`'s tooltip.
+    pub fn param_help(&self, name: &str) -> &'static str {
+        self.param_text(name, "help")
+    }
+
+    /// Why parameter `name` can't be modulated; empty when it can.
+    pub fn param_locked(&self, spec: &ParamSpec) -> &'static str {
+        if spec.locked {
+            self.param_text(spec.name, "locked")
+        } else {
+            ""
+        }
+    }
+
+    /// Every text key this node needs an entry for (the optional `doc` aside), for the test that
+    /// checks the lang files cover the registry.
+    pub fn text_keys(&self) -> Vec<String> {
+        let mut keys = vec![self.key("label"), self.key("description")];
+        keys.extend(
+            self.spec
+                .inputs
+                .iter()
+                .map(|i| self.key(&format!("input.{}", i.name))),
+        );
+        keys.extend(
+            self.spec
+                .outputs
+                .iter()
+                .map(|o| self.key(&format!("output.{}", o.name))),
+        );
+        for p in self.spec.params {
+            for field in ["label", "help"] {
+                keys.push(self.key(&format!("param.{}.{field}", p.name)));
+            }
+            if p.locked {
+                keys.push(self.key(&format!("param.{}.locked", p.name)));
+            }
+        }
+        keys
+    }
+
     /// How output `index`'s tag is set.
     pub fn output_tag(&self, index: usize) -> TagRule {
         self.spec
@@ -427,7 +498,7 @@ impl Registry {
     /// Every registered node type, ordered by category and then label.
     pub fn types(&self) -> Vec<&NodeType> {
         let mut types: Vec<&NodeType> = self.entries.values().map(|e| &e.info).collect();
-        types.sort_by_key(|t| (t.spec.category, t.spec.label));
+        types.sort_by_key(|t| (t.spec.category, t.label()));
         types
     }
 
@@ -461,13 +532,13 @@ mod tests {
         let registry = Registry::default();
         for t in registry.types() {
             assert!(
-                !t.spec.description.is_empty(),
+                !t.description().is_empty(),
                 "`{}` has no description",
                 t.kind
             );
             for port in t.spec.inputs {
                 assert!(
-                    !port.help.is_empty(),
+                    !t.input_help(port.name).is_empty(),
                     "`{}` input `{}` has no help text",
                     t.kind,
                     port.name
@@ -475,7 +546,7 @@ mod tests {
             }
             for port in t.spec.outputs {
                 assert!(
-                    !port.help.is_empty(),
+                    !t.output_help(port.name).is_empty(),
                     "`{}` output `{}` has no help text",
                     t.kind,
                     port.name
@@ -483,7 +554,7 @@ mod tests {
             }
             for p in t.spec.params {
                 assert!(
-                    !p.help.is_empty(),
+                    !t.param_help(p.name).is_empty(),
                     "`{}.{}` has no help text",
                     t.kind,
                     p.name

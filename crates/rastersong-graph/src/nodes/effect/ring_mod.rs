@@ -16,12 +16,11 @@ params! { RingMod {
 
 impl NodeKind for RingMod {
     const KIND: &'static str = "ring_mod";
-    const SPEC: NodeSpec = NodeSpec::new("Ring Modulation", Category::Effect)
-        .describe("Multiplies the carrier by the modulator, leaving sum and difference tones")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .inputs(&[
-            InputSpec::required("carrier", "The signal that gets multiplied"),
-            InputSpec::required("modulator", "The signal it is multiplied by"),
+            InputSpec::required("carrier"),
+            InputSpec::required("modulator"),
         ])
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[r#"{ "mix": 0.5 }"#, r#"{ "mix": 1 }"#];

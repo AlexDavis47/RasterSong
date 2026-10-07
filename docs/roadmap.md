@@ -151,7 +151,7 @@ Renames, merges, splits and removals need **no migration** while the format is v
 
 ### Text and localization
 
-- [ ] **chore** Move all user-facing text into **lang files** so locale and wording can be changed without touching
+- [x] **chore** Move all user-facing text into **lang files** (done: see [Text and languages](text.md); media-layer and CLI messages are still in code) so locale and wording can be changed without touching
   code. Covers: node labels, descriptions, parameter labels and help text, port help, choice labels, menu and
   button text, tooltips, notes and warnings, dialogs and errors. Proposed shape: a string table keyed by stable ids
   (`node.delay.label`, `node.delay.param.time.help`, `ui.timeline.loop`), `en` embedded at build time as the
@@ -160,7 +160,7 @@ Renames, merges, splits and removals need **no migration** while the format is v
   in step. Evaluate Fluent against a simple key/value format first (plurals and units need some formatting;
   keep it as small as that allows). Do this early: every new string in this roadmap should go in a lang file from
   the start.
-- [ ] **chore** Settings page picks the language (see [Project and settings](#project-and-settings)).
+- [x] **chore** Settings page picks the language (see [Project and settings](#project-and-settings)).
 
 ---
 
@@ -169,7 +169,7 @@ Renames, merges, splits and removals need **no migration** while the format is v
 - [ ] **feature** **Settings page.** A real Settings window (File → Settings, and a toolbar button) so hidden
   settings can be exposed. *Partly done:* the window (File → Settings…, Ctrl+,), its Application and Project pages
   and the settings that already existed (theme, wire style, node stats, keep connections, tempo, audio rate) are in;
-  what is left is language, cache budget, render-ahead, default tool, the toolbar button and
+  what is left is cache budget, render-ahead, default tool, the toolbar button and
   the per-setting reset. Two scopes, clearly separated:
   - *Application* (remembered between sessions, not in project files): theme, wire style, language, default
     preview resolution, cache budget (1 GiB today), render-ahead window (10 s today), default tool, keep input
@@ -406,7 +406,7 @@ The aim: one implementation per idea, so fixes and features land in one place. K
 - [ ] **chore** **Inspector widgets.** One slider+value-box, one integer field, one choice control, one tooltip
   helper, one meter, one number formatter. No widget re-implements these. The inspector, the timeline and the
   editor use the same ones.
-- [ ] **chore** **Text.** All strings from lang files (see [Text and localization](#text-and-localization)); no
+- [x] **chore** **Text.** All strings from lang files (see [Text and localization](#text-and-localization)); no
   string literals in widgets.
 - [ ] **chore** **Stretch.** One "stretch a signal to the project size" implementation, shared by the Stretch node,
   Video Output and the Look tool.

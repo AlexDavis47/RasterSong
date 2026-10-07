@@ -47,44 +47,27 @@ pub struct Noise {
 }
 
 params! { Noise {
-    COLOR: ParamSpec::choice(
-        "color",
-        "Color",
-        Color::OPTIONS,
-        "white",
-        "How the noise is spread over frequencies: white is sharp grain, brown is slow drift, violet is the finest grain",
-    ),
-    SEED: ParamSpec::number("seed", "Seed", 0.0, 0.0, 999.0, "Picks which noise; the same seed always gives the same noise").integer()
+    COLOR: ParamSpec::choice("color", Color::OPTIONS, "white"),
+    SEED: ParamSpec::number("seed", 0.0, 0.0, 999.0).integer()
         .limits(0.0, 4_000_000_000.0),
-    AMPLITUDE: ParamSpec::number(
-        "amplitude",
-        "Amplitude",
-        0.5,
+    AMPLITUDE: ParamSpec::number("amplitude", 0.5,
         0.0,
-        1.0,
-        "Scales the noise, which spans -1 to 1 before the offset is added",
-    )
+        1.0)
     .exposed()
     .limits(-10.0, 10.0),
-    OFFSET: ParamSpec::number(
-        "offset",
-        "Offset",
-        0.5,
+    OFFSET: ParamSpec::number("offset", 0.5,
         -1.0,
-        1.0,
-        "Added to the noise: 0.5 with amplitude 0.5 fills the video range 0 to 1, 0 suits audio",
-    )
+        1.0)
     .limits(-10.0, 10.0),
 } }
 
 impl NodeKind for Noise {
     const KIND: &'static str = "noise";
-    const SPEC: NodeSpec = NodeSpec::new("Noise", Category::Generator)
-        .describe("Random values in a chosen colour: grain in video, hiss in audio")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Generator)
         .params(Self::PARAMS)
         .takes_layout()
         .inputs(&[])
-        .outputs(&[OutputSpec::new("out", "The noise")]);
+        .outputs(&[OutputSpec::new("out")]);
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "color": "pink", "seed": 3 }"#,
         r#"{ "color": "brown" }"#,

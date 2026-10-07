@@ -8,6 +8,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
 use rastersong_engine::Tempo;
 use rastersong_engine::playback::{Metronome, Mixer, Stretcher, speed_gain};
+use rastersong_lang::tr;
 
 /// Where playback is, as last reported by the UI. The audio thread extrapolates from it.
 #[derive(Debug, Clone, Copy)]
@@ -101,7 +102,7 @@ impl AudioOut {
 fn open(shared: Arc<Shared>) -> Result<cpal::Stream, String> {
     let device = cpal::default_host()
         .default_output_device()
-        .ok_or("no output device")?;
+        .ok_or_else(|| tr("error.no_output_device").to_owned())?;
     let supported = device.default_output_config().map_err(|e| e.to_string())?;
     let config = supported.config();
     let stream = match supported.sample_format() {

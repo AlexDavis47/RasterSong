@@ -29,78 +29,44 @@ pub struct Compressor {
 }
 
 params! { Compressor {
-    THRESHOLD: ParamSpec::number(
-        "threshold",
-        "Threshold",
-        -18.0,
+    THRESHOLD: ParamSpec::number("threshold", -18.0,
         -60.0,
-        0.0,
-        "Level above which the signal is turned down",
-    )
+        0.0)
     .unit("dB")
     .exposed()
     .limits(-200.0, 60.0),
-    RATIO: ParamSpec::number(
-        "ratio",
-        "Ratio",
-        4.0,
+    RATIO: ParamSpec::number("ratio", 4.0,
         1.0,
-        20.0,
-        "How much is taken off above the threshold: 4 lets 1 dB through for every 4 dB over",
-    )
+        20.0)
     .limits(1.0, 1000.0),
-    ATTACK: ParamSpec::number(
-        "attack",
-        "Attack",
-        10.0,
+    ATTACK: ParamSpec::number("attack", 10.0,
         0.01,
-        1000.0,
-        "How quickly the compressor turns the signal down once it goes over",
-    )
+        1000.0)
     .limits(0.0, 1e6),
-    RELEASE: ParamSpec::number(
-        "release",
-        "Release",
-        100.0,
+    RELEASE: ParamSpec::number("release", 100.0,
         0.1,
-        5000.0,
-        "How quickly it lets go once the signal falls back",
-    )
+        5000.0)
     .limits(0.0, 1e6),
-    UNIT: Unit::time_param("ms", "Unit for attack and release"),
-    KNEE: ParamSpec::number(
-        "knee",
-        "Knee",
-        6.0,
+    UNIT: Unit::time_param("ms"),
+    KNEE: ParamSpec::number("knee", 6.0,
         0.0,
-        24.0,
-        "Width of the soft transition around the threshold; 0 is a hard knee",
-    )
+        24.0)
     .unit("dB")
     .limits(0.0, 100.0),
-    MAKEUP: ParamSpec::number(
-        "makeup",
-        "Makeup",
-        0.0,
+    MAKEUP: ParamSpec::number("makeup", 0.0,
         -24.0,
-        24.0,
-        "Gain applied after compression",
-    )
+        24.0)
     .unit("dB")
     .limits(-96.0, 96.0),
 } }
 
 impl NodeKind for Compressor {
     const KIND: &'static str = "compressor";
-    const SPEC: NodeSpec = NodeSpec::new("Compressor", Category::Effect)
-        .describe("Turns loud parts down, following the input or a sidechain")
+    const SPEC: NodeSpec = NodeSpec::new(Category::Effect)
         .params(Self::PARAMS)
         .inputs(&[
-            InputSpec::required("in", "The signal to compress"),
-            InputSpec::optional(
-                "sidechain",
-                "A signal whose level drives the compression instead of the input's own",
-            ),
+            InputSpec::required("in"),
+            InputSpec::optional("sidechain"),
         ])
         .per_channel()
         .expects(crate::Range::Bipolar);
