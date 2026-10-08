@@ -6,9 +6,10 @@ this page is the short list. If a rule here and a document disagree, fix the doc
 ## Branches and merging
 
 1. The 1.0 rebuild lives on `1.0-foundation`. **Nothing from it goes to `master`** and no PR targets `master`.
-2. Work on a branch off `1.0-foundation`; merge back only when all of these pass: `cargo fmt --all --check`,
-   `cargo clippy --workspace --all-targets -- -D warnings`, `cargo xtask docs --check`, `cargo test --workspace`
-   (and `rustfmt --edition 2024 --check crates/rastersong-graph/src/nodes/*/*.rs`). See [Testing](docs/testing.md).
+2. Work on a branch off `1.0-foundation`; merge back only when all of these pass, as CI runs them:
+   `cargo xtask fmt --check` (the workspace and the node files), `cargo clippy --workspace --all-targets -- -D
+   warnings`, `cargo xtask docs --check`, `cargo xtask fixtures` then `cargo test --workspace`, and `cargo deny
+   check`. See [Testing](docs/testing.md).
 3. No migrations before 1.0: the file format is version 0 and breaking changes are allowed
    ([Decisions](docs/decisions.md#no-migrations-before-10-october-2026)).
 
@@ -21,9 +22,11 @@ this page is the short list. If a rule here and a document disagree, fix the doc
    kind gets a new `Card` value, not a new widget.
 6. No parallel code paths for the same job (two ways to rename, label, drag, load). If a second one seems
    needed, change the first.
-7. Don't use egui helpers whose behaviour you haven't checked against the interaction you need
-   (`dnd_drag_source` senses drags only, so it never gets clicks or menus; use the `drag_source` in `resources.rs`).
-   A menu that holds a text field closes on outside clicks only (`PopupCloseBehavior::CloseOnClickOutside`).
+7. Don't use egui helpers or senses whose behaviour you haven't checked against the interaction you need.
+   `Sense::drag()` never reports clicks or double-clicks; a widget that should also take a click, a double-click or
+   a context menu needs `Sense::click_and_drag()`. `dnd_drag_source` senses drags only, so it never gets clicks or
+   menus; draggable cards go through `resource_card` in `resources.rs`. A menu that holds a text field closes on
+   outside clicks only (`PopupCloseBehavior::CloseOnClickOutside`).
 
 ## Text, units and diagnostics
 
@@ -44,21 +47,24 @@ this page is the short list. If a rule here and a document disagree, fix the doc
     methods, when the bug is about clicks, drags or menus.
 13. Don't weaken or delete a test to make a change pass; change it only when the behavior it pins changed on
     purpose, and say so in the commit.
+14. **Every interaction the UI promises is tested.** When a hint, tooltip or help text says "double-click…",
+    "right-click…", "drag…" or names a key, a kittest performs exactly that and checks the result. Testing a
+    neighbouring interaction (dragging an edge when the hint promises a double-click on it) doesn't count.
 
 ## Docs and roadmap
 
-14. **Docs describe the code as it is.** A change that alters behavior updates the matching document
+15. **Docs describe the code as it is.** A change that alters behavior updates the matching document
     ([index](docs/README.md)) in the same commit. A doc that disagrees with the code is a bug.
-15. **Roadmap:** tick the item in [Roadmap](docs/roadmap.md) when it ships (with a link to the doc section), add
+16. **Roadmap:** tick the item in [Roadmap](docs/roadmap.md) when it ships (with a link to the doc section), add
     items for work found but deferred, and tag them (**bug**, **feature**, **chore**).
-16. Non-obvious design choices get an entry in [Decisions](docs/decisions.md) with the reason.
+17. Non-obvious design choices get an entry in [Decisions](docs/decisions.md) with the reason.
 
 ## Dependencies and licensing
 
-17. Only LGPL-compatible dependencies; `cargo-deny` must pass. FFmpeg is the pinned shared LGPL build; never
+18. Only LGPL-compatible dependencies; `cargo-deny` must pass. FFmpeg is the pinned shared LGPL build; never
     enable GPL or nonfree options ([Licensing](docs/licensing.md), [Development](docs/development.md)).
 
 ## Working style
 
-18. Keep changes small and committed in logical steps with clear messages; leave the tree clean.
-19. When a rule here is missing or wrong, edit this file in the same change rather than working around it.
+19. Keep changes small and committed in logical steps with clear messages; leave the tree clean.
+20. When a rule here is missing or wrong, edit this file in the same change rather than working around it.
