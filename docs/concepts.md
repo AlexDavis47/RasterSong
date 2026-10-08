@@ -64,8 +64,8 @@ Imagine you're making a music video. You've got your video, and you've got your 
 
 ### Basic Workflow
 
-1. **Import your video file** - It becomes an RGB input node in the effects graph
-2. **Import your music file** - It becomes your modulator input node
+1. **Import your video file** - It becomes a video track, which the graph's Video Input node reads as an RGB signal
+2. **Import your music file** - It becomes an audio track, which an Audio Input node reads as your modulator
 3. **Split the carrier** - A Split node turns the RGB signal into red, green, and blue signals
 4. **Split the modulator** - A three-band splitter outputs:
    - Bass track

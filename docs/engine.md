@@ -13,10 +13,10 @@ crates/
   rastersong-engine   Render service: sequential renderer, warmup, frame cache, cancellation, playback clock
   rastersong-cli      Headless file-in → file-out renderer (testing, benchmarking, batch use)
   rastersong-gui      egui application: viewer, node editor, parameters, timeline
-xtask/                Developer tasks (fetch FFmpeg, generate test fixtures, packaging)
+xtask/                Developer tasks (fetch and build FFmpeg, generate test fixtures, generate node docs, formatting, packaging)
 ```
 
-Dependency direction: `gui → engine → (media, graph)`, and `graph`, `engine` and `gui` use `lang`. `media` and `graph` never depend on each other.
+Dependency direction: `gui → engine → (media, graph)` and `cli → engine`; every crate except `lang` itself uses `lang`. `media` and `graph` never depend on each other.
 
 ## Timeline
 
@@ -86,7 +86,8 @@ A background render thread continuously renders forward from the playhead into t
 open, whether playback is running or not. It fills the first missing frame in a window ahead of the playhead: 10
 seconds by default, limited to ¾ of the cache budget (1 GiB by default) so some frames behind the playhead survive
 for scrubbing back. When the cache is over budget, the frame farthest from the playhead is evicted, with frames
-behind it counting as twice as far.
+behind it counting as twice as far. With a loop region active, the window wraps from the region's end to its
+start, so the loop plays without waiting.
 
 **Cache rule.** Rendered frames are keyed by `(graph_version, preview_scale, frame_index)`. Any graph edit
 (parameter, node, connection) bumps `graph_version`, which invalidates everything rendered with the old version
@@ -98,10 +99,10 @@ parameter tweaks never build a backlog. Playback moving the playhead forward doe
 render leaves the renderer consistent, so it can carry on later without starting over. Frames finished for an old
 version are refused by the cache, so a stale frame can never be shown after an edit.
 
-**Frame timing.** Each frame's audio block covers that frame's span of time. Containers round timestamps (Matroska
-to whole milliseconds), so timestamps within 1 ms of the nominal grid `n / frame_rate` are snapped to it. Otherwise
-frame spans would alternate between e.g. 33 and 34 ms and the modulation would wobble. Variable-frame-rate frames
-sit well off the grid and keep their real times.
+**Frame timing.** Each project frame's audio block covers exactly `n / fps .. (n + 1) / fps` of the project
+grid, and video frames are picked by the source's nominal frame rate, so container timestamp rounding (Matroska's
+whole milliseconds) never makes frame spans alternate or modulation wobble. Variable-frame-rate video is conformed
+as if its rate were constant.
 
 ## Dynamic Playback
 
@@ -164,7 +165,8 @@ into it is also used as it is, not re-rendered. The renderer renders one bus, th
   the other way round, so they stay in sync without the host doing anything.
 - **Preview and export.** Each cached frame carries its sound, which preview playback reads. The CLI writes it to
   the `.mkv` as it renders.
-- *Planned:* a volume control on the node (see the [roadmap](roadmap.md#nodes)).
+- **Volume.** The node's `volume` (in dB, −48 to 12 on the slider, −120 to 60 typed) applies before sanitizing and
+  clipping, and a peak meter on the node shows the result.
 
 ## Taps and listening
 
@@ -192,6 +194,9 @@ renders a connection's sound ahead of a position, for the listen key. Both are r
 ## Graph layers
 
 A project with graph items ([Graph layers](app.md#graph-layers), `Project::layer_set`) hands the engine a
+*Graph layers are being replaced by folder tracks and graphs as FX (roadmap
+[stage 2b](roadmap.md#timeline-resources-and-routing)); this section describes the code as it is until then.*
+
 `LayerSet`: the layers bottom first, each a list of non-overlapping items (graph id, position, length and start in
 seconds, pre-roll, bindings), the stored graphs, and the id of the open graph, whose description the engine receives
 separately through `Engine::set_graph` because it changes as it is edited. `Engine::set_layers` stores it (graphs
@@ -211,7 +216,10 @@ no binding. The graph the editor has open is only a description until placed.
 - **Sound.** An Audio Input bound to *Layer below* reads the layer below's rendered sound (the Audio Output of the item
   playing there) when its layout is the same as the one the input was compiled for, which is the first Audio Output
   layout among the layer below's items; otherwise zeros. **Known limit:** the audio track mix is not available as a
-  layer-below input yet, so the bottom layer's audio inputs bound to *Layer below* read zeros. Sound has its own host
+  layer-below input (the engine never mixes the audio tracks; the app's playback mixer and the CLI sum them after
+  rendering), so the bottom layer's audio inputs bound to *Layer below* read zeros. An item with no Audio Output
+  also cuts the sound for the layer above, which then reads zeros rather than the sound from further down. Both go
+  away with roadmap stage 2b. Sound has its own host
   names (`@layer_below_audio`, `@none_audio`) because one name carries one layout and a graph can read both a picture
   and a sound from the layer below.
 - **Latency.** Layers run as a pipeline. A layer's latency *L* is the largest latency of its items' graphs; at
@@ -227,8 +235,8 @@ no binding. The graph the editor has open is only a description until placed.
   for the sum of the layers' longest warmups (limited by the same setting, as with one graph). Items already
   underway at that point simply run from there, so a seek into the middle of an item gives exactly what playing through
   gives for nodes with finite memory, as long as the memory fits the warmup.
-- **Time.** An item's graph time counts from its `start` at its first frame; pre-roll frames before the start of the
-  timeline count from zero.
+- **Time.** An item's graph time counts from its `start` at its first frame; pre-roll frames that would fall before
+  the graph's time zero count as frame 0.
 - **Sound out.** The render's sound (`AudioSink::Rendered`) is that of the top-most layer whose item playing at the
   frame has an Audio Output on the rendered bus; every such item has its own resampler. Any item with an Audio Output
   on the bus makes the sink rendered. **Known limit:** frames where no
@@ -248,19 +256,22 @@ no binding. The graph the editor has open is only a description until placed.
 Export uses the same graph and engine as preview, rendering every frame in order from the start at full resolution
 as fast as possible, with progress and estimated time remaining.
 
-Initial export formats:
+Planned export formats:
 
 - **H.264 MP4** for sharing, encoded through OS/hardware encoders (Media Foundation on Windows, VideoToolbox on macOS, NVENC/QSV/AMF where available)
 - **ProRes** and **FFV1** for high-quality / lossless output, using FFmpeg's built-in encoders
 
-The CLI already renders to `.mkv` or a directory of PNG frames; the GUI has no export yet.
+Today the CLI renders to `.mkv` (lossless FFV1 with PCM sound) or a directory of PNG frames; the GUI has no export
+yet.
 
 ## Performance
 
 - CPU only. Many of the most interesting effects (IIR filters, feedback, delays) are inherently sequential across the entire carrier stream, so they can't be spread across GPU threads anyway.
-- SIMD for per-sample operations.
-- Parallelism across independent graph branches and channels (`rayon`), not within a sequential stream.
-- Reusable buffer pool; no allocation during `process`.
+- No allocation during `process`.
 - Reduced-resolution preview is the main lever for heavy graphs.
-- *Planned:* per-node cost measurement shown in the editor, so slow nodes can be found (see the
-  [roadmap](roadmap.md#node-graph-editor)). Measured numbers for the nodes live in [benchmarks.md](benchmarks.md).
+- Graph layers already run as a pipeline across frames.
+- **Per-node cost** is measured around each node's `process` (`Graph::costs`, smoothed, never part of the cache key)
+  and shown in the editor as a badge and a tint (View → Show performance). Measured numbers for the nodes live in
+  [benchmarks.md](benchmarks.md).
+- *Planned:* SIMD for per-sample operations; parallelism across independent graph branches and channels (not
+  within a sequential stream); a reusable buffer pool.

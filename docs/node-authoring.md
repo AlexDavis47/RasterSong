@@ -26,11 +26,18 @@ pub trait Node: Send {
     /// Defaults to passing the main input's layout through.
     fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String>;
 
+    /// Notes and warnings about the inputs that don't stop processing (a signal whose tag doesn't
+    /// suit the node, say).
+    fn diagnostics(&self, ctx: &LayoutContext) -> Vec<Diagnostic> { Vec::new() }
+
     /// Called once the graph is compiled and layouts are known. Allocate buffers here.
     fn prepare(&mut self, ctx: &PrepareContext) {}
 
     /// Process exactly one frame. Inputs are already rate-matched; outputs are pre-sized.
     fn process(&mut self, ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]);
+
+    /// Writes the values of the meters the spec declares, for the frame just processed.
+    fn meters(&self, out: &mut [f32]) {}
 
     /// Clear all internal state, as if no frame had ever been processed.
     fn reset(&mut self) {}
@@ -67,9 +74,9 @@ registry. In the node's file:
   defaults to one input `in` and one output `out`.
 - **Tests** go in the same file: numeric tests with `crate::testing::{node, process_one}`, plus `TEST_CONFIGS`
   and `BENCH`. A registry test fails if an effect leaves them empty, so a new effect can't skip the property tests.
-- The checks the registry makes at registration time (a duplicate type, more than `MAX_INPUTS` inputs or
-  `MAX_PARAMS` parameters, a constructor that fails with the defaults) panic, and the registry tests run them for
-  every built-in node.
+- The checks the registry makes at registration time (a duplicate type, no outputs, more than `MAX_INPUTS` inputs
+  or `MAX_PARAMS` parameters, a constructor that fails with the defaults) panic, and the registry tests run them
+  for every built-in node.
 
 Rules every node must satisfy (enforced by tests, see [Testing](testing.md)):
 
@@ -81,7 +88,7 @@ Rules every node must satisfy (enforced by tests, see [Testing](testing.md)):
 ### Shared building blocks
 
 Shared code lives in `dsp.rs` (resampling, delay line, `mix`, dB conversion, `Biquad` with RBJ
-low/high/band/all-pass/notch, peak and shelf designs, `butterworth_cascade` for 12 to 48 dB/oct slopes, `AttackRelease` for detectors, `Stretcher` for drawing any signal at the picture size) and `nodes/support.rs` (`Unit`, `ms_to_samples`,
+low/high/band/all-pass/notch, peak and shelf designs, `butterworth_cascade` for 12 to 48 dB/oct slopes, `AttackRelease` for detectors, `smoothing_coefficient`, `Hilbert`, `Fft`, `Stretcher` for drawing any signal at the picture size) and `nodes/support.rs` (`Unit`, `ms_to_samples`,
 `settle_frames`, the conversion `Mapping`).
 
 **Meters.** A node that has something worth watching (gain reduction, a peak) lists it in `NodeSpec::meters` and writes the values from `Node::meters`, which the graph calls after `process` (no allocation, never affects output). The frame carries them with the node's processing time; the inspector draws a level or gain-reduction meter for each, with no per-node GUI code.
@@ -92,8 +99,10 @@ of a filter, a detector, a unit list, a layout choice or a wet/dry mix are how i
 
 ## Parameters
 
-Each node type is registered with a `NodeSpec`: a label, a category, a one-line description and a list of
-`ParamSpec`s (name, label, help text, and a number range, choice list or text default). Constructors read their
+Each node type is registered with a `NodeSpec`: its category, ports, meters, a few flags (whether it runs per
+channel, takes a generator layout, is user-addable, and the range it expects) and a list of `ParamSpec`s (name,
+unit, a number range, choice list or text default, and whether it is modulatable, exposed, whole-number, locked or
+conditional). Labels, descriptions and help text are in `nodes.lang`, not in the spec. Constructors read their
 parameters through those specs, so defaults and ranges live in one place, and the editor builds its parameter
 panels from the same specs. A number has a usual range, which the slider shows, and hard limits, the values the
 node can actually work with; unless a spec widens them, the limits are the usual range.
@@ -122,9 +131,9 @@ unmodulated parameters stay constants the node reads from its own fields, so the
 `PrepareContext::modulation(i)` gives the range a modulated parameter can move over, for sizing buffers and warmup.
 Specs also say which parameters show a pin on new nodes (`exposed`).
 
-**Whole-number parameters** (counts, divisions, steps, seeds, pixel sizes) are declared `.integer()`. The usual range, default and limits must be whole (a test checks), the slider and value box snap to whole values, loaded fractional values are rounded by `migrate.rs`, and a modulated value is rounded at every sample. Parameters that merely accept fractions (Bit Crush bits) are not integers; the per-node `int` toggle covers those.
+**Whole-number parameters** (counts, divisions, steps, seeds, pixel sizes) are declared `.integer()`. The usual range, default and limits must be whole (a test checks), the slider and value box snap to whole values, loaded fractional values are rounded when the graph compiles, and a modulated value is rounded at every sample. Parameters that merely accept fractions (Bit Crush bits) are not integers; the per-node `int` toggle covers those.
 
-**Locked parameters.** Modulation is the default and a parameter is locked with `.fixed("reason")` only when modulating
+**Locked parameters.** Modulation is the default and a parameter is locked with `.fixed()` only when modulating
 it is infeasible ([Decisions](decisions.md#modulation-is-allowed-unless-infeasible-october-2026)). The reason is written in `nodes.lang`
 (`node.<kind>.param.<name>.locked`) and shown in the inspector (a crossed-out pin; hover for the text) and in [nodes.md](nodes.md), and a test rejects a
 missing one. Today only what changes the signal's *layout* is locked: Pack channels and Resample width and height,
@@ -144,7 +153,7 @@ width read their value at each pixel (Beat and the unmodulated oscillator are fu
 stays exact; a changing division moves the shape against the beat grid instead of restarting it); a Noise seed
 picks a different noise at every sample; Sample & Hold's period reads the hold grid with each sample's own length.
 
-Nodes only have their own inputs for signals that are part of what they do: Amplitude Modulation's modulator and
-the compressor's and gate's sidechain. Delay, Bit Crush and Filter (then Low Pass) used to have a `modulation` input and a
-`depth` parameter; parameter modulation replaced them, and graphs that still use them are upgraded when loaded
-(`GraphDesc::upgrade`: the wire moves to `@time`, `@bits` or `@cutoff`, and the depth becomes its amount).
+Nodes only have their own inputs for signals that are part of what they do: for example the modulator of Amplitude
+Modulation, FM and Ring Mod, the second input of Blend and Crossfade, and the sidechain of the compressor, gate and
+Dynamic EQ. Delay, Bit Crush and Filter (then Low Pass) used to have a `modulation` input and a `depth`
+parameter; parameter modulation replaced them.
