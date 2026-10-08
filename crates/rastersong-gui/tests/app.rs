@@ -67,7 +67,11 @@ fn step_until(harness: &mut Harness<'_, App>, what: &str, condition: impl Fn(&Ap
 }
 
 fn loaded() -> Harness<'static, App> {
-    let mut harness = harness(app());
+    loaded_with(app())
+}
+
+fn loaded_with(app: App) -> Harness<'static, App> {
+    let mut harness = harness(app);
     step_until(&mut harness, "rendered frames", |app| {
         app.engine().buffered_from(0) >= 30
     });
@@ -1474,4 +1478,285 @@ fn resources_become_tracks_and_take_their_tracks_with_them() {
     app.remove_resource(ids[1]);
     assert!(app.project().audio_tracks.is_empty());
     assert_eq!(app.project().resources.len(), 1);
+}
+
+// --- Graph layers ---
+
+use rastersong_engine::Binding;
+use rastersong_gui::timeline::LAYER_HEIGHT;
+
+/// The starter project with a second graph and one empty layer; `edit` also gets the ids of
+/// the open graph and the second one.
+fn layered_app(edit: impl FnOnce(&mut Project, u32, u32)) -> App {
+    app_with_project(|project| {
+        let second = project.add_graph("Second graph", None);
+        project.add_layer("Layer");
+        let first = project.graph_id;
+        edit(project, first, second);
+    })
+}
+
+/// A point in layer lane `display` (0 is the top layer) at `seconds`; `bar` picks the item
+/// header bar rather than the lane's middle.
+fn layer_point(harness: &Harness<'_, App>, seconds: f64, display: usize, bar: bool) -> Pos2 {
+    let mut point = timeline_point(harness, seconds, 0);
+    let top = harness.state().timeline_area().top() + 22.0 + display as f32 * LAYER_HEIGHT;
+    point.y = top + if bar { 10.0 } else { LAYER_HEIGHT / 2.0 };
+    point
+}
+
+/// Switches the Resources panel to its graphs and returns the centre of the card named `name`.
+fn graph_card(harness: &mut Harness<'_, App>, name: &str) -> Pos2 {
+    harness.get_by_label("Graphs").click();
+    harness.run_steps(2);
+    harness.get_by_label(name).rect().center()
+}
+
+#[test]
+fn dropping_a_graph_on_a_layer_places_an_item_and_undo_removes_it() {
+    let mut harness = loaded_with(layered_app(|_, _, _| {}));
+    let second = harness.state().project().graph_entries()[1].id;
+    let card = graph_card(&mut harness, "Second graph");
+    let to = layer_point(&harness, 0.5, 0, false);
+    drag(&mut harness, card, to);
+    harness.run_steps(2);
+    let layer = &harness.state().project().layers[0];
+    assert_eq!(layer.items.len(), 1, "the graph was placed");
+    let item = &layer.items[0];
+    assert_eq!(item.graph, second);
+    assert!((item.position - 0.5).abs() < 0.05, "at {}", item.position);
+    // The default length is the project's: two seconds of video.
+    assert!((item.length - 2.0).abs() < 0.05, "length {}", item.length);
+    // It is selected, so the inspector shows it.
+    assert!(harness.query_by_label("Graph item").is_some());
+
+    shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
+    assert!(harness.state().project().layers[0].items.is_empty());
+}
+
+#[test]
+fn dropping_a_graph_off_the_layers_makes_a_new_layer() {
+    let mut harness = loaded_with(app_with_project(|project| {
+        project.add_graph("Second graph", None);
+    }));
+    assert!(harness.state().project().layers.is_empty());
+    let card = graph_card(&mut harness, "Second graph");
+    let to = timeline_point(&harness, 0.5, 1);
+    drag(&mut harness, card, to);
+    harness.run_steps(2);
+    let project = harness.state().project();
+    assert_eq!(project.layers.len(), 1);
+    assert_eq!(project.layers[0].items.len(), 1);
+    assert_eq!(project.layers[0].name, "Layer");
+}
+
+#[test]
+fn dragging_a_graph_item_moves_it_and_trims_its_neighbour() {
+    let mut harness = loaded_with(layered_app(|project, graph, _| {
+        project.place_graph(0, graph, 0.0, 1.0);
+        project.place_graph(0, graph, 1.0, 1.0);
+    }));
+    let from = layer_point(&harness, 0.25, 0, true);
+    let to = layer_point(&harness, 0.75, 0, true);
+    drag(&mut harness, from, to);
+    let items = &harness.state().project().layers[0].items;
+    assert_eq!(items.len(), 2);
+    assert!((items[0].position - 0.5).abs() < 0.05, "{items:?}");
+    // The neighbour starts where the moved item now ends and keeps its end.
+    assert!((items[1].position - 1.5).abs() < 0.05, "{items:?}");
+    assert!((items[1].end() - 2.0).abs() < 1e-6, "{items:?}");
+
+    shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
+    let items = &harness.state().project().layers[0].items;
+    assert_eq!((items[0].position, items[1].position), (0.0, 1.0));
+    assert_eq!(items[1].length, 1.0);
+}
+
+#[test]
+fn dragging_a_graph_items_edge_trims_it_without_stretching() {
+    let mut harness = loaded_with(layered_app(|project, graph, _| {
+        project.place_graph(0, graph, 0.0, 1.5);
+    }));
+    let from = layer_point(&harness, 1.5, 0, false) - vec2(2.0, 0.0);
+    let to = layer_point(&harness, 1.0, 0, false);
+    drag(&mut harness, from, to);
+    let item = &harness.state().project().layers[0].items[0];
+    assert!((item.length - 1.0).abs() < 0.05, "{item:?}");
+    assert_eq!((item.position, item.start), (0.0, 0.0));
+}
+
+#[test]
+fn layers_mute_and_solo_from_their_headers() {
+    let mut harness = loaded_with(layered_app(|_, _, _| {}));
+    // The layer's header comes before the tracks'.
+    harness.get_all_by_label("S").next().unwrap().click();
+    harness.run_steps(2);
+    assert!(harness.state().project().layers[0].solo);
+    assert!(!harness.state().project().video_tracks[0].solo);
+    let area = harness.state().timeline_area();
+    let mute = harness
+        .get_all_by_label("🔊")
+        .find(|b| area.contains(b.rect().center()))
+        .unwrap();
+    mute.click();
+    harness.run_steps(2);
+    assert!(harness.state().project().layers[0].muted);
+    shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
+    assert!(!harness.state().project().layers[0].muted);
+}
+
+#[test]
+fn the_add_layer_button_adds_a_layer_on_top() {
+    let mut harness = loaded_with(layered_app(|_, _, _| {}));
+    harness.get_by_label("+ Layer").click();
+    harness.run_steps(2);
+    let names: Vec<_> = harness
+        .state()
+        .project()
+        .layers
+        .iter()
+        .map(|l| l.name.clone())
+        .collect();
+    assert_eq!(names, ["Layer", "Layer 2"]);
+}
+
+#[test]
+fn the_inspector_binds_a_graph_items_inputs() {
+    let mut harness = loaded_with(layered_app(|project, graph, _| {
+        project.place_graph(0, graph, 0.0, 1.0);
+    }));
+    let bar = layer_point(&harness, 0.5, 0, true);
+    click(&mut harness, bar, PointerButton::Primary);
+    harness.run_steps(2);
+    assert!(harness.query_by_label("Graph item").is_some());
+    let binding = |harness: &Harness<'_, App>, node: &str| {
+        harness.state().project().layers[0].items[0]
+            .bindings
+            .get(node)
+            .cloned()
+    };
+    assert_eq!(binding(&harness, "audio"), Some(Binding::LayerBelow));
+    // The audio input's combo box is the second.
+    let inspector = harness.state().inspector_rect();
+    let combos: Vec<_> = harness
+        .get_all_by_role(egui::accesskit::Role::ComboBox)
+        .map(|c| c.rect().center())
+        .filter(|c| inspector.contains(*c))
+        .collect();
+    assert_eq!(combos.len(), 2, "one per input node");
+    click(&mut harness, combos[1], PointerButton::Primary);
+    harness.run_steps(2);
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "audio")
+        .click();
+    harness.run_steps(2);
+    assert_eq!(
+        binding(&harness, "audio"),
+        Some(Binding::Track("audio".into()))
+    );
+    shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
+    assert_eq!(binding(&harness, "audio"), Some(Binding::LayerBelow));
+}
+
+#[test]
+fn pre_roll_is_a_checkbox_in_the_item_inspector() {
+    let mut harness = loaded_with(layered_app(|project, graph, _| {
+        project.place_graph(0, graph, 0.0, 1.0);
+    }));
+    let bar = layer_point(&harness, 0.5, 0, true);
+    click(&mut harness, bar, PointerButton::Primary);
+    harness.run_steps(2);
+    assert!(harness.state().project().layers[0].items[0].pre_roll);
+    harness.get_by_label("Pre-roll").click();
+    harness.run_steps(2);
+    assert!(!harness.state().project().layers[0].items[0].pre_roll);
+}
+
+#[test]
+fn a_binding_to_a_missing_track_shows_a_note() {
+    let mut harness = loaded_with(layered_app(|project, graph, _| {
+        project.place_graph(0, graph, 0.0, 1.0);
+        project.layers[0].items[0]
+            .bindings
+            .insert("audio".into(), Binding::Track("vanished".into()));
+    }));
+    let bar = layer_point(&harness, 0.5, 0, true);
+    click(&mut harness, bar, PointerButton::Primary);
+    harness.run_steps(2);
+    assert!(
+        harness
+            .query_by_label_contains("\"vanished\" no longer exists")
+            .is_some()
+    );
+}
+
+#[test]
+fn double_clicking_a_graph_item_opens_its_graph() {
+    let app = layered_app(|project, _, second| {
+        project.place_graph(0, second, 0.0, 1.0);
+    });
+    // Quick steps, so two clicks land inside egui's double-click delay.
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 900.0))
+        .with_step_dt(0.02)
+        .build_ui_state(|ui, app: &mut App| app.ui(ui), app);
+    step_until(&mut harness, "rendered frames", |app| {
+        app.engine().buffered_from(0) >= 30
+    });
+    harness.run_steps(2);
+    let second = harness.state().project().layers[0].items[0].graph;
+    assert_ne!(harness.state().project().graph_id, second);
+    let bar = layer_point(&harness, 0.5, 0, true);
+    harness.event(Event::PointerMoved(bar));
+    harness.run_steps(1);
+    for _ in 0..2 {
+        for pressed in [true, false] {
+            press(&mut harness, bar, PointerButton::Primary, pressed);
+        }
+    }
+    harness.run_steps(2);
+    assert_eq!(harness.state().project().graph_id, second);
+}
+
+#[test]
+fn s_splits_and_delete_removes_the_selected_graph_item() {
+    let mut harness = loaded_with(layered_app(|project, graph, _| {
+        project.place_graph(0, graph, 0.0, 2.0);
+    }));
+    seek_on_ruler(&mut harness, 1.0);
+    let bar = layer_point(&harness, 0.5, 0, true);
+    click(&mut harness, bar, PointerButton::Primary);
+    shortcut(&mut harness, Modifiers::NONE, egui::Key::S);
+    let items = &harness.state().project().layers[0].items;
+    assert_eq!(items.len(), 2, "{items:?}");
+    assert!((items[0].end() - 1.0).abs() < 0.05);
+    // The first half is still the selected one.
+    shortcut(&mut harness, Modifiers::NONE, egui::Key::Delete);
+    let items = &harness.state().project().layers[0].items;
+    assert_eq!(items.len(), 1);
+    assert!(items[0].position > 0.9);
+}
+
+#[test]
+fn a_graph_items_mute_button_mutes_it_and_the_layer_menu_deletes_the_layer() {
+    let mut harness = loaded_with(layered_app(|project, graph, _| {
+        project.place_graph(0, graph, 0.0, 2.0);
+    }));
+    let mut mute = layer_point(&harness, 2.0, 0, true);
+    mute.x -= 8.0;
+    click(&mut harness, mute, PointerButton::Primary);
+    assert!(harness.state().project().layers[0].items[0].muted);
+    // The layer header's menu removes the layer with its items.
+    let header = pos2(
+        harness.state().timeline_area().left() + HEADER_WIDTH - 12.0,
+        harness.state().timeline_area().top() + 22.0 + LAYER_HEIGHT / 2.0,
+    );
+    click(&mut harness, header, PointerButton::Secondary);
+    for n in harness.get_all_by_role(egui::accesskit::Role::Button) {
+        eprintln!("{:?}", format!("{n:?}"));
+    }
+    harness.run_steps(2);
+    harness.get_by_label("Delete layer").click();
+    harness.run_steps(2);
+    assert!(harness.state().project().layers.is_empty());
 }

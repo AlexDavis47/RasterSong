@@ -550,6 +550,12 @@ impl Graph {
         self.steps[self.output_step].outputs[0].layout
     }
 
+    /// The graph's output for the last processed frame: what [`Self::process`] returned, for hosts
+    /// that read it again after looking at other parts of the graph.
+    pub fn output(&self) -> &Signal {
+        &self.steps[self.output_step].outputs[0]
+    }
+
     /// The layout of the audio output's signal, if the graph has an audio output.
     pub fn audio_layout(&self) -> Option<Layout> {
         self.audio_step.map(|s| self.steps[s].outputs[0].layout)

@@ -110,7 +110,7 @@ second, so a file that comes back (a drive plugged in) is picked up by itself.
 passthrough (the video wired to Video Output, the sound to Audio Output) and opens it. Double-click a graph (or
 right-click → Open in editor) to open it in the node editor, which swaps it with the open one, so the open graph
 (in bold) is the one rendered. Right-click also renames, duplicates or removes a graph (the open graph can't be
-removed). Until graph layers can place several graphs on the timeline, only the open graph renders.
+removed). Drag a graph card onto a [graph layer](#graph-layers) to place it on the timeline.
 
 ## Timeline
 
@@ -174,6 +174,43 @@ Linking, heights, solo and mutes are saved with the project and undo like any ed
   same or remove the region. Playing into the region repeats it; playing from after it plays on. While looping,
   rendering ahead wraps from the region's end to its start, so the loop plays without waiting. The region is saved
   with the project.
+
+### Graph layers
+
+Above the tracks, each **graph layer** is a lane of graph items, the top layer first (the project stores them
+bottom first). **+ Layer** (beside **+ Track**) adds an empty layer on top. A layer's header has its name (edit it
+like a track's), **mute** and **solo** (*S*: while any layer is soloed, only soloed layers render); right-click it
+to delete the layer with its items. With no layers the timeline looks as before.
+
+**Drag a graph card** from the Resources panel's Graphs tab onto a layer's lane to place it from the drop point
+for the project's length (5 seconds in an empty project). Dropping anywhere else on the timeline (a track, or
+empty space) makes a new layer on top first, and the lane under a dragged graph is outlined (or a hint says a layer
+will be made). Whatever the new item lands on is trimmed, cut or removed, so items on a layer never overlap.
+
+Graph items are drawn like track items, in their own color, with a **header bar** holding the graph's name and a mute
+button (a muted item reads as a gap). They share the track items' header bar, edge handles, selection outline and
+snapping (to ticks, item edges of tracks and layers, the playhead and the start; Shift drags freely):
+
+- Click the bar to select the item (selecting a graph item deselects track items and the other way round).
+  **Drag the bar** to move it: the item shows where it would land, and the move is made, as one undo step, when you
+  let go, trimming what it lands on. It stays on its layer.
+- Drag an edge to **trim** it. Graph items are never stretched: there is no rate, so Alt does nothing. Trimming the
+  left edge keeps what follows where it is (the item's own start moves), within the neighbours and the graph's
+  beginning.
+- **S** splits the selected graph item at the playhead (with nothing selected, every track item and graph item under
+  it); **Delete** removes it; the bar's right-click menu has Split and Delete. Copy, cut and paste don't cover graph
+  items yet ([roadmap](roadmap.md#timeline-resources-and-graph-layers)).
+- **Double-click** the bar to open the item's graph in the node editor.
+
+Selecting a graph item shows its **item inspector** in place of the node inspector (picking another node in the
+graph brings the node inspector back). It names the graph and has the **Pre-roll** checkbox (warm the graph up as if
+it had run before the item, so trimming the left edge changes nothing after it) and one row per Video Input or
+Audio Input node of the graph with a combo box: **Layer below**, every track of the input's kind (video tracks for
+video inputs, audio tracks for audio inputs), or **Nothing** (the input reads zeros). A new item binds every input to
+*Layer below*. A row bound to a track that no longer exists says so in a note: that input reads nothing until
+another is chosen. Bindings belong to the item, so one graph can sit twice reading different tracks. Layers and
+items are saved with the project and undo like any edit; how they render is described in
+[Graph layers](engine.md#graph-layers).
 
 ## Preview audio
 

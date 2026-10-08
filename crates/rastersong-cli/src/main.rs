@@ -8,8 +8,8 @@ use clap::{Parser, Subcommand};
 use rastersong_engine::playback::MixTrack;
 use rastersong_engine::sources::Modulator;
 use rastersong_engine::{
-    Bus, DEFAULT_AUDIO_TRACK, FfmpegBackend, GraphDesc, MediaBackend, Project, RenderSettings,
-    RenderTrack, Timeline, TrackKind, TrackSpec, VIDEO_SOURCE,
+    Bus, DEFAULT_AUDIO_TRACK, FfmpegBackend, GraphDesc, LayerSet, MediaBackend, Project,
+    RenderSettings, RenderTrack, Timeline, TrackKind, TrackSpec, VIDEO_SOURCE,
 };
 use rastersong_lang::tr_args;
 
@@ -119,7 +119,11 @@ fn info() -> Result<()> {
 /// What to render: the project, as the render needs it.
 struct Job {
     timeline: Timeline,
+    /// The project's open graph: rendered over the whole timeline, or, with `layers`, the
+    /// description of the open graph among the graph items.
     graph: GraphDesc,
+    /// The project's graph items; `None` when it has none.
+    layers: Option<LayerSet>,
     tempo: rastersong_engine::Tempo,
     audio_rate: u32,
 }
@@ -136,6 +140,7 @@ fn project_job(path: &Path, args: &RenderArgs) -> Result<Job> {
         timeline: project.timeline(),
         audio_rate: args.audio_rate.unwrap_or(project.audio_rate),
         tempo: project.tempo,
+        layers: project.layer_set(),
         graph: project.graph,
     })
 }
@@ -158,6 +163,7 @@ fn files_job(video: &Path, audio: &Path, graph: &Path, args: &RenderArgs) -> Res
             ..Timeline::default()
         },
         graph,
+        layers: None,
         tempo: Default::default(),
         audio_rate: args
             .audio_rate
@@ -229,6 +235,7 @@ fn render(args: RenderArgs) -> Result<()> {
         tempo: job.tempo,
         audio_rate: Some(job.audio_rate),
         bus,
+        layers: job.layers.clone(),
     };
     let started = std::time::Instant::now();
     let info = rastersong_engine::render(&backend, &tracks, &job.graph, &settings, &mut sink)?;
