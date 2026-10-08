@@ -71,7 +71,21 @@ fn loaded() -> Harness<'static, App> {
 }
 
 fn loaded_with(app: App) -> Harness<'static, App> {
-    let mut harness = harness(app);
+    settled(harness(app))
+}
+
+/// [`loaded_with`] with short steps, so two clicks land inside egui's double-click delay.
+fn loaded_quick(app: App) -> Harness<'static, App> {
+    settled(
+        Harness::builder()
+            .with_size(egui::vec2(1400.0, 900.0))
+            .with_step_dt(0.02)
+            .build_ui_state(|ui, app: &mut App| app.ui(ui), app),
+    )
+}
+
+/// Steps until the first second is rendered.
+fn settled(mut harness: Harness<'static, App>) -> Harness<'static, App> {
     step_until(&mut harness, "rendered frames", |app| {
         app.engine().buffered_from(0) >= 30
     });
@@ -731,6 +745,34 @@ fn dragging_a_headers_bottom_edge_changes_the_track_height() {
     assert!(
         (height - (LANE_HEIGHT + 40.0)).abs() < 2.0,
         "height {height}"
+    );
+}
+
+/// Two primary clicks at `pos`; a double-click on a harness from [`loaded_quick`].
+fn double_click(harness: &mut Harness<'_, App>, pos: Pos2) {
+    harness.event(Event::PointerMoved(pos));
+    harness.run_steps(1);
+    for _ in 0..2 {
+        for pressed in [true, false] {
+            press(harness, pos, PointerButton::Primary, pressed);
+        }
+    }
+    harness.run_steps(2);
+}
+
+#[test]
+fn double_clicking_a_headers_bottom_edge_resets_the_track_height() {
+    let mut harness = loaded_quick(app());
+    let area = harness.state().timeline_area();
+    let edge = pos2(area.left() + 60.0, area.top() + 22.0 + LANE_HEIGHT);
+    drag(&mut harness, edge, edge + vec2(0.0, 40.0));
+    assert!(harness.state().project().video_tracks[0].height.is_some());
+    // The edge moved down with the track.
+    double_click(&mut harness, edge + vec2(0.0, 40.0));
+    let height = harness.state().project().video_tracks[0].height;
+    assert!(
+        height.is_none_or(|h| (h - LANE_HEIGHT).abs() < 0.5),
+        "height {height:?}"
     );
 }
 
@@ -1695,26 +1737,11 @@ fn double_clicking_a_graph_item_opens_its_graph() {
     let app = layered_app(|project, _, second| {
         project.place_graph(0, second, 0.0, 1.0);
     });
-    // Quick steps, so two clicks land inside egui's double-click delay.
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(1400.0, 900.0))
-        .with_step_dt(0.02)
-        .build_ui_state(|ui, app: &mut App| app.ui(ui), app);
-    step_until(&mut harness, "rendered frames", |app| {
-        app.engine().buffered_from(0) >= 30
-    });
-    harness.run_steps(2);
+    let mut harness = loaded_quick(app);
     let second = harness.state().project().layers[0].items[0].graph;
     assert_ne!(harness.state().project().graph_id, second);
     let bar = layer_point(&harness, 0.5, 0, true);
-    harness.event(Event::PointerMoved(bar));
-    harness.run_steps(1);
-    for _ in 0..2 {
-        for pressed in [true, false] {
-            press(&mut harness, bar, PointerButton::Primary, pressed);
-        }
-    }
-    harness.run_steps(2);
+    double_click(&mut harness, bar);
     assert_eq!(harness.state().project().graph_id, second);
 }
 
@@ -1759,4 +1786,106 @@ fn a_graph_items_mute_button_mutes_it_and_the_layer_menu_deletes_the_layer() {
     harness.get_by_label("Delete layer").click();
     harness.run_steps(2);
     assert!(harness.state().project().layers.is_empty());
+}
+
+#[test]
+fn without_graph_items_the_preview_plays_the_track_mix() {
+    // An open graph that renders black: nothing feeds its output.
+    let black = |project: &mut Project| project.graph.connections.clear();
+    let mut harness = loaded_with(app_with_project(black));
+    let frame = harness.state().engine().frame(0).unwrap();
+    assert!(
+        frame.rgb.iter().any(|&b| b != 0),
+        "nothing placed, so the video shows"
+    );
+
+    // Placed over the whole timeline, the graph applies.
+    let graph = harness.state().project().graph_id;
+    harness.state_mut().drop_graph(graph, None, 0.0);
+    step_until(&mut harness, "the placed graph rendered", |app| {
+        app.engine()
+            .frame(0)
+            .is_some_and(|f| f.rgb.iter().all(|&b| b == 0))
+    });
+}
+
+// --- Track headers ---
+
+fn track_names(tracks: &[rastersong_engine::ProjectTrack]) -> Vec<String> {
+    tracks.iter().map(|t| t.name.clone()).collect()
+}
+
+/// The starter project with a second video track and a second audio track.
+fn four_track_app() -> App {
+    app_with_project(|project| {
+        project.add_track(TrackKind::Video, "video 2", "clip");
+        project.add_track(TrackKind::Audio, "audio 2", "song");
+    })
+}
+
+#[test]
+fn dragging_a_header_reorders_the_tracks_of_its_kind() {
+    let mut harness = loaded_with(four_track_app());
+    assert_eq!(
+        track_names(&harness.state().project().video_tracks),
+        ["video", "video 2"]
+    );
+    // Dragged by the kind icon, which is a label over the header's background.
+    let first_video = harness
+        .get_all_by_label("▣")
+        .next()
+        .unwrap()
+        .rect()
+        .center();
+    drag(
+        &mut harness,
+        first_video,
+        first_video + vec2(0.0, LANE_HEIGHT * 1.5),
+    );
+    assert_eq!(
+        track_names(&harness.state().project().video_tracks),
+        ["video 2", "video"]
+    );
+
+    let second_audio = harness
+        .get_all_by_label("♪")
+        .nth(1)
+        .unwrap()
+        .rect()
+        .center();
+    drag(
+        &mut harness,
+        second_audio,
+        second_audio - vec2(0.0, LANE_HEIGHT),
+    );
+    assert_eq!(
+        track_names(&harness.state().project().audio_tracks),
+        ["audio 2", "audio"]
+    );
+    // A video header dragged into the audio rows stays among the videos.
+    assert_eq!(harness.state().project().video_tracks.len(), 2);
+}
+
+#[test]
+fn video_tracks_are_removed_from_their_header() {
+    let mut harness = loaded_with(four_track_app());
+    // The second video track's × button.
+    harness.get_all_by_label("×").nth(1).unwrap().click();
+    harness.run_steps(2);
+    assert_eq!(
+        track_names(&harness.state().project().video_tracks),
+        ["video"]
+    );
+
+    // And from the header's right-click menu.
+    let icon = harness
+        .get_all_by_label("▣")
+        .next()
+        .unwrap()
+        .rect()
+        .center();
+    click(&mut harness, icon, PointerButton::Secondary);
+    harness.get_by_label("Remove track").click();
+    harness.run_steps(2);
+    assert!(harness.state().project().video_tracks.is_empty());
 }

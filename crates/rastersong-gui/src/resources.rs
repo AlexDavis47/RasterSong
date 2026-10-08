@@ -351,8 +351,8 @@ fn media_cards(
     });
 }
 
-/// What a graph card hands over while it is dragged. Nothing accepts it yet; it drags like media so
-/// every resource behaves the same.
+/// What a graph card hands over while it is dragged. The timeline takes it: dropped on a graph
+/// layer it places the graph there, anywhere else it makes a new layer for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DraggedGraph(pub u32);
 

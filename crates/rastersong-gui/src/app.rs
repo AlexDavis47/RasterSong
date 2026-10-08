@@ -338,7 +338,7 @@ impl App {
         self.sent_graph = without_layout(&self.project.graph);
         self.engine.set_graph(self.sent_graph.clone());
         self.engine.set_tempo(self.project.tempo);
-        self.engine.set_bypass_all(self.project.bypass_graph);
+        self.engine.set_bypass_all(self.project.plays_track_mix());
         self.sent_mix = None;
     }
 
@@ -1177,7 +1177,7 @@ impl App {
         self.engine.set_timeline(self.timeline_of(&self.project));
         self.engine.set_layers(self.project.layer_set());
         self.engine.set_tempo(self.project.tempo);
-        self.engine.set_bypass_all(self.project.bypass_graph);
+        self.engine.set_bypass_all(self.project.plays_track_mix());
         self.engine.set_audio_rate(self.project.audio_rate);
         self.engine
             .set_max_warmup_frames(self.project.max_warmup_frames);
@@ -2612,17 +2612,29 @@ impl App {
                 }
             }
             TrackAction::Move { from, to } => {
-                let (Some((TrackKind::Audio, from)), Some((TrackKind::Audio, to))) =
+                let (Some((kind, from)), Some((to_kind, to))) =
                     (self.track_row(from), self.track_row(to))
                 else {
                     return;
                 };
-                let videos = self.project.video_tracks.len();
-                let selected = self.selected_track.and_then(|row| row.checked_sub(videos));
-                // A selected video track stays selected where it is.
-                if let Some(audio) = move_track(&mut self.project.audio_tracks, from, to, selected)
-                {
-                    self.selected_track = Some(videos + audio);
+                if kind != to_kind {
+                    return;
+                }
+                // Rows of this kind start at `first`; a selected track of the other kind stays
+                // selected where it is.
+                let (tracks, first) = match kind {
+                    TrackKind::Video => (&mut self.project.video_tracks, 0),
+                    TrackKind::Audio => {
+                        let videos = self.project.video_tracks.len();
+                        (&mut self.project.audio_tracks, videos)
+                    }
+                };
+                let selected = self
+                    .selected_track
+                    .and_then(|row| row.checked_sub(first))
+                    .filter(|&i| i < tracks.len());
+                if let Some(moved) = move_track(tracks, from, to, selected) {
+                    self.selected_track = Some(first + moved);
                 }
             }
             TrackAction::Rename(row, new) => match self.track_row(row) {

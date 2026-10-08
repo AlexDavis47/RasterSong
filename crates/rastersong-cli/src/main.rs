@@ -8,8 +8,8 @@ use clap::{Parser, Subcommand};
 use rastersong_engine::playback::MixTrack;
 use rastersong_engine::sources::Modulator;
 use rastersong_engine::{
-    Bus, DEFAULT_AUDIO_TRACK, FfmpegBackend, GraphDesc, LayerSet, MediaBackend, Project,
-    RenderSettings, RenderTrack, Timeline, TrackKind, TrackSpec, VIDEO_SOURCE,
+    Bus, DEFAULT_AUDIO_TRACK, FfmpegBackend, GraphDesc, LayerSet, MediaBackend, Project, Registry,
+    RenderSettings, RenderTrack, Timeline, TrackKind, TrackSpec, VIDEO_SOURCE, render_form,
 };
 use rastersong_lang::tr_args;
 
@@ -119,8 +119,8 @@ fn info() -> Result<()> {
 /// What to render: the project, as the render needs it.
 struct Job {
     timeline: Timeline,
-    /// The project's open graph: rendered over the whole timeline, or, with `layers`, the
-    /// description of the open graph among the graph items.
+    /// The graph rendered over the whole timeline, or, with `layers`, the description of the open
+    /// graph among the graph items. A project without graph items renders its track mix.
     graph: GraphDesc,
     /// The project's graph items; `None` when it has none.
     layers: Option<LayerSet>,
@@ -136,12 +136,19 @@ fn project_job(path: &Path, args: &RenderArgs) -> Result<Job> {
         );
     }
     let project = Project::load(path).map_err(anyhow::Error::msg)?;
+    // Nothing placed means nothing applied: without graph items the open graph is only a
+    // description, and the track mix is rendered.
+    let graph = render_form(
+        &project.graph,
+        Registry::shared(),
+        !project.has_graph_items(),
+    );
     Ok(Job {
         timeline: project.timeline(),
         audio_rate: args.audio_rate.unwrap_or(project.audio_rate),
         tempo: project.tempo,
         layers: project.layer_set(),
-        graph: project.graph,
+        graph,
     })
 }
 

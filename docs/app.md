@@ -117,10 +117,9 @@ second, so a file that comes back (a drive plugged in) is picked up by itself.
 **Graphs** are resources too, on their own tab. A project can hold any number; **New graph** adds a
 passthrough (the video wired to Video Output, the sound to Audio Output) and opens it. Double-click a graph (or
 right-click → Open in editor) to open it in the node editor, which swaps it with the open one. The open graph is
-shown in bold. While no graph layer holds an item, the open graph is rendered over the whole timeline; once one
-does, only the layers are rendered (an interim rule the [roadmap](roadmap.md#timeline-resources-and-routing)
-removes). Right-click also renames, duplicates or removes a graph (the open graph can't be removed). Drag a graph
-card onto a [graph layer](#graph-layers) to place it on the timeline. **File → Import Graph…** and **Export
+shown in bold. A graph applies only where it is placed: while no graph layer holds an item, the preview and the
+CLI play the plain track mix, and the open graph is only a description to edit. Right-click also renames,
+duplicates or removes a graph (the open graph can't be removed). Drag a graph card onto a [graph layer](#graph-layers) to place it on the timeline. **File → Import Graph…** and **Export
 Graph…** read and write a graph as its own file.
 
 ## Timeline
@@ -133,9 +132,8 @@ is a lane of **items**, the stretches of its file placed on the timeline. The vi
 (its file's name until renamed; the video input reads it by that name), size and frame rate; each audio header has
 the track's name (which audio inputs select it by; renaming a track updates them), its volume in the track mix, and
 its bus when the project has several. Every header has **mute** and **solo** (*S*: while any track of a kind is
-soloed, only soloed tracks of that kind are in the [track mix](engine.md#track-mix-and-output-buses)); audio headers
-also have a × that removes the track. Video tracks can't be removed from the timeline yet (a
-[roadmap](roadmap.md#timeline-resources-and-routing) bug). Tracks left out of the mix are drawn dimmed. Each track's lane has its own outline (the selected track's is the accent color), so neighbouring tracks are easy to tell apart. The project lasts to the end of its last item and
+soloed, only soloed tracks of that kind are in the [track mix](engine.md#track-mix-and-output-buses)); every header
+also has a × that removes the track. Tracks left out of the mix are drawn dimmed. Each track's lane has its own outline (the selected track's is the accent color), so neighbouring tracks are easy to tell apart. The project lasts to the end of its last item and
 runs at its [timebase](engine.md#timeline). **+ Track** adds an empty video or audio track to drag a resource
 onto, or (Audio file…, also File → Add Audio Tracks…) several audio files at once, each named after its file.
 Dropping a resource on a track puts it there from the drop point: an empty track takes it, a track of the same
@@ -174,13 +172,13 @@ audio's waveform, and behaves like empty lane space. Items can't start before th
 - Every edit undoes as one step.
 
 Right-click a header for its menu: **Link with ▸** lists the other tracks to link this one with, **Unlink** takes it
-out of its link, and **Default height** resets its height. Moving, splitting, deleting or copying an item of a
+out of its link, **Default height** resets its height, and **Remove track** removes it. Moving, splitting, deleting or copying an item of a
 linked track takes the items of the linked tracks that overlap it, and trimming takes the linked edges at the same
 time, so a video and its sound stay together. Linked headers say so. (Track links are to be replaced by item
 groups; see the [roadmap](roadmap.md#timeline-resources-and-routing).) Drag the bottom edge of a header to change
-the track's **height**; the header's menu resets it. The edge's hint also promises a double-click reset, which
-doesn't work yet (a roadmap bug). Drag an audio header's free space (not its name, volume or bus) to reorder the
-audio tracks; video tracks can't be reordered yet. Frames rendered so far are marked in green along the bottom of the ruler.
+the track's **height**; double-clicking the edge, or the header's menu, resets it. Drag a header by its free space
+or its labels (not its name field, buttons, volume or bus) to reorder the tracks of its kind: video tracks among
+the video tracks, audio tracks among the audio tracks. Frames rendered so far are marked in green along the bottom of the ruler.
 Linking, heights, solo and mutes are saved with the project and undo like any edit.
 
 - The scroll wheel zooms time around the pointer, from half the whole project down to a few frames (over the
@@ -291,5 +289,6 @@ Project files are described in [Graph files](graph-format.md#projects).
   app paints itself comes from `crates/rastersong-gui/src/theme.rs`. The theme, preview resolution and volume are
   remembered between sessions.
 - **View** shows node latency and warmup, and node performance (processing time), under each node.
-- **Help → About RasterSong** credits FFmpeg and its LGPL license and lists the loaded FFmpeg libraries and build
+- **Help → About RasterSong** credits FFmpeg and links the text of the LGPL version the loaded build is under
+  (2.1 or later for the release build, 3 for the development build) and lists the loaded FFmpeg libraries and build
   configuration.

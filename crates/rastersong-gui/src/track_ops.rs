@@ -1,5 +1,5 @@
-//! Reordering the project's audio tracks, as the timeline asks. A plain function on the track
-//! list, so it can be tested without a window.
+//! Reordering the project's tracks within their list, as the timeline asks. A plain function on
+//! the track list, so it can be tested without a window.
 
 use rastersong_engine::ProjectTrack;
 

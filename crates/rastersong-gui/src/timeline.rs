@@ -3,8 +3,9 @@
 //!
 //! - The scroll wheel zooms time around the pointer (over the headers it scrolls the tracks);
 //!   middle- or right-drag pans in both directions; F fits the whole project.
-//! - Click or drag on the ruler or empty lane space to seek; drag an item by its header bar to
-//!   move it (with the other selected items, and the items they overlap on linked tracks).
+//! - Click or drag on the ruler to seek; drag over empty lane space to box-select items; drag an
+//!   item by its header bar to move it (with the other selected items, and the items they
+//!   overlap on linked tracks).
 //! - Click an item's header bar to select it, Ctrl+click to add or remove it; drag an item's
 //!   edge to trim it, Alt+drag to change its rate. Drags snap to the grid, item edges and the
 //!   playhead while snapping is on; Shift drags freely.
@@ -12,8 +13,8 @@
 //!   every item under it), Delete removes the selected items, and Ctrl+C, Ctrl+X and Ctrl+V
 //!   copy, cut and paste them at the playhead.
 //! - Ctrl+drag on the ruler makes a loop region (or moves one of its edges).
-//! - Drag a header to reorder audio tracks, its bottom edge to change the track's height;
-//!   right-click it to link tracks.
+//! - Drag a header to reorder the tracks of its kind, its bottom edge to change the track's
+//!   height; right-click it to link tracks or remove one.
 //! - Graph layers are lanes above the tracks (top layer first). Their items work like track
 //!   items (header bar, trim at the edges, snapping, S, Delete) but are not stretched, and a
 //!   move is applied when the drag ends, because the model trims what an item lands on.
@@ -260,7 +261,7 @@ pub enum TrackAction {
     /// Link the track with the one in the second row.
     Link(usize, usize),
     Unlink(usize),
-    /// An audio track's header was dragged to a new place: the track in row `from` moves to row
+    /// A track's header was dragged to a new place among the tracks of its kind: the track in row `from` moves to row
     /// `to`.
     Move {
         from: usize,
@@ -976,11 +977,12 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
             layer_header(ui, layer, &mut response);
         });
     }
-    let audio_rows = model
+    // Tracks reorder within their own list: the video rows, then the audio rows.
+    let first_audio = model
         .tracks
         .iter()
         .position(|t| t.kind == TrackKind::Audio)
-        .unwrap_or(rows)..rows;
+        .unwrap_or(rows);
     let mut dragging: Option<(usize, usize)> = None;
     for (row, track) in model.tracks.iter().enumerate() {
         let rect = areas.header(row, view.scroll_y);
@@ -993,8 +995,8 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
             ui.visuals().faint_bg_color
         };
         header_painter.rect_filled(rect, CornerRadius::same(3), fill);
-        // The header's background selects the track, drags an audio track to a new place and
-        // has the link menu. It goes under the widgets (which are made after it), so they keep
+        // The header's background selects the track, drags it to a new place among the tracks
+        // of its kind and has the track menu. It goes under the widgets (which are made after it), so they keep
         // their clicks.
         let grip = ui.interact(
             rect.intersect(header_clip),
@@ -1004,14 +1006,18 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         if grip.clicked() || grip.drag_started() {
             response.actions.push(TrackAction::Select(row));
         }
-        let movable = audio_rows.contains(&row);
+        let group = if row < first_audio {
+            0..first_audio
+        } else {
+            first_audio..rows
+        };
+        let movable = group.len() > 1;
         if movable
             && (grip.dragged() || grip.drag_stopped())
             && let Some(p) = grip.interact_pointer_pos()
         {
-            let boundaries: Vec<f32> = areas.tops[audio_rows.start..=audio_rows.end].to_vec();
-            let slot =
-                audio_rows.start + drop_slot(p.y - areas.body.top() + view.scroll_y, &boundaries);
+            let boundaries: Vec<f32> = areas.tops[group.start..=group.end].to_vec();
+            let slot = group.start + drop_slot(p.y - areas.body.top() + view.scroll_y, &boundaries);
             if grip.dragged() {
                 dragging = Some((row, slot));
             } else if let Some(to) = move_destination(row, slot) {
@@ -1028,7 +1034,7 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         } else {
             tr("timeline.track.header.help")
         });
-        grip.context_menu(|ui| link_menu(ui, model, row, &mut response));
+        grip.context_menu(|ui| track_menu(ui, model, row, &mut response));
         header(ui, rect, header_clip, |ui| {
             track_header(ui, track, &model.buses, row, &mut response);
         });
@@ -1040,7 +1046,8 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         let resize = ui.interact(
             edge.intersect(header_clip),
             ui.id().with(("track-resize", row)),
-            Sense::drag(),
+            // Takes clicks too: a plain drag sense never reports the double-click that resets.
+            Sense::click_and_drag(),
         );
         if resize.hovered() || resize.dragged() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
@@ -1135,8 +1142,9 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
     response
 }
 
-/// The header's right-click menu: link the track with another, or take it out of its link.
-fn link_menu(ui: &mut Ui, model: &TimelineModel, row: usize, response: &mut TimelineResponse) {
+/// The header's right-click menu: link the track with another or take it out of its link, reset
+/// its height, and remove it.
+fn track_menu(ui: &mut Ui, model: &TimelineModel, row: usize, response: &mut TimelineResponse) {
     let track = &model.tracks[row];
     ui.menu_button(tr("timeline.track.link"), |ui| {
         for (other, candidate) in model.tracks.iter().enumerate() {
@@ -1165,6 +1173,11 @@ fn link_menu(ui: &mut Ui, model: &TimelineModel, row: usize, response: &mut Time
         response
             .actions
             .push(TrackAction::SetHeight(row, LANE_HEIGHT));
+        ui.close();
+    }
+    ui.separator();
+    if ui.button(tr("timeline.track.remove")).clicked() {
+        response.actions.push(TrackAction::Remove(row));
         ui.close();
     }
 }
@@ -2277,7 +2290,7 @@ pub fn move_destination(from: usize, slot: usize) -> Option<usize> {
     (to != from).then_some(to)
 }
 
-/// The widgets of a track's header: name, mute, solo and (for audio) remove; then the video's
+/// The widgets of a track's header: name, mute, solo and remove; then the video's
 /// size and frame rate, or an audio track's volume and its bus when the project has several (or
 /// the track's is gone); and a link mark when it is linked.
 fn track_header(
@@ -2287,6 +2300,9 @@ fn track_header(
     row: usize,
     response: &mut TimelineResponse,
 ) {
+    // Labels don't select text here, so a drag that starts on one reaches the header below and
+    // reorders the track.
+    ui.style_mut().interaction.selectable_labels = false;
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
         ui.horizontal(|ui| {
@@ -2327,11 +2343,10 @@ fn track_header(
             {
                 response.actions.push(TrackAction::ToggleSolo(row));
             }
-            if track.kind == TrackKind::Audio
-                && ui
-                    .add(egui::Button::new("×").frame(false))
-                    .on_hover_text(tr("timeline.track.remove"))
-                    .clicked()
+            if ui
+                .add(egui::Button::new("×").frame(false))
+                .on_hover_text(tr("timeline.track.remove"))
+                .clicked()
             {
                 response.actions.push(TrackAction::Remove(row));
             }

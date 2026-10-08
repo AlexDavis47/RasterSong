@@ -132,3 +132,43 @@ fn a_project_with_graph_items_renders_them() {
         }
     }
 }
+
+#[test]
+fn a_project_without_graph_items_renders_its_track_mix() {
+    use rastersong_engine::{FfmpegBackend, GraphDesc, MediaBackend, Project, TrackKind};
+
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let video = workspace.join("fixtures").join("rgb_pattern.mkv");
+    if !video.exists() {
+        panic!("missing fixtures; run `cargo xtask fixtures`");
+    }
+    let tmp = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
+    // An open graph that would render black: nothing feeds its output.
+    let mut project = Project::new(
+        GraphDesc::from_json(
+            r#"{ "version": 0, "nodes": [ { "id": "o", "type": "output" } ], "connections": [] }"#,
+        )
+        .unwrap(),
+    );
+    project.add_track(TrackKind::Video, "video", &video);
+    let path = tmp.join("unplaced.rastersong");
+    project.save(&path).unwrap();
+    let out = tmp.join("unplaced.mkv");
+    let status = Command::new(env!("CARGO_BIN_EXE_rastersong-cli"))
+        .arg("render")
+        .arg(&path)
+        .arg(&out)
+        .args(["--frames", "3"])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let backend = FfmpegBackend::new().unwrap();
+    let mut rendered = backend.open_video(&out).unwrap();
+    for i in 0..3 {
+        let frame = rendered.frame(i).unwrap();
+        assert!(
+            frame.data.iter().any(|&b| b != 0),
+            "frame {i} shows the video"
+        );
+    }
+}

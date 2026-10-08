@@ -201,9 +201,12 @@ A project with graph items ([Graph layers](app.md#graph-layers), `Project::layer
 seconds, pre-roll, bindings), the stored graphs, and the id of the open graph, whose description the engine receives
 separately through `Engine::set_graph` because it changes as it is edited. `Engine::set_layers` stores it (graphs
 normalised with `render_form`, so labels and positions are not edits), it is part of what a render is built from, and
-a change cancels and re-renders like any edit. Without graph items (`None`) the open graph renders over the whole
-timeline exactly as before. Bypassing the whole graph drops the layers too, so the track mix shows. Offline, the
-CLI's `rastersong render <project> <out>` passes the project's layer set in `RenderSettings::layers`.
+a change cancels and re-renders like any edit. Without a layer set (`None`) the engine renders the graph it was given
+over the whole timeline, which the CLI's `render <video> <audio> <graph>` relies on. A *project* without graph items
+applies nothing: the app bypasses the whole graph (`Project::plays_track_mix`) and the CLI renders the graph's
+bypassed form, so both play the plain track mix. Bypassing the whole graph drops the layers too, so the track mix
+shows. Offline, the CLI's `rastersong render <project> <out>` passes the project's layer set in
+`RenderSettings::layers`.
 
 **The model.** Layer *k* shows the output of the item playing at each frame (timeline time `n / fps`, half-open
 spans like every item), and passes the picture of the layer below through where no item plays. The bottom layer's

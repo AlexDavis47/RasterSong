@@ -539,9 +539,9 @@ memory maps read ordinary files. Saving rewrites the zip, copying unchanged entr
      limit is in [Graph layers](engine.md#graph-layers))*.
 
    **2a. Fixes before the routing rebuild.** These don't depend on the model, so they ship first.
-   - [ ] **bug** Double-clicking a track's resize edge doesn't reset its height, though its hint says it does. The
+   - [x] **bug** Double-clicking a track's resize edge doesn't reset its height, though its hint says it does. The
      edge senses drag only (`Sense::drag()` in `timeline.rs`), which never reports a double-click, and the test
-     only drags. Fix: `click_and_drag`, plus a kittest that double-clicks.
+     only drags. Fix: `click_and_drag`, plus a kittest that double-clicks. *(Done: see [Timeline](app.md#timeline).)*
    - [ ] **chore** Audit every hint and tooltip in `ui.lang` that promises an interaction (double-click,
      right-click, drag, keys) and add the missing kittests (see the rule in [CONTRIBUTING](../CONTRIBUTING.md)).
    - [ ] **feature** A shared **drag bubble** widget (`widgets/`): a rounded pill with an icon and a label that
@@ -551,20 +551,22 @@ memory maps read ordinary files. Saving rewrites the zip, copying unchanged entr
    - [ ] **feature** **Drop preview:** while a resource or graph is dragged over the timeline, a ghost item shows
      where it will land (its length and snapped time on the target track), or a ghost track row shows where a new
      track will be made. The drop uses the same snapped time; today it is unsnapped.
-   - [ ] **bug** With no graph items the open graph still renders over the whole timeline, which is an implicit
+   - [x] **bug** With no graph items the open graph still renders over the whole timeline, which is an implicit
      graph ([Decisions](decisions.md#timeline-routing-folders-and-graphs-as-fx-october-2026)). With nothing placed,
-     play the plain track mix.
-   - [ ] **bug** Only audio tracks can be reordered; video tracks can't, and on audio tracks the header widgets
+     play the plain track mix. *(Done: the app and the CLI; see [Graph layers](engine.md#graph-layers).)*
+   - [x] **bug** Only audio tracks can be reordered; video tracks can't, and on audio tracks the header widgets
      cover most of the grip. Make every track draggable from its header background, and test it headless (the only
-     reorder test needs a GPU and has stale coordinates).
-   - [ ] **bug** Video tracks can't be removed from the app: only audio headers have a ×, and the header menu has
-     no Remove.
-   - [ ] **bug** Stale text:
+     reorder test needs a GPU and has stale coordinates). *(Done: header labels no longer select text, so a drag on
+     them reaches the header; see [Timeline](app.md#timeline).)*
+   - [x] **bug** Video tracks can't be removed from the app: only audio headers have a ×, and the header menu has
+     no Remove. *(Done: every header has a ×, and the menu has Remove track.)*
+   - [x] **bug** Stale text *(done)*:
      - The `resources.graph.open_now` hint says the open graph is the one rendered, which is only true with no
        graph items.
      - A comment in `timeline.rs` says empty lane space seeks; it box-selects.
      - A comment in `resources.rs` says nothing accepts `DraggedGraph` yet.
-   - [ ] **bug** About links the LGPL 3.0 text, but the release FFmpeg is LGPL 2.1 or later.
+   - [x] **bug** About links the LGPL 3.0 text, but the release FFmpeg is LGPL 2.1 or later. *(Done: it links the
+     version the loaded build reports; see [App](app.md).)*
 
    **2b. Routing rebuild** (the model above).
    - [ ] **chore** One track tree: folder tracks, master send, any track kind anywhere. Replaces the video and

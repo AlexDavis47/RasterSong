@@ -146,10 +146,16 @@ pub struct LayerSet {
 }
 
 impl Project {
-    /// Whether any layer holds a graph item. Without one, the open graph renders over the
-    /// whole timeline, as before layers.
+    /// Whether any layer holds a graph item. Without one nothing is applied: the output is the
+    /// plain track mix, and the open graph is only a description until it is placed.
     pub fn has_graph_items(&self) -> bool {
         self.layers.iter().any(|l| !l.items.is_empty())
+    }
+
+    /// Whether the preview skips every graph and plays the track mix: the graph is bypassed, or
+    /// no graph item is placed.
+    pub fn plays_track_mix(&self) -> bool {
+        self.bypass_graph || !self.has_graph_items()
     }
 
     /// Whether any layer is soloed.
