@@ -88,6 +88,8 @@ pub struct TrackView {
     pub bus: String,
     /// A line under the name, e.g. "1920×1080 · 29.97 fps".
     pub details: Option<String>,
+    /// The track's file is missing: it shows an error where its items would be.
+    pub missing: bool,
     /// The thumbnails of this track's file, once it is open.
     pub thumbnails: Option<TrackThumbnails>,
     /// The selected items, by index into [`Self::items`].
@@ -111,6 +113,7 @@ impl TrackView {
             waveform: None,
             bus: String::new(),
             details: None,
+            missing: false,
             thumbnails: None,
             selected_items: Vec::new(),
         }
@@ -165,6 +168,8 @@ pub struct TimelineModel<'a> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TrackAction {
     Select(usize),
+    /// The "+ Track" menu asked for an empty track of this kind.
+    AddEmpty(TrackKind),
     /// Item `item` of the track was clicked: select only it, or with `toggle` (Ctrl) add it to
     /// the selection or take it out.
     SelectItem {
@@ -248,6 +253,8 @@ pub struct TimelineResponse {
     pub toggle_snap: bool,
     /// Screen x where the lanes start, for turning a pointer position into time.
     pub lanes_left: f32,
+    /// The row of the lanes the pointer is over, for dropping a resource on a track.
+    pub row_under_pointer: Option<usize>,
 }
 
 /// How close (pixels) the pointer must be to a loop edge on the ruler to drag that edge.
@@ -665,6 +672,9 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
     // no items, and a drag box-selects the items it touches, adding to the selection with Ctrl
     // or Shift. Seeking belongs to the ruler.
     let body_lanes = Rect::from_min_max(pos2(lanes_left, areas.body.top()), areas.body.max);
+    response.row_under_pointer = pointer
+        .filter(|p| body_lanes.contains(*p))
+        .and_then(|p| areas.row_at(view.scroll_y, p.y));
     let pressed_in_lanes = ui
         .input(|i| i.pointer.press_origin())
         .or(background.interact_pointer_pos())
@@ -903,13 +913,30 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         vec2(HEADER_WIDTH, ADD_ROW_HEIGHT),
     );
     header(ui, add_row, header_clip, |ui| {
-        if ui
-            .button(tr("timeline.track.add"))
-            .on_hover_text(tr("timeline.track.add.help"))
-            .clicked()
-        {
-            response.actions.push(TrackAction::Add);
-        }
+        ui.menu_button(tr("timeline.track.add"), |ui| {
+            if ui.button(tr("timeline.track.add_video")).clicked() {
+                response
+                    .actions
+                    .push(TrackAction::AddEmpty(TrackKind::Video));
+                ui.close();
+            }
+            if ui.button(tr("timeline.track.add_audio")).clicked() {
+                response
+                    .actions
+                    .push(TrackAction::AddEmpty(TrackKind::Audio));
+                ui.close();
+            }
+            if ui
+                .button(tr("timeline.track.add_file"))
+                .on_hover_text(tr("timeline.track.add_file.help"))
+                .clicked()
+            {
+                response.actions.push(TrackAction::Add);
+                ui.close();
+            }
+        })
+        .response
+        .on_hover_text(tr("timeline.track.add.help"));
     });
 
     // The playhead, across the ruler and every lane.
@@ -1181,6 +1208,16 @@ impl Lane<'_> {
                 Stroke::new(1.0, theme.accent),
                 egui::StrokeKind::Inside,
             );
+        }
+        if track.missing {
+            painter.text(
+                lane.left_center() + vec2(6.0, 0.0),
+                Align2::LEFT_CENTER,
+                tr("timeline.track.missing"),
+                FontId::proportional(11.0),
+                ui.visuals().error_fg_color,
+            );
+            return;
         }
         let Some(duration) = track.duration else {
             painter.text(

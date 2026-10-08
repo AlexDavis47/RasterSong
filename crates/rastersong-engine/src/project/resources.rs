@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use super::{Project, ProjectTrack};
-use crate::timeline::TrackKind;
+use crate::timeline::{Item, TrackKind};
 
 /// Identifies a resource within its project: what tracks point at. Unique among the project's
 /// resources (and those its tracks name), not across time: a new resource can take a removed
@@ -63,7 +63,7 @@ impl Project {
 
     /// The resource `track` plays.
     pub fn track_resource(&self, track: &ProjectTrack) -> Option<&Resource> {
-        self.resource(track.resource)
+        self.resource(track.resource?)
     }
 
     /// The file `track` plays.
@@ -105,7 +105,7 @@ impl Project {
         self.resources
             .iter()
             .map(|r| r.id.0 + 1)
-            .chain(self.tracks().map(|t| t.resource.0 + 1))
+            .chain(self.tracks().filter_map(|t| t.resource).map(|id| id.0 + 1))
             .max()
             .unwrap_or(1)
     }
@@ -129,7 +129,7 @@ impl Project {
     /// The names of the tracks that play `id`.
     pub fn resource_users(&self, id: ResourceId) -> Vec<String> {
         self.tracks()
-            .filter(|t| t.resource == id)
+            .filter(|t| t.resource == Some(id))
             .map(|t| t.name.clone())
             .collect()
     }
@@ -148,6 +148,57 @@ impl Project {
             TrackKind::Audio => self.audio_tracks.push(track),
         }
         Some(name)
+    }
+
+    /// Points every resource that reads the file at `old` (the streams of one file) at `new`.
+    /// Returns how many moved.
+    pub fn relocate_resource(&mut self, id: ResourceId, new: impl Into<PathBuf>) -> usize {
+        let Some(old) = self.resource(id).map(|r| r.path.clone()) else {
+            return 0;
+        };
+        let new = new.into();
+        let mut moved = 0;
+        for resource in self.resources.iter_mut().filter(|r| r.path == old) {
+            resource.path = new.clone();
+            moved += 1;
+        }
+        moved
+    }
+
+    /// Adds an empty track of `kind`, named `Track`, `Track_2`, … (unique among tracks), below
+    /// the other tracks of its kind, and returns its name.
+    pub fn add_empty_track(&mut self, kind: TrackKind) -> String {
+        let name = self.unique_name("Track");
+        let track = ProjectTrack::empty(name.clone());
+        match kind {
+            TrackKind::Video => self.video_tracks.push(track),
+            TrackKind::Audio => self.audio_tracks.push(track),
+        }
+        name
+    }
+
+    /// Puts the whole resource `id` on track `track` from `position` seconds. An empty track
+    /// takes the resource; a track holds items of one resource only, so any other resource, or
+    /// one of the wrong kind, is refused (false).
+    pub fn place_resource(&mut self, track: &str, id: ResourceId, position: f64) -> bool {
+        let Some(kind) = self.resource(id).map(|r| r.kind.track_kind()) else {
+            return false;
+        };
+        let list = match kind {
+            TrackKind::Video => &mut self.video_tracks,
+            TrackKind::Audio => &mut self.audio_tracks,
+        };
+        let Some(track) = list.iter_mut().find(|t| t.name == track) else {
+            return false;
+        };
+        if track.resource.is_some_and(|r| r != id) {
+            return false;
+        }
+        track.resource = Some(id);
+        let mut item = Item::whole(0.0);
+        item.position = position.max(0.0);
+        track.items.push(item);
+        true
     }
 
     /// Adds a track called `name` playing the whole file at `path` (its best stream of `kind`),
@@ -176,8 +227,8 @@ impl Project {
     /// Removes a resource and every track that plays it, returning the removed tracks' names.
     pub fn remove_resource(&mut self, id: ResourceId) -> Vec<String> {
         let users = self.resource_users(id);
-        self.video_tracks.retain(|t| t.resource != id);
-        self.audio_tracks.retain(|t| t.resource != id);
+        self.video_tracks.retain(|t| t.resource != Some(id));
+        self.audio_tracks.retain(|t| t.resource != Some(id));
         self.resources.retain(|r| r.id != id);
         users
     }

@@ -166,7 +166,9 @@ fn run(shared: &Shared) {
         if opened.as_ref().map(|(g, _)| *g) != Some(generation) {
             source = None;
             opened = Some((generation, video.clone().unwrap_or_default()));
-            let Some((path, stream)) = video else { continue };
+            let Some((path, stream)) = video else {
+                continue;
+            };
             match shared.backend.open_video_stream(&path, stream) {
                 Ok(mut video) => {
                     let info = video.info().clone();

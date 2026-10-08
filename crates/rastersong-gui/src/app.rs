@@ -6,6 +6,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Color32, CornerRadius, Margin, RichText, Ui, UiBuilder};
 use rastersong_engine::LoadedTrack;
@@ -148,6 +149,9 @@ pub struct App {
     source_engine: Engine,
     /// The video the source engine was given.
     source_video_sent: Option<Timeline>,
+    /// Resources whose files aren't there, checked about once a second.
+    missing: HashSet<ResourceId>,
+    missing_checked: Option<Instant>,
     source_preview: Option<(egui::TextureHandle, Arc<Frame>)>,
     preview_view: PreviewView,
     /// The feed the preview shows; with the split on, the one on the right.
@@ -224,6 +228,8 @@ impl App {
             preview: None,
             source_engine,
             source_video_sent: None,
+            missing: HashSet::new(),
+            missing_checked: None,
             source_preview: None,
             preview_view: PreviewView::default(),
             preview_feed: Feed::default(),
@@ -315,7 +321,8 @@ impl App {
     /// Hands the whole project to the engine.
     fn send_project(&mut self) {
         self.engine.set_preview_scale(self.settings.preview_scale());
-        self.engine.set_timeline(self.project.timeline());
+        self.refresh_missing(true);
+        self.engine.set_timeline(self.timeline_of(&self.project));
         self.sent_graph = without_layout(&self.project.graph);
         self.engine.set_graph(self.sent_graph.clone());
         self.engine.set_tempo(self.project.tempo);
@@ -359,7 +366,7 @@ impl App {
             .project
             .add_resource(ResourceKind::Video, &name, &path, None);
         self.project.add_track_for(id, 0.0);
-        self.engine.set_timeline(self.project.timeline());
+        self.engine.set_timeline(self.timeline_of(&self.project));
         self.clock.seek(0);
         self.link_project_inputs();
         let known = self.project.audio_tracks.iter().any(|t| {
@@ -454,6 +461,88 @@ impl App {
         Some(name)
     }
 
+    /// Adds an empty track of `kind` to drag a resource onto, and selects it. Returns its name.
+    pub fn add_empty_track(&mut self, kind: TrackKind) -> String {
+        let name = self.project.add_empty_track(kind);
+        let videos = self.project.video_tracks.len();
+        self.selected_track = Some(match kind {
+            TrackKind::Video => videos - 1,
+            TrackKind::Audio => videos + self.project.audio_tracks.len() - 1,
+        });
+        name
+    }
+
+    /// Drops resource `id` on the track in timeline row `row` at `position` seconds: an empty
+    /// track takes it, a track of the same resource gets another item. Any other track can't
+    /// take it, so a new track plays it instead. Returns the name of the track it landed on.
+    pub fn drop_resource(
+        &mut self,
+        id: ResourceId,
+        row: Option<usize>,
+        position: f64,
+    ) -> Option<String> {
+        let target = row
+            .and_then(|row| self.track_row(row))
+            .and_then(|(kind, i)| match kind {
+                TrackKind::Video => self.project.video_tracks.get(i),
+                TrackKind::Audio => self.project.audio_tracks.get(i),
+            })
+            .map(|t| (t.name.clone(), t.resource.is_none()));
+        let Some((name, was_empty)) = target else {
+            return self.add_resource_track(id, position);
+        };
+        if !self.project.place_resource(&name, id, position) {
+            return self.add_resource_track(id, position);
+        }
+        if was_empty {
+            let audio = self.project.audio_tracks.iter().any(|t| t.name == name);
+            if audio {
+                self.editor
+                    .set_project_inputs(self.video_name(), self.track_name_list());
+                self.editor.link_track(&name);
+            } else {
+                self.link_project_inputs();
+            }
+        }
+        Some(name)
+    }
+
+    /// Points the resource's file (and the other streams of it) at `path`.
+    pub fn relocate_resource(&mut self, id: ResourceId, path: PathBuf) {
+        if self.project.relocate_resource(id, path) > 0 {
+            self.refresh_missing(true);
+        }
+    }
+
+    /// What the engine plays: the tracks whose files are there.
+    fn timeline_of(&self, project: &Project) -> Timeline {
+        project.timeline_with(|r| !self.missing.contains(&r.id))
+    }
+
+    /// Looks for resources whose files are gone, at most once a second unless `now`.
+    fn refresh_missing(&mut self, now: bool) {
+        if !now
+            && self
+                .missing_checked
+                .is_some_and(|t| t.elapsed() < Duration::from_secs(1))
+        {
+            return;
+        }
+        self.missing_checked = Some(Instant::now());
+        self.missing = self
+            .project
+            .resources
+            .iter()
+            .filter(|r| !self.backend.exists(&r.path))
+            .map(|r| r.id)
+            .collect();
+    }
+
+    /// The ids of resources whose files are missing.
+    pub fn missing_resources(&self) -> &HashSet<ResourceId> {
+        &self.missing
+    }
+
     /// Removes a resource, the tracks that play it, and their links to input nodes.
     pub fn remove_resource(&mut self, id: ResourceId) {
         let removed = self.project.remove_resource(id);
@@ -476,6 +565,21 @@ impl App {
             ResourceAction::AddToTimeline(id) => {
                 let at = self.clock.frame() as f64 / self.clock_rate();
                 self.add_resource_track(id, at);
+            }
+            ResourceAction::Relocate(id) => {
+                let Some(old) = self.project.resource(id).map(|r| r.path.clone()) else {
+                    return;
+                };
+                let mut dialog = rfd::FileDialog::new();
+                if let Some(folder) = old.parent().filter(|p| p.exists()) {
+                    dialog = dialog.set_directory(folder);
+                }
+                if let Some(file) = old.file_name() {
+                    dialog = dialog.set_file_name(file.to_string_lossy());
+                }
+                if let Some(path) = dialog.pick_file() {
+                    self.relocate_resource(id, path);
+                }
             }
             ResourceAction::Rename(id, name) => {
                 self.project.rename_resource(id, &name);
@@ -666,7 +770,7 @@ impl App {
 
     /// Puts the project back to an earlier (or later) state from the history.
     fn restore(&mut self, project: Project) {
-        self.engine.set_timeline(project.timeline());
+        self.engine.set_timeline(self.timeline_of(&project));
         self.editor.restore(&project.graph);
         let rows = project.video_tracks.len() + project.audio_tracks.len();
         self.selected_track = self
@@ -741,7 +845,7 @@ impl App {
                         ..Margin::ZERO
                     }))
                     .show(ui, |ui| {
-                        for action in resources_panel(ui, &self.project) {
+                        for action in resources_panel(ui, &self.project, &self.missing) {
                             self.resource_action(action);
                         }
                     });
@@ -1000,7 +1104,8 @@ impl App {
             self.sent_graph = semantic;
         }
         self.project.graph = graph;
-        self.engine.set_timeline(self.project.timeline());
+        self.refresh_missing(false);
+        self.engine.set_timeline(self.timeline_of(&self.project));
         self.engine.set_tempo(self.project.tempo);
         self.engine.set_bypass_all(self.project.bypass_graph);
         self.engine.set_audio_rate(self.project.audio_rate);
@@ -1763,7 +1868,7 @@ impl App {
         let area = ui.available_rect_before_wrap();
         let Some(info) = self.engine.info() else {
             ui.weak(tr("timeline.empty"));
-            if ui.button(tr("timeline.track.add")).clicked() {
+            if ui.button(tr("timeline.track.add_audio_file")).clicked() {
                 self.pick_audio_tracks();
             }
             // A resource dropped on the empty timeline starts at the beginning.
@@ -1787,6 +1892,7 @@ impl App {
             height: t.height.unwrap_or(LANE_HEIGHT),
             linked: self.project.linked_to(&t.name),
             bus: t.bus.clone(),
+            missing: t.resource.is_some_and(|r| self.missing.contains(&r)),
             selected_items: self
                 .selected_items
                 .iter()
@@ -1805,7 +1911,11 @@ impl App {
                 let shown = own.and_then(|o| o.service.info());
                 let shown = shown.as_ref();
                 TrackView {
-                    duration: shown.map(|v| v.frame_count as f64 / v.frame_rate.as_f64()),
+                    duration: if t.resource.is_none() {
+                        Some(0.0)
+                    } else {
+                        shown.map(|v| v.frame_count as f64 / v.frame_rate.as_f64())
+                    },
                     details: shown.map(|v| {
                         format!(
                             "{}×{} · {:.3} fps",
@@ -1831,7 +1941,11 @@ impl App {
         tracks.extend(self.project.audio_tracks.iter().map(|t| {
             let loaded = loaded.iter().find(|l| l.name == t.name);
             TrackView {
-                duration: loaded.map(|l| l.clip.duration_secs()),
+                duration: if t.resource.is_none() {
+                    Some(0.0)
+                } else {
+                    loaded.map(|l| l.clip.duration_secs())
+                },
                 waveform: loaded.map(|l| l.waveform.clone()),
                 ..view(t, TrackKind::Audio)
             }
@@ -1857,7 +1971,7 @@ impl App {
                 .input(|i| i.pointer.interact_pos())
                 .map_or(response.lanes_left, |p| p.x.max(response.lanes_left));
             let at = self.timeline_view.seconds(response.lanes_left, x).max(0.0);
-            self.add_resource_track(id, at);
+            self.drop_resource(id, response.row_under_pointer, at);
         }
         for track in &self.project.video_tracks {
             let frames: Vec<usize> = response
@@ -1989,13 +2103,21 @@ impl App {
     /// track's, changes nothing.
     pub fn rename_video(&mut self, name: &str) {
         let name = name.trim();
-        let Some(video) = self.project.video_tracks.first() else {
+        let Some(video) = self.project.video() else {
             return;
         };
         if name.is_empty() || name == video.name || self.project.has_track(name) {
             return;
         }
-        self.project.video_tracks[0].name = name.to_owned();
+        let video = video.name.clone();
+        if let Some(track) = self
+            .project
+            .video_tracks
+            .iter_mut()
+            .find(|t| t.name == video)
+        {
+            track.name = name.to_owned();
+        }
         self.editor
             .set_project_inputs(self.video_name(), self.track_name_list());
     }
@@ -2020,6 +2142,9 @@ impl App {
 
     /// The length of a track's file in seconds, once it is known.
     fn track_duration(&self, track: &ProjectTrack) -> Option<f64> {
+        if track.resource.is_none() {
+            return Some(0.0);
+        }
         if self
             .project
             .video_tracks
@@ -2222,7 +2347,14 @@ impl App {
                 }
             }
             TrackAction::Rename(row, new) => match self.track_row(row) {
-                Some((TrackKind::Video, 0)) => self.rename_video(&new),
+                Some((TrackKind::Video, i))
+                    if self
+                        .project
+                        .video()
+                        .is_some_and(|v| v.name == self.project.video_tracks[i].name) =>
+                {
+                    self.rename_video(&new)
+                }
                 Some((TrackKind::Video, i)) => {
                     let new = new.trim();
                     if !new.is_empty() && !self.project.has_track(new) {
@@ -2236,9 +2368,17 @@ impl App {
                 None => {}
             },
             TrackAction::Remove(row) => {
-                let Some((TrackKind::Audio, i)) = self.track_row(row) else {
+                let Some((kind, i)) = self.track_row(row) else {
                     return;
                 };
+                if kind == TrackKind::Video {
+                    let removed = self.project.video_tracks.remove(i);
+                    self.project.unlink_track(&removed.name);
+                    self.link_project_inputs();
+                    let rows = self.project.video_tracks.len() + self.project.audio_tracks.len();
+                    self.selected_track = self.selected_track.filter(|&s| s < rows);
+                    return;
+                }
                 let removed = self.project.audio_tracks.remove(i);
                 self.project.unlink_track(&removed.name);
                 self.editor
@@ -2253,6 +2393,9 @@ impl App {
                 .or(first_audio_row(&self.project));
             }
             TrackAction::Add => self.pick_audio_tracks(),
+            TrackAction::AddEmpty(kind) => {
+                self.add_empty_track(kind);
+            }
         }
     }
 

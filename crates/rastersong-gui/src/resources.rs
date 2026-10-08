@@ -1,6 +1,7 @@
 //! The Resources panel, listing the media the project uses, and the dialog that picks which
 //! streams of a file to import.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use eframe::egui::{self, Id, RichText, Sense, Ui};
@@ -19,6 +20,8 @@ pub enum ResourceAction {
     Rename(ResourceId, String),
     /// Remove the resource (and, once confirmed, its tracks).
     Remove(ResourceId),
+    /// Pick the file again, for a resource whose file moved.
+    Relocate(ResourceId),
 }
 
 /// What a resource row hands over while it is dragged: drop it on the timeline to make a track.
@@ -109,7 +112,11 @@ fn channels_label(channels: u32) -> String {
 
 /// The panel: a header with Import, then a row per resource. Rows can be dragged onto the
 /// timeline; a row whose file is missing says so.
-pub fn resources_panel(ui: &mut Ui, project: &Project) -> Vec<ResourceAction> {
+pub fn resources_panel(
+    ui: &mut Ui,
+    project: &Project,
+    missing: &HashSet<ResourceId>,
+) -> Vec<ResourceAction> {
     let mut actions = Vec::new();
     ui.horizontal(|ui| {
         ui.strong(tr("resources.title"));
@@ -133,7 +140,7 @@ pub fn resources_panel(ui: &mut Ui, project: &Project) -> Vec<ResourceAction> {
         .show(ui, |ui| {
             for resource in &project.resources {
                 let id = Id::new(("resource", resource.id));
-                let missing = !resource.path.exists();
+                let missing = missing.contains(&resource.id);
                 let users = project.resource_users(resource.id).len();
                 let row = ui.dnd_drag_source(id, DraggedResource(resource.id), |ui| {
                     ui.horizontal(|ui| {
@@ -147,6 +154,14 @@ pub fn resources_panel(ui: &mut Ui, project: &Project) -> Vec<ResourceAction> {
                             text = text.color(ui.visuals().error_fg_color);
                         }
                         ui.add(egui::Label::new(text).truncate().sense(Sense::hover()));
+                        if missing
+                            && ui
+                                .small_button(tr("resources.relocate"))
+                                .on_hover_text(tr("resources.relocate.help"))
+                                .clicked()
+                        {
+                            actions.push(ResourceAction::Relocate(resource.id));
+                        }
                     });
                 });
                 let file = resource
@@ -180,6 +195,10 @@ pub fn resources_panel(ui: &mut Ui, project: &Project) -> Vec<ResourceAction> {
                     }
                     if ui.button(tr("resources.add_to_timeline")).clicked() {
                         actions.push(ResourceAction::AddToTimeline(resource.id));
+                        ui.close();
+                    }
+                    if ui.button(tr("resources.relocate")).clicked() {
+                        actions.push(ResourceAction::Relocate(resource.id));
                         ui.close();
                     }
                     if ui.button(tr("resources.remove")).clicked() {
