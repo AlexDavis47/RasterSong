@@ -2,7 +2,7 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::MediaError;
+use crate::{MediaError, Samples};
 
 /// A media backend: opens video sources and loads audio. [`crate::FfmpegBackend`] is the real
 /// implementation; [`crate::FakeBackend`] produces synthetic media for tests.
@@ -11,6 +11,20 @@ pub trait MediaBackend: Send + Sync + Debug {
 
     /// Decodes an entire audio stream to interleaved `f32`.
     fn load_audio(&self, path: &Path, options: AudioOptions) -> Result<AudioClip, MediaError>;
+
+    /// Decodes an entire audio stream to interleaved `f32`, handing the samples to `sink` in
+    /// pieces as they are decoded rather than holding them all, and returns the sample rate and
+    /// channel count. Used to write audio to a cache file.
+    fn decode_audio(
+        &self,
+        path: &Path,
+        options: AudioOptions,
+        sink: &mut dyn FnMut(&[f32]) -> Result<(), MediaError>,
+    ) -> Result<(u32, u32), MediaError> {
+        let clip = self.load_audio(path, options)?;
+        sink(&clip.samples)?;
+        Ok((clip.sample_rate, clip.channels))
+    }
 
     /// Whether the file has an audio stream, from its header alone (no decoding). False if the
     /// file can't be opened.
@@ -124,8 +138,9 @@ pub struct AudioOptions {
 pub struct AudioClip {
     pub sample_rate: u32,
     pub channels: u32,
-    /// Interleaved samples, nominally in `-1.0..=1.0`.
-    pub samples: Vec<f32>,
+    /// Interleaved samples, nominally in `-1.0..=1.0`, in memory or memory-mapped from a cache
+    /// file. Cloning a clip shares them.
+    pub samples: Samples,
 }
 
 impl AudioClip {

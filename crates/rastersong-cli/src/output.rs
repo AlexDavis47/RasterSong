@@ -151,7 +151,7 @@ fn mix(tracks: &[SourceTrack], only: Option<&str>, info: &RenderInfo, rate: u32)
     AudioClip {
         sample_rate: rate,
         channels: 2,
-        samples,
+        samples: samples.into(),
     }
 }
 
@@ -186,7 +186,7 @@ mod tests {
             Arc::new(AudioClip {
                 sample_rate: 4,
                 channels: 1,
-                samples: vec![value; 4],
+                samples: vec![value; 4].into(),
             })
         };
         let tracks = vec![
@@ -219,14 +219,15 @@ mod tests {
             frames: 2,
             timebase,
         };
-        // 2 s at 2 Hz, stereo. Track `b` is silent in the mix (gain 0) ...
+        // 2 s at 2 Hz, stereo. Track `b` is silent in the mix (gain 0). Each item's first sample
+        // falls on its edge, where its fade in starts from silence ...
         let mixed = mix(&tracks, None, &info, 2);
         assert_eq!((mixed.sample_rate, mixed.channels), (2, 2));
-        assert_eq!(mixed.samples[..4], [0.5; 4]);
+        assert_eq!(mixed.samples[..4], [0.0, 0.0, 0.5, 0.5]);
         assert_eq!(mixed.samples[4..], [0.0; 4]);
         // ... and at full volume, from 1 s, when passed through on its own.
         let alone = mix(&tracks, Some("b"), &info, 2);
-        assert_eq!(alone.samples[..4], [0.0; 4]);
-        assert_eq!(alone.samples[4..6], [0.25; 2]);
+        assert_eq!(alone.samples[..6], [0.0; 6]);
+        assert_eq!(alone.samples[6..], [0.25; 2]);
     }
 }

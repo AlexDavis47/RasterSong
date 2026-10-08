@@ -190,7 +190,7 @@ fn stereo_tracks_reach_the_graph_interleaved() {
     let clip = AudioClip {
         sample_rate: 9000,
         channels: 2,
-        samples: [0.5, -0.5].repeat(9000 * 3),
+        samples: [0.5, -0.5].repeat(9000 * 3).into(),
     };
     let graph = r#"{ "version": 0,
       "nodes": [
@@ -310,12 +310,12 @@ fn tracks_at_different_rates_meet_in_one_graph() {
     let mono = AudioClip {
         sample_rate: 9_000,
         channels: 1,
-        samples: vec![0.25; 9_000 * 3],
+        samples: vec![0.25; 9_000 * 3].into(),
     };
     let stereo = AudioClip {
         sample_rate: 16_000,
         channels: 2,
-        samples: [0.5, -0.5].repeat(16_000 * 3),
+        samples: [0.5, -0.5].repeat(16_000 * 3).into(),
     };
     let track = |name: &str, clip: &AudioClip| {
         RenderTrack::audio(name, Arc::new(Modulator::new(clip)), 0.0)

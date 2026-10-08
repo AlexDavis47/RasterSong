@@ -188,15 +188,18 @@ fn render(args: RenderArgs) -> Result<()> {
     };
 
     let backend = FfmpegBackend::new()?;
+    let audio_cache = rastersong_engine::AudioCache::in_user_dir();
     let mut tracks = Vec::new();
     let mut sources = Vec::new();
     for spec in &job.timeline.tracks {
         let media = match spec.kind {
             TrackKind::Video => rastersong_engine::TrackMedia::Video(spec.path.clone()),
             TrackKind::Audio => {
-                let clip = backend
-                    .load_audio(&spec.path, AudioOptions::default())
-                    .with_context(|| format!("loading audio from {}", spec.path.display()))?;
+                let clip = match &audio_cache {
+                    Some(cache) => cache.load(&backend, &spec.path, AudioOptions::default()),
+                    None => backend.load_audio(&spec.path, AudioOptions::default()),
+                }
+                .with_context(|| format!("loading audio from {}", spec.path.display()))?;
                 let gain = job
                     .mix
                     .iter()

@@ -12,6 +12,8 @@ publish.workspace = true
 [dependencies]
 ffmpeg-next.workspace = true
 rastersong-lang.workspace = true
+memmap2.workspace = true
+sha2.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

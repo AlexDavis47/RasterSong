@@ -193,6 +193,7 @@ fn respects_the_cache_budget() {
         EngineConfig {
             cache_bytes: 20 * 16 * 8 * 3,
             lookahead_secs: 10.0,
+            audio_cache: None,
         },
     );
     load(&engine, FINITE);

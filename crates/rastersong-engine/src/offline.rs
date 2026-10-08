@@ -104,7 +104,7 @@ mod tests {
         AudioClip {
             sample_rate: 100,
             channels: 1,
-            samples: vec![0.0; 100],
+            samples: vec![0.0; 100].into(),
         }
     }
 

@@ -11,6 +11,10 @@ use std::path::PathBuf;
 use rastersong_media::Rational;
 use serde::{Deserialize, Serialize};
 
+/// Seconds over which audio fades in at the start of each item and out at its end, so cuts
+/// don't click. Fixed for now; never more than half the item.
+pub const EDGE_FADE: f64 = 0.005;
+
 /// The project's picture size and frame rate. One block of every graph is one project frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -140,6 +144,28 @@ impl Item {
         self.start + (t - self.position) * self.rate
     }
 
+    /// How long the item's audio takes to fade in at its start, and out at its end, in seconds:
+    /// [`EDGE_FADE`], or half the item when it is shorter than two fades.
+    pub fn fade(&self, duration: f64) -> f64 {
+        EDGE_FADE.min(self.length(duration) / 2.0)
+    }
+
+    /// The gain of the item's audio at timeline time `t`: 0 outside the item or when muted,
+    /// rising linearly to 1 over the fade at its start and falling back to 0 over the fade at
+    /// its end. Where items overlap, each later item is mixed over what is below it by its gain,
+    /// so a cut between overlapping items crossfades rather than dipping.
+    pub fn gain_at(&self, t: f64, duration: f64) -> f64 {
+        let end = self.timeline_end(duration);
+        if self.muted || t < self.position || t >= end {
+            return 0.0;
+        }
+        let fade = self.fade(duration);
+        if fade <= 0.0 {
+            return 1.0;
+        }
+        ((t - self.position).min(end - t) / fade).min(1.0)
+    }
+
     /// The resource time played at timeline time `t`, if the item plays then.
     pub fn plays_at(&self, t: f64, duration: f64) -> Option<f64> {
         (!self.muted && t >= self.position && t < self.timeline_end(duration))
@@ -245,6 +271,26 @@ mod tests {
         );
         // Without an out point the item plays to the end of the resource.
         assert_eq!(Item::whole(1.5).timeline_end(3.0), 4.5);
+    }
+
+    #[test]
+    fn audio_fades_in_and_out_at_item_edges() {
+        let item = Item::whole(1.0);
+        // A 2 s resource: fades of EDGE_FADE at both ends.
+        assert_eq!(item.gain_at(0.999, 2.0), 0.0);
+        assert_eq!(item.gain_at(1.0, 2.0), 0.0);
+        assert!((item.gain_at(1.0 + EDGE_FADE / 2.0, 2.0) - 0.5).abs() < 1e-9);
+        assert_eq!(item.gain_at(1.5, 2.0), 1.0);
+        assert!((item.gain_at(3.0 - EDGE_FADE / 4.0, 2.0) - 0.25).abs() < 1e-9);
+        assert_eq!(item.gain_at(3.0, 2.0), 0.0);
+        // A very short item fades over half its length each way.
+        assert_eq!(item.fade(0.002), 0.001);
+        assert!((item.gain_at(1.0005, 0.002) - 0.5).abs() < 1e-9);
+        let muted = Item {
+            muted: true,
+            ..item
+        };
+        assert_eq!(muted.gain_at(1.5, 2.0), 0.0);
     }
 
     #[test]

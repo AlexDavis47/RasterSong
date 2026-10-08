@@ -209,6 +209,20 @@ Also decided with it:
   lengthens the project; the extra frames show the gap's zeros.
 - **No timebase until one is set**: a project takes its first video track's, or 1920×1080 at 30 fps, so opening a
   video still sets up the project the way it did.
+### Audio item fades and the audio cache (October 2026)
+
+Built as the second step of the timeline model.
+
+- **Fades are 5 ms, linear, at every item edge**, the start of a file included: long enough to stop clicks, short
+  enough not to soften a transient anyone would hear. An item is mixed over the earlier items by its gain, so where
+  items overlap the later one still wins, but its edges crossfade with what is below instead of dipping to zero.
+- **Cache files are keyed by content, not by path**, so a moved, renamed or copied file reuses its cache and an
+  edited one gets a new file. Hashing is remembered against path, size and modified time, because hashing a long
+  video on every open would cost seconds.
+- **A cache that can't be written is not an error**: the audio is decoded into memory as before, with a warning in
+  the log. Tests and the engine's default configuration use no cache; the app and the CLI use the user's cache
+  directory.
+
 ## Open
 
 

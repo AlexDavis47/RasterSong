@@ -44,8 +44,9 @@ pub use rastersong_graph::{
     Tempo, range_span,
 };
 pub use rastersong_media::{
-    AudioClip, AudioOptions, BackendInfo, FakeBackend, FakeVideo, FfmpegBackend, LibraryInfo,
-    LosslessWriter, MediaBackend, MediaError, Rational, Version, VideoFrame, VideoInfo,
+    AudioCache, AudioClip, AudioOptions, BackendInfo, FakeBackend, FakeVideo, FfmpegBackend,
+    LibraryInfo, LosslessWriter, MediaBackend, MediaError, Rational, Samples, Version, VideoFrame,
+    VideoInfo,
 };
 pub use renderer::{
     DEFAULT_AUDIO_TRACK, OutputSize, RenderInfo, RenderTrack, Renderer, TrackMedia, VIDEO_SOURCE,

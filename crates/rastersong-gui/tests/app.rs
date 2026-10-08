@@ -781,7 +781,7 @@ fn opening_a_video_with_sound_adds_its_audio_track() {
             AudioClip {
                 sample_rate: 8000,
                 channels: 1,
-                samples: vec![0.0; 8000],
+                samples: vec![0.0; 8000].into(),
             },
         );
     let mut app = App::new(

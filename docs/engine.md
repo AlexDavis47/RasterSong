@@ -33,12 +33,19 @@ track, read by the input nodes that name it, through a track reader in the rende
   time for `n` (frames are held or skipped when the rates differ), scaled to the project size the way Video
   Output stretches.
 - **Audio tracks** fill each frame's block with the audio of exactly that frame's time span, item by item
-  (`Modulator::fill_items`), resampled when an item's rate isn't 1.
+  (`Modulator::fill_items`), resampled when an item's rate isn't 1. The samples are read from the audio cache's
+  memory map ([Media](media.md)), shared with the preview mixer and the waveform rather than copied.
 - **Gaps read zeros**, as do muted items and input nodes that name no track. Where items overlap, the later one
-  in the list plays.
+  in the list plays (for audio, crossfading at its edges; see below).
+
+**Audio item edges fade** over a fixed 5 ms (`EDGE_FADE`, at most half the item), linearly, so cuts don't click.
+Each item is mixed over the items listed before it by its gain (`Item::gain_at`): inside the item it replaces
+them, and at its edges it crossfades with them, so a cut between overlapping items never dips to silence. The
+first sample of an item that starts at the beginning of its file fades in too. The preview mixer applies the same
+gains.
 
 Video frames are placed by the file's nominal frame rate, so variable-frame-rate video is conformed as if its rate
-were constant. Audio item edges have no fades yet.
+were constant.
 
 ## Sequential schedule
 

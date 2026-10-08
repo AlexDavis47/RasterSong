@@ -67,7 +67,7 @@ fn float_audio_at_the_output_format_is_copied_exactly() {
     assert_eq!((clip.sample_rate, clip.channels), (48_000, 2));
     let expected = wav_f32_samples(&std::fs::read(fixture("float.wav")).unwrap());
     assert_eq!(clip.samples.len(), expected.len());
-    assert!(clip.samples == expected, "samples differ from the file");
+    assert!(*clip.samples == expected, "samples differ from the file");
 }
 
 #[test]

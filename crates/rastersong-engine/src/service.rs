@@ -10,7 +10,7 @@ use std::thread::JoinHandle;
 
 use rastersong_graph::{CompileOptions, GraphDesc, NodeStats, Registry, Tempo, render_form};
 use rastersong_lang::{tr, tr_args};
-use rastersong_media::{AudioClip, AudioOptions, MediaBackend};
+use rastersong_media::{AudioCache, AudioClip, AudioOptions, MediaBackend};
 
 use crate::audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE, SinkResampler};
 use crate::cache::{CacheKey, Frame, FrameCache};
@@ -87,6 +87,8 @@ pub struct EngineConfig {
     pub cache_bytes: usize,
     /// How far ahead of the playhead to render, memory permitting.
     pub lookahead_secs: f64,
+    /// Where decoded audio is kept and memory-mapped from. `None` decodes audio into memory.
+    pub audio_cache: Option<AudioCache>,
 }
 
 impl Default for EngineConfig {
@@ -94,6 +96,7 @@ impl Default for EngineConfig {
         Self {
             cache_bytes: 1 << 30,
             lookahead_secs: 10.0,
+            audio_cache: None,
         }
     }
 }
@@ -662,7 +665,7 @@ impl Wanted {
 }
 
 /// Decoded audio by file, so editing the graph or an offset doesn't decode again.
-type AudioCache = HashMap<PathBuf, DecodedAudio>;
+type DecodedFiles = HashMap<PathBuf, DecodedAudio>;
 
 #[derive(Clone)]
 struct DecodedAudio {
@@ -680,7 +683,7 @@ struct Worker {
     tap_failed: Option<CacheKey>,
     /// Turns the listened connection's signal into sound, for the connection it was made for.
     listen_sink: Option<ListenSink>,
-    audio: AudioCache,
+    audio: DecodedFiles,
     /// The `changes` count when the project last failed; nothing is retried until it moves.
     failed_at: Option<u64>,
 }
@@ -1108,16 +1111,19 @@ impl Worker {
         if let Some(cached) = self.audio.get(&spec.path) {
             return Ok(cached.clone());
         }
-        let clip = self
-            .shared
-            .backend
-            .load_audio(&spec.path, AudioOptions::default())
-            .map_err(|e| {
-                Failure::new(tr_args(
-                    "error.audio_track",
-                    &[("name", &spec.name), ("error", &e.to_string())],
-                ))
-            })?;
+        let backend = self.shared.backend.as_ref();
+        let options = AudioOptions::default();
+        let audio_cache = lock(&self.shared.config).audio_cache.clone();
+        let clip = match &audio_cache {
+            Some(cache) => cache.load(backend, &spec.path, options),
+            None => backend.load_audio(&spec.path, options),
+        }
+        .map_err(|e| {
+            Failure::new(tr_args(
+                "error.audio_track",
+                &[("name", &spec.name), ("error", &e.to_string())],
+            ))
+        })?;
         let entry = DecodedAudio {
             modulator: Arc::new(Modulator::new(&clip)),
             waveform: Arc::new(Waveform::new(&clip)),

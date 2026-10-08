@@ -71,20 +71,31 @@ impl Mixer {
                 continue;
             }
             let duration = clip.duration_secs();
+            let at = |f: usize, c: usize| clip.samples[f * channels + c.min(channels - 1)];
             for (j, frame) in out.as_chunks_mut::<2>().0.iter_mut().enumerate() {
                 let t = start + j as f64 / rate;
-                let Some((_, at)) = crate::timeline::item_at(&track.items, t, duration) else {
-                    continue;
-                };
-                let pos = at * f64::from(clip.sample_rate);
-                if pos >= 0.0 && pos < (frames - 1) as f64 {
-                    let i = pos as usize;
-                    let frac = (pos - i as f64) as f32;
-                    let at = |f: usize, c: usize| clip.samples[f * channels + c.min(channels - 1)];
-                    for (c, out) in frame.iter_mut().enumerate() {
-                        let a = at(i, c);
-                        *out += (a + (at(i + 1, c) - a) * frac) * track.gain;
+                // Each item is mixed over the ones before it by its gain, which fades at its
+                // edges, as the renderer's track readers do (`Modulator::fill_items`).
+                let mut mixed = [0.0f32; 2];
+                for item in &track.items {
+                    let g = item.gain_at(t, duration) as f32;
+                    if g <= 0.0 {
+                        continue;
                     }
+                    let pos = item.source_time(t) * f64::from(clip.sample_rate);
+                    for (c, mixed) in mixed.iter_mut().enumerate() {
+                        let x = if pos >= 0.0 && pos < (frames - 1) as f64 {
+                            let i = pos as usize;
+                            let a = at(i, c);
+                            a + (at(i + 1, c) - a) * (pos - i as f64) as f32
+                        } else {
+                            0.0
+                        };
+                        *mixed += (x - *mixed) * g;
+                    }
+                }
+                for (out, mixed) in frame.iter_mut().zip(mixed) {
+                    *out += mixed * track.gain;
                 }
             }
         }
@@ -385,7 +396,7 @@ mod tests {
         let clip = Arc::new(AudioClip {
             sample_rate: 4,
             channels: 2,
-            samples: vec![1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0],
+            samples: vec![1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0].into(),
         });
         let mixer = Mixer::new(vec![
             MixTrack {
@@ -403,8 +414,9 @@ mod tests {
         // 4 Hz output from 0 s: the track starts at 1 s and lasts 1 s.
         mixer.render(0.0, 4.0, &mut out);
         assert_eq!(&out[..8], [0.0; 8], "before the offset: silence");
+        assert_eq!(&out[8..10], [0.0; 2], "the item's edge, where it fades in");
         assert_eq!(
-            &out[8..12],
+            &out[10..14],
             [0.5, -0.5, 0.5, -0.5],
             "left and right kept, gain applied"
         );

@@ -69,7 +69,7 @@ impl Settings {
     pub const CACHE_MIB_RANGE: std::ops::RangeInclusive<u32> = 64..=32768;
     pub const RENDER_AHEAD_RANGE: std::ops::RangeInclusive<f64> = 1.0..=120.0;
 
-    /// The cache budget and lookahead the engine should use.
+    /// The cache budget, lookahead and audio cache directory the engine should use.
     pub fn engine_config(&self) -> rastersong_engine::EngineConfig {
         rastersong_engine::EngineConfig {
             cache_bytes: self
@@ -81,6 +81,7 @@ impl Settings {
                 *Self::RENDER_AHEAD_RANGE.start(),
                 *Self::RENDER_AHEAD_RANGE.end(),
             ),
+            audio_cache: rastersong_engine::AudioCache::in_user_dir(),
         }
     }
 

@@ -11,6 +11,25 @@ use crate::{AudioClip, AudioOptions, MediaError};
 
 /// Decodes the best audio stream of `path` in full, converted to interleaved `f32`.
 pub(crate) fn load_audio(path: &Path, options: AudioOptions) -> Result<AudioClip, MediaError> {
+    let mut samples = Vec::new();
+    let (sample_rate, channels) = decode_audio(path, options, &mut |chunk| {
+        samples.extend_from_slice(chunk);
+        Ok(())
+    })?;
+    Ok(AudioClip {
+        sample_rate,
+        channels,
+        samples: samples.into(),
+    })
+}
+
+/// Decodes the best audio stream of `path` in full, handing the interleaved `f32` samples to
+/// `sink` as they come, and returns the sample rate and channel count.
+pub(crate) fn decode_audio(
+    path: &Path,
+    options: AudioOptions,
+    sink: &mut dyn FnMut(&[f32]) -> Result<(), MediaError>,
+) -> Result<(u32, u32), MediaError> {
     let mut input = open_input(path)?;
     let stream = input
         .streams()
@@ -34,10 +53,13 @@ pub(crate) fn load_audio(path: &Path, options: AudioOptions) -> Result<AudioClip
             tracing::debug!(path = %path.display(), "audio decoder rejected a packet: {e}");
         }
         drain(&mut decoder, &mut decoded, &mut resampler)?;
+        resampler.hand_over(sink)?;
     }
     decoder.send_eof().map_err(decode_error)?;
     drain(&mut decoder, &mut decoded, &mut resampler)?;
-    resampler.finish()
+    resampler.flush()?;
+    resampler.hand_over(sink)?;
+    Ok((resampler.out_rate, resampler.channels() as u32))
 }
 
 fn drain(
@@ -211,13 +233,16 @@ impl Resampler {
         self.input = None;
     }
 
-    fn finish(mut self) -> Result<AudioClip, MediaError> {
-        self.flush()?;
-        Ok(AudioClip {
-            sample_rate: self.out_rate,
-            channels: self.channels() as u32,
-            samples: std::mem::take(&mut self.samples),
-        })
+    /// Gives the samples converted so far to `sink`.
+    fn hand_over(
+        &mut self,
+        sink: &mut dyn FnMut(&[f32]) -> Result<(), MediaError>,
+    ) -> Result<(), MediaError> {
+        if !self.samples.is_empty() {
+            sink(&self.samples)?;
+            self.samples.clear();
+        }
+        Ok(())
     }
 }
 

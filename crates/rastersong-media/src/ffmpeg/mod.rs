@@ -36,6 +36,15 @@ impl MediaBackend for FfmpegBackend {
         audio::load_audio(path, options)
     }
 
+    fn decode_audio(
+        &self,
+        path: &Path,
+        options: AudioOptions,
+        sink: &mut dyn FnMut(&[f32]) -> Result<(), MediaError>,
+    ) -> Result<(u32, u32), MediaError> {
+        audio::decode_audio(path, options, sink)
+    }
+
     fn has_audio(&self, path: &Path) -> bool {
         open_input(path)
             .is_ok_and(|input| input.streams().best(ffmpeg::media::Type::Audio).is_some())

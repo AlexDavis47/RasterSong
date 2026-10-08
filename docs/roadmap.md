@@ -453,9 +453,11 @@ memory maps read ordinary files. Saving rewrites the zip, copying unchanged entr
    - [ ] **feature** Track mix and output buses, with the warning on removal.
    - [x] **feature** Track readers in the engine: video conformed to the project's grid and size, audio placed item
      by item, gaps read zeros.
-   - [ ] **feature** Audio decoded to cache files and memory-mapped (`Modulator` and the waveform read the mapped
-     samples instead of owning copies).
-   - [ ] **feature** Short fixed fades on audio item edges.
+   - [x] **feature** Audio decoded to cache files and memory-mapped (`Modulator` and the waveform read the mapped
+     samples instead of owning copies). *(Done: see [Media](media.md); uncompressed WAVs are still decoded to the
+     cache rather than mapped directly, and clearing the cache from Settings waits for the Settings page.)*
+   - [x] **feature** Short fixed fades on audio item edges *(5 ms, crossfading where items overlap; see
+     [Timeline](engine.md#timeline))*.
    - [x] **chore** New project file contents (still plain JSON at this stage); CLI `render <project> <out>` *(the
      old `render <video> <audio> <graph> <out>` stays; without an Audio Output the CLI writes the mix of the audio
      tracks)*.

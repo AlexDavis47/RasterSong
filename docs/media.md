@@ -21,8 +21,17 @@ synthetic frames. (Licensing of FFmpeg itself is in [Licensing](licensing.md#ffm
 - **Conversion:** one reused scaler per source using FFmpeg's `sws_scale_frame`, which picks the color matrix
   and range from each frame. Output is at the requested size (project/preview resolution). Display-matrix
   rotation (phone video) is applied so frames come out upright.
-- **Audio:** decoded once on load, in full, to interleaved `f32` via swresample, optionally resampled and remixed.
-  Encoder priming samples are trimmed using the container's edit list. Audio is small enough that this is the
-  simplest correct approach.
+- **Audio:** decoded in full to interleaved `f32` via swresample, optionally resampled and remixed. Encoder
+  priming samples are trimmed using the container's edit list. Decoding hands the samples on in pieces
+  (`MediaBackend::decode_audio`), so they can go straight to a file.
+- **Audio cache:** `AudioCache` decodes each audio stream once into an uncompressed `f32` file and reads it back
+  through a memory map (`Samples`), so a track costs address space rather than memory, every reader shares one
+  copy, and reopening a project decodes nothing. Files are named by the SHA-256 of the source's bytes (remembered
+  against its path, size and modified time, so a long video isn't hashed on every open) and the decoding options,
+  and are written under a temporary name and renamed into place. The cache lives in `%LOCALAPPDATA%\RasterSong\cache`
+  on Windows, `~/Library/Caches/RasterSong` on macOS and `$XDG_CACHE_HOME/rastersong` (or `~/.cache/rastersong`)
+  elsewhere; `RASTERSONG_CACHE_DIR` overrides it. A missing file is decoded again, a damaged one rebuilt, and a
+  cache that can't be written falls back to decoding into memory. Uncompressed WAVs are decoded to the cache like
+  any other file for now rather than mapped directly.
 - **Latest-wins requests:** a video source is a synchronous object. Stale work is dropped by the engine's render
   thread (see [Cancellation](engine.md#always-rendering-ahead)).
