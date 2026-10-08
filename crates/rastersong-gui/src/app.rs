@@ -51,6 +51,9 @@ const SOURCE_GRAPH: &str = r#"{ "version": 0,
     "nodes": [ { "id": "video", "type": "video_input" }, { "id": "out", "type": "output" } ],
     "connections": [ { "from": "video", "to": "out" } ] }"#;
 
+/// What copying timeline items puts on the system clipboard. The items themselves stay in the app.
+pub const ITEM_CLIPBOARD_MARKER: &str = "RasterSong timeline items";
+
 const VIDEO_EXTENSIONS: &[&str] = &[
     "mp4", "mov", "mkv", "avi", "webm", "m4v", "ts", "mts", "m2ts", "mpg",
 ];
@@ -249,6 +252,11 @@ impl App {
 
     pub fn editor(&self) -> &GraphEditor {
         &self.editor
+    }
+
+    /// The selected timeline items.
+    pub fn selected_items(&self) -> &[ItemRef] {
+        &self.selected_items
     }
 
     pub fn timeline_view(&self) -> TimelineView {
@@ -1647,7 +1655,7 @@ impl App {
             self.clock.seek(frame);
         }
         for action in response.actions {
-            self.track_action(action);
+            self.track_action(ui.ctx(), action);
         }
     }
 
@@ -1789,7 +1797,7 @@ impl App {
         });
     }
 
-    fn track_action(&mut self, action: TrackAction) {
+    fn track_action(&mut self, ctx: &egui::Context, action: TrackAction) {
         let name = |app: &mut Self, row: usize| app.track_at(row).map(|t| t.name.clone());
         match action {
             TrackAction::Select(row) => self.selected_track = Some(row),
@@ -1806,6 +1814,20 @@ impl App {
                 }
             }
             TrackAction::ClearItems => self.selected_items.clear(),
+            TrackAction::SelectItems { items, additive } => {
+                if !additive {
+                    self.selected_items.clear();
+                }
+                for (row, item) in items {
+                    let Some(track) = name(self, row) else {
+                        continue;
+                    };
+                    let at = ItemRef::new(track, item);
+                    if !self.selected_items.contains(&at) {
+                        self.selected_items.push(at);
+                    }
+                }
+            }
             TrackAction::MoveItem { row, item, delta } => {
                 let Some(track) = name(self, row) else { return };
                 let at = ItemRef::new(track, item);
@@ -1864,13 +1886,17 @@ impl App {
                 }
                 let lengths = self.item_lengths();
                 self.item_clipboard = self.project.copy_items(&self.selected_items, &lengths);
+                // The platform only sends Ctrl+V on when the system clipboard holds text, so the
+                // copy puts a marker there; a paste pastes the items only while it is still there.
+                ctx.copy_text(ITEM_CLIPBOARD_MARKER.to_owned());
                 if action == TrackAction::CutItems {
                     self.project.delete_items(&self.selected_items, lengths);
                     self.selected_items.clear();
                 }
             }
-            TrackAction::PasteItems { at } => {
-                if !self.item_clipboard.is_empty() {
+            TrackAction::PasteItems { at, text } => {
+                let ours = text.is_none_or(|t| t == ITEM_CLIPBOARD_MARKER);
+                if ours && !self.item_clipboard.is_empty() {
                     self.selected_items = self.project.paste_items(&self.item_clipboard, at);
                 }
             }

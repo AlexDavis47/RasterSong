@@ -169,6 +169,12 @@ pub enum TrackAction {
     },
     /// Empty lane space was clicked: select no items.
     ClearItems,
+    /// A box was dragged over lane space: select these items (row, item), adding them to the
+    /// selection with `additive` (Ctrl or Shift).
+    SelectItems {
+        items: Vec<(usize, usize)>,
+        additive: bool,
+    },
     /// Item `item` of the track was dragged `delta` seconds along the timeline, with the other
     /// selected items if it is selected.
     MoveItem {
@@ -196,9 +202,12 @@ pub enum TrackAction {
     DeleteItems,
     CopyItems,
     CutItems,
-    /// Paste the copied items at time `at` (the playhead).
+    /// Paste the copied items at time `at` (the playhead). `text` is the system clipboard's text
+    /// for a keyboard paste, which pastes only when it is what the item copy put there; the
+    /// right-click menu, which can't read the clipboard, has none.
     PasteItems {
         at: f64,
+        text: Option<String>,
     },
     ToggleMute(usize),
     ToggleSolo(usize),
@@ -644,31 +653,73 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         .clamp(0.0, (content - areas.body.height()).max(0.0));
     let x = |seconds: f64| view.x(lanes_left, seconds);
 
-    // Seeking: a primary click or drag that started on the ruler or empty lane space.
-    // (A drag still knows where it started; a click is over by now, so use where it was.)
+    // Lane space (empty, or an item's content below its header bar): a click selects the row and
+    // no items, and a drag box-selects the items it touches, adding to the selection with Ctrl
+    // or Shift. Seeking belongs to the ruler.
+    let body_lanes = Rect::from_min_max(pos2(lanes_left, areas.body.top()), areas.body.max);
     let pressed_in_lanes = ui
         .input(|i| i.pointer.press_origin())
         .or(background.interact_pointer_pos())
-        .is_some_and(|p| areas.lanes.contains(p));
-    if (background.clicked() || background.dragged_by(PointerButton::Primary))
+        .is_some_and(|p| body_lanes.contains(p));
+    if background.clicked()
         && pressed_in_lanes
         && let Some(p) = background.interact_pointer_pos()
     {
-        let frame = (view.seconds(lanes_left, p.x) * model.frame_rate).floor();
-        response.seek = Some((frame.max(0.0) as usize).min(model.frame_count.saturating_sub(1)));
-        if background.clicked() {
-            response.actions.push(TrackAction::ClearItems);
-            if let Some(row) = areas.row_at(view.scroll_y, p.y) {
-                response.actions.push(TrackAction::Select(row));
-            }
+        response.actions.push(TrackAction::ClearItems);
+        if let Some(row) = areas.row_at(view.scroll_y, p.y) {
+            response.actions.push(TrackAction::Select(row));
         }
+    }
+    let box_id = ui.id().with("timeline-box-select");
+    if background.drag_started_by(PointerButton::Primary)
+        && pressed_in_lanes
+        && let Some(origin) = ui.input(|i| i.pointer.press_origin())
+    {
+        let additive = ui.input(|i| i.modifiers.command || i.modifiers.shift);
+        let start = BoxSelect {
+            seconds: view.seconds(lanes_left, origin.x),
+            y: origin.y - areas.body.top() + view.scroll_y,
+            additive,
+        };
+        ui.data_mut(|d| d.insert_temp(box_id, start));
+    }
+    let boxing: Option<BoxSelect> = ui.data(|d| d.get_temp(box_id));
+    if let (Some(start), Some(p)) = (boxing, background.interact_pointer_pos()) {
+        let corner = pos2(
+            view.x(lanes_left, start.seconds),
+            start.y + areas.body.top() - view.scroll_y,
+        );
+        let selection = Rect::from_two_pos(corner, p);
+        if background.dragged_by(PointerButton::Primary) {
+            let painter = ui.painter_at(body_lanes);
+            painter.rect_filled(
+                selection,
+                CornerRadius::ZERO,
+                theme.accent.gamma_multiply(0.08),
+            );
+            painter.rect_stroke(
+                selection,
+                CornerRadius::ZERO,
+                Stroke::new(1.0, theme.accent.gamma_multiply(0.7)),
+                egui::StrokeKind::Inside,
+            );
+        }
+        if background.drag_stopped() {
+            let items = items_in(&areas, model, view, selection);
+            response.actions.push(TrackAction::SelectItems {
+                items,
+                additive: start.additive,
+            });
+        }
+    }
+    if background.drag_stopped() {
+        ui.data_mut(|d| d.remove::<BoxSelect>(box_id));
     }
 
     loop_ruler(ui, &areas, model, view, &mut response);
 
     // Ruler and tick lines.
     let grid = RulerGrid::new(model, view.px_per_sec);
-    let body_lanes = Rect::from_min_max(pos2(lanes_left, areas.body.top()), areas.body.max);
     let painter = ui.painter_at(areas.ruler.union(body_lanes));
     let shown_loop = match response.loop_region {
         Some(changed) => changed,
@@ -902,6 +953,44 @@ fn link_menu(ui: &mut Ui, model: &TimelineModel, row: usize, response: &mut Time
             .push(TrackAction::SetHeight(row, LANE_HEIGHT));
         ui.close();
     }
+}
+
+/// A box selection being dragged over the lanes: where it started, in seconds and in body
+/// content y (before scrolling), so it stays put while the view moves.
+#[derive(Debug, Clone, Copy)]
+struct BoxSelect {
+    seconds: f64,
+    y: f32,
+    additive: bool,
+}
+
+/// The items (row, item) whose blocks touch `selection`, in screen space.
+fn items_in(
+    areas: &Areas,
+    model: &TimelineModel,
+    view: &TimelineView,
+    selection: Rect,
+) -> Vec<(usize, usize)> {
+    let mut found = Vec::new();
+    for (row, track) in model.tracks.iter().enumerate() {
+        let lane = areas.lane(row, view.scroll_y);
+        if !lane.y_range().intersects(selection.y_range()) {
+            continue;
+        }
+        for (k, item) in track.items.iter().enumerate() {
+            let Some((start, end)) = track.item_span(item) else {
+                continue;
+            };
+            let block = Rect::from_min_max(
+                pos2(view.x(lane.left(), start), lane.top()),
+                pos2(view.x(lane.left(), end), lane.bottom()),
+            );
+            if block.intersects(selection) {
+                found.push((row, k));
+            }
+        }
+    }
+    found
 }
 
 /// The ruler's own clicks and drags: a click or drag moves the playhead, Ctrl+drag makes a loop
@@ -1429,7 +1518,10 @@ fn item_keys(ui: &Ui, model: &TimelineModel, response: &mut TimelineResponse) {
             let action = match event {
                 egui::Event::Copy => TrackAction::CopyItems,
                 egui::Event::Cut => TrackAction::CutItems,
-                egui::Event::Paste(_) => TrackAction::PasteItems { at },
+                egui::Event::Paste(text) => TrackAction::PasteItems {
+                    at,
+                    text: Some(text.clone()),
+                },
                 _ => return true,
             };
             response.actions.push(action);
@@ -1452,7 +1544,7 @@ fn item_menu(ui: &mut Ui, model: &TimelineModel, response: &mut TimelineResponse
         (
             tr("menu.edit.paste"),
             "Ctrl+V",
-            TrackAction::PasteItems { at },
+            TrackAction::PasteItems { at, text: None },
         ),
         (tr("timeline.item.delete"), "Del", TrackAction::DeleteItems),
     ];

@@ -474,7 +474,8 @@ fn dragging_an_item_by_its_header_bar_moves_it() {
         harness.state().project().audio_tracks[0].items[0].position,
         0.0
     );
-    // Below the bar the item is content: dragging there scrubs the playhead instead.
+    // Below the bar the item is content: dragging there box-selects instead, and leaves the
+    // playhead alone.
     let body = timeline_point(&harness, 0.5, 1);
     let to = timeline_point(&harness, 1.0, 1);
     drag(&mut harness, body, to);
@@ -482,7 +483,59 @@ fn dragging_an_item_by_its_header_bar_moves_it() {
         harness.state().project().audio_tracks[0].items[0].position,
         0.0
     );
-    assert_eq!(harness.state().clock().frame(), 30);
+    assert_eq!(harness.state().clock().frame(), 0);
+}
+
+#[test]
+fn dragging_over_the_lanes_box_selects_items() {
+    let mut harness = loaded();
+    seek_on_ruler(&mut harness, 1.0);
+    harness.event(Event::PointerMoved(timeline_point(&harness, 1.5, 1)));
+    shortcut(&mut harness, Modifiers::NONE, egui::Key::S);
+    let selected = |harness: &Harness<'_, App>| -> Vec<(String, usize)> {
+        let mut refs: Vec<_> = harness
+            .state()
+            .selected_items()
+            .iter()
+            .map(|r| (r.track.clone(), r.item))
+            .collect();
+        refs.sort();
+        refs
+    };
+    // A box over the second halves of both tracks, from below the last track.
+    let mut from = timeline_point(&harness, 1.9, 1);
+    from.y += LANE_HEIGHT;
+    let to = timeline_point(&harness, 1.2, 0);
+    drag(&mut harness, from, to);
+    assert_eq!(
+        selected(&harness),
+        [("audio".to_owned(), 1), ("video".to_owned(), 1)]
+    );
+    assert_eq!(harness.state().clock().frame(), 30, "the playhead stays");
+
+    // A plain box replaces the selection; Ctrl or Shift adds to it.
+    let from = timeline_point(&harness, 0.2, 1);
+    let to = timeline_point(&harness, 0.4, 1);
+    drag(&mut harness, from, to);
+    assert_eq!(selected(&harness), [("audio".to_owned(), 0)]);
+    let from = timeline_point(&harness, 0.2, 0);
+    let to = timeline_point(&harness, 0.4, 0);
+    modifier_drag(&mut harness, Modifiers::SHIFT, from, to);
+    assert_eq!(
+        selected(&harness),
+        [("audio".to_owned(), 0), ("video".to_owned(), 0)]
+    );
+
+    // The selected items edit together: Delete removes both.
+    shortcut(&mut harness, Modifiers::NONE, egui::Key::Delete);
+    let project = harness.state().project();
+    assert_eq!(project.audio_tracks[0].items.len(), 1);
+    assert_eq!(project.video_tracks[0].items.len(), 1);
+
+    // A click on empty lane space selects nothing.
+    let empty = timeline_point(&harness, 0.3, 1);
+    click(&mut harness, empty, PointerButton::Primary);
+    assert!(selected(&harness).is_empty());
 }
 
 #[test]
@@ -535,26 +588,72 @@ fn s_splits_under_the_playhead_and_delete_removes_the_selected_items() {
     assert_eq!(project.video_tracks[0].items.len(), 2);
 }
 
+/// The system clipboard as the platform layer (egui-winit) handles it: Ctrl+C and Ctrl+X send
+/// copy and cut events, and whatever the app copies lands on the clipboard; Ctrl+V sends a paste
+/// event only when the clipboard holds text.
+#[derive(Default)]
+struct PlatformClipboard(String);
+
+impl PlatformClipboard {
+    fn send(&mut self, harness: &mut Harness<'_, App>, event: Event) {
+        harness.event(event);
+        harness.run_steps(1);
+        for command in &harness.output().platform_output.commands {
+            if let egui::OutputCommand::CopyText(text) = command {
+                self.0.clone_from(text);
+            }
+        }
+        harness.run_steps(1);
+    }
+
+    fn copy(&mut self, harness: &mut Harness<'_, App>) {
+        self.send(harness, Event::Copy);
+    }
+
+    fn cut(&mut self, harness: &mut Harness<'_, App>) {
+        self.send(harness, Event::Cut);
+    }
+
+    fn paste(&mut self, harness: &mut Harness<'_, App>) {
+        if !self.0.is_empty() {
+            let text = self.0.clone();
+            self.send(harness, Event::Paste(text));
+        }
+    }
+}
+
 #[test]
 fn copied_items_paste_at_the_playhead() {
     let mut harness = loaded();
+    let mut clipboard = PlatformClipboard::default();
     let nodes = harness.state().project().graph.nodes.len();
     let bar = item_bar_point(&harness, 0.5, 1);
     click(&mut harness, bar, PointerButton::Primary);
-    harness.event(Event::Copy);
-    harness.run_steps(2);
+    clipboard.copy(&mut harness);
     seek_on_ruler(&mut harness, 1.0);
-    harness.event(Event::Paste(String::new()));
-    harness.run_steps(2);
-    let project = harness.state().project();
-    let positions: Vec<f64> = project.audio_tracks[0]
-        .items
-        .iter()
-        .map(|i| i.position)
-        .collect();
-    assert_eq!(positions, [0.0, 1.0]);
+    clipboard.paste(&mut harness);
+    let positions = |harness: &Harness<'_, App>| -> Vec<f64> {
+        harness.state().project().audio_tracks[0]
+            .items
+            .iter()
+            .map(|i| i.position)
+            .collect()
+    };
+    assert_eq!(positions(&harness), [0.0, 1.0]);
     // Over the timeline the clipboard is the timeline's, not the graph's.
-    assert_eq!(project.graph.nodes.len(), nodes);
+    assert_eq!(harness.state().project().graph.nodes.len(), nodes);
+
+    // Cut removes the selected (pasted) item and pastes it back.
+    clipboard.cut(&mut harness);
+    assert_eq!(positions(&harness), [0.0]);
+    seek_on_ruler(&mut harness, 1.5);
+    clipboard.paste(&mut harness);
+    assert_eq!(positions(&harness), [0.0, 1.5]);
+
+    // Text copied elsewhere since then isn't the items.
+    clipboard.0 = "some other text".into();
+    clipboard.paste(&mut harness);
+    assert_eq!(positions(&harness).len(), 2);
 }
 
 #[test]
@@ -784,7 +883,12 @@ fn the_wheel_zooms_over_an_audio_block_too() {
 
 /// Drags with the Ctrl key held.
 fn ctrl_drag(harness: &mut Harness<'_, App>, from: Pos2, to: Pos2) {
-    harness.event(Event::ModifiersChanged(Modifiers::COMMAND));
+    modifier_drag(harness, Modifiers::COMMAND, from, to);
+}
+
+/// A primary drag with `modifiers` held throughout.
+fn modifier_drag(harness: &mut Harness<'_, App>, modifiers: Modifiers, from: Pos2, to: Pos2) {
+    harness.event(Event::ModifiersChanged(modifiers));
     harness.run_steps(1);
     harness.event(Event::PointerMoved(from));
     harness.run_steps(1);
@@ -792,7 +896,7 @@ fn ctrl_drag(harness: &mut Harness<'_, App>, from: Pos2, to: Pos2) {
         pos: from,
         button: PointerButton::Primary,
         pressed: true,
-        modifiers: Modifiers::COMMAND,
+        modifiers,
     });
     harness.run_steps(1);
     for t in [0.25, 0.5, 0.75, 1.0] {
@@ -803,7 +907,7 @@ fn ctrl_drag(harness: &mut Harness<'_, App>, from: Pos2, to: Pos2) {
         pos: to,
         button: PointerButton::Primary,
         pressed: false,
-        modifiers: Modifiers::COMMAND,
+        modifiers,
     });
     harness.run_steps(1);
     harness.event(Event::ModifiersChanged(Modifiers::NONE));

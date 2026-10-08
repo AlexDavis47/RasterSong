@@ -102,12 +102,14 @@ app opens one video track; more arrive with the Resources panel on the
 Every item has a **header bar** along its top with the track's name and a mute button (a muted item reads as a gap,
 for graphs too). Drag the bar to move the item; the area below it shows the item's content, thumbnails of the
 source video (decoded by a separate small decoder so they never slow rendering and survive graph edits) or the
-audio's waveform, and seeks like empty lane space. Items can't start before the timeline does.
+audio's waveform, and behaves like empty lane space. Items can't start before the timeline does.
 
 **Editing items:**
 
 - Click an item's bar to select it, Ctrl+click to add it to the selection or take it out; clicking empty lane
-  space selects none. Selected items are outlined. Dragging a selected item moves every selected item.
+  space selects none. **Drag over lane space** (empty, or an item's content) to box-select the items the box
+  touches, on any tracks; Ctrl or Shift adds them to the selection. Selected items are outlined. Dragging a
+  selected item moves every selected item, and every edit below applies to all of them.
 - Drag an item's left or right edge (over its whole height) to **trim** it over its file; it stops at the file's
   ends. **Alt+drag** an edge to change the item's **rate** instead, keeping its in and out points: longer plays
   slower and lower, like tape (from 0.05× to 20×).
@@ -115,8 +117,9 @@ audio's waveform, and seeks like empty lane space. Items can't start before the 
   selected.
 - **Delete** (or Backspace) removes the selected items. **Ctrl+C**, **Ctrl+X** and **Ctrl+V** copy, cut and paste
   them; pasted items go back to the tracks they came from, the earliest at the playhead, and become the
-  selection. These keys act on the timeline while the pointer is over it, and on the graph otherwise. The bar's
-  right-click menu has the same commands.
+  selection. These keys act on the timeline while the pointer is over it, and on the graph otherwise. Copying puts
+  a marker on the system clipboard (the platform only sends Ctrl+V when it holds text); copying anything else
+  since then means Ctrl+V over the timeline pastes nothing. The bar's right-click menu has the same commands.
 - **Snapping** is on by default (the Snap button in the ruler's corner): moves and edges snap to the ruler's
   ticks (beats and bars in tempo mode), the edges of other items, the playhead and the timeline's start, within
   a few pixels. Hold **Shift** to drag freely.
@@ -132,8 +135,8 @@ Linking, heights, solo and mutes are saved with the project and undo like any ed
 - The scroll wheel zooms time around the pointer, from half the whole video down to a few frames (over the
   headers it scrolls the tracks); middle- or right-drag pans in both directions; F shows the whole video.
 - Tick lines run behind the lanes, labelled on the ruler, down to single frames when zoomed in.
-- Click or drag on the ruler, empty lane space or an item's content to seek.
-- **Loop region** (as in Reaper): drag along the ruler to make one, snapped to whole frames; drag its edges to
+- Click or drag on the ruler to seek; lane space selects instead (see above).
+- **Loop region** (as in Reaper): Ctrl+drag along the ruler to make one, snapped to whole frames; Ctrl+drag its edges to
   change it. R or the Loop button by the play button turns looping on and off; right-click the ruler to do the
   same or remove the region. Playing into the region repeats it; playing from after it plays on. While looping,
   rendering ahead wraps from the region's end to its start, so the loop plays without waiting. The region is saved
