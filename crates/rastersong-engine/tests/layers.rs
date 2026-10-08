@@ -519,4 +519,7 @@ fn the_service_reports_a_graph_item_that_cannot_compile() {
         unreachable!()
     };
     assert!(failure.message.contains('7'), "{}", failure.message);
+    // The node at fault is named with the graph it belongs to.
+    assert_eq!(failure.graph, Some(7));
+    assert_eq!(failure.node.as_deref(), Some("b"));
 }

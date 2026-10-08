@@ -11,7 +11,7 @@ Testing is a first-class part of the project. Every phase has tests that must pa
 | Fixtures | Small generated clips: B-frames, open GOP, variable frame rate, odd dimensions, rotation metadata, frame index encoded into lossless frames, audio-only, video-only, truncated files | `cargo xtask fixtures` (uses the `ffmpeg` installed by `cargo xtask fetch-ffmpeg`, not one on `PATH`) |
 | End to end | CLI renders the example graphs; selected frames compared to golden images in `crates/rastersong-cli/tests/golden/` with tolerances for cross-platform floating-point differences. After an intended change, inspect the new frames and update them with `RASTERSONG_BLESS=1 cargo test -p rastersong-cli --test golden` | snapshot tests |
 | Performance | Samples/sec per node, decode fps, full-graph fps, recorded in [benchmarks.md](benchmarks.md). Automated regression checks in CI are planned; shared CI runners are too noisy for tight thresholds | `criterion` |
-| GUI | Graph ↔ editor conversion and timeline math are unit tested. Headless interaction tests (`crates/rastersong-gui/tests/app.rs`, `resources_panel.rs`) drive the real UI with real pointer events on the fake backend; every interaction a hint or tooltip promises gets one ([CONTRIBUTING](../CONTRIBUTING.md)). `cargo test -p rastersong-gui --test screenshots -- --ignored` renders the UI offscreen (needs a GPU) to `target/tmp/screenshots/` for checking layout changes | `egui_kittest` |
+| GUI | Graph ↔ editor conversion and timeline math are unit tested. Headless interaction tests (`crates/rastersong-gui/tests/app.rs`, `resources_panel.rs`) drive the real UI with real pointer events on the fake backend; every interaction a hint or tooltip promises gets one ([CONTRIBUTING](../CONTRIBUTING.md)), and `param_field.rs` does the same for the parameter field's track, value box and amount knob. `cargo test -p rastersong-gui --test screenshots -- --ignored` renders the UI offscreen (needs a GPU) to `target/tmp/screenshots/` for checking layout changes | `egui_kittest` |
 | Robustness (later) | Malformed media never crashes the app | `cargo-fuzz` |
 
 CI runs `clippy` (with `-D warnings`), the fixtures and tests, and the generated-docs check
@@ -33,5 +33,4 @@ Work in the [roadmap](roadmap.md) carries its own test obligations, so they aren
 - Taps (inspection and listening) never change the rendered output or the cache (they are read-only probes).
 - Routing: with no FX the output equals the plain mix; an audio FX on a folder hears the sum of its children; a graph
   with no Audio Output passes its track's audio through; a Control folder with master send off reaches no output.
-- Timeline interactions: double-clicking a track's resize edge resets its height; every track kind reorders by
-  dragging its header; a drop lands where its ghost was drawn; grouped items move together.
+- Timeline interactions: a drop lands where its ghost was drawn; grouped items move together.

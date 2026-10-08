@@ -2072,3 +2072,183 @@ fn dragging_a_media_card_onto_the_timeline_makes_a_track() {
     harness.run_steps(2);
     assert_eq!(harness.state().project().video_tracks.len(), 2);
 }
+
+/// The middle of the first wire of the graph, which hovering inspects.
+fn wire_middle(harness: &Harness<'_, App>) -> Pos2 {
+    let editor = harness.state().editor();
+    let wire = editor.wires()[0];
+    let from = editor
+        .pin_screen_pos(wire.from.0, false, wire.from.1)
+        .unwrap();
+    let to = editor.pin_screen_pos(wire.to.0, true, wire.to.1).unwrap();
+    // Wires leave and enter their pins level, so the curve passes through the middle.
+    from + (to - from) * 0.5
+}
+
+/// Rests the pointer on the first wire until the editor reports it hovered.
+fn hover_wire(harness: &mut Harness<'_, App>) {
+    let at = wire_middle(harness);
+    harness.event(Event::PointerMoved(at));
+    step_until(harness, "the wire hovered", |app| {
+        app.editor().hovered_output().is_some()
+    });
+}
+
+#[test]
+fn holding_alt_and_scrolling_over_a_connection_changes_its_view() {
+    let mut harness = loaded();
+    hover_wire(&mut harness);
+    let before = harness.state().settings().views;
+    harness.event(Event::ModifiersChanged(Modifiers::ALT));
+    harness.run_steps(1);
+    harness.event(Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: vec2(0.0, -1.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: Modifiers::ALT,
+    });
+    harness.run_steps(2);
+    harness.event(Event::ModifiersChanged(Modifiers::NONE));
+    harness.run_steps(1);
+    assert_ne!(harness.state().settings().views, before);
+}
+
+#[test]
+fn holding_shift_over_a_connection_listens_to_it() {
+    let mut harness = loaded();
+    hover_wire(&mut harness);
+    assert!(!harness.state().is_listening());
+    harness.event(Event::ModifiersChanged(Modifiers::SHIFT));
+    harness.run_steps(2);
+    assert!(harness.state().is_listening());
+    harness.event(Event::ModifiersChanged(Modifiers::NONE));
+    harness.run_steps(2);
+    assert!(!harness.state().is_listening());
+}
+
+#[test]
+fn copies_keep_input_connections_and_shift_does_the_opposite_once() {
+    let mut harness = loaded();
+    assert!(harness.state().settings().keep_connections);
+    select(&mut harness, "split");
+    let split = key(&harness, "split");
+    let wires = |harness: &Harness<'_, App>| harness.state().editor().wires().len();
+    let feeding = harness
+        .state()
+        .editor()
+        .wires()
+        .iter()
+        .filter(|w| w.to.0 == split)
+        .count();
+    assert!(feeding > 0);
+
+    // Ctrl+D: the copy is fed like the original.
+    let before = wires(&harness);
+    shortcut(&mut harness, Modifiers::COMMAND, egui::Key::D);
+    assert_eq!(wires(&harness), before + feeding);
+    // Ctrl+Shift+D (the copy is selected now, fed the same): its inputs are left unconnected.
+    let before = wires(&harness);
+    shortcut(
+        &mut harness,
+        Modifiers::COMMAND | Modifiers::SHIFT,
+        egui::Key::D,
+    );
+    assert_eq!(wires(&harness), before);
+
+    // The same for pasting, with Shift held for Ctrl+Shift+V.
+    select(&mut harness, "split");
+    harness.event(Event::Copy);
+    harness.run_steps(2);
+    let text = harness.state().editor().clipboard().unwrap().to_owned();
+    let canvas = harness.state().editor().canvas_rect();
+    harness.event(Event::PointerMoved(pos2(
+        canvas.left() + 40.0,
+        canvas.bottom() - 90.0,
+    )));
+    let before = wires(&harness);
+    harness.event(Event::Paste(text.clone()));
+    harness.run_steps(2);
+    assert_eq!(wires(&harness), before + feeding);
+    let before = wires(&harness);
+    harness.event(Event::ModifiersChanged(
+        Modifiers::COMMAND | Modifiers::SHIFT,
+    ));
+    harness.event(Event::Paste(text));
+    harness.run_steps(2);
+    harness.event(Event::ModifiersChanged(Modifiers::NONE));
+    harness.run_steps(1);
+    assert_eq!(wires(&harness), before);
+}
+
+#[test]
+fn the_split_divider_drags_and_unprocessed_swaps_the_sides() {
+    use rastersong_gui::preview::Feed;
+    let mut harness = loaded();
+    harness.get_by_label("Split").click();
+    harness.run_steps(2);
+    let (position, sides) = harness.state().preview_split().expect("split on");
+    assert_eq!(sides, (Feed::Unprocessed, Feed::Processed));
+
+    let rect = harness.state().preview_rect();
+    let divider = pos2(rect.left() + rect.width() * position, rect.center().y);
+    drag(
+        &mut harness,
+        divider,
+        divider + vec2(rect.width() * 0.2, 0.0),
+    );
+    let (moved, _) = harness.state().preview_split().unwrap();
+    assert!(
+        (moved - (position + 0.2)).abs() < 0.02,
+        "{position} -> {moved}"
+    );
+
+    harness.get_by_label("Unprocessed").click();
+    harness.run_steps(2);
+    let (_, sides) = harness.state().preview_split().unwrap();
+    assert_eq!(sides, (Feed::Processed, Feed::Unprocessed));
+}
+
+#[test]
+fn clicking_the_error_bar_shows_the_node_at_fault() {
+    let app = app_with_project(|project| {
+        project.graph = GraphDesc::from_json(
+            r#"{ "version": 0, "nodes": [ { "id": "v", "type": "video_input" },
+                { "id": "c", "type": "pack", "params": { "channels": 7 } },
+                { "id": "o", "type": "output" } ],
+              "connections": [ { "from": "v", "to": "c" }, { "from": "c", "to": "o" } ] }"#,
+        )
+        .unwrap();
+        project.add_layer("Layer");
+        let graph = project.graph_id;
+        project.place_graph(0, graph, 0.0, 2.0);
+    });
+    let mut harness = harness(app);
+    step_until(&mut harness, "the failure", |app| {
+        matches!(
+            app.engine().status(),
+            rastersong_engine::EngineStatus::Failed(_)
+        )
+    });
+    harness.run_steps(2);
+    assert!(harness.state().editor().active().is_none());
+    // On the message itself, which runs along the bar.
+    let canvas = harness.state().editor().canvas_rect();
+    let bar = pos2(canvas.left() + 60.0, canvas.bottom() - 15.0);
+    click(&mut harness, bar, PointerButton::Primary);
+    assert_eq!(
+        harness.state().editor().active().map(|n| n.id.as_str()),
+        Some("c")
+    );
+}
+
+#[test]
+fn the_add_track_menu_adds_empty_tracks() {
+    let mut harness = loaded();
+    harness.get_by_label("+ Track").click();
+    harness.run_steps(2);
+    harness.get_by_label("Video track").click();
+    harness.run_steps(2);
+    let project = harness.state().project();
+    assert_eq!(project.video_tracks.len(), 2);
+    assert_eq!(project.video_tracks[1].resource, None);
+}

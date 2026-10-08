@@ -67,7 +67,8 @@ Our own editor, drawn on a pannable, zoomable canvas (see [Decisions](decisions.
   "i" badge; warnings (something lost or ignored) a yellow "!". Neither stops the render. With several inputs,
   the main input (which sets the output's length and layout) has a ring around its pin.
 - When the graph can't render, a bar along the bottom of the graph says why and outlines the node at fault in
-  red; clicking the bar shows the node.
+  red; clicking the bar shows the node. A placed graph that isn't the open one is named by its id in the
+  message, and the bar has no node to show.
 - Moving or renaming nodes doesn't re-render; any other edit does.
 
 ## Inspector

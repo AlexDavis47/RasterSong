@@ -1034,9 +1034,10 @@ impl GraphEditor {
         };
         let text = egui::RichText::new(tr_args("editor.error_bar", &[("message", &message)]))
             .color(theme.error_bar_text);
+        // Not selectable, so a click on the message reaches the bar under it.
         ui.put(
             bar.shrink2(vec2(10.0, 0.0)),
-            egui::Label::new(text).truncate(),
+            egui::Label::new(text).truncate().selectable(false),
         );
         if node.is_some() {
             response.clone().on_hover_text(tr("editor.error_bar.hover"));

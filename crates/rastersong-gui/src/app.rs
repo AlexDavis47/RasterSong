@@ -107,6 +107,7 @@ pub struct App {
     /// Where the timeline and the inspector were last drawn, for tests.
     timeline_area: egui::Rect,
     inspector_rect: egui::Rect,
+    preview_rect: egui::Rect,
     audio: AudioOut,
     backend_info: Option<BackendInfo>,
     project: Project,
@@ -211,6 +212,7 @@ impl App {
             timeline_view: TimelineView::default(),
             timeline_area: egui::Rect::NOTHING,
             inspector_rect: egui::Rect::NOTHING,
+            preview_rect: egui::Rect::NOTHING,
             audio,
             backend_info,
             saved: project.clone(),
@@ -306,6 +308,18 @@ impl App {
         self.inspector_rect
     }
 
+    /// Where the preview's frame was last painted.
+    pub fn preview_rect(&self) -> egui::Rect {
+        self.preview_rect
+    }
+
+    /// With the split on, where the divider sits (a fraction of the preview's width) and the
+    /// feeds shown (left, right); `None` with it off.
+    pub fn preview_split(&self) -> Option<(f32, (Feed, Feed))> {
+        self.preview_split
+            .then(|| (self.split_position, split_sides(self.preview_feed)))
+    }
+
     /// Each video track's file length in seconds, once it is known.
     pub fn video_durations(&self) -> Vec<Option<f64>> {
         let tracks = &self.project.video_tracks;
@@ -315,6 +329,11 @@ impl App {
     /// How many video thumbnails are ready to draw.
     pub fn thumbnail_count(&self) -> usize {
         self.thumbnails.values().map(|t| t.textures.len()).sum()
+    }
+
+    /// Whether the sound of a connection is being listened to (Shift held over it).
+    pub fn is_listening(&self) -> bool {
+        self.listening.is_some()
     }
 
     /// The user's settings, saved between sessions.
@@ -976,7 +995,13 @@ impl App {
         self.editor.max_warmup_frames = self.project.max_warmup_frames;
         let frame = self.engine.frame(self.clock.frame());
         let failure = match self.engine.status() {
-            EngineStatus::Failed(failure) => Some(failure),
+            // The editor shows the open graph: a node of another graph isn't one it can point at.
+            EngineStatus::Failed(mut failure) => {
+                if failure.graph.is_some_and(|g| g != self.project.graph_id) {
+                    failure.node = None;
+                }
+                Some(failure)
+            }
             _ => None,
         };
         let levels = frame.as_ref().map_or(&[][..], |f| &f.levels[..]);
@@ -1596,6 +1621,7 @@ impl App {
     /// Paints the frame (or, with the split on, the two feeds either side of a draggable divider)
     /// at the current pan and zoom.
     fn paint_preview(&mut self, ui: &mut Ui, rect: egui::Rect, theme: &Theme) {
+        self.preview_rect = rect;
         let size = [&self.preview, &self.source_preview]
             .into_iter()
             .flatten()

@@ -6,7 +6,7 @@ mod inspect;
 mod inspector;
 mod linked;
 mod modulation;
-mod param_field;
+pub mod param_field;
 mod performance;
 mod search;
 mod tooltips;

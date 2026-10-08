@@ -542,8 +542,15 @@ memory maps read ordinary files. Saving rewrites the zip, copying unchanged entr
    - [x] **bug** Double-clicking a track's resize edge doesn't reset its height, though its hint says it does. The
      edge senses drag only (`Sense::drag()` in `timeline.rs`), which never reports a double-click, and the test
      only drags. Fix: `click_and_drag`, plus a kittest that double-clicks. *(Done: see [Timeline](app.md#timeline).)*
-   - [ ] **chore** Audit every hint and tooltip in `ui.lang` that promises an interaction (double-click,
+   - [x] **chore** Audit every hint and tooltip in `ui.lang` that promises an interaction (double-click,
      right-click, drag, keys) and add the missing kittests (see the rule in [CONTRIBUTING](../CONTRIBUTING.md)).
+     *(Done: see [Testing](testing.md). It found three bugs, fixed below.)*
+   - [x] **bug** Clicking a parameter's slider track set the value a little off from where its handle is drawn
+     (the value was taken along the whole track, the handle runs along a rail inset 4 px at each end).
+   - [x] **bug** A failing graph item's error lost its node, so the error bar couldn't point at the node at fault;
+     the failure now names the node and its graph, and the bar shows it when that graph is open.
+   - [x] **bug** Clicking the error bar's message did nothing: the message label took the click (it was
+     selectable). Only the bar's empty end worked.
    - [ ] **feature** A shared **drag bubble** widget (`widgets/`): a rounded pill with an icon and a label that
      follows the pointer during any drag. It plays a short "bloop" scale animation on start and on drop, and
      shrinks back to the source when the drag is cancelled. Resource and graph cards use it first, then item and
