@@ -21,7 +21,8 @@ Dependency direction: `gui → engine → (media, graph)`, and `graph`, `engine`
 ## Timeline
 
 The project is the clock, like a Premiere sequence: a **timebase** (width, height, frame rate) that no media file
-owns. A project without one takes the first video track's, or 1920×1080 at 30 fps when it has no video. One block
+owns. A project without one takes the first video track's, or 1920×1080 at 30 fps when it has no video; the app
+sets it on the Project page of Settings. One block
 of every graph is one project frame, frame `n` covering `n / fps` to `(n + 1) / fps` seconds, and the project
 lasts to the end of its last item (`timeline.rs`).
 

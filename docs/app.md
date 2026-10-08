@@ -125,7 +125,9 @@ With several buses, each audio track's header shows the bus it is routed to, wit
 
 **File → Settings…** (Ctrl+,) opens a window with two pages. **Application** is remembered on this computer: theme,
 wire style, the node latency and warmup display, and keeping input connections when duplicating and pasting.
-**Project** is saved in the project file: tempo (bpm, beats per bar, first beat), *Max warmup frames* (how much
+**Project** is saved in the project file: the **picture** (resolution and frame rate, from 23.976 to 60 fps with
+NTSC rates as exact fractions; until one is set the fields show the first video's and say so, and the reset button
+goes back to following it), tempo (bpm, beats per bar, first beat), *Max warmup frames* (how much
 is pre-rendered after a jump in the timeline; the page warns when the graph needs more), the Audio Output rate and
 the **output buses** (below). Each
 setting has a line of help. The tempo bar in the timeline edits the same tempo fields. The preview resolution and

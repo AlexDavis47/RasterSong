@@ -3,8 +3,8 @@
 
 use eframe::egui::{self, RichText, Ui};
 use rastersong_engine::{
-    Bus, INSPECT_RATE_RANGE, MAX_BUS_CHANNELS, MAX_WARMUP_FRAMES_LIMIT, PreviewScale, Tempo,
-    UNBOUNDED_WARMUP,
+    Bus, INSPECT_RATE_RANGE, MAX_BUS_CHANNELS, MAX_WARMUP_FRAMES_LIMIT, PreviewScale, Rational,
+    Tempo, Timebase, UNBOUNDED_WARMUP,
 };
 use rastersong_lang::{tr, tr_args};
 
@@ -77,6 +77,33 @@ pub(super) fn tempo_fields(ui: &mut Ui, tempo: &mut Tempo) {
             .suffix(tr("unit.seconds.suffix")),
     )
     .on_hover_text(tr("tempo.first_beat.help"));
+}
+
+/// The frame rates the Picture section offers, NTSC rates as exact fractions.
+const FRAME_RATES: [Rational; 8] = [
+    Rational::new(24000, 1001),
+    Rational::new(24, 1),
+    Rational::new(25, 1),
+    Rational::new(30000, 1001),
+    Rational::new(30, 1),
+    Rational::new(50, 1),
+    Rational::new(60000, 1001),
+    Rational::new(60, 1),
+];
+
+/// The widths and heights a project can render at.
+const PICTURE_SIZE_RANGE: std::ops::RangeInclusive<f64> = 16.0..=8192.0;
+
+/// "29.97 fps", "25 fps": the rate to at most three decimals.
+fn frame_rate_label(rate: Rational) -> String {
+    let fps = format!("{:.3}", rate.as_f64());
+    let fps = fps.trim_end_matches('0').trim_end_matches('.');
+    tr_args("settings.frame_rate.value", &[("fps", fps)])
+}
+
+/// Whether two frame rates are the same rate, however they are written (`60/2` is `30/1`).
+fn same_rate(a: Rational, b: Rational) -> bool {
+    i64::from(a.num) * i64::from(b.den) == i64::from(b.num) * i64::from(a.den)
 }
 
 impl App {
@@ -405,7 +432,72 @@ impl App {
         );
     }
 
+    /// The project's resolution and frame rate. Until one is set they follow the first video
+    /// (or the default without one), shown here as the engine resolved them; editing a field sets
+    /// the project's own, and the reset button goes back to following the video.
+    fn picture_settings(&mut self, ui: &mut Ui) {
+        section(ui, tr("settings.picture"));
+        let own = self.project.timebase;
+        let mut timebase = own
+            .or_else(|| self.engine.info().map(|info| info.timebase))
+            .unwrap_or(Timebase::DEFAULT);
+        let mut changed = false;
+        ui.horizontal(|ui| {
+            ui.label(tr("settings.resolution"));
+            for (value, hover) in [
+                (&mut timebase.width, "settings.resolution.width"),
+                (&mut timebase.height, "settings.resolution.height"),
+            ] {
+                let mut size = f64::from(*value);
+                if ui
+                    .add(
+                        ValueBox::new(&mut size)
+                            .range(PICTURE_SIZE_RANGE)
+                            .max_decimals(0)
+                            .speed(2.0)
+                            .suffix(tr("settings.resolution.suffix")),
+                    )
+                    .on_hover_text(tr(hover))
+                    .changed()
+                {
+                    *value = size.round() as u32;
+                    changed = true;
+                }
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label(tr("settings.frame_rate"));
+            let current = timebase.frame_rate;
+            egui::ComboBox::from_id_salt("settings-frame-rate")
+                .selected_text(frame_rate_label(current))
+                .show_ui(ui, |ui| {
+                    let other =
+                        (!FRAME_RATES.iter().any(|&r| same_rate(r, current))).then_some(current);
+                    for rate in other.into_iter().chain(FRAME_RATES) {
+                        if ui
+                            .selectable_label(same_rate(rate, current), frame_rate_label(rate))
+                            .clicked()
+                            && rate != current
+                        {
+                            timebase.frame_rate = rate;
+                            changed = true;
+                        }
+                    }
+                });
+            if own.is_none() {
+                ui.label(RichText::new(tr("settings.picture.from_video")).weak());
+            } else if reset_button(ui, true) {
+                self.project.timebase = None;
+            }
+        });
+        if changed {
+            self.project.timebase = Some(timebase);
+        }
+        help(ui, tr("settings.picture.help"));
+    }
+
     fn project_settings(&mut self, ui: &mut Ui) {
+        self.picture_settings(ui);
         section(ui, tr("settings.tempo"));
         ui.horizontal_wrapped(|ui| tempo_fields(ui, &mut self.project.tempo));
         help(ui, tr("settings.tempo.help"));

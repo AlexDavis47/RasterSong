@@ -446,8 +446,8 @@ memory maps read ordinary files. Saving rewrites the zip, copying unchanged entr
      track lists ([Decisions](decisions.md#video-and-audio-tracks-are-separate-lists-october-2026)), tracks hold
      items (position, in/out, rate, mute), and every track enters the graph by its name. The app still shows one
      item per track.
-   - [ ] **feature** Project settings (resolution, frame rate) on the Project page of Settings. Today the timebase
-     can only be set in the project file.
+   - [x] **feature** Project settings (resolution, frame rate) on the Project page of Settings: a Picture section
+     shows the timebase in use, and editing it sets the project's own (the reset button follows the video again).
    - [ ] **feature** Tracks of items for video and audio, item header bars with mute, track solo and height, linking.
    - [ ] **feature** Item editing (move, trim, split, delete, rate drag, snapping, multi-select, copy/paste, undo).
    - [x] **feature** Track mix and output buses, with the warning on removal *(done: see

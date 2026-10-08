@@ -852,6 +852,38 @@ fn tracks_offer_the_buses_and_project_settings_add_them() {
 }
 
 #[test]
+fn the_picture_follows_the_video_until_a_frame_rate_is_picked() {
+    let mut harness = loaded();
+    shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Comma);
+    harness.get_by_label("Project").click();
+    harness.run_steps(3);
+    // No timebase of its own: the fields show the video's, and say so.
+    harness.get_by_label("Following the first video");
+    harness.get_by_value("30 fps").click();
+    harness.run_steps(2);
+    harness.get_by_label("29.97 fps").click();
+    harness.run_steps(2);
+    let picked = harness.state().project().timebase;
+    assert_eq!(
+        picked,
+        Some(rastersong_engine::Timebase {
+            width: 64,
+            height: 36,
+            frame_rate: Rational::new(30000, 1001),
+        })
+    );
+    step_until(&mut harness, "the new frame rate", |app| {
+        app.engine()
+            .info()
+            .is_some_and(|info| info.frame_rate == Rational::new(30000, 1001))
+    });
+    // The reset button goes back to following the video.
+    harness.get_by_label("\u{21ba}").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().project().timebase, None);
+}
+
+#[test]
 fn the_warmup_limit_is_a_project_setting_that_reaches_the_project() {
     let mut harness = loaded();
     shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Comma);
