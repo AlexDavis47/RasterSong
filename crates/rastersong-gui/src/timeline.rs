@@ -684,6 +684,8 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         ui.data_mut(|d| d.insert_temp(box_id, start));
     }
     let boxing: Option<BoxSelect> = ui.data(|d| d.get_temp(box_id));
+    // Drawn after the lanes, so it shows over the items.
+    let mut dragged_box = None;
     if let (Some(start), Some(p)) = (boxing, background.interact_pointer_pos()) {
         let corner = pos2(
             view.x(lanes_left, start.seconds),
@@ -691,18 +693,7 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         );
         let selection = Rect::from_two_pos(corner, p);
         if background.dragged_by(PointerButton::Primary) {
-            let painter = ui.painter_at(body_lanes);
-            painter.rect_filled(
-                selection,
-                CornerRadius::ZERO,
-                theme.accent.gamma_multiply(0.08),
-            );
-            painter.rect_stroke(
-                selection,
-                CornerRadius::ZERO,
-                Stroke::new(1.0, theme.accent.gamma_multiply(0.7)),
-                egui::StrokeKind::Inside,
-            );
+            dragged_box = Some(selection);
         }
         if background.drag_stopped() {
             let items = items_in(&areas, model, view, selection);
@@ -778,6 +769,19 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
             clip: body_lanes,
         };
         lane.show(ui, &lane_painter, model, view, theme, &mut response);
+    }
+    if let Some(selection) = dragged_box {
+        lane_painter.rect_filled(
+            selection,
+            CornerRadius::ZERO,
+            theme.accent.gamma_multiply(0.12),
+        );
+        lane_painter.rect_stroke(
+            selection,
+            CornerRadius::ZERO,
+            Stroke::new(1.0, theme.accent.gamma_multiply(0.8)),
+            egui::StrokeKind::Inside,
+        );
     }
 
     // Headers.

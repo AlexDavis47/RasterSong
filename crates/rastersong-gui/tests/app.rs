@@ -487,6 +487,41 @@ fn dragging_an_item_by_its_header_bar_moves_it() {
 }
 
 #[test]
+fn the_selection_box_is_drawn_over_the_items() {
+    let mut harness = loaded();
+    let from = timeline_point(&harness, 0.2, 1);
+    let to = timeline_point(&harness, 1.5, 0);
+    harness.event(Event::PointerMoved(from));
+    harness.run_steps(1);
+    press(&mut harness, from, PointerButton::Primary, true);
+    for t in [0.5, 1.0] {
+        harness.event(Event::PointerMoved(from + (to - from) * t));
+        harness.run_steps(1);
+    }
+    let selection = egui::Rect::from_two_pos(from, to);
+    let rects: Vec<egui::Rect> = harness
+        .output()
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Rect(r) => Some(r.rect),
+            _ => None,
+        })
+        .collect();
+    let at = rects
+        .iter()
+        .rposition(|r| r.min.distance(selection.min) < 1.0 && r.max.distance(selection.max) < 1.0)
+        .expect("the box is drawn while dragging");
+    // Shapes come in paint order.
+    let later = rects[at + 1..]
+        .iter()
+        .filter(|r| r.intersects(selection.shrink(1.0)))
+        .count();
+    assert_eq!(later, 0, "nothing in the lanes is drawn over the box");
+    press(&mut harness, to, PointerButton::Primary, false);
+}
+
+#[test]
 fn dragging_over_the_lanes_box_selects_items() {
     let mut harness = loaded();
     seek_on_ruler(&mut harness, 1.0);
