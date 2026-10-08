@@ -321,9 +321,9 @@ in order: each stage is a foundation for the next, so nothing is built on a mode
 changes need no migration (version 0).
 
 Graph layers shipped first, in stage 2: stacked lanes of graph items above the tracks, each reading the one below
-through *Layer below*. They are being replaced by **Reaper-style routing**, in which folder tracks are buses and
+through *Layer below*. Stage 2b replaced them with **Reaper-style routing**, in which folder tracks are buses and
 graphs are FX on tracks, folders, the master and items. Premiere's Video / Audio / Control grouping is the default
-template. The model below describes the target, and stage 2b does the rebuild.
+template. The model below describes the target; what stage 2b built is in [Routing](engine.md#routing).
 
 **Rule: explicit over hidden.** Every signal a graph uses enters through a port that something visibly filled.
 There are no fallbacks and no overrides that only apply in some situations (the old "Audio Output replaces the
@@ -424,9 +424,9 @@ graph's extra input ports. With no FX anywhere, the output is the plain mix, bec
   *Main*, stereo; 5.1 is *Main* with six channels; stems are extra buses, or folders sent to a bus). Tracks route
   to a bus (*Main* by default), and each Audio Output picks one. Adding buses or channels breaks nothing; removing
   them warns first, listing the connections and tracks affected.
-- *Today* the track tree and folders exist, but the audio sum happens after rendering, in the app's playback mixer
-  and the CLI, with each track's level multiplied down through its folders. Graphs therefore can't hear the track
-  mix.
+- *Today* folders mix inside the renderer whenever an FX renders sound. With none, the app's playback mixer and
+  the CLI still sum the audio tracks after rendering, each track's level multiplied down through its folders,
+  which sounds the same and keeps playback real-time.
 
 **Graphs and ports.** Graphs are resources; a project can have any number.
 
@@ -460,11 +460,10 @@ graph's extra input ports. With no FX anywhere, the output is the plain mix, bec
   per section. Item FX keep what graph items have today: trimming without stretching, mute, and **pre-roll**.
   Pre-roll is a per-item setting, on by default: the graph warms up as if it had been running before the item, so
   trimming the left edge never changes what follows. Off, it starts cold at the edge.
-- *Today* (before stage 2b) graphs are placed as items on **graph layers**. These are lanes above the tracks; items
-  on a lane can't overlap, and the lanes are stacked so each reads the one below through *Layer below*. The bottom
-  lane reads the track mix's picture; its sound is not available yet. See [Graph layers](engine.md#graph-layers).
+- *Today* FX chains, item FX, receives and the FX window are built; see [FX](app.md#fx) and
+  [Routing](engine.md#routing).
 
-**Editor and preview.** Double-clicking a graph resource or graph item opens it in the editor. The preview always
+**Editor and preview.** Double-clicking a graph resource or an FX in a chain opens it in the editor. The preview always
 shows the master output. Hovering a connection in the open graph inspects it even when the graph isn't under the
 playhead (the tap renderer renders it on its own).
 
@@ -474,7 +473,7 @@ audio are both mixed **inside the renderer**. This replaces today's `@track_mix`
 sum in the app's mixer and the CLI. The renderer keeps a compiled graph per FX instance and switches item FX at
 item edges. Latency is already compensated against the timeline (output frame N comes from source frame N +
 latency), so graphs with different latencies stay in sync. FX chains have their own renderer state, so they can
-run as a pipeline across frames on separate cores, as today's graph layers already do. The cache key
+run as a pipeline across frames on separate cores, as graph layers did. The cache key
 becomes what produced the frame: the active graphs' versions, the versions of the resources and tracks they read,
 and the preview scale, so editing one graph keeps frames rendered only by others. Each video track needs a decoder
 on the render thread, the tap renderer and the thumbnails; benchmark this early.
@@ -527,17 +526,14 @@ memory maps read ordinary files. Saving rewrites the zip, copying unchanged entr
    - [x] **chore** `CONTRIBUTING.md` development rules, and one shared channel-count label *(done)*.
    - Input and Output port nodes *(moved to stage 2b: ports are filled by the host track and receives)*.
    - [x] **feature** Graph layers: items, bindings in the item inspector, stacking, mute/solo, pre-roll setting
-     *(done: see [Timeline](app.md#timeline), [Graph layers](engine.md#graph-layers) and
-     [Decisions](decisions.md#graph-layers-october-2026))*.
-     *(Superseded by stage 2b; graph layers stay as they are until then.)*
+     *(done: see [Decisions](decisions.md#graph-layers-october-2026))*. *(Replaced by FX in stage 2b.)*
    - ~~**feature** Graph items in the timeline: copy, cut and paste, box select, and moving an item to another
      layer by dragging.~~ *(Superseded: item FX use the track item editing.)*
    - [x] **feature** Renderer switching graphs at item edges, one renderer state per item, layers as a pipeline
-     *(done: see [Graph layers](engine.md#graph-layers); the cache key is still the project version, so an edit
-     to one graph re-renders every frame)*.
+     *(done; carried over to item FX, see [Routing](engine.md#routing); the cache key is still the project
+     version, so an edit to one graph re-renders every frame)*.
    - ~~**feature** Layer-below sound under the bottom layer and the track mix sound under frames no item supplies
-     sound for~~ *(superseded: stage 2b mixes audio inside the renderer, so FX hear their track or folder; today's
-     limit is in [Graph layers](engine.md#graph-layers))*.
+     sound for~~ *(superseded: stage 2b mixes audio inside the renderer, so FX hear their track or folder)*.
 
    **2a. Fixes before the routing rebuild.** These don't depend on the model, so they ship first.
    - [x] **bug** Double-clicking a track's resize edge doesn't reset its height, though its hint says it does. The
@@ -565,7 +561,7 @@ memory maps read ordinary files. Saving rewrites the zip, copying unchanged entr
      shows its length rather than only its start.
    - [x] **bug** With no graph items the open graph still renders over the whole timeline, which is an implicit
      graph ([Decisions](decisions.md#timeline-routing-folders-and-graphs-as-fx-october-2026)). With nothing placed,
-     play the plain track mix. *(Done: the app and the CLI; see [Graph layers](engine.md#graph-layers).)*
+     play the plain track mix. *(Done: the app and the CLI; see [Routing](engine.md#routing).)*
    - [x] **bug** Only audio tracks can be reordered; video tracks can't, and on audio tracks the header widgets
      cover most of the grip. Make every track draggable from its header background, and test it headless (the only
      reorder test needs a GPU and has stale coordinates). *(Done: header labels no longer select text, so a drag on
@@ -584,21 +580,27 @@ memory maps read ordinary files. Saving rewrites the zip, copying unchanged entr
    - [x] **chore** One track tree: folder tracks, master send, any track kind anywhere. Replaces the video and
      audio lists. *(Done: see [Decisions](decisions.md#the-track-tree-october-2026). Until folders mix in the
      renderer, their levels are multiplied into each track's.)*
-   - [ ] **feature** Folder mixing inside the renderer (video composite, audio sum). Replaces `@track_mix` and the
-     after-render audio sum in the app and the CLI.
-   - [ ] **feature** Graphs as FX chains on tracks, folders and the master: bypass, the "through" tag for a missing
-     output, and receives filling extra inputs.
-   - [ ] **feature** Item FX with trim, mute and pre-roll, replacing graph layers and `Binding::LayerBelow`.
+   - [x] **feature** Folder mixing inside the renderer (video composite, audio sum). Replaces `@track_mix`.
+     *(Done: see [Routing](engine.md#routing) and
+     [Decisions](decisions.md#routing-in-the-renderer-october-2026). The after-render audio sum stays as the
+     real-time path while no FX renders sound.)*
+   - [x] **feature** Graphs as FX chains on tracks, folders and the master: bypass, the "through" tag for a missing
+     output, and receives filling extra inputs. *(Done: see [FX](app.md#fx).)*
+   - [x] **feature** Item FX with trim, mute and pre-roll, replacing graph layers and `Binding::LayerBelow`.
+     *(Done: see [Routing](engine.md#routing).)*
    - [x] **feature** Input port nodes replacing Video Input and Audio Input *(done: the same nodes read a named
      port; see [Decisions](decisions.md#input-ports-october-2026)). Output ports only matter to subgraphs, so they
      move to stage 3.)*
    - [ ] **feature** Item groups (Group / Ungroup, Ctrl+G, multi-stream imports grouped), replacing track links.
    - [x] **feature** Folder rows in the timeline (collapse triangle, indent, dragging into and out of folders)
      and the default Video / Audio / Control template.
-   - [ ] **feature** The FX button and chain popup on track, folder and master headers.
+   - [x] **feature** The FX button and chain popup on track, folder and master headers *(done: the FX window, and
+     graphs dropped onto items, tracks or below the tracks; see [FX](app.md#fx))*.
    - [ ] **feature** A cache key made of the active graphs' versions, so editing one graph keeps frames rendered
      only by others.
    - [ ] **feature** Graph Progress node.
+   - [ ] **chore** Run FX chains as a pipeline across frames again, as graph layers did (the routed renderer runs
+     them in order on the render thread).
    - [ ] **feature** Inspecting connections in a graph that isn't under the playhead.
 3. **Subgraphs**
    - [ ] **feature** Subgraph nodes with pins, linked references, Make unique, cycle check, flattening at compile.

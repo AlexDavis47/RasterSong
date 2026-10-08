@@ -70,8 +70,8 @@ fn a_graph_with_an_audio_output_exports_its_sound() {
 }
 
 #[test]
-fn a_project_with_graph_items_renders_them() {
-    use rastersong_engine::{FfmpegBackend, GraphDesc, MediaBackend, Project, TrackKind};
+fn a_project_with_fx_renders_them() {
+    use rastersong_engine::{FfmpegBackend, Fx, GraphDesc, Item, MediaBackend, Project, TrackKind};
 
     let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let video = workspace.join("fixtures").join("rgb_pattern.mkv");
@@ -99,11 +99,23 @@ fn a_project_with_graph_items_renders_them() {
     let plain = tmp.join("plain.rastersong");
     project.save(&plain).unwrap();
 
-    // The graph, unbound, on frames 2 and 3: black there.
-    project.add_layer("Layer");
+    // The graph reading a port nothing fills, on an item over frames 2 and 3: black there.
     let graph = project.graph_id;
-    project.place_graph(0, graph, 2.0 / fps, 2.0 / fps).unwrap();
-    project.set_graph_binding(0, 0, "Video", None);
+    project.graph.nodes[0].params.insert(
+        "port".into(),
+        rastersong_engine::ParamValue::Text("Nope".into()),
+    );
+    let cut = |from: f64, to: Option<f64>, fx: Vec<Fx>| Item {
+        start: from / fps,
+        end: to.map(|t| t / fps),
+        fx,
+        ..Item::whole(from / fps)
+    };
+    project.tracks[0].items = vec![
+        cut(0.0, Some(2.0), Vec::new()),
+        cut(2.0, Some(4.0), vec![Fx::new(graph)]),
+        cut(4.0, None, Vec::new()),
+    ];
     let layered = tmp.join("layered.rastersong");
     project.save(&layered).unwrap();
 
@@ -134,7 +146,7 @@ fn a_project_with_graph_items_renders_them() {
 }
 
 #[test]
-fn a_project_without_graph_items_renders_its_track_mix() {
+fn a_project_without_fx_renders_its_track_mix() {
     use rastersong_engine::{FfmpegBackend, GraphDesc, MediaBackend, Project, TrackKind};
 
     let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");

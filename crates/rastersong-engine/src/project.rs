@@ -7,20 +7,17 @@ use rastersong_graph::{GraphDesc, ParamValue, Tempo, audio_output_bus};
 use rastersong_lang::tr_args;
 use serde::{Deserialize, Serialize};
 
-use crate::timeline::{Bus, Item, Timebase, TrackKind};
+use crate::timeline::{Bus, Fx, Item, Timebase, TrackKind};
 
 mod editing;
+mod fx;
 mod graphs;
-mod layers;
 mod resources;
 mod tree;
 
 pub use editing::{Edge, ItemRef, MIN_ITEM_LENGTH, RATE_RANGE, snap_offset};
+pub use fx::FxTarget;
 pub use graphs::{GraphEntry, PASSTHROUGH_GRAPH, StoredGraph};
-pub use layers::{
-    Binding, GraphItem, GraphLayer, InputKind, InputPort, LayerSet, RenderItem, input_ports,
-    port_of,
-};
 pub use resources::{Resource, ResourceId, ResourceKind, resource_name_for};
 pub use tree::drop_depths;
 
@@ -61,10 +58,10 @@ pub struct Project {
     /// The project's other graphs, kept until one is opened.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub graphs: Vec<StoredGraph>,
-    /// Graph layers, bottom first: lanes of graph items above the tracks. See
-    /// [`Self::layer_set`].
+    /// The master's FX chain, run on everything the top-level tracks send. See
+    /// [`Self::routing`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub layers: Vec<GraphLayer>,
+    pub master_fx: Vec<Fx>,
     /// The loop region on the timeline, if one has been made.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loop_region: Option<LoopRegion>,
@@ -207,6 +204,9 @@ pub struct ProjectTrack {
     /// Where the resource plays on the timeline.
     #[serde(default = "whole")]
     pub items: Vec<Item>,
+    /// The track's FX chain, run on its items' picture and sound (a folder's, on its mix).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fx: Vec<Fx>,
     /// Level in the track mix, 0 to 1; a folder's scales everything in it. Graphs read the
     /// track as it is.
     #[serde(default = "full_volume")]
@@ -266,6 +266,7 @@ impl ProjectTrack {
             new_tracks: None,
             resource: Some(resource),
             items: whole(),
+            fx: Vec::new(),
             volume: 1.0,
             muted: false,
             master_send: true,
@@ -327,7 +328,7 @@ impl Project {
             graph_id: graphs::first_graph_id(),
             graph_name: graphs::default_graph_name(),
             graphs: Vec::new(),
-            layers: Vec::new(),
+            master_fx: Vec::new(),
             loop_region: None,
             tempo: Tempo::default(),
             timeline_mode: TimelineMode::default(),
@@ -468,7 +469,7 @@ impl Project {
         }
     }
 
-    /// Renames track `old` to `new`, and what refers to it by name (graph item bindings). Refused
+    /// Renames track `old` to `new`, and what refers to it by name (FX receives). Refused
     /// (false, nothing changed) when there is no such track, or `new` is empty or another
     /// track's. Renaming a track to its own name succeeds.
     pub fn rename_track(&mut self, old: &str, new: &str) -> bool {
@@ -485,13 +486,7 @@ impl Project {
         for track in self.tracks_mut().filter(|t| t.name == old) {
             track.name = new.to_owned();
         }
-        for item in self.layers.iter_mut().flat_map(|l| &mut l.items) {
-            for binding in item.bindings.values_mut() {
-                if *binding == Binding::Track(old.to_owned()) {
-                    *binding = Binding::Track(new.to_owned());
-                }
-            }
-        }
+        self.rename_receives(old, new);
         true
     }
 
@@ -579,7 +574,6 @@ impl Project {
             DEFAULT_INSPECT_RATE
         };
         project.graph.upgrade();
-        layers::sanitize(&mut project.layers);
         project.buses = sanitized_buses(std::mem::take(&mut project.buses));
         let dir = path.parent().unwrap_or(Path::new(""));
         for resource in &mut project.resources {
@@ -601,7 +595,7 @@ impl Project {
         project.sanitize_tree();
         for track in project.tracks_mut() {
             for item in &mut track.items {
-                *item = item.sanitized();
+                *item = item.clone().sanitized();
             }
         }
         Ok(project)
@@ -838,12 +832,11 @@ mod tests {
     }
 
     #[test]
-    fn renaming_a_track_follows_through_to_bindings() {
+    fn renaming_a_track_follows_through_to_receives() {
         let mut project = three_tracks();
-        let layer = project.add_layer("FX");
         let graph = project.graph_id;
-        let item = project.place_graph(layer, graph, 0.0, 1.0).unwrap();
-        project.set_graph_binding(layer, item, "Kick", Some(Binding::Track("a".into())));
+        project.add_fx(&FxTarget::Master, graph).unwrap();
+        project.set_fx_receive(&FxTarget::Master, 0, "Kick", Some("a"));
         // Taken, empty and unknown names are refused; its own name is fine.
         assert!(!project.rename_track("a", "b"));
         assert!(!project.rename_track("a", "  "));
@@ -851,10 +844,7 @@ mod tests {
         assert!(project.rename_track("a", "a"));
         assert!(project.rename_track("a", " kick "));
         assert!(project.has_track("kick") && !project.has_track("a"));
-        assert_eq!(
-            project.layers[layer].items[item].bindings["Kick"],
-            Binding::Track("kick".into())
-        );
+        assert_eq!(project.master_fx[0].receives["Kick"], "kick");
         // Video tracks are renamed the same way.
         assert!(project.rename_track("v", "clip"));
         assert_eq!(project.tracks[0].name, "clip");

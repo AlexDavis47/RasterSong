@@ -581,6 +581,55 @@ fn folder_screenshots() {
     assert!(harness.state().project().tracks[1].collapsed);
 }
 
+/// FX chains: on the video track, an item and the master, with the master's chain open.
+#[test]
+#[ignore = "needs a GPU; run explicitly to look at the UI"]
+fn fx_screenshots() {
+    use rastersong_engine::{Fx, Item};
+    let app = app_edited(ThemeChoice::Dark, 1, TimelineMode::Time, |project| {
+        let side = project.add_graph(
+            "Sidechain",
+            Some(
+                GraphDesc::from_json(
+                    r#"{ "version": 0, "nodes": [
+                        { "id": "v", "type": "video_input" },
+                        { "id": "k", "type": "audio_input", "params": { "port": "Kick" } },
+                        { "id": "o", "type": "output" } ],
+                        "connections": [ { "from": "v", "to": "o" } ] }"#,
+                )
+                .unwrap(),
+            ),
+        );
+        let open = project.graph_id;
+        project.tracks[0].fx = vec![Fx::new(open)];
+        project.tracks[1].items = vec![
+            Item {
+                end: Some(1.5),
+                fx: vec![Fx::new(open)],
+                ..Item::whole(0.0)
+            },
+            Item {
+                start: 2.0,
+                ..Item::whole(2.0)
+            },
+        ];
+        let mut fx = Fx::new(side);
+        fx.receives.insert("Kick".into(), "audio".into());
+        project.master_fx = vec![
+            fx,
+            Fx {
+                bypass: true,
+                ..Fx::new(open)
+            },
+        ];
+    });
+    let mut harness = gpu_harness(app);
+    wait_for_frames(&mut harness, 10);
+    harness.get_by_label("Master FX").click();
+    harness.run_steps(4);
+    save(&mut harness, "dark-31-fx");
+}
+
 /// Tracks of several items, a muted item, linked tracks and a taller track.
 #[test]
 #[ignore = "needs a GPU; run explicitly to look at the UI"]

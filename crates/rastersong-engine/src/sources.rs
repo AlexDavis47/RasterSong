@@ -13,12 +13,10 @@ pub fn fill_video(frame: &VideoFrame, out: &mut Signal) {
 }
 
 /// Graph output in `0.0..=1.0` → RGB8, clamping out-of-range values.
-pub fn to_rgb8(signal: &Signal, out: &mut Vec<u8>) {
+pub fn to_rgb8(data: &[f32], out: &mut Vec<u8>) {
     out.clear();
     out.extend(
-        signal
-            .data
-            .iter()
+        data.iter()
             .map(|&x| (x.clamp(0.0, 1.0) * 255.0).round() as u8),
     );
 }
@@ -271,7 +269,7 @@ mod tests {
             start: 0.3,
             ..Item::whole(0.2)
         };
-        m.fill_items(&[item], 0.0, 0.5, &mut block);
+        m.fill_items(std::slice::from_ref(&item), 0.0, 0.5, &mut block);
         assert_eq!(block, [0.0, 0.0, 3.0, 4.0, 5.0]);
         // Out point at 0.5 s of the file: the item ends after two samples, then silence.
         let item = Item {
@@ -356,12 +354,12 @@ mod tests {
         let mut signal = Signal::zeros(rastersong_graph::Layout::rgb(2, 1));
         fill_video(&frame, &mut signal);
         let mut rgb = Vec::new();
-        to_rgb8(&signal, &mut rgb);
+        to_rgb8(&signal.data, &mut rgb);
         assert_eq!(rgb, frame.data);
 
         signal.data[0] = -0.5;
         signal.data[1] = 1.5;
-        to_rgb8(&signal, &mut rgb);
+        to_rgb8(&signal.data, &mut rgb);
         assert_eq!(&rgb[..2], [0, 255]);
     }
 }

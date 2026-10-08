@@ -46,7 +46,7 @@ leans on them.
 
 **Application**
 
-- [Desktop app](app.md): preview, node editor, inspector, the Resources panel, timeline and graph layers, settings, output buses, keys, projects.
+- [Desktop app](app.md): preview, node editor, inspector, the Resources panel, timeline and FX, settings, output buses, keys, projects.
 - [Text and languages](text.md): where every user-facing string lives, the key scheme, adding a language.
 
 **Project**

@@ -13,17 +13,20 @@ pub enum EngineError {
     /// Raised by an output, e.g. when writing a file fails.
     #[error("{0}")]
     Output(String),
-    /// A graph placed on a layer can't be compiled.
-    #[error("{}", layer_message(*.graph, .error))]
-    Layer { graph: u32, error: GraphError },
+    /// A graph used as an FX can't be compiled or fails.
+    #[error("{}", fx_message(*.graph, .error))]
+    Fx { graph: u32, error: GraphError },
+    /// The tracks' receives can't be routed, e.g. they make a loop.
+    #[error("{0}")]
+    Routing(String),
     /// The project's size or frame rate can't be rendered.
     #[error("{}", timebase_message(.0))]
     Timebase(Timebase),
 }
 
-fn layer_message(graph: u32, error: &GraphError) -> String {
+fn fx_message(graph: u32, error: &GraphError) -> String {
     tr_args(
-        "error.project.layer_graph",
+        "error.project.fx_graph",
         &[("graph", &graph.to_string()), ("error", &error.to_string())],
     )
 }

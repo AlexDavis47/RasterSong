@@ -250,7 +250,7 @@ impl Project {
                 let cut = item.source_time(at);
                 kept.push(Item {
                     end: Some(cut),
-                    ..item
+                    ..item.clone()
                 });
                 if wanted {
                     result.push(ItemRef::new(name.clone(), kept.len()));
@@ -291,7 +291,10 @@ impl Project {
     ) -> Vec<(String, Item)> {
         self.with_linked(items, duration)
             .iter()
-            .filter_map(|at| self.item_ref(at).map(|(_, i)| (at.track.clone(), *i)))
+            .filter_map(|at| {
+                self.item_ref(at)
+                    .map(|(_, i)| (at.track.clone(), i.clone()))
+            })
             .collect()
     }
 
@@ -310,7 +313,7 @@ impl Project {
             };
             track.items.push(Item {
                 position: (item.position - earliest + at).max(0.0),
-                ..*item
+                ..item.clone()
             });
             pasted.push(ItemRef::new(name.clone(), track.items.len() - 1));
         }

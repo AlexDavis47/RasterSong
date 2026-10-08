@@ -155,7 +155,7 @@ impl Project {
     }
 
     /// Whether track `i` counts as soloed: it, or a folder it is in, is.
-    fn soloed(&self, i: usize) -> bool {
+    pub(super) fn soloed(&self, i: usize) -> bool {
         self.path_up(i).any(|t| t.solo)
     }
 

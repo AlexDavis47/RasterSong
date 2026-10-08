@@ -65,11 +65,10 @@ tempo and the loop region:
   a `name` and its `graph`, until one is opened and swaps places with the open graph.
 - An item: `position` (seconds into the project), `start` and `end` (its in and out points, in seconds of the
   file; no `end` plays to the end of the file), `rate` (seconds of file per second of timeline, 1 by default) and
-  `muted`.
-- `layers`: the graph layers, bottom first, each a `name`, `items`, `muted` and `solo`. A graph item has the
-  `graph` id it plays, `position` and `length` in seconds, `start` (seconds into the graph's own time, 0 by
-  default), `muted`, `pre_roll` (true by default) and `bindings`: by input node id, `"layer_below"` or
-  `{ "track": "name" }`; an input left out reads nothing. See [Graph layers](engine.md#graph-layers).
+  `muted`, its `fx` chain and `pre_roll` (true by default: its FX warm up as if they had run before it).
+- `fx` (on a track or folder), `master_fx` (on the project) and an item's `fx`: FX chains, first to last. An FX
+  is the `graph` id it runs, `bypass` (false by default) and `receives`: which track fills each input port other
+  than `Video` and `Audio`, by port name; a port left out reads zeros. See [Routing](engine.md#routing).
 - `loop_region` (`start` and `end` in seconds, and whether it is `enabled`), `tempo` (`bpm`, `beats_per_bar`,
   `offset_secs`), `timeline_mode` (`"time"` or `"tempo"`) and `bypass_graph`.
 

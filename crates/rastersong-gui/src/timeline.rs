@@ -15,9 +15,9 @@
 //! - Ctrl+drag on the ruler makes a loop region (or moves one of its edges).
 //! - Drag a header to reorder the tracks of its kind, its bottom edge to change the track's
 //!   height; right-click it to link tracks or remove one.
-//! - Graph layers are lanes above the tracks (top layer first). Their items work like track
-//!   items (header bar, trim at the edges, snapping, S, Delete) but are not stretched, and a
-//!   move is applied when the drag ends, because the model trims what an item lands on.
+//! - A header's FX button opens the track's FX chain, the Master FX button below the tracks the
+//!   master's, and an item's menu the item's. A graph dragged from the Resources panel lands on
+//!   the item, track or header under the pointer, or below the tracks on the master.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -51,8 +51,6 @@ const MIN_NAME_WIDTH: f32 = 40.0;
 pub const LANE_HEIGHT: f32 = 58.0;
 /// The shortest and tallest a track can be made.
 pub const LANE_HEIGHT_RANGE: std::ops::RangeInclusive<f32> = 46.0..=320.0;
-/// Height of a graph layer's lane and header.
-pub const LAYER_HEIGHT: f32 = 40.0;
 /// Height of the bar along the top of each item, which drags it and holds its mute button.
 const ITEM_BAR: f32 = 14.0;
 /// How close (pixels) to an item's edge the pointer must be to trim it.
@@ -114,6 +112,8 @@ pub struct TrackView {
     pub thumbnails: Option<TrackThumbnails>,
     /// The selected items, by index into [`Self::items`].
     pub selected_items: Vec<usize>,
+    /// The names of the graphs in the track's FX chain, in order.
+    pub fx: Vec<String>,
 }
 
 impl TrackView {
@@ -140,6 +140,7 @@ impl TrackView {
             missing: false,
             thumbnails: None,
             selected_items: Vec::new(),
+            fx: Vec::new(),
         }
     }
 
@@ -165,32 +166,6 @@ pub struct Thumbnail {
     pub size: Vec2,
 }
 
-/// A graph item as the timeline shows it.
-#[derive(Debug, Clone, PartialEq)]
-pub struct GraphItemView {
-    /// The graph's name.
-    pub name: String,
-    pub position: f64,
-    pub length: f64,
-    pub muted: bool,
-}
-
-/// One graph layer as the timeline shows it.
-#[derive(Debug, Clone, PartialEq)]
-pub struct LayerView {
-    /// The layer's index in the project (layers are stored bottom first; the timeline lists the
-    /// top layer first).
-    pub index: usize,
-    pub name: String,
-    pub muted: bool,
-    pub solo: bool,
-    /// Left out by its mute or another layer's solo: drawn dimmed.
-    pub silenced: bool,
-    pub items: Vec<GraphItemView>,
-    /// The selected item, by index into [`Self::items`].
-    pub selected_item: Option<usize>,
-}
-
 /// What the timeline shows.
 #[derive(Debug, Clone)]
 pub struct TimelineModel<'a> {
@@ -198,8 +173,6 @@ pub struct TimelineModel<'a> {
     pub frame_rate: f64,
     pub playhead: usize,
     pub cached: &'a [Range<usize>],
-    /// The graph layers above the tracks, top layer first.
-    pub layers: Vec<LayerView>,
     /// The tracks shown, top first: every track but those in a collapsed folder.
     pub tracks: Vec<TrackView>,
     /// The selected row of [`Self::tracks`].
@@ -215,11 +188,14 @@ pub struct TimelineModel<'a> {
     pub snap: bool,
     /// A resource or graph being dragged from the Resources panel, for the drop preview.
     pub drop_ghost: Option<DropGhost>,
+    /// The names of the graphs in the master's FX chain, in order.
+    pub master_fx: Vec<String>,
 }
 
 /// What is being dragged over the timeline from the Resources panel. While the pointer is over
-/// the lanes a ghost shows where it would land: an item on the track or layer that takes it, or
-/// a ghost row where a new track or layer would be made.
+/// the lanes a ghost shows where it would land: an item on the track that takes it, or a ghost
+/// row where a new track would be made; a graph highlights the item, track or master whose FX
+/// chain it would join.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DropGhost {
     pub name: String,
@@ -235,8 +211,19 @@ pub enum GhostTarget {
     /// [`TimelineModel::tracks`] takes it. Anywhere else a new track is made, before row
     /// `new_row` (the number of rows for the bottom).
     Media { lands_on: Vec<bool>, new_row: usize },
-    /// A graph: on the layer under the pointer, or a new layer on top.
+    /// A graph, which joins an FX chain: see [`FxDrop`].
     Graph,
+}
+
+/// Whose FX chain a graph dropped on the timeline joins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FxDrop {
+    /// The item under the pointer.
+    Item { row: usize, item: usize },
+    /// The track (or folder) whose lane or header is under the pointer.
+    Track(usize),
+    /// Below the tracks: the master.
+    Master,
 }
 
 /// Something the user did to a track. Tracks are named by their row in
@@ -274,6 +261,19 @@ pub enum TrackAction {
         row: usize,
         item: usize,
     },
+    /// Whether the item's FX warm up before it.
+    SetPreRoll {
+        row: usize,
+        item: usize,
+        on: bool,
+    },
+    /// Open the FX chain of the track, of item `item` of it, or of the master.
+    OpenFx(usize),
+    OpenItemFx {
+        row: usize,
+        item: usize,
+    },
+    OpenMasterFx,
     /// An edge of item `item` was dragged to time `to` (seconds): trimmed, or with `stretch`
     /// (Alt) its rate changed.
     TrimItem {
@@ -323,61 +323,12 @@ pub enum TrackAction {
     Add,
 }
 
-/// Something the user did to a graph layer or its items. Layers are named by their index in the
-/// project (see [`LayerView::index`]).
-#[derive(Debug, Clone, PartialEq)]
-pub enum LayerAction {
-    /// The "+ Layer" button.
-    Add,
-    SelectItem {
-        layer: usize,
-        item: usize,
-    },
-    /// The item was dragged by `delta` seconds, and released.
-    MoveItem {
-        layer: usize,
-        item: usize,
-        delta: f64,
-    },
-    /// An edge of the item was dragged to time `to` (seconds).
-    TrimItem {
-        layer: usize,
-        item: usize,
-        edge: Edge,
-        to: f64,
-    },
-    ToggleItemMute {
-        layer: usize,
-        item: usize,
-    },
-    /// The item's menu asked to split it at time `at` (the playhead).
-    SplitItem {
-        layer: usize,
-        item: usize,
-        at: f64,
-    },
-    DeleteItem {
-        layer: usize,
-        item: usize,
-    },
-    /// The item was double-clicked: open its graph in the editor.
-    OpenItem {
-        layer: usize,
-        item: usize,
-    },
-    ToggleMute(usize),
-    ToggleSolo(usize),
-    Rename(usize, String),
-    Remove(usize),
-}
-
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TimelineResponse {
     pub seek: Option<usize>,
     pub actions: Vec<TrackAction>,
-    pub layer_actions: Vec<LayerAction>,
-    /// The layer (by project index) the pointer is over, for dropping a graph on it.
-    pub layer_under_pointer: Option<usize>,
+    /// Whose FX chain a graph dragged over the timeline would join, if dropped now.
+    pub fx_drop: Option<FxDrop>,
     /// Frames whose thumbnails would fill the visible video items, with the track they are of.
     pub wanted_thumbnails: Vec<(String, usize)>,
     /// A new loop region (`Some(None)` to remove it).
@@ -390,8 +341,8 @@ pub struct TimelineResponse {
     pub lanes_left: f32,
     /// The row of the lanes the pointer is over, for dropping a resource on a track.
     pub row_under_pointer: Option<usize>,
-    /// Where a resource or graph dragged over the lanes would start (seconds), snapped like an
-    /// item drag. A drop lands there, where its ghost was drawn.
+    /// Where a resource dragged over the lanes would start (seconds), snapped like an item
+    /// drag. A drop lands there, where its ghost was drawn.
     pub drop_at: Option<f64>,
 }
 
@@ -641,13 +592,13 @@ struct Areas {
     ruler: Rect,
     /// Below the ruler, headers and lanes: the part that scrolls vertically.
     body: Rect,
-    /// The top of each track row from the top of the body before scrolling (below the graph
-    /// layers), then the bottom of the last.
+    /// The top of each track row from the top of the body before scrolling, then the bottom of
+    /// the last.
     tops: Vec<f32>,
 }
 
 impl Areas {
-    fn new(area: Rect, tracks: &[TrackView], layers: usize) -> Self {
+    fn new(area: Rect, tracks: &[TrackView]) -> Self {
         let headers = Rect::from_min_max(
             pos2(area.left(), area.top() + RULER_HEIGHT),
             pos2(area.left() + HEADER_WIDTH, area.bottom()),
@@ -655,7 +606,7 @@ impl Areas {
         let lanes = Rect::from_min_max(pos2(headers.right() + GAP, area.top()), area.max);
         let ruler = Rect::from_min_max(lanes.min, pos2(lanes.right(), area.top() + RULER_HEIGHT));
         let body = Rect::from_min_max(pos2(area.left(), ruler.bottom()), area.max);
-        let mut tops = vec![layers as f32 * LAYER_HEIGHT];
+        let mut tops = vec![0.0];
         for track in tracks {
             tops.push(tops.last().unwrap() + track.height);
         }
@@ -694,34 +645,6 @@ impl Areas {
         .shrink2(vec2(0.0, 2.0))
     }
 
-    /// Layer lane `display` (0 is the top layer) in screen space, before clipping.
-    fn layer_lane(&self, display: usize, scroll: f32) -> Rect {
-        Rect::from_min_size(
-            pos2(
-                self.lanes.left(),
-                self.body.top() + display as f32 * LAYER_HEIGHT - scroll,
-            ),
-            vec2(self.lanes.width(), LAYER_HEIGHT),
-        )
-        .shrink2(vec2(0.0, 2.0))
-    }
-
-    fn layer_header(&self, display: usize, scroll: f32) -> Rect {
-        let lane = self.layer_lane(display, scroll);
-        Rect::from_min_size(
-            pos2(self.headers.left(), lane.top()),
-            vec2(HEADER_WIDTH, lane.height()),
-        )
-    }
-
-    /// Which layer (0 is the top) is at screen y, if any.
-    fn layer_at(&self, scroll: f32, y: f32, layers: usize) -> Option<usize> {
-        let offset = y - self.body.top() + scroll;
-        (offset >= 0.0)
-            .then(|| (offset / LAYER_HEIGHT) as usize)
-            .filter(|&d| d < layers)
-    }
-
     /// Which row is at screen y, if any.
     fn row_at(&self, scroll: f32, y: f32) -> Option<usize> {
         let offset = y - self.body.top() + scroll;
@@ -737,7 +660,7 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
     let theme = Theme::of(ui.ctx());
     let area = ui.available_rect_before_wrap();
     let background = ui.allocate_rect(area, Sense::click_and_drag());
-    let areas = Areas::new(area, &model.tracks, model.layers.len());
+    let areas = Areas::new(area, &model.tracks);
     let lanes_left = areas.lanes.left();
     response.lanes_left = lanes_left;
     let width = areas.lanes.width().max(1.0);
@@ -747,12 +670,6 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         .tracks
         .iter()
         .flat_map(|t| t.items.iter().filter_map(|i| t.item_span(i)))
-        .chain(
-            model
-                .layers
-                .iter()
-                .flat_map(|l| l.items.iter().map(|i| (i.position, i.position + i.length))),
-        )
         .fold((0.0f64, duration), |(lo, hi), (start, end)| {
             (lo.min(start), hi.max(end))
         });
@@ -847,10 +764,25 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
     response.row_under_pointer = pointer
         .filter(|p| body_lanes.contains(*p))
         .and_then(|p| areas.row_at(view.scroll_y, p.y));
-    response.layer_under_pointer = pointer
-        .filter(|p| body_lanes.contains(*p))
-        .and_then(|p| areas.layer_at(view.scroll_y, p.y, model.layers.len()))
-        .map(|display| model.layers[display].index);
+    let graph_dragged = egui::DragAndDrop::has_payload_of_type::<DraggedGraph>(ui.ctx());
+    if graph_dragged && let Some(p) = pointer.filter(|p| areas.body.contains(*p)) {
+        response.fx_drop = Some(match areas.row_at(view.scroll_y, p.y) {
+            Some(row) => {
+                let at = view.seconds(lanes_left, p.x);
+                let track = &model.tracks[row];
+                let item = track.items.iter().position(|i| {
+                    track
+                        .item_span(i)
+                        .is_some_and(|(start, end)| start <= at && at < end)
+                });
+                match item {
+                    Some(item) if p.x >= lanes_left => FxDrop::Item { row, item },
+                    _ => FxDrop::Track(row),
+                }
+            }
+            None => FxDrop::Master,
+        });
+    }
     let pressed_in_lanes = ui
         .input(|i| i.pointer.press_origin())
         .or(background.interact_pointer_pos())
@@ -955,25 +887,6 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
 
     // Lanes, clipped to the scrolling body.
     let lane_painter = ui.painter_at(body_lanes);
-    let graph_dragged = egui::DragAndDrop::has_payload_of_type::<DraggedGraph>(ui.ctx());
-    for (display, layer) in model.layers.iter().enumerate() {
-        let lane = LayerLane {
-            layer,
-            rect: areas.layer_lane(display, view.scroll_y),
-            clip: body_lanes,
-            drop_target: graph_dragged && response.layer_under_pointer == Some(layer.index),
-        };
-        lane.show(ui, &lane_painter, model, view, theme, &mut response);
-    }
-    if graph_dragged && response.layer_under_pointer.is_none() && over(body_lanes) {
-        lane_painter.text(
-            pos2(areas.lanes.right() - 8.0, body_lanes.top() + 4.0),
-            Align2::RIGHT_TOP,
-            tr("timeline.layer.drop_new"),
-            FontId::proportional(11.0),
-            theme.accent,
-        );
-    }
     for (row, track) in model.tracks.iter().enumerate() {
         let lane = Lane {
             track,
@@ -984,6 +897,30 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         lane.show(ui, &lane_painter, model, view, theme, &mut response);
     }
     if let Some(ghost) = &model.drop_ghost
+        && ghost.target == GhostTarget::Graph
+        && let Some(target) = response.fx_drop
+    {
+        let band = fx_drop_band(&areas, model, view, target);
+        let painter = ui.painter_at(areas.body);
+        painter.rect(
+            band,
+            CornerRadius::same(3),
+            theme.accent.gamma_multiply(0.15),
+            Stroke::new(1.5, theme.accent),
+            egui::StrokeKind::Inside,
+        );
+        let label = match target {
+            FxDrop::Master => tr_args("timeline.fx.drop_master", &[("graph", &ghost.name)]),
+            _ => tr_args("timeline.fx.drop", &[("graph", &ghost.name)]),
+        };
+        painter.text(
+            band.right_top() + vec2(-6.0, 3.0),
+            Align2::RIGHT_TOP,
+            label,
+            FontId::proportional(11.0),
+            theme.accent,
+        );
+    } else if let Some(ghost) = &model.drop_ghost
         && let Some(p) = pointer.filter(|p| body_lanes.contains(*p))
     {
         let want = view.seconds(lanes_left, p.x).max(0.0);
@@ -993,10 +930,10 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
             view,
             want,
             ghost.length,
-            &layer_snap_targets(model, None),
+            &all_snap_targets(model),
         );
         response.drop_at = Some(at);
-        let (band, new_row) = ghost_band(&areas, model, view, ghost, &response);
+        let (band, new_row) = ghost_band(&areas, view, ghost, &response);
         if new_row {
             lane_painter.rect_filled(
                 band,
@@ -1033,32 +970,6 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         pos2(areas.headers.right(), area.bottom()),
     );
     let header_painter = ui.painter_at(header_clip);
-    for (display, layer) in model.layers.iter().enumerate() {
-        let rect = areas.layer_header(display, view.scroll_y);
-        if !rect.intersects(header_clip) {
-            continue;
-        }
-        header_painter.rect_filled(rect, CornerRadius::same(3), ui.visuals().faint_bg_color);
-        // The background has the layer's menu; it goes under the widgets, so they keep their
-        // clicks.
-        let grip = ui.interact(
-            rect.intersect(header_clip),
-            ui.id().with(("layer-grip", layer.index)),
-            Sense::click(),
-        );
-        grip.context_menu(|ui| {
-            if ui.button(tr("timeline.layer.remove")).clicked() {
-                response
-                    .layer_actions
-                    .push(LayerAction::Remove(layer.index));
-                ui.close();
-            }
-        });
-        grip.on_hover_text(tr("timeline.layer.header.help"));
-        header(ui, rect, header_clip, |ui| {
-            layer_header(ui, layer, &mut response);
-        });
-    }
     // The shown tree, for where a dragged header can land.
     let shape: Vec<(u32, bool)> = model.tracks.iter().map(|t| (t.depth, t.folder)).collect();
     let mut dragging: Option<(usize, usize, Option<u32>)> = None;
@@ -1213,12 +1124,8 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         })
         .response
         .on_hover_text(tr("timeline.track.add.help"));
-        if ui
-            .button(tr("timeline.layer.add"))
-            .on_hover_text(tr("timeline.layer.add.help"))
-            .clicked()
-        {
-            response.layer_actions.push(LayerAction::Add);
+        if fx_button(ui, tr("timeline.fx.master"), &model.master_fx).clicked() {
+            response.actions.push(TrackAction::OpenMasterFx);
         }
     });
 
@@ -1666,13 +1573,18 @@ impl Lane<'_> {
                 }
             }
         }
+        let name = if item.fx.is_empty() {
+            track.name.clone()
+        } else {
+            tr_args("timeline.item.with_fx", &[("track", &track.name)])
+        };
         if item_bar(
             ui,
             painter,
             self.clip,
             theme,
             bar,
-            (visible.left(), &track.name, item.muted),
+            (visible.left(), &name, item.muted),
             hovered,
             ui.id().with(("item-mute", row, k)),
         ) {
@@ -1731,7 +1643,7 @@ impl Lane<'_> {
                 delta: to - item.position,
             });
         }
-        grab.context_menu(|ui| item_menu(ui, model, response));
+        grab.context_menu(|ui| item_menu(ui, model, (row, k, item), response));
         if hovered {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }
@@ -1747,7 +1659,7 @@ impl Lane<'_> {
 /// was dragged to (snapped). `ids` are the handles' id parts and the id the drag is remembered
 /// under; `targets` lists where a drag snaps to, asked when a drag starts. The handles are made
 /// after the item's bar, so they win where they overlap it, and before its mute button, so that
-/// keeps its clicks. Shared by track items and graph items.
+/// keeps its clicks.
 #[allow(clippy::too_many_arguments)]
 fn edge_handles(
     ui: &Ui,
@@ -1806,7 +1718,7 @@ fn edge_handles(
 }
 
 /// The header bar of an item, drawn over `bar`: the name at `left` and the mute button at its
-/// right end. Returns whether the mute button was clicked. Shared by track items and graph items.
+/// right end. Returns whether the mute button was clicked.
 #[allow(clippy::too_many_arguments)]
 fn item_bar(
     ui: &Ui,
@@ -1865,201 +1777,9 @@ fn item_bar(
     clicked
 }
 
-/// One graph layer's lane: its items, each with a header bar along its top.
-struct LayerLane<'a> {
-    layer: &'a LayerView,
-    rect: Rect,
-    /// The visible part of the lanes.
-    clip: Rect,
-    /// A graph is being dragged over this lane.
-    drop_target: bool,
-}
-
-impl LayerLane<'_> {
-    fn show(
-        &self,
-        ui: &Ui,
-        painter: &egui::Painter,
-        model: &TimelineModel,
-        view: &TimelineView,
-        theme: &Theme,
-        response: &mut TimelineResponse,
-    ) {
-        let lane = self.rect;
-        if !lane.intersects(self.clip) {
-            return;
-        }
-        painter.rect_filled(lane, CornerRadius::same(3), theme.lane_bg);
-        let (outline, width) = if self.drop_target {
-            (theme.accent, 1.5)
-        } else {
-            (theme.lane_outline, 1.0)
-        };
-        painter.rect_stroke(
-            lane,
-            CornerRadius::same(3),
-            Stroke::new(width, outline),
-            egui::StrokeKind::Inside,
-        );
-        for (k, item) in self.layer.items.iter().enumerate() {
-            let block = Rect::from_min_max(
-                pos2(view.x(lane.left(), item.position), lane.top() + 1.0),
-                pos2(
-                    view.x(lane.left(), item.position + item.length),
-                    lane.bottom() - 1.0,
-                ),
-            );
-            if block.intersect(self.clip).width() <= 0.0 {
-                continue;
-            }
-            self.item(ui, painter, model, view, theme, (k, item, block), response);
-        }
-    }
-
-    /// Item `k`, drawn in `block`: a coloured body and the header bar that drags it and mutes
-    /// it. A drag only shows where the item would land; the move is made when it is released,
-    /// because the model trims what the item lands on.
-    #[allow(clippy::too_many_arguments)]
-    fn item(
-        &self,
-        ui: &Ui,
-        painter: &egui::Painter,
-        model: &TimelineModel,
-        view: &TimelineView,
-        theme: &Theme,
-        (k, item, block): (usize, &GraphItemView, Rect),
-        response: &mut TimelineResponse,
-    ) {
-        let (layer, index) = (self.layer, self.layer.index);
-        let bar_of = |block: Rect| {
-            Rect::from_min_max(block.min, pos2(block.right(), block.top() + ITEM_BAR))
-        };
-        let grab = ui.interact(
-            bar_of(block).intersect(self.clip),
-            ui.id().with(("layer-item-bar", index, k)),
-            Sense::click_and_drag(),
-        );
-        let hovered = grab.hovered() || grab.dragged();
-        let selected = layer.selected_item == Some(k);
-        let ctx = ui.ctx();
-        let drag_id = ui.id().with(("layer-item-drag", index, k));
-        let landing_id = drag_id.with("landing");
-        let select = LayerAction::SelectItem {
-            layer: index,
-            item: k,
-        };
-        edge_handles(
-            ui,
-            model,
-            view,
-            self.clip,
-            block,
-            Some((item.position, item.position + item.length)),
-            (("layer-item-edge", index, k), drag_id),
-            &|| layer_snap_targets(model, Some((index, k))),
-            tr("timeline.layer.item.edge"),
-            |edge, to| {
-                response.layer_actions.push(LayerAction::TrimItem {
-                    layer: index,
-                    item: k,
-                    edge,
-                    to,
-                });
-            },
-        );
-        if grab.drag_started_by(PointerButton::Primary) {
-            if !selected {
-                response.layer_actions.push(select.clone());
-            }
-            let drag = ItemDrag {
-                edge: None,
-                origin: item.position,
-                length: item.length,
-                targets: layer_snap_targets(model, Some((index, k))),
-            };
-            ctx.data_mut(|d| d.insert_temp(drag_id, drag));
-        }
-        let mut landing = None;
-        if grab.dragged_by(PointerButton::Primary)
-            && let Some(drag) = ctx.data(|d| d.get_temp::<ItemDrag>(drag_id))
-            && let Some(to) = drag_to(ui, model, view, &drag)
-        {
-            let to = to.max(0.0);
-            ctx.data_mut(|d| d.insert_temp(landing_id, to));
-            landing = Some(to);
-        }
-        if grab.drag_stopped()
-            && let Some(to) = ctx.data(|d| d.get_temp::<f64>(landing_id))
-        {
-            ctx.data_mut(|d| d.remove::<f64>(landing_id));
-            if to != item.position {
-                response.layer_actions.push(LayerAction::MoveItem {
-                    layer: index,
-                    item: k,
-                    delta: to - item.position,
-                });
-            }
-        }
-        // Where the item is drawn: where it would land, while it is dragged.
-        let shown = match landing {
-            Some(to) => block.translate(vec2(((to - item.position) * view.px_per_sec) as f32, 0.0)),
-            None => block,
-        };
-        let bar = bar_of(shown);
-        let base = theme.graph_block;
-        let mut fill = if hovered {
-            base.gamma_multiply(1.2)
-        } else {
-            base
-        };
-        if item.muted || layer.silenced {
-            fill = fill.gamma_multiply(0.4);
-        }
-        painter.rect_filled(shown, CornerRadius::same(3), fill);
-        if item_bar(
-            ui,
-            painter,
-            self.clip,
-            theme,
-            bar,
-            (shown.intersect(self.clip).left(), &item.name, item.muted),
-            hovered,
-            ui.id().with(("layer-item-mute", index, k)),
-        ) {
-            response.layer_actions.push(LayerAction::ToggleItemMute {
-                layer: index,
-                item: k,
-            });
-        }
-        if selected {
-            painter.rect_stroke(
-                shown,
-                CornerRadius::same(3),
-                Stroke::new(2.0, theme.accent),
-                egui::StrokeKind::Inside,
-            );
-        }
-
-        if grab.clicked() || (grab.secondary_clicked() && !selected) {
-            response.layer_actions.push(select);
-        }
-        if grab.double_clicked() {
-            response.layer_actions.push(LayerAction::OpenItem {
-                layer: index,
-                item: k,
-            });
-        }
-        grab.context_menu(|ui| graph_item_menu(ui, model, index, k, response));
-        if hovered {
-            ctx.set_cursor_icon(egui::CursorIcon::Grab);
-        }
-        grab.on_hover_text(tr("timeline.layer.item.drag"));
-    }
-}
-
-/// Where a drag of graph item `k` of layer `layer` can snap: the timeline's start, the playhead,
-/// and the edges of every track item and of the layers' other items.
-fn layer_snap_targets(model: &TimelineModel, skip: Option<(usize, usize)>) -> Vec<f64> {
+/// Where a drag of anything can snap when nothing is left out: the timeline's start, the
+/// playhead and the edges of every item.
+fn all_snap_targets(model: &TimelineModel) -> Vec<f64> {
     let mut targets = vec![0.0, model.playhead as f64 / model.frame_rate];
     for track in &model.tracks {
         for item in &track.items {
@@ -2068,83 +1788,7 @@ fn layer_snap_targets(model: &TimelineModel, skip: Option<(usize, usize)>) -> Ve
             }
         }
     }
-    for l in &model.layers {
-        for (j, item) in l.items.iter().enumerate() {
-            if skip != Some((l.index, j)) {
-                targets.extend([item.position, item.position + item.length]);
-            }
-        }
-    }
     targets
-}
-
-/// A graph item's right-click menu: split at the playhead and delete.
-fn graph_item_menu(
-    ui: &mut Ui,
-    model: &TimelineModel,
-    layer: usize,
-    item: usize,
-    response: &mut TimelineResponse,
-) {
-    let at = model.playhead as f64 / model.frame_rate;
-    if ui
-        .add(egui::Button::new(tr("timeline.item.split")).shortcut_text("S"))
-        .clicked()
-    {
-        response
-            .layer_actions
-            .push(LayerAction::SplitItem { layer, item, at });
-        ui.close();
-    }
-    if ui
-        .add(egui::Button::new(tr("timeline.item.delete")).shortcut_text("Del"))
-        .clicked()
-    {
-        response
-            .layer_actions
-            .push(LayerAction::DeleteItem { layer, item });
-        ui.close();
-    }
-}
-
-/// The widgets of a graph layer's header: its name, mute and solo.
-fn layer_header(ui: &mut Ui, layer: &LayerView, response: &mut TimelineResponse) {
-    ui.label("▤");
-    let edit = name_edit(
-        ui,
-        ui.id().with(("layer-name", layer.index)),
-        &layer.name,
-        |e| e.desired_width(NAME_WIDTH),
-    );
-    edit.response.on_hover_text(tr("timeline.layer.name.help"));
-    if let Some(name) = edit.committed {
-        response
-            .layer_actions
-            .push(LayerAction::Rename(layer.index, name));
-    }
-    let mute = egui::Button::new(if layer.muted { "🔇" } else { "🔊" }).frame(false);
-    if ui
-        .add(mute)
-        .on_hover_text(if layer.muted {
-            tr("timeline.layer.unmute")
-        } else {
-            tr("timeline.layer.mute")
-        })
-        .clicked()
-    {
-        response
-            .layer_actions
-            .push(LayerAction::ToggleMute(layer.index));
-    }
-    if ui
-        .add(egui::Button::selectable(layer.solo, "S"))
-        .on_hover_text(tr("timeline.layer.solo"))
-        .clicked()
-    {
-        response
-            .layer_actions
-            .push(LayerAction::ToggleSolo(layer.index));
-    }
 }
 
 /// A drag of an item or one of its edges, remembered from where it started so snapping can
@@ -2193,15 +1837,14 @@ fn snap_time(
     want + snap_offset(&edges, targets, line, reach)
 }
 
-/// Height of the ghost row drawn where a dropped resource or graph would make a new track or
-/// layer.
+/// Height of the ghost row drawn where a dropped resource would make a new track, or a dropped
+/// graph would join the master's FX.
 const GHOST_ROW_HEIGHT: f32 = 26.0;
 
-/// Where the drop ghost goes (screen space, before clipping): the lane of the track or layer
-/// that takes it, or a ghost row (`true`) where a new one would be made.
+/// Where the drop ghost of a resource goes (screen space, before clipping): the lane of the
+/// track that takes it, or a ghost row (`true`) where a new one would be made.
 fn ghost_band(
     areas: &Areas,
-    model: &TimelineModel,
     view: &TimelineView,
     ghost: &DropGhost,
     response: &TimelineResponse,
@@ -2222,21 +1865,35 @@ fn ghost_band(
             }
             (row(areas.row_top(*new_row, view.scroll_y)), true)
         }
-        GhostTarget::Graph => match response.layer_under_pointer {
-            Some(index) => {
-                let display = model
-                    .layers
-                    .iter()
-                    .position(|l| l.index == index)
-                    .unwrap_or(0);
-                (areas.layer_lane(display, view.scroll_y), false)
+        GhostTarget::Graph => (row(areas.row_top(0, view.scroll_y)), true),
+    }
+}
+
+/// What a graph dropped on `target` highlights (screen space, before clipping): the item, the
+/// track's header and lane, or a row below the tracks for the master.
+fn fx_drop_band(areas: &Areas, model: &TimelineModel, view: &TimelineView, target: FxDrop) -> Rect {
+    match target {
+        FxDrop::Item { row, item } => {
+            let lane = areas.lane(row, view.scroll_y);
+            let track = &model.tracks[row];
+            match track.items.get(item).and_then(|i| track.item_span(i)) {
+                Some((start, end)) => Rect::from_min_max(
+                    pos2(view.x(lane.left(), start), lane.top()),
+                    pos2(view.x(lane.left(), end), lane.bottom()),
+                ),
+                None => lane,
             }
-            // A new layer goes on top.
-            None => (
-                row(areas.body.top() - view.scroll_y + GHOST_ROW_HEIGHT / 2.0),
-                true,
-            ),
-        },
+        }
+        FxDrop::Track(row) => areas
+            .header(row, view.scroll_y)
+            .union(areas.lane(row, view.scroll_y)),
+        FxDrop::Master => {
+            let top = areas.row_top(model.tracks.len(), view.scroll_y);
+            Rect::from_min_max(
+                pos2(areas.headers.left(), top + 2.0),
+                pos2(areas.lanes.right(), top + ADD_ROW_HEIGHT - 2.0),
+            )
+        }
     }
 }
 
@@ -2328,8 +1985,37 @@ fn item_keys(ui: &Ui, model: &TimelineModel, response: &mut TimelineResponse) {
     });
 }
 
-/// An item's right-click menu: the item keys, for the selected items.
-fn item_menu(ui: &mut Ui, model: &TimelineModel, response: &mut TimelineResponse) {
+/// An item's right-click menu: its FX and pre-roll, then the item keys, for the selected items.
+fn item_menu(
+    ui: &mut Ui,
+    model: &TimelineModel,
+    (row, k, item): (usize, usize, &Item),
+    response: &mut TimelineResponse,
+) {
+    if ui
+        .button(tr("timeline.item.fx"))
+        .on_hover_text(tr("timeline.item.fx.help"))
+        .clicked()
+    {
+        response
+            .actions
+            .push(TrackAction::OpenItemFx { row, item: k });
+        ui.close();
+    }
+    let mut pre_roll = item.pre_roll;
+    if ui
+        .checkbox(&mut pre_roll, tr("timeline.item.pre_roll"))
+        .on_hover_text(tr("timeline.item.pre_roll.help"))
+        .changed()
+    {
+        response.actions.push(TrackAction::SetPreRoll {
+            row,
+            item: k,
+            on: pre_roll,
+        });
+        ui.close();
+    }
+    ui.separator();
     let at = model.playhead as f64 / model.frame_rate;
     let entries = [
         (
@@ -2597,7 +2283,9 @@ fn track_header(
             }
         });
         ui.horizontal(|ui| {
-            ui.add_space(16.0);
+            if fx_button(ui, tr("timeline.fx.button"), &track.fx).clicked() {
+                response.actions.push(TrackAction::OpenFx(row));
+            }
             if !track.linked.is_empty() {
                 ui.weak(tr("timeline.track.linked.mark"))
                     .on_hover_text(tr_args(
@@ -2622,6 +2310,20 @@ fn track_header(
             }
         });
     });
+}
+
+/// The button that opens an FX chain, lit while the chain has FX; its tooltip lists them.
+fn fx_button(ui: &mut Ui, label: &str, chain: &[String]) -> egui::Response {
+    let help = if chain.is_empty() {
+        tr("timeline.fx.button.help").to_owned()
+    } else {
+        tr_args("timeline.fx.button.chain", &[("fx", &chain.join(" → "))])
+    };
+    ui.add(egui::Button::selectable(
+        !chain.is_empty(),
+        egui::RichText::new(label).small(),
+    ))
+    .on_hover_text(help)
 }
 
 /// The volume of an audio track or folder, and at the top of the tree its bus when there is a
@@ -2722,7 +2424,6 @@ mod tests {
         let areas = Areas::new(
             Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 400.0)),
             &tracks,
-            0,
         );
         let body = RULER_HEIGHT;
         assert_eq!(areas.row_top(1, 0.0), body + LANE_HEIGHT);
@@ -2731,29 +2432,6 @@ mod tests {
         assert_eq!(areas.row_at(0.0, body + LANE_HEIGHT + 90.0), Some(1));
         assert_eq!(areas.row_at(0.0, body + LANE_HEIGHT + 110.0), None);
         assert_eq!(areas.row_at(20.0, body + LANE_HEIGHT - 10.0), Some(1));
-    }
-
-    #[test]
-    fn graph_layers_sit_above_the_tracks() {
-        let tracks = [TrackView::new("a", Some(TrackKind::Video))];
-        let areas = Areas::new(
-            Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 400.0)),
-            &tracks,
-            2,
-        );
-        let body = RULER_HEIGHT;
-        // Two layers, then the track.
-        assert_eq!(areas.row_top(0, 0.0), body + 2.0 * LAYER_HEIGHT);
-        assert_eq!(areas.layer_at(0.0, body + 5.0, 2), Some(0));
-        assert_eq!(areas.layer_at(0.0, body + LAYER_HEIGHT + 5.0, 2), Some(1));
-        assert_eq!(
-            areas.layer_at(0.0, body + 2.0 * LAYER_HEIGHT + 5.0, 2),
-            None
-        );
-        assert_eq!(areas.row_at(0.0, body + 5.0), None, "a layer is no track");
-        assert_eq!(areas.row_at(0.0, body + 2.0 * LAYER_HEIGHT + 5.0), Some(0));
-        // Layers scroll with the tracks.
-        assert_eq!(areas.layer_lane(0, 10.0).top(), body - 10.0 + 2.0);
     }
 
     #[test]
@@ -2843,7 +2521,6 @@ mod tests {
             frame_rate: 30.0,
             playhead: 0,
             cached: &[],
-            layers: Vec::new(),
             tracks: Vec::new(),
             selected_track: None,
             loop_region: None,
@@ -2856,6 +2533,7 @@ mod tests {
             buses: Vec::new(),
             snap: true,
             drop_ghost: None,
+            master_fx: Vec::new(),
         };
         let grid = RulerGrid::new(&model(TimelineMode::Tempo), 360.0);
         // Ticks every quarter beat (0.125 s), starting at the offset.

@@ -461,7 +461,7 @@ fn items_place_the_video_and_gaps_read_zeros() {
         start: 10.0 / 30.0,
         end: Some(1.0),
         rate: 2.0,
-        muted: false,
+        ..Item::whole(0.5)
     }];
     let (info, reds) = passthrough_frames(None, video.clone());
     assert_eq!(info.frames, 25);
@@ -478,17 +478,43 @@ fn items_place_the_video_and_gaps_read_zeros() {
 }
 
 #[test]
-fn a_video_input_naming_no_track_reads_zeros() {
-    use rastersong_engine::RenderTrack;
+fn the_main_port_reads_the_mix_and_a_port_naming_no_track_reads_zeros() {
+    use rastersong_engine::{GraphDesc, RenderTrack, Renderer};
 
+    // The master's main Video port is the tracks' mix, whatever they are called.
     let (info, reds) = passthrough_frames(None, RenderTrack::video("other", common::VIDEO));
     assert_eq!(info.frames, common::FRAMES);
-    assert!(reds.iter().all(|&r| r == 0));
+    assert_eq!(reds, (0..common::FRAMES as u8).collect::<Vec<_>>());
+
+    let named = common::FINITE_PASSTHROUGH.replace(
+        r#""type": "video_input""#,
+        r#""type": "video_input", "params": { "port": "Nope" }"#,
+    );
+    let mut r = Renderer::new(
+        &common::backend(),
+        None,
+        &[RenderTrack::video("other", common::VIDEO)],
+        &GraphDesc::from_json(&named).unwrap(),
+        Default::default(),
+        &rastersong_engine::Bus::main(),
+        &Registry::default(),
+        OutputSize::Native,
+    )
+    .unwrap();
+    for i in 0..common::FRAMES {
+        assert!(
+            r.render(i, &|| false)
+                .unwrap()
+                .unwrap()
+                .iter()
+                .all(|&b| b == 0)
+        );
+    }
 }
 
 #[test]
-fn the_bypassed_graph_shows_the_top_video_track_in_the_mix_playing() {
-    use rastersong_engine::{GraphDesc, Item, Renderer, render_form};
+fn without_fx_the_top_video_track_playing_shows() {
+    use rastersong_engine::{GraphDesc, Item, Renderer, single_routing};
 
     // Track `top` plays the first half second of the clip from 1 s; `bottom` the whole clip.
     let top_track = || RenderTrack {
@@ -501,11 +527,13 @@ fn the_bypassed_graph_shows_the_top_video_track_in_the_mix_playing() {
     let top = top_track();
     let bottom = RenderTrack::video("bottom", common::VIDEO);
     let graph = GraphDesc::from_json(common::FINITE).unwrap();
-    let mut r = Renderer::new(
+    let tracks = [top, bottom];
+    let mut r = Renderer::with_routing(
         &common::backend(),
         None,
-        &[top, bottom],
-        &render_form(&graph, &Registry::default(), true),
+        &tracks,
+        &single_routing(&tracks, &graph).without_fx(),
+        &graph,
         Default::default(),
         &rastersong_engine::Bus::main(),
         &Registry::default(),
@@ -525,11 +553,13 @@ fn the_bypassed_graph_shows_the_top_video_track_in_the_mix_playing() {
         in_mix: false,
         ..top_track()
     };
-    let mut r = Renderer::new(
+    let tracks = [top, RenderTrack::video("bottom", common::VIDEO)];
+    let mut r = Renderer::with_routing(
         &common::backend(),
         None,
-        &[top, RenderTrack::video("bottom", common::VIDEO)],
-        &render_form(&graph, &Registry::default(), true),
+        &tracks,
+        &single_routing(&tracks, &graph).without_fx(),
+        &graph,
         Default::default(),
         &rastersong_engine::Bus::main(),
         &Registry::default(),

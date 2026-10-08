@@ -161,8 +161,6 @@ The graph-layer choices (*stacked graph layers*, *layer below*, track links) are
   fallbacks, no situational overrides. The old Audio Output rules (replace the source audio, except when nothing is
   connected, bypassed or a track is wired straight in) were hard to predict, and hidden fallbacks make failures hard
   to diagnose. Implicit behaviour needs a clear reason (Video Output's stretch) and is documented where it happens.
-  The code still has one interim exception: with no graph items, the open graph renders over the whole timeline
-  (see [Graph layers](#graph-layers-october-2026)); it is removed in roadmap stage 2a.
 - **The project has its own timebase**, like a Premiere sequence. With several videos, images and raw files, no
   source can be the clock.
 - **One resource per track.** A graph is compiled for a fixed layout per source; one resource per track keeps a
@@ -331,9 +329,9 @@ Built as the second step of stage 2.
 
 ### Graph layers (October 2026)
 
-Built as the third step of stage 2 ([Graph layers](engine.md#graph-layers)). *Superseded by
-[Timeline routing: folders and graphs as FX](#timeline-routing-folders-and-graphs-as-fx-october-2026); this is how
-the code works until roadmap stage 2b replaces it.*
+Built as the third step of stage 2. *Superseded by
+[Timeline routing: folders and graphs as FX](#timeline-routing-folders-and-graphs-as-fx-october-2026) and removed in
+stage 2b ([Routing in the renderer](#routing-in-the-renderer-october-2026)); kept as the record of why.*
 
 - **Items on a layer never overlap, and the model enforces it.** Placing or moving an item trims, cuts or removes
   what it lands on (`Project::place_graph`), and loading a file repairs overlaps the same way, so the renderer can
@@ -440,6 +438,27 @@ weighed:
   graph, video track reorder) are fixed first, then the model is rebuilt. No migration is needed (version 0).
 
 See [Timeline, resources and routing](roadmap.md#timeline-resources-and-routing).
+
+### Routing in the renderer (October 2026)
+
+How stage 2b built the routing above ([Routing](engine.md#routing)):
+
+- **One routed renderer.** The renderer walks the track tree each frame: a track's items (each through its item
+  FX), then the track's FX chain, then into its folder's mix, up to the master and its FX. A folder or the master
+  shows the first child with a picture and sums audio at each child's volume. Graph layers and their stack are
+  removed, and with them the `@track_mix` and `@layer_below` sources.
+- **Through nodes, not special cases.** An FX graph with no Video Output, or no Audio Output for the bus, gets a
+  through node injected where the output would be, so "audio: through" is ordinary graph code with no extra path in
+  the renderer. The FX window shows the tag.
+- **Receives read post-FX, pre-volume**, ordered by a topological sort of the tracks; a loop is refused with an
+  error naming the tracks rather than broken silently.
+- **The single-graph form is a routing too.** `Renderer::new` (CLI `--graph`, the tap renderer, tests) builds a
+  routing with the graph as master FX and its ports named after tracks receiving from them, so there is one
+  renderer, not two.
+- **Bypass FX** renders the routing with every FX left out (`Routing::without_fx`), which is the plain mix the
+  output gives with no FX at all.
+- **The app's mixer stays the real-time path** for preview audio while no FX renders sound; the renderer's audio is
+  used as soon as one does. Moving all preview audio into the renderer waits until it can keep up in real time.
 
 ### Input ports (October 2026)
 
