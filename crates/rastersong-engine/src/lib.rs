@@ -26,10 +26,10 @@ pub use error::EngineError;
 pub use listen::ListenTarget;
 pub use offline::{FrameSink, RenderSettings, RenderedFrame, render};
 pub use project::{
-    DEFAULT_INSPECT_RATE, DEFAULT_MAX_WARMUP_FRAMES, Edge, INSPECT_RATE_RANGE, ItemRef, LoopRegion,
-    MAX_WARMUP_FRAMES_LIMIT, MIN_ITEM_LENGTH, PROJECT_EXTENSION, PROJECT_VERSION, Project,
-    ProjectTrack, RATE_RANGE, Resource, ResourceId, ResourceKind, TimelineMode, resource_name_for,
-    snap_offset,
+    DEFAULT_INSPECT_RATE, DEFAULT_MAX_WARMUP_FRAMES, Edge, GraphEntry, INSPECT_RATE_RANGE, ItemRef,
+    LoopRegion, MAX_WARMUP_FRAMES_LIMIT, MIN_ITEM_LENGTH, PASSTHROUGH_GRAPH, PROJECT_EXTENSION,
+    PROJECT_VERSION, Project, ProjectTrack, RATE_RANGE, Resource, ResourceId, ResourceKind,
+    StoredGraph, TimelineMode, resource_name_for, snap_offset,
 };
 pub use rastersong_graph::dsp::Fft;
 pub use rastersong_graph::nodes::support::UNBOUNDED_WARMUP;
@@ -57,7 +57,7 @@ pub use service::{
     Engine, EngineConfig, EngineStatus, Failure, LoadedTrack, PreviewScale, RenderProgress,
 };
 pub use tap::{PICTURE_SIDE, Picture, Tap, TapOutcome, TapRequest, picture_size};
-pub use thumbnails::{THUMBNAIL_HEIGHT, Thumbnails};
+pub use thumbnails::{THUMBNAIL_HEIGHT, Thumbnails, VideoKey};
 pub use timeline::{Bus, Item, MAX_BUS_CHANNELS, Timebase, Timeline, TrackKind, TrackSpec};
 pub use waveform::Waveform;
 

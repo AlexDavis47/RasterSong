@@ -88,8 +88,10 @@ pub struct TrackView {
     pub bus: String,
     /// A line under the name, e.g. "1920×1080 · 29.97 fps".
     pub details: Option<String>,
-    /// Whether the model's thumbnails are of this track's file.
-    pub thumbnails: bool,
+    /// The track's file is missing: it shows an error where its items would be.
+    pub missing: bool,
+    /// The thumbnails of this track's file, once it is open.
+    pub thumbnails: Option<TrackThumbnails>,
     /// The selected items, by index into [`Self::items`].
     pub selected_items: Vec<usize>,
 }
@@ -111,7 +113,8 @@ impl TrackView {
             waveform: None,
             bus: String::new(),
             details: None,
-            thumbnails: false,
+            missing: false,
+            thumbnails: None,
             selected_items: Vec::new(),
         }
     }
@@ -120,6 +123,15 @@ impl TrackView {
     fn item_span(&self, item: &Item) -> Option<(f64, f64)> {
         self.duration.map(|d| (item.position, item.timeline_end(d)))
     }
+}
+
+/// The thumbnails decoded so far of one video track's file.
+#[derive(Debug, Clone)]
+pub struct TrackThumbnails {
+    /// By frame of the file.
+    pub frames: Arc<BTreeMap<usize, Thumbnail>>,
+    /// The frame rate of the file.
+    pub rate: f64,
 }
 
 /// A thumbnail ready to draw.
@@ -140,10 +152,6 @@ pub struct TimelineModel<'a> {
     pub tracks: Vec<TrackView>,
     /// The selected row of [`Self::tracks`].
     pub selected_track: Option<usize>,
-    /// Source thumbnails decoded so far, by frame of the file they are of.
-    pub thumbnails: &'a BTreeMap<usize, Thumbnail>,
-    /// The frame rate of the file the thumbnails are of (0 when there is none).
-    pub thumbnail_rate: f64,
     pub loop_region: Option<LoopRegion>,
     /// The project tempo, which the ruler follows in [`TimelineMode::Tempo`].
     pub tempo: Tempo,
@@ -160,6 +168,8 @@ pub struct TimelineModel<'a> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TrackAction {
     Select(usize),
+    /// The "+ Track" menu asked for an empty track of this kind.
+    AddEmpty(TrackKind),
     /// Item `item` of the track was clicked: select only it, or with `toggle` (Ctrl) add it to
     /// the selection or take it out.
     SelectItem {
@@ -233,8 +243,8 @@ pub enum TrackAction {
 pub struct TimelineResponse {
     pub seek: Option<usize>,
     pub actions: Vec<TrackAction>,
-    /// Frames whose thumbnails would fill the visible video items.
-    pub wanted_thumbnails: Vec<usize>,
+    /// Frames whose thumbnails would fill the visible video items, with the track they are of.
+    pub wanted_thumbnails: Vec<(String, usize)>,
     /// A new loop region (`Some(None)` to remove it).
     pub loop_region: Option<Option<LoopRegion>>,
     /// The mode button was clicked: switch between the time and tempo rulers.
@@ -243,6 +253,8 @@ pub struct TimelineResponse {
     pub toggle_snap: bool,
     /// Screen x where the lanes start, for turning a pointer position into time.
     pub lanes_left: f32,
+    /// The row of the lanes the pointer is over, for dropping a resource on a track.
+    pub row_under_pointer: Option<usize>,
 }
 
 /// How close (pixels) the pointer must be to a loop edge on the ruler to drag that edge.
@@ -660,6 +672,9 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
     // no items, and a drag box-selects the items it touches, adding to the selection with Ctrl
     // or Shift. Seeking belongs to the ruler.
     let body_lanes = Rect::from_min_max(pos2(lanes_left, areas.body.top()), areas.body.max);
+    response.row_under_pointer = pointer
+        .filter(|p| body_lanes.contains(*p))
+        .and_then(|p| areas.row_at(view.scroll_y, p.y));
     let pressed_in_lanes = ui
         .input(|i| i.pointer.press_origin())
         .or(background.interact_pointer_pos())
@@ -898,13 +913,30 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         vec2(HEADER_WIDTH, ADD_ROW_HEIGHT),
     );
     header(ui, add_row, header_clip, |ui| {
-        if ui
-            .button(tr("timeline.track.add"))
-            .on_hover_text(tr("timeline.track.add.help"))
-            .clicked()
-        {
-            response.actions.push(TrackAction::Add);
-        }
+        ui.menu_button(tr("timeline.track.add"), |ui| {
+            if ui.button(tr("timeline.track.add_video")).clicked() {
+                response
+                    .actions
+                    .push(TrackAction::AddEmpty(TrackKind::Video));
+                ui.close();
+            }
+            if ui.button(tr("timeline.track.add_audio")).clicked() {
+                response
+                    .actions
+                    .push(TrackAction::AddEmpty(TrackKind::Audio));
+                ui.close();
+            }
+            if ui
+                .button(tr("timeline.track.add_file"))
+                .on_hover_text(tr("timeline.track.add_file.help"))
+                .clicked()
+            {
+                response.actions.push(TrackAction::Add);
+                ui.close();
+            }
+        })
+        .response
+        .on_hover_text(tr("timeline.track.add.help"));
     });
 
     // The playhead, across the ruler and every lane.
@@ -1177,6 +1209,16 @@ impl Lane<'_> {
                 egui::StrokeKind::Inside,
             );
         }
+        if track.missing {
+            painter.text(
+                lane.left_center() + vec2(6.0, 0.0),
+                Align2::LEFT_CENTER,
+                tr("timeline.track.missing"),
+                FontId::proportional(11.0),
+                ui.visuals().error_fg_color,
+            );
+            return;
+        }
         let Some(duration) = track.duration else {
             painter.text(
                 lane.left_center() + vec2(6.0, 0.0),
@@ -1294,11 +1336,11 @@ impl Lane<'_> {
         painter.rect_filled(block, CornerRadius::same(3), fill);
         let content = Rect::from_min_max(pos2(block.left(), bar.bottom()), block.max);
         match track.kind {
-            TrackKind::Video if track.thumbnails => {
+            TrackKind::Video if track.thumbnails.is_some() => {
                 let duration = track.duration.unwrap_or_default();
                 thumbnails(
                     painter,
-                    model,
+                    track,
                     view,
                     lane.left(),
                     (item, duration),
@@ -1610,7 +1652,7 @@ fn draw_waveform(
 #[allow(clippy::too_many_arguments)]
 fn thumbnails(
     painter: &egui::Painter,
-    model: &TimelineModel,
+    track: &TrackView,
     view: &TimelineView,
     lanes_left: f32,
     (item, duration): (&Item, f64),
@@ -1618,7 +1660,10 @@ fn thumbnails(
     clip: Rect,
     response: &mut TimelineResponse,
 ) {
-    let fps = model.thumbnail_rate;
+    let Some(own) = &track.thumbnails else {
+        return;
+    };
+    let fps = own.rate;
     if fps <= 0.0 {
         return;
     }
@@ -1630,8 +1675,8 @@ fn thumbnails(
     if shown.width() <= 0.0 || strip.height() <= 0.0 {
         return;
     }
-    let aspect = model
-        .thumbnails
+    let aspect = own
+        .frames
         .values()
         .next()
         .map_or(16.0 / 9.0, |t| t.size.x / t.size.y.max(1.0));
@@ -1652,7 +1697,7 @@ fn thumbnails(
     let at = |s: f64| view.x(lanes_left, item.position + (s - item.start) / item.rate);
     let painter = painter.with_clip_rect(shown);
     for &frame in &frames {
-        let Some(thumbnail) = nearest(model.thumbnails, frame) else {
+        let Some(thumbnail) = nearest(&own.frames, frame) else {
             continue;
         };
         let start = at(frame as f64 / fps);
@@ -1669,10 +1714,18 @@ fn thumbnails(
         };
         painter.image(thumbnail.texture, slot, uv, egui::Color32::WHITE);
     }
-    let room = MAX_THUMBNAIL_REQUEST.saturating_sub(response.wanted_thumbnails.len());
-    response
+    let asked = response
         .wanted_thumbnails
-        .extend(frames.into_iter().take(room));
+        .iter()
+        .filter(|(name, _)| *name == track.name)
+        .count();
+    let room = MAX_THUMBNAIL_REQUEST.saturating_sub(asked);
+    response.wanted_thumbnails.extend(
+        frames
+            .into_iter()
+            .take(room)
+            .map(|frame| (track.name.clone(), frame)),
+    );
 }
 
 /// The decoded thumbnail closest to `frame`.
@@ -1984,8 +2037,6 @@ mod tests {
             cached: &[],
             tracks: Vec::new(),
             selected_track: None,
-            thumbnails: Box::leak(Box::default()),
-            thumbnail_rate: 0.0,
             loop_region: None,
             tempo: Tempo {
                 bpm: 120.0,

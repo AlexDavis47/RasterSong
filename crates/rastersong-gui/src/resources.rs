@@ -1,6 +1,7 @@
 //! The Resources panel, listing the media the project uses, and the dialog that picks which
 //! streams of a file to import.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use eframe::egui::{self, Id, RichText, Sense, Ui};
@@ -19,6 +20,15 @@ pub enum ResourceAction {
     Rename(ResourceId, String),
     /// Remove the resource (and, once confirmed, its tracks).
     Remove(ResourceId),
+    /// Pick the file again, for a resource whose file moved.
+    Relocate(ResourceId),
+    /// Make a new graph (a passthrough).
+    NewGraph,
+    /// Open the graph with this id in the editor.
+    OpenGraph(u32),
+    RenameGraph(u32, String),
+    DuplicateGraph(u32),
+    RemoveGraph(u32),
 }
 
 /// What a resource row hands over while it is dragged: drop it on the timeline to make a track.
@@ -109,7 +119,11 @@ fn channels_label(channels: u32) -> String {
 
 /// The panel: a header with Import, then a row per resource. Rows can be dragged onto the
 /// timeline; a row whose file is missing says so.
-pub fn resources_panel(ui: &mut Ui, project: &Project) -> Vec<ResourceAction> {
+pub fn resources_panel(
+    ui: &mut Ui,
+    project: &Project,
+    missing: &HashSet<ResourceId>,
+) -> Vec<ResourceAction> {
     let mut actions = Vec::new();
     ui.horizontal(|ui| {
         ui.strong(tr("resources.title"));
@@ -124,16 +138,15 @@ pub fn resources_panel(ui: &mut Ui, project: &Project) -> Vec<ResourceAction> {
         });
     });
     ui.separator();
-    if project.resources.is_empty() {
-        ui.weak(tr("resources.empty"));
-        return actions;
-    }
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
+            if project.resources.is_empty() {
+                ui.weak(tr("resources.empty"));
+            }
             for resource in &project.resources {
                 let id = Id::new(("resource", resource.id));
-                let missing = !resource.path.exists();
+                let missing = missing.contains(&resource.id);
                 let users = project.resource_users(resource.id).len();
                 let row = ui.dnd_drag_source(id, DraggedResource(resource.id), |ui| {
                     ui.horizontal(|ui| {
@@ -147,6 +160,14 @@ pub fn resources_panel(ui: &mut Ui, project: &Project) -> Vec<ResourceAction> {
                             text = text.color(ui.visuals().error_fg_color);
                         }
                         ui.add(egui::Label::new(text).truncate().sense(Sense::hover()));
+                        if missing
+                            && ui
+                                .small_button(tr("resources.relocate"))
+                                .on_hover_text(tr("resources.relocate.help"))
+                                .clicked()
+                        {
+                            actions.push(ResourceAction::Relocate(resource.id));
+                        }
                     });
                 });
                 let file = resource
@@ -182,6 +203,10 @@ pub fn resources_panel(ui: &mut Ui, project: &Project) -> Vec<ResourceAction> {
                         actions.push(ResourceAction::AddToTimeline(resource.id));
                         ui.close();
                     }
+                    if ui.button(tr("resources.relocate")).clicked() {
+                        actions.push(ResourceAction::Relocate(resource.id));
+                        ui.close();
+                    }
                     if ui.button(tr("resources.remove")).clicked() {
                         actions.push(ResourceAction::Remove(resource.id));
                         ui.close();
@@ -191,8 +216,63 @@ pub fn resources_panel(ui: &mut Ui, project: &Project) -> Vec<ResourceAction> {
                     actions.push(ResourceAction::AddToTimeline(resource.id));
                 }
             }
+            graphs_section(ui, project, &mut actions);
         });
     actions
+}
+
+/// The graphs: one row each, the open one marked. Double-click opens a graph in the editor.
+fn graphs_section(ui: &mut Ui, project: &Project, actions: &mut Vec<ResourceAction>) {
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.strong(tr("resources.graphs"));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .small_button(tr("resources.graph.new"))
+                .on_hover_text(tr("resources.graph.new.help"))
+                .clicked()
+            {
+                actions.push(ResourceAction::NewGraph);
+            }
+        });
+    });
+    ui.separator();
+    let entries = project.graph_entries();
+    for entry in &entries {
+        let mut text = RichText::new(entry.name.clone());
+        if entry.open {
+            text = text.strong();
+        }
+        let row = ui.add(egui::Label::new(text).truncate().sense(Sense::click()));
+        let row = row.on_hover_text(if entry.open {
+            tr("resources.graph.open_now")
+        } else {
+            tr("resources.graph.help")
+        });
+        row.context_menu(|ui| {
+            let rename = name_edit(ui, Id::new(("graph-name", entry.id)), &entry.name, |t| {
+                t.desired_width(180.0)
+            });
+            if let Some(name) = rename.committed {
+                actions.push(ResourceAction::RenameGraph(entry.id, name));
+            }
+            if !entry.open && ui.button(tr("resources.graph.open")).clicked() {
+                actions.push(ResourceAction::OpenGraph(entry.id));
+                ui.close();
+            }
+            if ui.button(tr("resources.graph.duplicate")).clicked() {
+                actions.push(ResourceAction::DuplicateGraph(entry.id));
+                ui.close();
+            }
+            if !entry.open && ui.button(tr("resources.remove")).clicked() {
+                actions.push(ResourceAction::RemoveGraph(entry.id));
+                ui.close();
+            }
+        });
+        if row.double_clicked() && !entry.open {
+            actions.push(ResourceAction::OpenGraph(entry.id));
+        }
+    }
 }
 
 /// The "found multiple tracks" dialog for `pending`: a checkbox per stream. `Some(true)` when

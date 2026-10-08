@@ -737,6 +737,91 @@ fn thumbnails_of_the_source_video_arrive() {
 }
 
 #[test]
+fn the_same_video_on_two_tracks_loads_both() {
+    let mut harness = loaded();
+    let resource = harness.state().project().video_tracks[0].resource.unwrap();
+    harness.state_mut().add_resource_track(resource, 1.0);
+    harness.state_mut().add_resource_track(resource, 2.0);
+    harness.run_steps(2);
+    assert_eq!(harness.state().project().video_tracks.len(), 3);
+    // Neither new track is left on "loading", and each gets its thumbnails.
+    step_until(&mut harness, "both lengths", |app| {
+        app.video_durations().iter().all(Option::is_some)
+    });
+    harness.run_steps(2);
+}
+
+#[test]
+fn empty_tracks_take_resources_dropped_on_them() {
+    let mut app = import_app();
+    app.import_files([PathBuf::from("concert.mkv")]);
+    app.finish_import(Some(&[true, true, false]));
+    let ids: Vec<_> = app.project().resources.iter().map(|r| r.id).collect();
+    let (video, band) = (ids[0], ids[1]);
+    let name = app.add_empty_track(TrackKind::Video);
+    assert_eq!(app.project().video_tracks[0].resource, None);
+    // Dropped on the empty track, the video fills it; the same again adds an item.
+    assert_eq!(app.drop_resource(video, Some(0), 2.0), Some(name.clone()));
+    assert_eq!(app.drop_resource(video, Some(0), 9.0), Some(name.clone()));
+    assert_eq!(app.project().video_tracks.len(), 1);
+    assert_eq!(app.project().video_tracks[0].items.len(), 2);
+    // Audio on a video track starts a track of its own.
+    let other = app.drop_resource(band, Some(0), 0.0).unwrap();
+    assert_ne!(other, name);
+    assert_eq!(app.project().audio_tracks.len(), 1);
+    // Off the tracks, a resource makes a new track.
+    app.drop_resource(video, None, 0.0);
+    assert_eq!(app.project().video_tracks.len(), 2);
+}
+
+#[test]
+fn a_missing_file_leaves_its_tracks_as_gaps_until_relocated() {
+    let mut app = import_app();
+    app.import_files([PathBuf::from("concert.mkv")]);
+    app.finish_import(Some(&[true, true, false]));
+    let ids: Vec<_> = app.project().resources.iter().map(|r| r.id).collect();
+    app.add_resource_track(ids[0], 0.0);
+    assert!(app.missing_resources().is_empty());
+    // The file moves: the resource is missing until it is pointed at the new place.
+    app.relocate_resource(ids[0], PathBuf::from("gone.mkv"));
+    assert!(app.missing_resources().contains(&ids[0]));
+    assert!(app.missing_resources().contains(&ids[1]));
+    app.relocate_resource(ids[0], PathBuf::from("concert.mkv"));
+    assert!(app.missing_resources().is_empty());
+    assert!(
+        app.project()
+            .resources
+            .iter()
+            .all(|r| r.path.as_path() == Path::new("concert.mkv"))
+    );
+}
+
+#[test]
+fn a_new_graph_opens_as_a_passthrough_and_the_old_one_is_kept() {
+    let mut harness = loaded();
+    let before = harness.state().project().graph.clone();
+    let id = harness.state_mut().new_graph();
+    harness.run_steps(3);
+    let app = harness.state();
+    assert_eq!(app.project().graph_id, id);
+    assert_eq!(app.project().graphs.len(), 1);
+    assert_eq!(
+        app.project().graphs[0].graph.nodes.len(),
+        before.nodes.len()
+    );
+    // The editor shows the passthrough: the input nodes, Video Output and Audio Output.
+    assert!(
+        app.editor().node_count() <= 6,
+        "{}",
+        app.editor().node_count()
+    );
+    let old = app.project().graphs[0].id;
+    harness.state_mut().open_graph(old);
+    harness.run_steps(3);
+    assert_eq!(harness.state().project().graph_id, old);
+}
+
+#[test]
 fn adding_tracks_names_them_after_their_files_and_links_a_node_to_each() {
     let mut harness = loaded();
     let nodes = harness.state().editor().node_count();

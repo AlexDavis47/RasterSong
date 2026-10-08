@@ -44,6 +44,11 @@ pub trait MediaBackend: Send + Sync + Debug {
     /// Whether the file has an audio stream, from its header alone (no decoding). False if the
     /// file can't be opened.
     fn has_audio(&self, path: &Path) -> bool;
+
+    /// Whether the file is there to open: false marks a resource missing.
+    fn exists(&self, path: &Path) -> bool {
+        path.exists()
+    }
 }
 
 /// Random access to the frames of one video stream, by frame index.

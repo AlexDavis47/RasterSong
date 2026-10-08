@@ -253,8 +253,8 @@ Built as the timeline's fourth step, before item editing.
   would push any of them before the start of the timeline stops where the first reaches it. Splitting together
   comes with item editing.
 - **Track height and links are saved with the project** (`height`, `link` on the track), like mute and solo.
-- The app still opens one video track (File → Open Video replaces it); thumbnails are drawn for it. More video
-  tracks arrive with the Resources panel, which is how tracks get their files.
+- File → Open Video replaces the video track; the Resources panel adds more video tracks, which is how tracks
+  get their files.
 
 ### Item editing (October 2026)
 
@@ -294,6 +294,29 @@ Built as the first step of stage 2 of [Timeline, resources and graph layers](roa
   to play. Renaming a resource leaves its tracks' names alone, since graphs select tracks by name.
 - **Resource ids are unique, not permanent.** A new resource can reuse a removed one's id once nothing points at
   it; undo restores whole projects, so nothing can hold a stale id.
+
+### Empty tracks, Relocate and graph resources (October 2026)
+
+Built as the second step of stage 2.
+
+- **Only the first video track used to get a length and thumbnails**, so a second video track (the same resource
+  dragged on twice, say) sat on "loading" for ever although the engine could render it. Thumbnails are now made per
+  video stream (path and stream index), and tracks of one resource share a decoder.
+- **An empty track has no resource** (`resource` left out, no items) and fills with the first resource of its kind
+  dropped on it, because a track holds one resource only. Empty tracks are not sent to the engine. "The video"
+  (the track graphs and the project timebase follow) is the first video track that has a resource.
+- **A resource that can't be dropped on a track makes a new track** (another resource, the wrong kind, no track
+  under the pointer), so a drop never silently does nothing and never changes what a track holds.
+- **Missing files are left out of the timeline sent to the engine**, rather than failing the whole render the way an
+  unopenable video does: their tracks read as gaps until found. Existence comes from the media backend, so the fake
+  backend can say a file is there without a real path. Relocating moves every resource that reads the same file.
+- **Graphs are kept as one open graph plus the others.** `Project::graph` stays the open graph, so the editor, the
+  engine and every existing caller are unchanged; the other graphs wait in `graphs` and opening one swaps it with
+  the open graph. This is a stepping stone: when graph layers place graphs on the timeline, each graph becomes a
+  plain entry in one list.
+- **Input and Output port nodes wait for graph layers.** A port is filled by a layer item's bindings or a
+  subgraph's pins; with neither, a port node would be today's Video Input and Audio Input under another name, and
+  the project-linked node machinery would have to be rewritten twice.
 
 ## Open
 

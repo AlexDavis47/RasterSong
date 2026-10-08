@@ -125,6 +125,12 @@ impl MediaBackend for FakeBackend {
         self.audio.contains_key(path)
     }
 
+    fn exists(&self, path: &Path) -> bool {
+        self.videos.contains_key(path)
+            || self.audio.contains_key(path)
+            || self.streams.contains_key(path)
+    }
+
     fn load_audio(&self, path: &Path, options: AudioOptions) -> Result<AudioClip, MediaError> {
         assert_eq!(
             AudioOptions {

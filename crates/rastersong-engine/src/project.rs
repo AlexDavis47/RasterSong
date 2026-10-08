@@ -11,9 +11,11 @@ use crate::DEFAULT_AUDIO_TRACK;
 use crate::timeline::{Bus, Item, Timebase, Timeline, TrackKind, TrackSpec};
 
 mod editing;
+mod graphs;
 mod resources;
 
 pub use editing::{Edge, ItemRef, MIN_ITEM_LENGTH, RATE_RANGE, snap_offset};
+pub use graphs::{GraphEntry, PASSTHROUGH_GRAPH, StoredGraph};
 pub use resources::{Resource, ResourceId, ResourceKind, resource_name_for};
 
 /// The project file format version. Like the graph format it stays 0 until 1.0: files change
@@ -43,7 +45,16 @@ pub struct Project {
     /// each Audio Output writes to one. Never empty; Main, stereo, by default.
     #[serde(default = "default_buses", skip_serializing_if = "is_default_buses")]
     pub buses: Vec<Bus>,
+    /// The open graph: what the editor shows and the engine renders.
     pub graph: GraphDesc,
+    /// The open graph's id and name among the project's graphs.
+    #[serde(default = "graphs::first_graph_id")]
+    pub graph_id: u32,
+    #[serde(default = "graphs::default_graph_name")]
+    pub graph_name: String,
+    /// The project's other graphs, kept until one is opened.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub graphs: Vec<StoredGraph>,
     /// The loop region on the timeline, if one has been made.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loop_region: Option<LoopRegion>,
@@ -165,8 +176,10 @@ impl LoopRegion {
 pub struct ProjectTrack {
     /// The name the graph's input nodes select the track by. Unique among all tracks.
     pub name: String,
-    /// What the track plays.
-    pub resource: ResourceId,
+    /// What the track plays: `None` for an empty track, which takes the first resource of its
+    /// kind dropped on it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource: Option<ResourceId>,
     /// Where the resource plays on the timeline.
     #[serde(default = "whole")]
     pub items: Vec<Item>,
@@ -204,7 +217,7 @@ impl ProjectTrack {
     pub fn new(name: String, resource: ResourceId) -> Self {
         Self {
             name,
-            resource,
+            resource: Some(resource),
             items: whole(),
             volume: 1.0,
             muted: false,
@@ -212,6 +225,15 @@ impl ProjectTrack {
             solo: false,
             height: None,
             link: None,
+        }
+    }
+
+    /// A track with no resource and no items yet.
+    pub fn empty(name: String) -> Self {
+        Self {
+            resource: None,
+            items: Vec::new(),
+            ..Self::new(name, ResourceId(0))
         }
     }
 
@@ -272,6 +294,9 @@ impl Project {
             audio_tracks: Vec::new(),
             buses: default_buses(),
             graph,
+            graph_id: graphs::first_graph_id(),
+            graph_name: graphs::default_graph_name(),
+            graphs: Vec::new(),
             loop_region: None,
             tempo: Tempo::default(),
             timeline_mode: TimelineMode::default(),
@@ -284,6 +309,13 @@ impl Project {
 
     /// What the engine renders: the timebase and every track.
     pub fn timeline(&self) -> Timeline {
+        self.timeline_with(|_| true)
+    }
+
+    /// [`Self::timeline`] without the tracks whose resource `readable` refuses (a file that is
+    /// missing): they read as gaps until the file is found.
+    pub fn timeline_with(&self, readable: impl Fn(&Resource) -> bool) -> Timeline {
+        let readable = |t: &&ProjectTrack| self.track_resource(t).is_some_and(&readable);
         let video_solo = self.soloing(TrackKind::Video);
         let audio_solo = self.soloing(TrackKind::Audio);
         Timeline {
@@ -291,10 +323,12 @@ impl Project {
             tracks: self
                 .video_tracks
                 .iter()
+                .filter(readable)
                 .map(|t| t.spec(TrackKind::Video, video_solo, self.track_resource(t)))
                 .chain(
                     self.audio_tracks
                         .iter()
+                        .filter(readable)
                         .map(|t| t.spec(TrackKind::Audio, audio_solo, self.track_resource(t))),
                 )
                 .collect(),
@@ -483,9 +517,9 @@ impl Project {
         self.unique_name(DEFAULT_AUDIO_TRACK)
     }
 
-    /// The video: the first video track.
+    /// The video: the first video track that has a resource.
     pub fn video(&self) -> Option<&ProjectTrack> {
-        self.video_tracks.first()
+        self.video_tracks.iter().find(|t| t.resource.is_some())
     }
 
     /// The video's file.
@@ -553,9 +587,8 @@ impl Project {
                     .map(|t| (t, ResourceKind::Audio)),
             )
             .find(|(t, kind)| {
-                !resources
-                    .iter()
-                    .any(|r| r.id == t.resource && r.kind == *kind)
+                t.resource
+                    .is_some_and(|id| !resources.iter().any(|r| r.id == id && r.kind == *kind))
             });
         if let Some((track, _)) = mismatch {
             return Err(error(&tr_args(
@@ -1050,5 +1083,88 @@ mod inspect_rate_tests {
         .unwrap();
         assert_eq!(Project::load(&path).unwrap().inspect_rate, 30.0);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn graphs_are_kept_and_swapped_in_when_opened() {
+        let starter = GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap();
+        let mut project = Project::new(starter.clone());
+        assert_eq!(project.graph_entries().len(), 1);
+        let new = project.add_graph("Graph", None);
+        // Names stay unique, and the template is the passthrough.
+        assert_eq!(project.graph_entries()[1].name, "Graph_2");
+        assert_eq!(project.graphs[0].graph.nodes.len(), 4);
+
+        assert!(project.open_graph(new));
+        assert_eq!(project.graph.nodes.len(), 4);
+        assert_eq!(
+            (project.graph_id, project.graph_name.as_str()),
+            (new, "Graph_2")
+        );
+        // The graph that was open is stored in its place, as it was.
+        assert_eq!(project.graphs[0].graph, starter);
+        // The open graph can't be opened again or removed; a stored one can.
+        assert!(!project.open_graph(new));
+        assert!(!project.remove_graph(new));
+        let copy = project.duplicate_graph(new).unwrap();
+        assert!(project.rename_graph(copy, "Copy"));
+        assert!(project.remove_graph(copy));
+        assert!(project.rename_graph(1, "Graph_2"));
+        assert_eq!(
+            project
+                .graph_entries()
+                .iter()
+                .filter(|g| g.name == "Graph_2")
+                .count(),
+            1
+        );
+
+        // They survive saving.
+        let dir = std::env::temp_dir().join("rastersong-graph-resources");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("p.rastersong");
+        project.save(&path).unwrap();
+        assert_eq!(Project::load(&path).unwrap(), project);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_empty_track_takes_the_first_resource_dropped_on_it() {
+        let mut project =
+            Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
+        let clip = project.add_resource(ResourceKind::Video, "clip", "clip.mp4", None);
+        let other = project.add_resource(ResourceKind::Video, "other", "other.mp4", None);
+        let song = project.add_resource(ResourceKind::Audio, "song", "song.wav", None);
+        let name = project.add_empty_track(TrackKind::Video);
+        assert_eq!(project.add_empty_track(TrackKind::Video), "Track_2");
+        // Empty tracks play nothing: the engine isn't told about them.
+        assert!(project.timeline().tracks.is_empty());
+        assert!(project.video().is_none());
+
+        // A resource of the wrong kind is refused; the right one fills the track.
+        assert!(!project.place_resource(&name, song, 0.0));
+        assert!(project.place_resource(&name, clip, 1.0));
+        assert_eq!(project.video_tracks[0].items[0].position, 1.0);
+        assert_eq!(project.video().unwrap().name, name);
+        // The same resource adds an item; another resource is refused.
+        assert!(project.place_resource(&name, clip, 5.0));
+        assert_eq!(project.video_tracks[0].items.len(), 2);
+        assert!(!project.place_resource(&name, other, 0.0));
+        assert_eq!(project.timeline().tracks.len(), 1);
+    }
+
+    #[test]
+    fn two_video_tracks_may_play_one_resource() {
+        let mut project =
+            Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
+        let clip = project.add_resource(ResourceKind::Video, "clip", "clip.mp4", None);
+        let a = project.add_track_for(clip, 0.0).unwrap();
+        let b = project.add_track_for(clip, 0.0).unwrap();
+        assert_eq!((a.as_str(), b.as_str()), ("clip", "clip_2"));
+        let timeline = project.timeline();
+        assert_eq!(timeline.tracks.len(), 2);
+        assert_eq!(timeline.tracks[0].path, timeline.tracks[1].path);
+        // Removing the resource takes both tracks.
+        assert_eq!(project.remove_resource(clip).len(), 2);
     }
 }

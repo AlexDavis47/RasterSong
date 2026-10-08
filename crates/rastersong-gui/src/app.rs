@@ -3,9 +3,10 @@
 //! Layout: the Resources panel and the timeline along the bottom; above them the preview (with
 //! its playback controls), the node graph and the inspector, side by side.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Color32, CornerRadius, Margin, RichText, Ui, UiBuilder};
 use rastersong_engine::LoadedTrack;
@@ -14,7 +15,7 @@ use rastersong_engine::{
     AudioSink, BackendInfo, CompileOptions, Engine, EngineConfig, EngineStatus, Frame, Graph,
     GraphDesc, Item, ItemRef, MediaBackend, NodeStats, PROJECT_EXTENSION, PlaybackClock,
     PreviewScale, Project, ProjectTrack, Registry, ResourceId, ResourceKind, Thumbnails, Timeline,
-    TimelineMode, TrackKind, TrackSpec, VIDEO_SOURCE, resource_name_for,
+    TimelineMode, TrackKind, TrackSpec, VIDEO_SOURCE, VideoInfo, VideoKey, resource_name_for,
 };
 use rastersong_lang::{tr, tr_args};
 
@@ -38,7 +39,8 @@ use crate::resources::{
 use crate::settings::Settings;
 use crate::theme::{Theme, ThemeChoice, apply_style};
 use crate::timeline::{
-    LANE_HEIGHT, Thumbnail, TimelineModel, TimelineView, TrackAction, TrackView, timecode, timeline,
+    LANE_HEIGHT, Thumbnail, TimelineModel, TimelineView, TrackAction, TrackThumbnails, TrackView,
+    timecode, timeline,
 };
 use crate::track_ops::move_track;
 
@@ -82,14 +84,21 @@ enum Pending {
     OpenProject,
 }
 
+/// The thumbnails of one video stream and their textures.
+struct VideoThumbnails {
+    service: Thumbnails,
+    textures: BTreeMap<usize, (egui::TextureHandle, Thumbnail)>,
+}
+
 pub struct App {
     engine: Engine,
     /// For quick checks on media files (e.g. whether a video has sound).
     backend: Arc<dyn MediaBackend>,
-    thumbnails: Thumbnails,
-    /// Textures of the decoded thumbnails, and the video they're of.
-    thumbnail_textures: BTreeMap<usize, (egui::TextureHandle, Thumbnail)>,
-    thumbnail_video: Option<PathBuf>,
+    /// Thumbnails of each video stream the timeline's video tracks play: tracks of one
+    /// resource share an entry.
+    thumbnails: HashMap<VideoKey, VideoThumbnails>,
+    /// The first video track's stream, which a changed timeline view starts over for.
+    thumbnail_video: Option<VideoKey>,
     timeline_view: TimelineView,
     /// Where the timeline and the inspector were last drawn, for tests.
     timeline_area: egui::Rect,
@@ -140,6 +149,9 @@ pub struct App {
     source_engine: Engine,
     /// The video the source engine was given.
     source_video_sent: Option<Timeline>,
+    /// Resources whose files aren't there, checked about once a second.
+    missing: HashSet<ResourceId>,
+    missing_checked: Option<Instant>,
     source_preview: Option<(egui::TextureHandle, Arc<Frame>)>,
     preview_view: PreviewView,
     /// The feed the preview shows; with the split on, the one on the right.
@@ -176,7 +188,6 @@ impl App {
         backend_info: Option<BackendInfo>,
         audio: AudioOut,
     ) -> Self {
-        let thumbnails = Thumbnails::new(backend.clone());
         let engine = Engine::new(backend.clone(), EngineConfig::default());
         let source_engine = Engine::new(backend.clone(), EngineConfig::default());
         let editor = linked_editor(&project);
@@ -186,8 +197,7 @@ impl App {
         let mut app = Self {
             engine,
             backend,
-            thumbnails,
-            thumbnail_textures: BTreeMap::new(),
+            thumbnails: HashMap::new(),
             thumbnail_video: None,
             timeline_view: TimelineView::default(),
             timeline_area: egui::Rect::NOTHING,
@@ -218,6 +228,8 @@ impl App {
             preview: None,
             source_engine,
             source_video_sent: None,
+            missing: HashSet::new(),
+            missing_checked: None,
             source_preview: None,
             preview_view: PreviewView::default(),
             preview_feed: Feed::default(),
@@ -283,9 +295,15 @@ impl App {
         self.inspector_rect
     }
 
+    /// Each video track's file length in seconds, once it is known.
+    pub fn video_durations(&self) -> Vec<Option<f64>> {
+        let tracks = &self.project.video_tracks;
+        tracks.iter().map(|t| self.track_duration(t)).collect()
+    }
+
     /// How many video thumbnails are ready to draw.
     pub fn thumbnail_count(&self) -> usize {
-        self.thumbnail_textures.len()
+        self.thumbnails.values().map(|t| t.textures.len()).sum()
     }
 
     /// The user's settings, saved between sessions.
@@ -303,7 +321,8 @@ impl App {
     /// Hands the whole project to the engine.
     fn send_project(&mut self) {
         self.engine.set_preview_scale(self.settings.preview_scale());
-        self.engine.set_timeline(self.project.timeline());
+        self.refresh_missing(true);
+        self.engine.set_timeline(self.timeline_of(&self.project));
         self.sent_graph = without_layout(&self.project.graph);
         self.engine.set_graph(self.sent_graph.clone());
         self.engine.set_tempo(self.project.tempo);
@@ -347,7 +366,7 @@ impl App {
             .project
             .add_resource(ResourceKind::Video, &name, &path, None);
         self.project.add_track_for(id, 0.0);
-        self.engine.set_timeline(self.project.timeline());
+        self.engine.set_timeline(self.timeline_of(&self.project));
         self.clock.seek(0);
         self.link_project_inputs();
         let known = self.project.audio_tracks.iter().any(|t| {
@@ -442,6 +461,110 @@ impl App {
         Some(name)
     }
 
+    /// Adds an empty track of `kind` to drag a resource onto, and selects it. Returns its name.
+    pub fn add_empty_track(&mut self, kind: TrackKind) -> String {
+        let name = self.project.add_empty_track(kind);
+        let videos = self.project.video_tracks.len();
+        self.selected_track = Some(match kind {
+            TrackKind::Video => videos - 1,
+            TrackKind::Audio => videos + self.project.audio_tracks.len() - 1,
+        });
+        name
+    }
+
+    /// Drops resource `id` on the track in timeline row `row` at `position` seconds: an empty
+    /// track takes it, a track of the same resource gets another item. Any other track can't
+    /// take it, so a new track plays it instead. Returns the name of the track it landed on.
+    pub fn drop_resource(
+        &mut self,
+        id: ResourceId,
+        row: Option<usize>,
+        position: f64,
+    ) -> Option<String> {
+        let target = row
+            .and_then(|row| self.track_row(row))
+            .and_then(|(kind, i)| match kind {
+                TrackKind::Video => self.project.video_tracks.get(i),
+                TrackKind::Audio => self.project.audio_tracks.get(i),
+            })
+            .map(|t| (t.name.clone(), t.resource.is_none()));
+        let Some((name, was_empty)) = target else {
+            return self.add_resource_track(id, position);
+        };
+        if !self.project.place_resource(&name, id, position) {
+            return self.add_resource_track(id, position);
+        }
+        if was_empty {
+            let audio = self.project.audio_tracks.iter().any(|t| t.name == name);
+            if audio {
+                self.editor
+                    .set_project_inputs(self.video_name(), self.track_name_list());
+                self.editor.link_track(&name);
+            } else {
+                self.link_project_inputs();
+            }
+        }
+        Some(name)
+    }
+
+    /// Adds a passthrough graph and opens it. Returns its id.
+    pub fn new_graph(&mut self) -> u32 {
+        self.project.graph = self.editor.to_desc();
+        let id = self.project.add_graph("Graph", None);
+        self.open_graph(id);
+        id
+    }
+
+    /// Opens a graph from the Resources panel in the editor. It is the graph rendered, too:
+    /// there is one at a time until graph layers can place several.
+    pub fn open_graph(&mut self, id: u32) {
+        self.project.graph = self.editor.to_desc();
+        if !self.project.open_graph(id) {
+            return;
+        }
+        self.editor = linked_editor(&self.project);
+        if !self.editor.warnings.is_empty() {
+            self.error = Some(self.editor.warnings.join("\n"));
+        }
+        self.project.graph = self.editor.to_desc();
+    }
+
+    /// Points the resource's file (and the other streams of it) at `path`.
+    pub fn relocate_resource(&mut self, id: ResourceId, path: PathBuf) {
+        if self.project.relocate_resource(id, path) > 0 {
+            self.refresh_missing(true);
+        }
+    }
+
+    /// What the engine plays: the tracks whose files are there.
+    fn timeline_of(&self, project: &Project) -> Timeline {
+        project.timeline_with(|r| !self.missing.contains(&r.id))
+    }
+
+    /// Looks for resources whose files are gone, at most once a second unless `now`.
+    fn refresh_missing(&mut self, now: bool) {
+        if !now
+            && self
+                .missing_checked
+                .is_some_and(|t| t.elapsed() < Duration::from_secs(1))
+        {
+            return;
+        }
+        self.missing_checked = Some(Instant::now());
+        self.missing = self
+            .project
+            .resources
+            .iter()
+            .filter(|r| !self.backend.exists(&r.path))
+            .map(|r| r.id)
+            .collect();
+    }
+
+    /// The ids of resources whose files are missing.
+    pub fn missing_resources(&self) -> &HashSet<ResourceId> {
+        &self.missing
+    }
+
     /// Removes a resource, the tracks that play it, and their links to input nodes.
     pub fn remove_resource(&mut self, id: ResourceId) {
         let removed = self.project.remove_resource(id);
@@ -464,6 +587,36 @@ impl App {
             ResourceAction::AddToTimeline(id) => {
                 let at = self.clock.frame() as f64 / self.clock_rate();
                 self.add_resource_track(id, at);
+            }
+            ResourceAction::NewGraph => {
+                self.new_graph();
+            }
+            ResourceAction::OpenGraph(id) => self.open_graph(id),
+            ResourceAction::RenameGraph(id, name) => {
+                self.project.rename_graph(id, &name);
+            }
+            ResourceAction::DuplicateGraph(id) => {
+                // The open graph is copied as it is in the editor now.
+                self.project.graph = self.editor.to_desc();
+                self.project.duplicate_graph(id);
+            }
+            ResourceAction::RemoveGraph(id) => {
+                self.project.remove_graph(id);
+            }
+            ResourceAction::Relocate(id) => {
+                let Some(old) = self.project.resource(id).map(|r| r.path.clone()) else {
+                    return;
+                };
+                let mut dialog = rfd::FileDialog::new();
+                if let Some(folder) = old.parent().filter(|p| p.exists()) {
+                    dialog = dialog.set_directory(folder);
+                }
+                if let Some(file) = old.file_name() {
+                    dialog = dialog.set_file_name(file.to_string_lossy());
+                }
+                if let Some(path) = dialog.pick_file() {
+                    self.relocate_resource(id, path);
+                }
             }
             ResourceAction::Rename(id, name) => {
                 self.project.rename_resource(id, &name);
@@ -654,7 +807,7 @@ impl App {
 
     /// Puts the project back to an earlier (or later) state from the history.
     fn restore(&mut self, project: Project) {
-        self.engine.set_timeline(project.timeline());
+        self.engine.set_timeline(self.timeline_of(&project));
         self.editor.restore(&project.graph);
         let rows = project.video_tracks.len() + project.audio_tracks.len();
         self.selected_track = self
@@ -690,7 +843,6 @@ impl App {
                 let ctx = ctx.clone();
                 move || ctx.request_repaint()
             });
-            self.thumbnails.on_update(move || ctx.request_repaint());
             apply_style(ui.ctx());
             self.initialized = true;
         }
@@ -730,7 +882,7 @@ impl App {
                         ..Margin::ZERO
                     }))
                     .show(ui, |ui| {
-                        for action in resources_panel(ui, &self.project) {
+                        for action in resources_panel(ui, &self.project, &self.missing) {
                             self.resource_action(action);
                         }
                     });
@@ -989,7 +1141,8 @@ impl App {
             self.sent_graph = semantic;
         }
         self.project.graph = graph;
-        self.engine.set_timeline(self.project.timeline());
+        self.refresh_missing(false);
+        self.engine.set_timeline(self.timeline_of(&self.project));
         self.engine.set_tempo(self.project.tempo);
         self.engine.set_bypass_all(self.project.bypass_graph);
         self.engine.set_audio_rate(self.project.audio_rate);
@@ -1671,7 +1824,7 @@ impl App {
             {
                 self.preview_split = !self.preview_split;
             }
-            if let (Some(project), Some(preview)) = (self.thumbnails.info(), info) {
+            if let (Some(project), Some(preview)) = (self.first_video_info(), info) {
                 ui.weak(tr_args(
                     "controls.resolution",
                     &[
@@ -1752,7 +1905,7 @@ impl App {
         let area = ui.available_rect_before_wrap();
         let Some(info) = self.engine.info() else {
             ui.weak(tr("timeline.empty"));
-            if ui.button(tr("timeline.track.add")).clicked() {
+            if ui.button(tr("timeline.track.add_audio_file")).clicked() {
                 self.pick_audio_tracks();
             }
             // A resource dropped on the empty timeline starts at the beginning.
@@ -1765,7 +1918,6 @@ impl App {
         self.tidy_item_selection();
         let loaded = self.engine.loaded_tracks();
         self.update_thumbnails(ui.ctx());
-        let video_info = self.thumbnails.info();
         let view = |t: &ProjectTrack, kind: TrackKind| TrackView {
             name: t.name.clone(),
             kind,
@@ -1777,6 +1929,7 @@ impl App {
             height: t.height.unwrap_or(LANE_HEIGHT),
             linked: self.project.linked_to(&t.name),
             bus: t.bus.clone(),
+            missing: t.resource.is_some_and(|r| self.missing.contains(&r)),
             selected_items: self
                 .selected_items
                 .iter()
@@ -1789,11 +1942,17 @@ impl App {
             .project
             .video_tracks
             .iter()
-            .enumerate()
-            .map(|(i, t)| {
-                let shown = (i == 0).then_some(video_info.as_ref()).flatten();
+            .map(|t| {
+                let key = self.video_key(t);
+                let own = key.as_ref().and_then(|k| self.thumbnails.get(k));
+                let shown = own.and_then(|o| o.service.info());
+                let shown = shown.as_ref();
                 TrackView {
-                    duration: shown.map(|v| v.frame_count as f64 / v.frame_rate.as_f64()),
+                    duration: if t.resource.is_none() {
+                        Some(0.0)
+                    } else {
+                        shown.map(|v| v.frame_count as f64 / v.frame_rate.as_f64())
+                    },
                     details: shown.map(|v| {
                         format!(
                             "{}×{} · {:.3} fps",
@@ -1803,7 +1962,15 @@ impl App {
                         )
                         .replace(".000 fps", " fps")
                     }),
-                    thumbnails: shown.is_some(),
+                    thumbnails: own.zip(shown).map(|(o, v)| TrackThumbnails {
+                        frames: Arc::new(
+                            o.textures
+                                .iter()
+                                .map(|(&frame, (_, thumbnail))| (frame, *thumbnail))
+                                .collect(),
+                        ),
+                        rate: v.frame_rate.as_f64(),
+                    }),
                     ..view(t, TrackKind::Video)
                 }
             })
@@ -1811,16 +1978,15 @@ impl App {
         tracks.extend(self.project.audio_tracks.iter().map(|t| {
             let loaded = loaded.iter().find(|l| l.name == t.name);
             TrackView {
-                duration: loaded.map(|l| l.clip.duration_secs()),
+                duration: if t.resource.is_none() {
+                    Some(0.0)
+                } else {
+                    loaded.map(|l| l.clip.duration_secs())
+                },
                 waveform: loaded.map(|l| l.waveform.clone()),
                 ..view(t, TrackKind::Audio)
             }
         }));
-        let thumbnails: BTreeMap<usize, Thumbnail> = self
-            .thumbnail_textures
-            .iter()
-            .map(|(&frame, (_, thumbnail))| (frame, *thumbnail))
-            .collect();
         let cached = self.engine.cached_ranges();
         let model = TimelineModel {
             frame_count: info.frames,
@@ -1829,8 +1995,6 @@ impl App {
             cached: &cached,
             tracks,
             selected_track: self.selected_track,
-            thumbnails: &thumbnails,
-            thumbnail_rate: video_info.map_or(0.0, |v| v.frame_rate.as_f64()),
             loop_region: self.project.loop_region,
             tempo: self.project.tempo,
             mode: self.project.timeline_mode,
@@ -1844,9 +2008,19 @@ impl App {
                 .input(|i| i.pointer.interact_pos())
                 .map_or(response.lanes_left, |p| p.x.max(response.lanes_left));
             let at = self.timeline_view.seconds(response.lanes_left, x).max(0.0);
-            self.add_resource_track(id, at);
+            self.drop_resource(id, response.row_under_pointer, at);
         }
-        self.thumbnails.request(&response.wanted_thumbnails);
+        for track in &self.project.video_tracks {
+            let frames: Vec<usize> = response
+                .wanted_thumbnails
+                .iter()
+                .filter(|(name, _)| *name == track.name)
+                .map(|&(_, frame)| frame)
+                .collect();
+            if let Some(thumbs) = self.video_key(track).and_then(|k| self.thumbnails.get(&k)) {
+                thumbs.service.request(&frames);
+            }
+        }
         if let Some(region) = response.loop_region {
             self.project.loop_region = region;
         }
@@ -1882,33 +2056,63 @@ impl App {
         });
     }
 
-    /// Keeps the thumbnail service on the project's video, and a texture for each thumbnail it
-    /// has decoded.
+    /// The stream of a file a video track plays, which thumbnails are made of.
+    fn video_key(&self, track: &ProjectTrack) -> Option<VideoKey> {
+        let resource = self.project.track_resource(track)?;
+        Some((resource.path.clone(), resource.stream))
+    }
+
+    /// The first video track's file, which the project's picture size follows.
+    fn first_video_info(&self) -> Option<VideoInfo> {
+        let key = self.video_key(self.project.video()?)?;
+        self.thumbnails.get(&key)?.service.info()
+    }
+
+    /// Keeps a thumbnail service on each video stream the timeline plays, and a texture for each
+    /// thumbnail it has decoded.
     fn update_thumbnails(&mut self, ctx: &egui::Context) {
-        let video = self.project.video_path().map(Path::to_path_buf);
-        if self.thumbnail_video != video {
-            self.thumbnail_video = video.clone();
-            self.thumbnails.set_video(video);
-            self.thumbnail_textures.clear();
+        let keys: Vec<VideoKey> = self
+            .project
+            .video_tracks
+            .iter()
+            .filter_map(|t| self.video_key(t))
+            .collect();
+        let first = keys.first().cloned();
+        if self.thumbnail_video != first {
+            self.thumbnail_video = first;
             self.timeline_view = TimelineView::default();
         }
-        let frames = self.thumbnails.frames();
-        self.thumbnail_textures
-            .retain(|frame, _| frames.contains_key(frame));
-        for (frame, image) in frames {
-            self.thumbnail_textures.entry(frame).or_insert_with(|| {
-                let size = [image.width as usize, image.height as usize];
-                let texture = ctx.load_texture(
-                    format!("thumbnail-{frame}"),
-                    egui::ColorImage::from_rgb(size, &image.data),
-                    egui::TextureOptions::LINEAR,
-                );
-                let thumbnail = Thumbnail {
-                    texture: texture.id(),
-                    size: egui::vec2(size[0] as f32, size[1] as f32),
-                };
-                (texture, thumbnail)
+        let wanted: HashSet<&VideoKey> = keys.iter().collect();
+        self.thumbnails.retain(|key, _| wanted.contains(key));
+        for key in keys {
+            let backend = &self.backend;
+            let entry = self.thumbnails.entry(key.clone()).or_insert_with(|| {
+                let service = Thumbnails::new(backend.clone());
+                let ctx = ctx.clone();
+                service.on_update(move || ctx.request_repaint());
+                service.set_video(Some(key));
+                VideoThumbnails {
+                    service,
+                    textures: BTreeMap::new(),
+                }
             });
+            let frames = entry.service.frames();
+            entry.textures.retain(|frame, _| frames.contains_key(frame));
+            for (frame, image) in frames {
+                entry.textures.entry(frame).or_insert_with(|| {
+                    let size = [image.width as usize, image.height as usize];
+                    let texture = ctx.load_texture(
+                        format!("thumbnail-{frame}"),
+                        egui::ColorImage::from_rgb(size, &image.data),
+                        egui::TextureOptions::LINEAR,
+                    );
+                    let thumbnail = Thumbnail {
+                        texture: texture.id(),
+                        size: egui::vec2(size[0] as f32, size[1] as f32),
+                    };
+                    (texture, thumbnail)
+                });
+            }
         }
     }
 
@@ -1936,13 +2140,21 @@ impl App {
     /// track's, changes nothing.
     pub fn rename_video(&mut self, name: &str) {
         let name = name.trim();
-        let Some(video) = self.project.video_tracks.first() else {
+        let Some(video) = self.project.video() else {
             return;
         };
         if name.is_empty() || name == video.name || self.project.has_track(name) {
             return;
         }
-        self.project.video_tracks[0].name = name.to_owned();
+        let video = video.name.clone();
+        if let Some(track) = self
+            .project
+            .video_tracks
+            .iter_mut()
+            .find(|t| t.name == video)
+        {
+            track.name = name.to_owned();
+        }
         self.editor
             .set_project_inputs(self.video_name(), self.track_name_list());
     }
@@ -1967,10 +2179,19 @@ impl App {
 
     /// The length of a track's file in seconds, once it is known.
     fn track_duration(&self, track: &ProjectTrack) -> Option<f64> {
-        if self.project.video().is_some_and(|v| v.name == track.name) {
+        if track.resource.is_none() {
+            return Some(0.0);
+        }
+        if self
+            .project
+            .video_tracks
+            .iter()
+            .any(|v| v.name == track.name)
+        {
             return self
-                .thumbnails
-                .info()
+                .video_key(track)
+                .and_then(|k| self.thumbnails.get(&k))
+                .and_then(|t| t.service.info())
                 .map(|v| v.frame_count as f64 / v.frame_rate.as_f64());
         }
         self.engine
@@ -2163,7 +2384,14 @@ impl App {
                 }
             }
             TrackAction::Rename(row, new) => match self.track_row(row) {
-                Some((TrackKind::Video, 0)) => self.rename_video(&new),
+                Some((TrackKind::Video, i))
+                    if self
+                        .project
+                        .video()
+                        .is_some_and(|v| v.name == self.project.video_tracks[i].name) =>
+                {
+                    self.rename_video(&new)
+                }
                 Some((TrackKind::Video, i)) => {
                     let new = new.trim();
                     if !new.is_empty() && !self.project.has_track(new) {
@@ -2177,9 +2405,17 @@ impl App {
                 None => {}
             },
             TrackAction::Remove(row) => {
-                let Some((TrackKind::Audio, i)) = self.track_row(row) else {
+                let Some((kind, i)) = self.track_row(row) else {
                     return;
                 };
+                if kind == TrackKind::Video {
+                    let removed = self.project.video_tracks.remove(i);
+                    self.project.unlink_track(&removed.name);
+                    self.link_project_inputs();
+                    let rows = self.project.video_tracks.len() + self.project.audio_tracks.len();
+                    self.selected_track = self.selected_track.filter(|&s| s < rows);
+                    return;
+                }
                 let removed = self.project.audio_tracks.remove(i);
                 self.project.unlink_track(&removed.name);
                 self.editor
@@ -2194,6 +2430,9 @@ impl App {
                 .or(first_audio_row(&self.project));
             }
             TrackAction::Add => self.pick_audio_tracks(),
+            TrackAction::AddEmpty(kind) => {
+                self.add_empty_track(kind);
+            }
         }
     }
 
