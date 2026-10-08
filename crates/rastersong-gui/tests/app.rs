@@ -1419,7 +1419,7 @@ fn importing_a_file_with_several_streams_asks_which_to_import() {
     harness.get_by_label("Found multiple tracks in this media");
     // Leave out the crowd.
     harness
-        .get_by_label("Audio 2: Crowd · fake · 8000 Hz · mono")
+        .get_by_label("Audio 2: Crowd · fake · 8000 Hz · Mono")
         .click();
     harness.run_steps(1);
     harness.get_by_label("Import").click();

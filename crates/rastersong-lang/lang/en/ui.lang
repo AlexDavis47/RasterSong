@@ -327,11 +327,6 @@ settings.buses.master = master
 settings.buses.master.help = The first bus is the master: the preview plays it and the export writes it.
 settings.buses.remove = Remove this bus
 settings.buses.add = + Add bus
-settings.buses.mono = Mono
-settings.buses.stereo = Stereo
-settings.buses.surround_5_1 = 5.1
-settings.buses.surround_7_1 = 7.1
-settings.buses.channels = {count} channels
 
 # --- Themes ---
 theme.dark = Dark
@@ -370,21 +365,26 @@ meter.range = Range
 meter.reduction = Gain reduction
 meter.db = {value} dB
 
+# --- Channel counts ---
+channels.mono = Mono
+channels.stereo = Stereo
+channels.surround_5_1 = 5.1
+channels.surround_7_1 = 7.1
+channels.n = {count} channels
+
 # --- Resources panel ---
-resources.title = Resources
 resources.import = Import…
 resources.import.help = Import media files. Files can also be dropped onto the window.
 resources.empty = Import media to use it in the project.
 resources.kind.video = Video
 resources.kind.audio = Audio
-resources.channels.mono = mono
-resources.channels.stereo = stereo
-resources.channels.n = {n} channels
 resources.missing = Missing: {path}
 resources.used_by = Played by {count} track(s)
 resources.drag.help = Drag onto the timeline to make a track; double-click to add one at the playhead. Right-click to rename or remove.
 resources.add_to_timeline = Add to Timeline
 resources.graphs = Graphs
+resources.tab.media = Media
+resources.graph.kind = Graph
 resources.graph.new = New graph
 resources.graph.new.help = Add a graph that passes the picture and the sound through
 resources.graph.open = Open in editor

@@ -87,7 +87,7 @@ A connected (modulated) parameter shows, in the wire's colour:
 
 ## Resources
 
-The **Resources** panel, left of the timeline, lists the media the project uses. Each resource is one stream of a
+The **Resources** panel, left of the timeline, holds everything the project uses, in two tabs: **Media** and **Graphs**. Both show their resources as a grid of cards, drawn by one shared component (`resource_card`) so media and graphs look, drag and open menus the same way. The Media tab lists the media the project uses. Each resource is one stream of a
 linked file (embedding comes later on the [roadmap](roadmap.md#timeline-resources-and-graph-layers)): a video stream
 or an audio stream with any number of channels. **Import…** (or File → Import Media…, or dropping files onto the
 window) adds files. A file with one video or audio stream becomes a resource at once; a file with more, such as a
@@ -99,14 +99,14 @@ Resources are named after their file (video keeps the extension, audio drops it,
 made unique with `_2`, `_3`, …. Nothing reaches the timeline until it is placed: **drag a resource onto the
 timeline** to add a track playing it from where it is dropped, or double-click it (or right-click → Add to
 Timeline) to add one at the playhead. The track is named after the resource, and an audio track gets its Audio
-Input node as before. Right-click renames a resource (its tracks keep their names, since graphs select tracks by
+Input node as before. Right-click a card renames a resource (its tracks keep their names, since graphs select tracks by
 name) or removes it; removing a resource that tracks play asks first and removes those tracks with it. A resource
-whose file is missing is drawn in red, with its path in the tooltip and a **Relocate…** button (also in the
+whose file is missing is drawn in red, with its path in the tooltip and a **Relocate…** button under the card, outside the drag area so it always takes the click (also in the
 right-click menu, for any resource): pick where the file is now, and the other streams of the same file follow.
 Until it is found, the tracks that play it read as gaps and say so in their lanes. The panel checks about once a
 second, so a file that comes back (a drive plugged in) is picked up by itself.
 
-**Graphs** are resources too, listed below the media. A project can hold any number; **New graph** adds a
+**Graphs** are resources too, on their own tab. A project can hold any number; **New graph** adds a
 passthrough (the video wired to Video Output, the sound to Audio Output) and opens it. Double-click a graph (or
 right-click → Open in editor) to open it in the node editor, which swaps it with the open one, so the open graph
 (in bold) is the one rendered. Right-click also renames, duplicates or removes a graph (the open graph can't be
@@ -120,7 +120,7 @@ is a lane of **items**, the stretches of its file placed on the timeline. The vi
 the track's name (which audio inputs select it by; renaming a track updates them), its volume in the track mix, and
 its bus when the project has several. Every header has **mute** and **solo** (*S*: while any track of a kind is
 soloed, only soloed tracks of that kind are in the [track mix](engine.md#track-mix-and-output-buses)); audio headers
-also remove the track. Tracks left out of the mix are drawn dimmed. The project lasts to the end of its last item and
+also remove the track. Tracks left out of the mix are drawn dimmed. Each track's lane has its own outline (the selected track's is the accent color), so neighbouring tracks are easy to tell apart. The project lasts to the end of its last item and
 runs at its [timebase](engine.md#timeline). **+ Track** adds an empty video or audio track to drag a resource
 onto, or (Audio file…, also File → Add Audio Tracks…) several audio files at once, each named after its file.
 Dropping a resource on a track puts it there from the drop point: an empty track takes it, a track of the same

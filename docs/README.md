@@ -21,6 +21,7 @@ leans on them.
 | Work on the desktop app | [Desktop app](app.md) |
 | Change wording or add a language | [Text and languages](text.md) |
 | Build, test or package | [Development](development.md), [Testing](testing.md) |
+| Contribute (rules every change follows) | [Contributing](../CONTRIBUTING.md) |
 | Check licensing | [Licensing](licensing.md) |
 | See what is planned | [Roadmap](roadmap.md), [Decisions](decisions.md) |
 

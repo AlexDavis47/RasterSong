@@ -1201,14 +1201,18 @@ impl Lane<'_> {
         if !lane.intersects(self.clip) {
             return;
         }
-        if model.selected_track == Some(row) {
-            painter.rect_stroke(
-                lane,
-                CornerRadius::same(3),
-                Stroke::new(1.0, theme.accent),
-                egui::StrokeKind::Inside,
-            );
-        }
+        painter.rect_filled(lane, CornerRadius::same(3), theme.lane_bg);
+        let (outline, width) = if model.selected_track == Some(row) {
+            (theme.accent, 1.5)
+        } else {
+            (theme.lane_outline, 1.0)
+        };
+        painter.rect_stroke(
+            lane,
+            CornerRadius::same(3),
+            Stroke::new(width, outline),
+            egui::StrokeKind::Inside,
+        );
         if track.missing {
             painter.text(
                 lane.left_center() + vec2(6.0, 0.0),
