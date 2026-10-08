@@ -280,7 +280,7 @@ impl Project {
             track.depth -= 1;
         }
         let removed = self.tracks.remove(i);
-        self.unlink_track(&removed.name);
+        self.tidy_groups();
         Some(removed)
     }
 

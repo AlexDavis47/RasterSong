@@ -488,7 +488,7 @@ fn dragging_an_item_by_its_header_bar_moves_it() {
     drag(&mut harness, from, to);
     let position = harness.state().project().audios()[0].items[0].position;
     assert!((position - 0.5).abs() < 0.02, "position {position}");
-    // The video isn't linked, so it stays.
+    // The video isn't grouped with it, so it stays.
     assert_eq!(harness.state().project().videos()[0].items[0].position, 0.0);
     shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
     assert_eq!(harness.state().project().audios()[0].items[0].position, 0.0);
@@ -589,26 +589,47 @@ fn dragging_over_the_lanes_box_selects_items() {
 }
 
 #[test]
-fn linked_tracks_move_their_overlapping_items_together() {
-    let mut harness = harness(app_with_project(|project| {
-        project.link_tracks("video", "audio");
-    }));
-    step_until(&mut harness, "rendered frames", |app| {
-        app.engine().buffered_from(0) >= 30
-    });
-    step_until(&mut harness, "the video's length", |app| {
-        app.thumbnail_count() > 0
-    });
-    harness.run_steps(2);
-    // Both headers show the link.
-    assert_eq!(harness.get_all_by_label("linked").count(), 2);
-    let from = item_bar_point(&harness, 0.5, 1);
-    let to = item_bar_point(&harness, 1.0, 1);
-    drag(&mut harness, from, to);
+fn grouped_items_move_together_and_ungroup_from_the_menu() {
+    let mut harness = loaded();
+    let video = item_bar_point(&harness, 0.5, 0);
+    let audio = item_bar_point(&harness, 0.5, 1);
+    click(&mut harness, video, PointerButton::Primary);
+    modifier_click(&mut harness, Modifiers::COMMAND, audio);
+    harness.event(Event::ModifiersChanged(Modifiers::NONE));
+    shortcut(&mut harness, Modifiers::COMMAND, egui::Key::G);
     let project = harness.state().project();
-    let audio = project.audios()[0].items[0].position;
-    assert!((audio - 0.5).abs() < 0.02, "audio at {audio}");
-    assert_eq!(project.videos()[0].items[0].position, audio);
+    let group = project.videos()[0].items[0].group;
+    assert!(group.is_some());
+    assert_eq!(project.audios()[0].items[0].group, group);
+
+    // Dragging the audio alone takes the video with it.
+    click(&mut harness, audio, PointerButton::Primary);
+    let to = item_bar_point(&harness, 1.0, 1);
+    drag(&mut harness, audio, to);
+    let project = harness.state().project();
+    let moved = project.audios()[0].items[0].position;
+    assert!((moved - 0.5).abs() < 0.02, "audio at {moved}");
+    assert_eq!(project.videos()[0].items[0].position, moved);
+
+    // The item menu ungroups them; Ctrl+Shift+G does too, after an undo.
+    let audio = item_bar_point(&harness, 1.0, 1);
+    right_click(&mut harness, audio);
+    harness.get_by_label_contains("Ungroup").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().project().videos()[0].items[0].group, None);
+    shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
+    assert!(
+        harness.state().project().videos()[0].items[0]
+            .group
+            .is_some()
+    );
+    harness.event(Event::PointerMoved(audio));
+    shortcut(
+        &mut harness,
+        Modifiers::COMMAND | Modifiers::SHIFT,
+        egui::Key::G,
+    );
+    assert_eq!(harness.state().project().audios()[0].items[0].group, None);
 }
 
 /// Clicks the ruler at `seconds`, moving the playhead there.
@@ -634,7 +655,7 @@ fn s_splits_under_the_playhead_and_delete_removes_the_selected_items() {
     let project = harness.state().project();
     assert_eq!(project.audios()[0].items.len(), 1);
     assert_eq!(project.audios()[0].items[0].end, Some(1.0));
-    // The video isn't linked, so it keeps both halves.
+    // The video isn't grouped with it, so it keeps both halves.
     assert_eq!(project.videos()[0].items.len(), 2);
 }
 
@@ -1136,7 +1157,7 @@ fn tracks_are_renamed_without_touching_the_graph() {
 }
 
 #[test]
-fn opening_a_video_with_sound_adds_its_audio_track() {
+fn opening_a_video_with_sound_adds_its_audio_track_grouped_with_it() {
     let backend = FakeBackend::new()
         .with_video(
             "movie.mp4",
@@ -1169,6 +1190,10 @@ fn opening_a_video_with_sound_adds_its_audio_track() {
         .map(|t| (t.name.clone(), app.project().track_path(t)))
         .collect();
     assert_eq!(tracks, [("movie".to_owned(), Some(Path::new("movie.mp4")))]);
+    // The picture and its sound are grouped.
+    let group = app.project().audios()[0].items[0].group;
+    assert!(group.is_some());
+    assert_eq!(app.project().videos()[0].items[0].group, group);
     // Opening it again doesn't add the track twice.
     app.open_video(PathBuf::from("movie.mp4"));
     assert_eq!(app.project().audios().len(), 1);
@@ -1921,23 +1946,6 @@ fn clicking_the_ruler_mode_switches_between_time_and_tempo() {
     harness.get_by_label("♪ Tempo").click();
     harness.run_steps(2);
     assert_eq!(harness.state().project().timeline_mode, TimelineMode::Time);
-}
-
-#[test]
-fn the_header_menu_links_and_unlinks_tracks() {
-    let mut harness = loaded();
-    let icon = harness.get_by_label("▣").rect().center();
-    right_click(&mut harness, icon);
-    harness.get_by_label_contains("Link with").click();
-    harness.run_steps(2);
-    harness.get_by_label("audio").click();
-    harness.run_steps(2);
-    assert_eq!(harness.state().project().linked_to("video"), ["audio"]);
-
-    right_click(&mut harness, icon);
-    harness.get_by_label("Unlink").click();
-    harness.run_steps(2);
-    assert!(harness.state().project().linked_to("video").is_empty());
 }
 
 /// A primary click with `modifiers` held.

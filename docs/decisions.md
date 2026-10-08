@@ -267,7 +267,7 @@ Built as the timeline's fourth step, before item editing.
 
 Built as the timeline's fifth step.
 
-- **Linked tracks act together on every edit** *(to become item groups, see
+- **Linked tracks act together on every edit** *(replaced by item groups in stage 2b, see
   [Timeline routing](#timeline-routing-folders-and-graphs-as-fx-october-2026))*. Move, split, delete, copy and paste take the items of linked tracks
   that overlap the ones edited, read from time as for moves. A trim takes only the linked edges at the same time
   (within a millisecond), so trimming a cut that lines up on both tracks keeps it lined up, and an item that only
@@ -431,7 +431,9 @@ weighed:
 - **Nothing placed means nothing applied.** With no FX anywhere, the output is the plain mix. The interim rule that
   rendered the open graph over the whole timeline is dropped.
 - **Items are grouped, not tracks linked.** Select items, then right-click → *Group* (Ctrl+G). Grouped items move,
-  trim, split and delete together. A multi-stream import groups its items. Tracks can't be linked.
+  trim, split and delete together. A multi-stream import groups its items. Tracks can't be linked. *(Done in
+  stage 2b: groups are a number on each item, so membership no longer depends on overlap in time. Splitting a
+  group leaves one on each side of the cut, and pasted copies make a new group.)*
 - **Automation lanes.** An automation node in a graph shows as an envelope lane under the track hosting that graph,
   edited as the automation-curve design already describes; automation clips stay available as items.
 - **Order:** the bugs that don't depend on the model (track height reset, drag feedback, drop preview, the implicit

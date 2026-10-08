@@ -183,23 +183,25 @@ audio's waveform, and behaves like empty lane space. Items can't start before th
   selection. These keys act on the timeline while the pointer is over it, and on the graph otherwise. Copying puts
   a marker on the system clipboard (the platform only sends Ctrl+V when it holds text); copying anything else
   since then means Ctrl+V over the timeline pastes nothing. The bar's right-click menu has the same commands.
+- **Ctrl+G** (or **Group** in the bar's menu) groups the selected items, and **Ctrl+Shift+G** (**Ungroup**) ungroups
+  the groups they are in. Moving, splitting, deleting or copying a grouped item takes the rest of its group, and
+  trimming takes the group's edges at the same time, so a video and its sound stay together. A grouped item's bar
+  shows 🔗. Splitting a group leaves a group on each side; pasted copies make a new group. Opening a video with
+  sound groups the picture's item with its sound's.
 - **Snapping** is on by default (the Snap button in the ruler's corner): moves and edges snap to the ruler's
   ticks (beats and bars in tempo mode), the edges of other items, the playhead and the timeline's start, within
   a few pixels. Hold **Shift** to drag freely.
 - Every edit undoes as one step.
 
 Right-click a header for its menu: **Send to master** turns the track's master send off or on (off leaves it, and
-everything in it, out of the mix; FX can still receive it), **Link with ▸** lists the other tracks to link this
-one with, **Unlink** takes it out of its link, **Default height** resets its height, and **Remove track** removes it. Moving, splitting, deleting or copying an item of a
-linked track takes the items of the linked tracks that overlap it, and trimming takes the linked edges at the same
-time, so a video and its sound stay together. Linked headers say so. (Track links are to be replaced by item
-groups; see the [roadmap](roadmap.md#timeline-resources-and-routing).) Drag the bottom edge of a header to change
+everything in it, out of the mix; FX can still receive it), **Default height** resets its height, and **Remove
+track** removes it. Drag the bottom edge of a header to change
 the track's **height**; double-clicking the edge, or the header's menu, resets it. Drag a header by its free space
 or its labels (not its name field, buttons, volume or bus) to move the track, with everything in it: up or down
 among all the tracks, and left or right (one indent per level) to take it out of a folder or put it in the folder
 it lands under. A marker line shows where it goes, indented as deep as it will sit; a drop that would leave the
 tree invalid (a folder into itself) is refused. Frames rendered so far are marked in green along the bottom of the ruler.
-The tree, collapsed folders, linking, heights, solo, mutes and master sends are saved with the project and undo like
+The tree, collapsed folders, item groups, heights, solo, mutes and master sends are saved with the project and undo like
 any edit.
 
 - The scroll wheel zooms time around the pointer, from half the whole project down to a few frames (over the
@@ -280,7 +282,8 @@ around it. In the graph, Ctrl+C, Ctrl+X and Ctrl+V copy, cut and paste nodes wit
 the connections between them; pasted nodes land at the pointer. The **Edit** menu has the same commands. Duplicate
 and Paste also keep the node's input connections, unless **File → Settings → Keep input connections when duplicating and pasting** is off. Holding Shift
 (Ctrl+Shift+D, Ctrl+Shift+V) does the opposite for one action. Connections to nodes that don't exist in the target
-project are skipped.
+project are skipped. Over the timeline, S splits, Delete removes the selected items, Ctrl+C, Ctrl+X and Ctrl+V
+copy, cut and paste them, and Ctrl+G and Ctrl+Shift+G group and ungroup them (see [Timeline](#timeline)).
 
 ## Undo
 

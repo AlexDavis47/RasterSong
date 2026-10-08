@@ -13,7 +13,8 @@ use eframe::egui;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use rastersong_engine::{
-    AudioClip, FakeBackend, FakeVideo, GraphDesc, Project, Rational, TimelineMode, TrackKind,
+    AudioClip, FakeBackend, FakeVideo, GraphDesc, ItemRef, Project, Rational, TimelineMode,
+    TrackKind,
 };
 use rastersong_gui::theme::WireStyle;
 
@@ -630,7 +631,7 @@ fn fx_screenshots() {
     save(&mut harness, "dark-31-fx");
 }
 
-/// Tracks of several items, a muted item, linked tracks and a taller track.
+/// Tracks of several items, a muted item, grouped items and a taller track.
 #[test]
 #[ignore = "needs a GPU; run explicitly to look at the UI"]
 fn item_screenshots() {
@@ -663,7 +664,7 @@ fn item_screenshots() {
             project.videos()[0].name.clone(),
             project.audios()[0].name.clone(),
         );
-        project.link_tracks(&video, &audio);
+        project.group_items(&[ItemRef::new(video, 0), ItemRef::new(audio, 0)]);
     });
     let mut harness = gpu_harness(app);
     wait_for_frames(&mut harness, 10);

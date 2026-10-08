@@ -591,7 +591,9 @@ memory maps read ordinary files. Saving rewrites the zip, copying unchanged entr
    - [x] **feature** Input port nodes replacing Video Input and Audio Input *(done: the same nodes read a named
      port; see [Decisions](decisions.md#input-ports-october-2026)). Output ports only matter to subgraphs, so they
      move to stage 3.)*
-   - [ ] **feature** Item groups (Group / Ungroup, Ctrl+G, multi-stream imports grouped), replacing track links.
+   - [x] **feature** Item groups (Group / Ungroup, Ctrl+G, multi-stream imports grouped), replacing track links.
+     *(Done: see [Timeline](app.md#timeline). Opening a video groups its picture and sound; the import dialog only
+     makes resources, so it has nothing to group.)*
    - [x] **feature** Folder rows in the timeline (collapse triangle, indent, dragging into and out of folders)
      and the default Video / Audio / Control template.
    - [x] **feature** The FX button and chain popup on track, folder and master headers *(done: the FX window, and

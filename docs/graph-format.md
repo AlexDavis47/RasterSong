@@ -54,9 +54,8 @@ tempo and the loop region:
 - `tracks`: the track tree, top first, as the timeline lists it. Each track has a `name` (the port name graphs
   read it by, unique among all tracks), its `depth` (0 at the top; a folder holds the deeper tracks right after
   it), the `resource` it plays (video or audio), its `items`, `volume`, `muted`, `solo` and `master_send` (true by
-  default) for the track mix, its `bus` (for a top-level track), its `height` on the timeline and its `link` group
-  (tracks with the same number move their items together). A `folder` has no resource or items, may be
-  `collapsed`, and may take `new_tracks` of a kind (`"video"` or `"audio"`). Left out, `items` is one item
+  default) for the track mix, its `bus` (for a top-level track) and its `height` on the timeline. A `folder` has
+  no resource or items, may be `collapsed`, and may take `new_tracks` of a kind (`"video"` or `"audio"`). Left out, `items` is one item
   playing the whole resource from the start. A track with no `resource` is empty (and has no items) until a
   resource is dropped on it. A tree read from a file is repaired: the first track is at depth 0, and none is more
   than one level deeper than a folder above it.
@@ -65,7 +64,8 @@ tempo and the loop region:
   a `name` and its `graph`, until one is opened and swaps places with the open graph.
 - An item: `position` (seconds into the project), `start` and `end` (its in and out points, in seconds of the
   file; no `end` plays to the end of the file), `rate` (seconds of file per second of timeline, 1 by default) and
-  `muted`, its `fx` chain and `pre_roll` (true by default: its FX warm up as if they had run before it).
+  `muted`, its `group` (items with the same number move, trim, split and delete together; a group of one is
+  dropped on load), its `fx` chain and `pre_roll` (true by default: its FX warm up as if they had run before it).
 - `fx` (on a track or folder), `master_fx` (on the project) and an item's `fx`: FX chains, first to last. An FX
   is the `graph` id it runs, `bypass` (false by default) and `receives`: which track fills each input port other
   than `Video` and `Audio`, by port name; a port left out reads zeros. See [Routing](engine.md#routing).

@@ -230,9 +230,6 @@ pub struct ProjectTrack {
     /// The track's height on the timeline, in points. `None` is the app's default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub height: Option<f32>,
-    /// The tracks with the same link group, video or audio, move their items together.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub link: Option<u32>,
 }
 
 fn full_volume() -> f32 {
@@ -273,7 +270,6 @@ impl ProjectTrack {
             bus: main_bus(),
             solo: false,
             height: None,
-            link: None,
         }
     }
 
@@ -417,58 +413,6 @@ impl Project {
         true
     }
 
-    /// The names of the other tracks linked to track `name`.
-    pub fn linked_to(&self, name: &str) -> Vec<String> {
-        let Some(group) = self.track(name).and_then(|t| t.link) else {
-            return Vec::new();
-        };
-        self.tracks()
-            .filter(|t| t.link == Some(group) && t.name != name)
-            .map(|t| t.name.clone())
-            .collect()
-    }
-
-    /// Links tracks `a` and `b`, and with them every track already linked to either.
-    pub fn link_tracks(&mut self, a: &str, b: &str) {
-        if a == b || !self.has_track(a) || !self.has_track(b) {
-            return;
-        }
-        let groups = [a, b].map(|n| self.track(n).and_then(|t| t.link));
-        let group = groups.into_iter().flatten().min().unwrap_or_else(|| {
-            self.tracks()
-                .filter_map(|t| t.link)
-                .max()
-                .map_or(1, |g| g + 1)
-        });
-        for track in self.tracks_mut() {
-            if track.name == a
-                || track.name == b
-                || (track.link.is_some() && groups.contains(&track.link))
-            {
-                track.link = Some(group);
-            }
-        }
-    }
-
-    /// Takes track `name` out of its link; a track left linked to nothing is unlinked too.
-    pub fn unlink_track(&mut self, name: &str) {
-        let Some(group) = self.track(name).and_then(|t| t.link) else {
-            return;
-        };
-        for track in self.tracks_mut() {
-            if track.name == name {
-                track.link = None;
-            }
-        }
-        if self.tracks().filter(|t| t.link == Some(group)).count() == 1 {
-            for track in self.tracks_mut() {
-                if track.link == Some(group) {
-                    track.link = None;
-                }
-            }
-        }
-    }
-
     /// Renames track `old` to `new`, and what refers to it by name (FX receives). Refused
     /// (false, nothing changed) when there is no such track, or `new` is empty or another
     /// track's. Renaming a track to its own name succeeds.
@@ -593,6 +537,7 @@ impl Project {
             )));
         }
         project.sanitize_tree();
+        project.tidy_groups();
         for track in project.tracks_mut() {
             for item in &mut track.items {
                 *item = item.clone().sanitized();
@@ -680,51 +625,6 @@ mod tests {
         assert!(project.timeline().renders_like(&before));
         project.tracks[0].muted = true;
         assert!(!project.timeline().renders_like(&before));
-    }
-
-    #[test]
-    fn linking_joins_groups_and_unlinking_the_second_to_last_ends_it() {
-        let mut project = three_tracks();
-        project.link_tracks("v", "a");
-        assert_eq!(project.linked_to("v"), ["a"]);
-        project.link_tracks("b", "a");
-        assert_eq!(project.linked_to("a"), ["v", "b"]);
-        project.unlink_track("v");
-        assert_eq!(project.linked_to("a"), ["b"]);
-        project.unlink_track("b");
-        assert!(project.tracks().all(|t| t.link.is_none()));
-        // Two separate links merge when linked.
-        project.link_tracks("v", "a");
-        project.add_track(TrackKind::Audio, "c", "c.wav");
-        project.link_tracks("b", "c");
-        project.link_tracks("a", "c");
-        assert_eq!(project.linked_to("v"), ["a", "b", "c"]);
-    }
-
-    #[test]
-    fn moving_an_item_moves_the_overlapping_items_of_linked_tracks() {
-        let mut project = three_tracks();
-        // a: items at 0..2 and 5..7; b: one at 1..3; v: 0..10. Each file is 2 s (v 10 s).
-        project.tracks[1].items = vec![Item::whole(0.0), Item::whole(5.0)];
-        project.tracks[2].items = vec![Item::whole(1.0)];
-        let duration = |t: &ProjectTrack| Some(if t.name == "v" { 10.0 } else { 2.0 });
-        let positions = |p: &Project| -> Vec<Vec<f64>> {
-            p.tracks()
-                .map(|t| t.items.iter().map(|i| i.position).collect())
-                .collect()
-        };
-        // Unlinked, only the item dragged moves.
-        assert_eq!(project.move_item("a", 1, 1.0, duration), 1.0);
-        assert_eq!(positions(&project), [vec![0.0], vec![0.0, 6.0], vec![1.0]]);
-        // Linked, b's item overlaps a's first; a's second item and the video don't (v isn't
-        // linked).
-        project.link_tracks("a", "b");
-        assert_eq!(project.move_item("a", 0, 0.5, duration), 0.5);
-        assert_eq!(positions(&project), [vec![0.0], vec![0.5, 6.0], vec![1.5]]);
-        // Moving left stops when the first of them reaches the start.
-        assert_eq!(project.move_item("b", 0, -3.0, duration), -0.5);
-        assert_eq!(positions(&project), [vec![0.0], vec![0.0, 6.0], vec![1.0]]);
-        assert_eq!(project.move_item("nope", 0, 1.0, duration), 0.0);
     }
 
     #[test]

@@ -92,6 +92,9 @@ pub struct Item {
     /// its left edge never changes what follows. Off, they start cold at the edge.
     #[serde(default = "yes", skip_serializing_if = "is_yes")]
     pub pre_roll: bool,
+    /// Items with the same group move, trim, split and delete together.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<u32>,
 }
 
 /// A graph in an FX chain: on a track, a folder, the master or an item. Its `Video` and
@@ -152,6 +155,7 @@ impl Item {
             muted: false,
             fx: Vec::new(),
             pre_roll: true,
+            group: None,
         }
     }
 
@@ -170,6 +174,7 @@ impl Item {
             muted: self.muted,
             fx: self.fx,
             pre_roll: self.pre_roll,
+            group: self.group,
         }
     }
 

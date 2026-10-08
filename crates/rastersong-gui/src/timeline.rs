@@ -4,17 +4,18 @@
 //! - The scroll wheel zooms time around the pointer (over the headers it scrolls the tracks);
 //!   middle- or right-drag pans in both directions; F fits the whole project.
 //! - Click or drag on the ruler to seek; drag over empty lane space to box-select items; drag an
-//!   item by its header bar to move it (with the other selected items, and the items they
-//!   overlap on linked tracks).
+//!   item by its header bar to move it (with the other selected items and the items grouped with
+//!   them).
 //! - Click an item's header bar to select it, Ctrl+click to add or remove it; drag an item's
 //!   edge to trim it, Alt+drag to change its rate. Drags snap to the grid, item edges and the
 //!   playhead while snapping is on; Shift drags freely.
 //! - Over the timeline, S splits at the playhead (the selected items, or with none selected
 //!   every item under it), Delete removes the selected items, and Ctrl+C, Ctrl+X and Ctrl+V
-//!   copy, cut and paste them at the playhead.
+//!   copy, cut and paste them at the playhead. Ctrl+G groups the selected items, so they move,
+//!   trim, split and delete together; Ctrl+Shift+G ungroups them.
 //! - Ctrl+drag on the ruler makes a loop region (or moves one of its edges).
 //! - Drag a header to reorder the tracks of its kind, its bottom edge to change the track's
-//!   height; right-click it to link tracks or remove one.
+//!   height; right-click it for the track menu.
 //! - A header's FX button opens the track's FX chain, the Master FX button below the tracks the
 //!   master's, and an item's menu the item's. A graph dragged from the Resources panel lands on
 //!   the item, track or header under the pointer, or below the tracks on the master.
@@ -99,8 +100,6 @@ pub struct TrackView {
     pub volume: f32,
     /// Height of the track's lane and header.
     pub height: f32,
-    /// The other tracks linked to this one.
-    pub linked: Vec<String>,
     pub waveform: Option<Arc<Waveform>>,
     /// The output bus an audio track is summed into in the track mix.
     pub bus: String,
@@ -133,7 +132,6 @@ impl TrackView {
             silenced: false,
             volume: 1.0,
             height: LANE_HEIGHT,
-            linked: Vec::new(),
             waveform: None,
             bus: String::new(),
             details: None,
@@ -288,6 +286,9 @@ pub enum TrackAction {
         at: f64,
     },
     DeleteItems,
+    /// Group the selected items, and ungroup them.
+    GroupItems,
+    UngroupItems,
     CopyItems,
     CutItems,
     /// Paste the copied items at time `at` (the playhead). `text` is the system clipboard's text
@@ -305,9 +306,6 @@ pub enum TrackAction {
     SetMasterSend(usize, bool),
     SetVolume(usize, f32),
     SetHeight(usize, f32),
-    /// Link the track with the one in the second row.
-    Link(usize, usize),
-    Unlink(usize),
     /// A track's header was dragged to a new place: the track in row `from` (with what is in
     /// it) moves before the track in row `slot` (the number of rows for the bottom), `depth`
     /// folders deep.
@@ -1150,8 +1148,8 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
     response
 }
 
-/// The header's right-click menu: send the track to the master or not, link it with another or
-/// take it out of its link, reset its height, and remove it.
+/// The header's right-click menu: send the track to the master or not, reset its height, and
+/// remove it.
 fn track_menu(ui: &mut Ui, model: &TimelineModel, row: usize, response: &mut TimelineResponse) {
     let track = &model.tracks[row];
     let mut send = track.master_send;
@@ -1164,9 +1162,6 @@ fn track_menu(ui: &mut Ui, model: &TimelineModel, row: usize, response: &mut Tim
         ui.close();
     }
     ui.separator();
-    if !track.folder {
-        track_link_menu(ui, model, row, response);
-    }
     if track.height != LANE_HEIGHT && ui.button(tr("timeline.track.reset_height")).clicked() {
         response
             .actions
@@ -1176,40 +1171,6 @@ fn track_menu(ui: &mut Ui, model: &TimelineModel, row: usize, response: &mut Tim
     ui.separator();
     if ui.button(tr("timeline.track.remove")).clicked() {
         response.actions.push(TrackAction::Remove(row));
-        ui.close();
-    }
-}
-
-/// Linking a track with another, or taking it out of its link. Folders hold no items, so they
-/// aren't offered.
-fn track_link_menu(
-    ui: &mut Ui,
-    model: &TimelineModel,
-    row: usize,
-    response: &mut TimelineResponse,
-) {
-    let track = &model.tracks[row];
-    ui.menu_button(tr("timeline.track.link"), |ui| {
-        for (other, candidate) in model.tracks.iter().enumerate() {
-            if other == row || candidate.folder || track.linked.contains(&candidate.name) {
-                continue;
-            }
-            if ui.button(&candidate.name).clicked() {
-                response.actions.push(TrackAction::Link(row, other));
-                ui.close();
-            }
-        }
-    });
-    if !track.linked.is_empty()
-        && ui
-            .button(tr("timeline.track.unlink"))
-            .on_hover_text(tr_args(
-                "timeline.track.linked",
-                &[("tracks", &track.linked.join(", "))],
-            ))
-            .clicked()
-    {
-        response.actions.push(TrackAction::Unlink(row));
         ui.close();
     }
 }
@@ -1573,11 +1534,14 @@ impl Lane<'_> {
                 }
             }
         }
-        let name = if item.fx.is_empty() {
+        let mut name = if item.fx.is_empty() {
             track.name.clone()
         } else {
             tr_args("timeline.item.with_fx", &[("track", &track.name)])
         };
+        if item.group.is_some() {
+            name = tr_args("timeline.item.grouped", &[("name", &name)]);
+        }
         if item_bar(
             ui,
             painter,
@@ -1647,10 +1611,10 @@ impl Lane<'_> {
         if hovered {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }
-        grab.on_hover_text(if track.linked.is_empty() {
+        grab.on_hover_text(if item.group.is_none() {
             tr("timeline.item.drag")
         } else {
-            tr("timeline.item.drag_linked")
+            tr("timeline.item.drag_grouped")
         });
     }
 }
@@ -1929,20 +1893,18 @@ fn paint_ghost(
 
 /// Where a drag of item `k` of row `row` can snap: the timeline's start, the playhead, and the
 /// edges of the items that don't move with it (the selected ones, when `with_selection`, and
-/// those of linked tracks that overlap it).
+/// those grouped with it).
 fn snap_targets(model: &TimelineModel, row: usize, k: usize, with_selection: bool) -> Vec<f64> {
-    let dragged = &model.tracks[row];
-    let span = dragged.items.get(k).and_then(|i| dragged.item_span(i));
+    let group = model.tracks[row].items.get(k).and_then(|i| i.group);
     let mut targets = vec![0.0, model.playhead as f64 / model.frame_rate];
     for (r, track) in model.tracks.iter().enumerate() {
-        let linked = dragged.linked.contains(&track.name);
         for (j, item) in track.items.iter().enumerate() {
             let Some((start, end)) = track.item_span(item) else {
                 continue;
             };
             let moving = (r == row && j == k)
                 || (with_selection && track.selected_items.contains(&j))
-                || (linked && span.is_some_and(|(a, b)| start < b && end > a));
+                || (group.is_some() && item.group == group);
             if !moving {
                 targets.extend([start, end]);
             }
@@ -1952,7 +1914,8 @@ fn snap_targets(model: &TimelineModel, row: usize, k: usize, with_selection: boo
 }
 
 /// The item keys, while the pointer is over the timeline: S splits at the playhead, Delete and
-/// Backspace remove the selected items, and the clipboard events copy, cut and paste them. The
+/// Backspace remove the selected items, Ctrl+G groups them and Ctrl+Shift+G ungroups them, and
+/// the clipboard events copy, cut and paste them. The
 /// clipboard events are taken out of the input so the graph, drawn later, doesn't see them.
 fn item_keys(ui: &Ui, model: &TimelineModel, response: &mut TimelineResponse) {
     let at = model.playhead as f64 / model.frame_rate;
@@ -1967,6 +1930,19 @@ fn item_keys(ui: &Ui, model: &TimelineModel, response: &mut TimelineResponse) {
     }
     if delete {
         response.actions.push(TrackAction::DeleteItems);
+    }
+    let (ungroup, group) = ui.input_mut(|i| {
+        let shift = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
+        (
+            i.consume_key(shift, Key::G),
+            i.consume_key(egui::Modifiers::COMMAND, Key::G),
+        )
+    });
+    if group {
+        response.actions.push(TrackAction::GroupItems);
+    }
+    if ungroup {
+        response.actions.push(TrackAction::UngroupItems);
     }
     ui.input_mut(|i| {
         i.events.retain(|event| {
@@ -1986,6 +1962,7 @@ fn item_keys(ui: &Ui, model: &TimelineModel, response: &mut TimelineResponse) {
 }
 
 /// An item's right-click menu: its FX and pre-roll, then the item keys, for the selected items.
+/// Group needs two items selected; Ungroup needs a grouped one.
 fn item_menu(
     ui: &mut Ui,
     model: &TimelineModel,
@@ -2035,6 +2012,38 @@ fn item_menu(
     for (label, keys, action) in entries {
         if ui
             .add(egui::Button::new(label).shortcut_text(keys))
+            .clicked()
+        {
+            response.actions.push(action);
+            ui.close();
+        }
+    }
+    ui.separator();
+    let selected = || {
+        model
+            .tracks
+            .iter()
+            .flat_map(|t| t.selected_items.iter().filter_map(|&j| t.items.get(j)))
+    };
+    let can_ungroup = item.group.is_some() || selected().any(|i| i.group.is_some());
+    let group_entries = [
+        (
+            tr("timeline.item.group"),
+            "Ctrl+G",
+            selected().count() >= 2,
+            TrackAction::GroupItems,
+        ),
+        (
+            tr("timeline.item.ungroup"),
+            "Ctrl+Shift+G",
+            can_ungroup,
+            TrackAction::UngroupItems,
+        ),
+    ];
+    for (label, keys, enabled, action) in group_entries {
+        if ui
+            .add_enabled(enabled, egui::Button::new(label).shortcut_text(keys))
+            .on_hover_text(tr("timeline.item.group.help"))
             .clicked()
         {
             response.actions.push(action);
@@ -2210,7 +2219,7 @@ fn track_icon(track: &TrackView) -> &'static str {
 /// The widgets of a track's header: a folder's open/closed toggle, then name, mute, solo and
 /// remove; then the video's size and frame rate, or the volume of an audio track or folder and,
 /// at the top of the tree, its bus when the project has several (or the track's is gone); and a
-/// link mark when it is linked.
+/// its FX button.
 fn track_header(
     ui: &mut Ui,
     track: &TrackView,
@@ -2285,13 +2294,6 @@ fn track_header(
         ui.horizontal(|ui| {
             if fx_button(ui, tr("timeline.fx.button"), &track.fx).clicked() {
                 response.actions.push(TrackAction::OpenFx(row));
-            }
-            if !track.linked.is_empty() {
-                ui.weak(tr("timeline.track.linked.mark"))
-                    .on_hover_text(tr_args(
-                        "timeline.track.linked",
-                        &[("tracks", &track.linked.join(", "))],
-                    ));
             }
             match track.kind {
                 _ if track.folder => audio_controls(ui, track, buses, row, response),

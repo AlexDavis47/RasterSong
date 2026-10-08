@@ -378,7 +378,7 @@ impl App {
 
     /// Opens a video: its best video stream replaces the video track, as a resource named
     /// after the file. If it has sound of its own, that's added as an audio track too (unless a
-    /// track already plays it).
+    /// track already plays it), its item grouped with the picture's.
     pub fn open_video(&mut self, path: PathBuf) {
         let has_audio = self.backend.has_audio(&path);
         while let Some(i) = (0..self.project.tracks.len())
@@ -391,7 +391,7 @@ impl App {
         let id = self
             .project
             .add_resource(ResourceKind::Video, &name, &path, None);
-        self.project.add_track_for(id, 0.0);
+        let video = self.project.add_track_for(id, 0.0);
         self.engine.set_timeline(self.timeline_of(&self.project));
         self.clock.seek(0);
         let known = self.project.tracks_of(TrackKind::Audio).any(|t| {
@@ -400,7 +400,15 @@ impl App {
                 .is_some_and(|r| r.path == path && r.stream.is_none())
         });
         if has_audio && !known {
-            self.add_audio_tracks([path]);
+            let name = resource_name_for(&path, ResourceKind::Audio);
+            let id = self
+                .project
+                .add_resource(ResourceKind::Audio, &name, &path, None);
+            let audio = self.add_resource_track(id, 0.0);
+            if let (Some(video), Some(audio)) = (video, audio) {
+                self.project
+                    .group_items(&[ItemRef::new(video, 0), ItemRef::new(audio, 0)]);
+            }
         }
     }
 
@@ -576,12 +584,9 @@ impl App {
         &self.missing
     }
 
-    /// Removes a resource, the tracks that play it, and their links.
+    /// Removes a resource and the tracks that play it.
     pub fn remove_resource(&mut self, id: ResourceId) {
         let removed = self.project.remove_resource(id);
-        for name in &removed {
-            self.project.unlink_track(name);
-        }
         self.selected_items.retain(|r| !removed.contains(&r.track));
         self.tidy_track_selection();
     }
@@ -1905,7 +1910,6 @@ impl App {
                 silenced: self.project.mix_gain(i, soloing(kind)) == 0.0,
                 volume: t.volume,
                 height: t.height.unwrap_or(LANE_HEIGHT),
-                linked: self.project.linked_to(&t.name),
                 bus: t.bus.clone(),
                 missing: t.resource.is_some_and(|r| self.missing.contains(&r)),
                 selected_items: self
@@ -2356,12 +2360,10 @@ impl App {
             TrackAction::MoveItem { row, item, delta } => {
                 let Some(track) = name(self, row) else { return };
                 let at = ItemRef::new(track, item);
-                let lengths = self.item_lengths();
                 if self.selected_items.contains(&at) {
-                    self.project
-                        .move_items(&self.selected_items, delta, lengths);
+                    self.project.move_items(&self.selected_items, delta);
                 } else {
-                    self.project.move_items(&[at], delta, lengths);
+                    self.project.move_items(&[at], delta);
                 }
             }
             TrackAction::TrimItem {
@@ -2401,21 +2403,25 @@ impl App {
                 }
             }
             TrackAction::DeleteItems => {
-                let lengths = self.item_lengths();
-                self.project.delete_items(&self.selected_items, lengths);
+                self.project.delete_items(&self.selected_items);
                 self.selected_items.clear();
+            }
+            TrackAction::GroupItems => {
+                self.project.group_items(&self.selected_items);
+            }
+            TrackAction::UngroupItems => {
+                self.project.ungroup_items(&self.selected_items);
             }
             TrackAction::CopyItems | TrackAction::CutItems => {
                 if self.selected_items.is_empty() {
                     return;
                 }
-                let lengths = self.item_lengths();
-                self.item_clipboard = self.project.copy_items(&self.selected_items, &lengths);
+                self.item_clipboard = self.project.copy_items(&self.selected_items);
                 // The platform only sends Ctrl+V on when the system clipboard holds text, so the
                 // copy puts a marker there; a paste pastes the items only while it is still there.
                 ctx.copy_text(ITEM_CLIPBOARD_MARKER.to_owned());
                 if action == TrackAction::CutItems {
-                    self.project.delete_items(&self.selected_items, lengths);
+                    self.project.delete_items(&self.selected_items);
                     self.selected_items.clear();
                 }
             }
@@ -2460,16 +2466,6 @@ impl App {
             TrackAction::SetHeight(row, height) => {
                 if let Some(track) = self.track_at(row) {
                     track.height = (height != LANE_HEIGHT).then_some(height);
-                }
-            }
-            TrackAction::Link(row, other) => {
-                if let (Some(a), Some(b)) = (name(self, row), name(self, other)) {
-                    self.project.link_tracks(&a, &b);
-                }
-            }
-            TrackAction::Unlink(row) => {
-                if let Some(track) = name(self, row) {
-                    self.project.unlink_track(&track);
                 }
             }
             TrackAction::SetBus(row, bus) => {
