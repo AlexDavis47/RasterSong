@@ -150,11 +150,48 @@ Keeping the input connections of duplicated and pasted nodes is controlled by bo
 setting sets the default; the keybind does the opposite for one action. See the
 [roadmap](roadmap.md#node-graph-editor).
 
+### Timeline, resources and graph layers (October 2026)
+
+The one-video timeline, single graph and plain JSON project become a multi-track editor with several graphs. The
+plan is in the [roadmap](roadmap.md#timeline-resources-and-graph-layers); the reasons for its main choices:
+
+- **Explicit over hidden.** Every signal enters a graph through a port that something visibly filled; no
+  fallbacks, no situational overrides. The old Audio Output rules (replace the source audio, except when nothing is
+  connected, bypassed or a track is wired straight in) were hard to predict, and hidden fallbacks make failures hard
+  to diagnose. Implicit behaviour needs a clear reason (Video Output's stretch) and is documented where it happens.
+- **The project has its own timebase**, like a Premiere sequence. With several videos, images and raw files, no
+  source can be the clock.
+- **One resource per track.** A graph is compiled for a fixed layout per source; one resource per track keeps a
+  track's layout fixed along the timeline and avoids mixing rates within a track. The resource can still be cut up
+  freely.
+- **The parent fills a graph's ports, with no fallback to a track.** As a subgraph the parent graph wires them; on
+  a layer the item binds them. One rule for both, graphs become reusable tools, and a fallback binding was rejected
+  as a second, hidden way in.
+- **Stacked graph layers rather than one graph lane.** A single lane forced every graph to rewire everything it
+  didn't change (all the audio, for a video effect). Layers stack like adjustment layers, with the track mix at the
+  bottom, and new graphs start as a visible passthrough, so a graph only touches what it changes. Layers pass only
+  master outputs; control signals are shared through subgraphs. The two systems work together: layers stack
+  finished results, subgraphs share signals.
+- **Pre-roll by default, per item.** A graph item warms up as if it had been running before its left edge, as
+  after a seek, so trimming the edge never changes what follows. Starting cold stays available.
+- **The project file is a zip** with embedded files stored uncompressed. Plain JSON can't hold multi-gigabyte media;
+  a project folder would not be one file. Embedding is an explicit action because saving rewrites the zip.
+- **Audio is decoded to cache files and memory-mapped**, not held in memory. In memory, 48 kHz stereo takes about
+  23 MB a minute and each track was held about three times, so twenty 5-minute stems would take around 7 GB.
+  Streaming from the compressed file instead would bring back inexact seeks, encoder priming on every seek and a
+  decoder per reader. Mapping reuses the raw-file reader and the reading code still sees a slice of `f32`.
+- **Output buses, and export writes the master output.** This settles the former open question on multi-track
+  export: export renders the master video and each bus, as streams in one file or as separate files (separate by
+  default with more than one bus, since most players only play the first audio stream).
+- **Items have mute but no solo.** Solo on an item either does little (only its own track) or breaks graph
+  layers (silencing what *Layer below* reads); tracks and layers keep solo.
+- **Automation is a generator.** A curve is a function of time like Oscillator or Beat, sampled at the shared
+  generator layout (audio rate by default, so ramps on audio-rate parameters don't step), and it snaps like
+  everything else.
+- **Glue makes edit lists**, for media and automation alike: one mechanism, nothing re-encoded, and Make unique
+  bakes one when it should stop following its source.
+
 ## Open
-
-### Open: multi-track export
-
-How a multi-track project mixes for export: one mixed stream, or several streams. Needed before GUI export.
 
 ### Open: "Audio to video" / "Video to audio" names
 
