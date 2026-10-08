@@ -57,7 +57,7 @@ pub use service::{
     Engine, EngineConfig, EngineStatus, Failure, LoadedTrack, PreviewScale, RenderProgress,
 };
 pub use tap::{PICTURE_SIDE, Picture, Tap, TapOutcome, TapRequest, picture_size};
-pub use thumbnails::{THUMBNAIL_HEIGHT, Thumbnails};
+pub use thumbnails::{THUMBNAIL_HEIGHT, Thumbnails, VideoKey};
 pub use timeline::{Bus, Item, MAX_BUS_CHANNELS, Timebase, Timeline, TrackKind, TrackSpec};
 pub use waveform::Waveform;
 

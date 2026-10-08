@@ -3,7 +3,7 @@
 //! Layout: the Resources panel and the timeline along the bottom; above them the preview (with
 //! its playback controls), the node graph and the inspector, side by side.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -14,7 +14,7 @@ use rastersong_engine::{
     AudioSink, BackendInfo, CompileOptions, Engine, EngineConfig, EngineStatus, Frame, Graph,
     GraphDesc, Item, ItemRef, MediaBackend, NodeStats, PROJECT_EXTENSION, PlaybackClock,
     PreviewScale, Project, ProjectTrack, Registry, ResourceId, ResourceKind, Thumbnails, Timeline,
-    TimelineMode, TrackKind, TrackSpec, VIDEO_SOURCE, resource_name_for,
+    TimelineMode, TrackKind, TrackSpec, VIDEO_SOURCE, VideoInfo, VideoKey, resource_name_for,
 };
 use rastersong_lang::{tr, tr_args};
 
@@ -38,7 +38,8 @@ use crate::resources::{
 use crate::settings::Settings;
 use crate::theme::{Theme, ThemeChoice, apply_style};
 use crate::timeline::{
-    LANE_HEIGHT, Thumbnail, TimelineModel, TimelineView, TrackAction, TrackView, timecode, timeline,
+    LANE_HEIGHT, Thumbnail, TimelineModel, TimelineView, TrackAction, TrackThumbnails, TrackView,
+    timecode, timeline,
 };
 use crate::track_ops::move_track;
 
@@ -82,14 +83,21 @@ enum Pending {
     OpenProject,
 }
 
+/// The thumbnails of one video stream and their textures.
+struct VideoThumbnails {
+    service: Thumbnails,
+    textures: BTreeMap<usize, (egui::TextureHandle, Thumbnail)>,
+}
+
 pub struct App {
     engine: Engine,
     /// For quick checks on media files (e.g. whether a video has sound).
     backend: Arc<dyn MediaBackend>,
-    thumbnails: Thumbnails,
-    /// Textures of the decoded thumbnails, and the video they're of.
-    thumbnail_textures: BTreeMap<usize, (egui::TextureHandle, Thumbnail)>,
-    thumbnail_video: Option<PathBuf>,
+    /// Thumbnails of each video stream the timeline's video tracks play: tracks of one
+    /// resource share an entry.
+    thumbnails: HashMap<VideoKey, VideoThumbnails>,
+    /// The first video track's stream, which a changed timeline view starts over for.
+    thumbnail_video: Option<VideoKey>,
     timeline_view: TimelineView,
     /// Where the timeline and the inspector were last drawn, for tests.
     timeline_area: egui::Rect,
@@ -176,7 +184,6 @@ impl App {
         backend_info: Option<BackendInfo>,
         audio: AudioOut,
     ) -> Self {
-        let thumbnails = Thumbnails::new(backend.clone());
         let engine = Engine::new(backend.clone(), EngineConfig::default());
         let source_engine = Engine::new(backend.clone(), EngineConfig::default());
         let editor = linked_editor(&project);
@@ -186,8 +193,7 @@ impl App {
         let mut app = Self {
             engine,
             backend,
-            thumbnails,
-            thumbnail_textures: BTreeMap::new(),
+            thumbnails: HashMap::new(),
             thumbnail_video: None,
             timeline_view: TimelineView::default(),
             timeline_area: egui::Rect::NOTHING,
@@ -283,9 +289,15 @@ impl App {
         self.inspector_rect
     }
 
+    /// Each video track's file length in seconds, once it is known.
+    pub fn video_durations(&self) -> Vec<Option<f64>> {
+        let tracks = &self.project.video_tracks;
+        tracks.iter().map(|t| self.track_duration(t)).collect()
+    }
+
     /// How many video thumbnails are ready to draw.
     pub fn thumbnail_count(&self) -> usize {
-        self.thumbnail_textures.len()
+        self.thumbnails.values().map(|t| t.textures.len()).sum()
     }
 
     /// The user's settings, saved between sessions.
@@ -690,7 +702,6 @@ impl App {
                 let ctx = ctx.clone();
                 move || ctx.request_repaint()
             });
-            self.thumbnails.on_update(move || ctx.request_repaint());
             apply_style(ui.ctx());
             self.initialized = true;
         }
@@ -1671,7 +1682,7 @@ impl App {
             {
                 self.preview_split = !self.preview_split;
             }
-            if let (Some(project), Some(preview)) = (self.thumbnails.info(), info) {
+            if let (Some(project), Some(preview)) = (self.first_video_info(), info) {
                 ui.weak(tr_args(
                     "controls.resolution",
                     &[
@@ -1765,7 +1776,6 @@ impl App {
         self.tidy_item_selection();
         let loaded = self.engine.loaded_tracks();
         self.update_thumbnails(ui.ctx());
-        let video_info = self.thumbnails.info();
         let view = |t: &ProjectTrack, kind: TrackKind| TrackView {
             name: t.name.clone(),
             kind,
@@ -1789,9 +1799,11 @@ impl App {
             .project
             .video_tracks
             .iter()
-            .enumerate()
-            .map(|(i, t)| {
-                let shown = (i == 0).then_some(video_info.as_ref()).flatten();
+            .map(|t| {
+                let key = self.video_key(t);
+                let own = key.as_ref().and_then(|k| self.thumbnails.get(k));
+                let shown = own.and_then(|o| o.service.info());
+                let shown = shown.as_ref();
                 TrackView {
                     duration: shown.map(|v| v.frame_count as f64 / v.frame_rate.as_f64()),
                     details: shown.map(|v| {
@@ -1803,7 +1815,15 @@ impl App {
                         )
                         .replace(".000 fps", " fps")
                     }),
-                    thumbnails: shown.is_some(),
+                    thumbnails: own.zip(shown).map(|(o, v)| TrackThumbnails {
+                        frames: Arc::new(
+                            o.textures
+                                .iter()
+                                .map(|(&frame, (_, thumbnail))| (frame, *thumbnail))
+                                .collect(),
+                        ),
+                        rate: v.frame_rate.as_f64(),
+                    }),
                     ..view(t, TrackKind::Video)
                 }
             })
@@ -1816,11 +1836,6 @@ impl App {
                 ..view(t, TrackKind::Audio)
             }
         }));
-        let thumbnails: BTreeMap<usize, Thumbnail> = self
-            .thumbnail_textures
-            .iter()
-            .map(|(&frame, (_, thumbnail))| (frame, *thumbnail))
-            .collect();
         let cached = self.engine.cached_ranges();
         let model = TimelineModel {
             frame_count: info.frames,
@@ -1829,8 +1844,6 @@ impl App {
             cached: &cached,
             tracks,
             selected_track: self.selected_track,
-            thumbnails: &thumbnails,
-            thumbnail_rate: video_info.map_or(0.0, |v| v.frame_rate.as_f64()),
             loop_region: self.project.loop_region,
             tempo: self.project.tempo,
             mode: self.project.timeline_mode,
@@ -1846,7 +1859,17 @@ impl App {
             let at = self.timeline_view.seconds(response.lanes_left, x).max(0.0);
             self.add_resource_track(id, at);
         }
-        self.thumbnails.request(&response.wanted_thumbnails);
+        for track in &self.project.video_tracks {
+            let frames: Vec<usize> = response
+                .wanted_thumbnails
+                .iter()
+                .filter(|(name, _)| *name == track.name)
+                .map(|&(_, frame)| frame)
+                .collect();
+            if let Some(thumbs) = self.video_key(track).and_then(|k| self.thumbnails.get(&k)) {
+                thumbs.service.request(&frames);
+            }
+        }
         if let Some(region) = response.loop_region {
             self.project.loop_region = region;
         }
@@ -1882,33 +1905,63 @@ impl App {
         });
     }
 
-    /// Keeps the thumbnail service on the project's video, and a texture for each thumbnail it
-    /// has decoded.
+    /// The stream of a file a video track plays, which thumbnails are made of.
+    fn video_key(&self, track: &ProjectTrack) -> Option<VideoKey> {
+        let resource = self.project.track_resource(track)?;
+        Some((resource.path.clone(), resource.stream))
+    }
+
+    /// The first video track's file, which the project's picture size follows.
+    fn first_video_info(&self) -> Option<VideoInfo> {
+        let key = self.video_key(self.project.video()?)?;
+        self.thumbnails.get(&key)?.service.info()
+    }
+
+    /// Keeps a thumbnail service on each video stream the timeline plays, and a texture for each
+    /// thumbnail it has decoded.
     fn update_thumbnails(&mut self, ctx: &egui::Context) {
-        let video = self.project.video_path().map(Path::to_path_buf);
-        if self.thumbnail_video != video {
-            self.thumbnail_video = video.clone();
-            self.thumbnails.set_video(video);
-            self.thumbnail_textures.clear();
+        let keys: Vec<VideoKey> = self
+            .project
+            .video_tracks
+            .iter()
+            .filter_map(|t| self.video_key(t))
+            .collect();
+        let first = keys.first().cloned();
+        if self.thumbnail_video != first {
+            self.thumbnail_video = first;
             self.timeline_view = TimelineView::default();
         }
-        let frames = self.thumbnails.frames();
-        self.thumbnail_textures
-            .retain(|frame, _| frames.contains_key(frame));
-        for (frame, image) in frames {
-            self.thumbnail_textures.entry(frame).or_insert_with(|| {
-                let size = [image.width as usize, image.height as usize];
-                let texture = ctx.load_texture(
-                    format!("thumbnail-{frame}"),
-                    egui::ColorImage::from_rgb(size, &image.data),
-                    egui::TextureOptions::LINEAR,
-                );
-                let thumbnail = Thumbnail {
-                    texture: texture.id(),
-                    size: egui::vec2(size[0] as f32, size[1] as f32),
-                };
-                (texture, thumbnail)
+        let wanted: HashSet<&VideoKey> = keys.iter().collect();
+        self.thumbnails.retain(|key, _| wanted.contains(key));
+        for key in keys {
+            let backend = &self.backend;
+            let entry = self.thumbnails.entry(key.clone()).or_insert_with(|| {
+                let service = Thumbnails::new(backend.clone());
+                let ctx = ctx.clone();
+                service.on_update(move || ctx.request_repaint());
+                service.set_video(Some(key));
+                VideoThumbnails {
+                    service,
+                    textures: BTreeMap::new(),
+                }
             });
+            let frames = entry.service.frames();
+            entry.textures.retain(|frame, _| frames.contains_key(frame));
+            for (frame, image) in frames {
+                entry.textures.entry(frame).or_insert_with(|| {
+                    let size = [image.width as usize, image.height as usize];
+                    let texture = ctx.load_texture(
+                        format!("thumbnail-{frame}"),
+                        egui::ColorImage::from_rgb(size, &image.data),
+                        egui::TextureOptions::LINEAR,
+                    );
+                    let thumbnail = Thumbnail {
+                        texture: texture.id(),
+                        size: egui::vec2(size[0] as f32, size[1] as f32),
+                    };
+                    (texture, thumbnail)
+                });
+            }
         }
     }
 
@@ -1967,10 +2020,16 @@ impl App {
 
     /// The length of a track's file in seconds, once it is known.
     fn track_duration(&self, track: &ProjectTrack) -> Option<f64> {
-        if self.project.video().is_some_and(|v| v.name == track.name) {
+        if self
+            .project
+            .video_tracks
+            .iter()
+            .any(|v| v.name == track.name)
+        {
             return self
-                .thumbnails
-                .info()
+                .video_key(track)
+                .and_then(|k| self.thumbnails.get(&k))
+                .and_then(|t| t.service.info())
                 .map(|v| v.frame_count as f64 / v.frame_rate.as_f64());
         }
         self.engine

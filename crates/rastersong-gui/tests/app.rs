@@ -737,6 +737,21 @@ fn thumbnails_of_the_source_video_arrive() {
 }
 
 #[test]
+fn the_same_video_on_two_tracks_loads_both() {
+    let mut harness = loaded();
+    let resource = harness.state().project().video_tracks[0].resource;
+    harness.state_mut().add_resource_track(resource, 1.0);
+    harness.state_mut().add_resource_track(resource, 2.0);
+    harness.run_steps(2);
+    assert_eq!(harness.state().project().video_tracks.len(), 3);
+    // Neither new track is left on "loading", and each gets its thumbnails.
+    step_until(&mut harness, "both lengths", |app| {
+        app.video_durations().iter().all(Option::is_some)
+    });
+    harness.run_steps(2);
+}
+
+#[test]
 fn adding_tracks_names_them_after_their_files_and_links_a_node_to_each() {
     let mut harness = loaded();
     let nodes = harness.state().editor().node_count();

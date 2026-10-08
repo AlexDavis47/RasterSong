@@ -17,6 +17,10 @@ pub const THUMBNAIL_HEIGHT: u32 = 64;
 /// Thumbnails kept in memory (about 1 MB per 60 at 16:9).
 const CAPACITY: usize = 600;
 
+/// A video stream of a file, as thumbnails are made of it: its path and stream index (the file's
+/// best video stream for `None`).
+pub type VideoKey = (PathBuf, Option<usize>);
+
 type Callback = Arc<dyn Fn() + Send + Sync>;
 
 pub struct Thumbnails {
@@ -39,7 +43,7 @@ struct Shared {
 
 #[derive(Default)]
 struct State {
-    video: Option<PathBuf>,
+    video: Option<VideoKey>,
     /// Bumped when the video changes, so the worker drops what it was doing.
     generation: u64,
     info: Option<VideoInfo>,
@@ -77,8 +81,8 @@ impl Thumbnails {
         *lock(&self.shared.on_update) = Some(Arc::new(callback));
     }
 
-    /// The video to make thumbnails of. Changing it forgets every thumbnail.
-    pub fn set_video(&self, video: Option<PathBuf>) {
+    /// The video stream to make thumbnails of. Changing it forgets every thumbnail.
+    pub fn set_video(&self, video: Option<VideoKey>) {
         let mut state = lock(&self.shared.state);
         if state.video == video {
             return;
@@ -137,7 +141,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 /// lowest first (the decoder's fast path is forward).
 fn run(shared: &Shared) {
     let mut source = None;
-    let mut opened: Option<(u64, PathBuf)> = None;
+    let mut opened: Option<(u64, VideoKey)> = None;
     loop {
         let (generation, video, next) = {
             let mut state = lock(&shared.state);
@@ -162,8 +166,8 @@ fn run(shared: &Shared) {
         if opened.as_ref().map(|(g, _)| *g) != Some(generation) {
             source = None;
             opened = Some((generation, video.clone().unwrap_or_default()));
-            let Some(path) = video else { continue };
-            match shared.backend.open_video(&path) {
+            let Some((path, stream)) = video else { continue };
+            match shared.backend.open_video_stream(&path, stream) {
                 Ok(mut video) => {
                     let info = video.info().clone();
                     let height = THUMBNAIL_HEIGHT.min(info.height.max(1));
@@ -246,7 +250,7 @@ mod tests {
             },
         );
         let thumbnails = Thumbnails::new(Arc::new(backend));
-        thumbnails.set_video(Some(PathBuf::from("clip")));
+        thumbnails.set_video(Some((PathBuf::from("clip"), None)));
         thumbnails
     }
 
