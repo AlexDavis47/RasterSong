@@ -1087,14 +1087,14 @@ Can process R, G and B separately.
 
 | Node | What it does |
 |---|---|
-| [Audio Output](#audio_output) | The rendered sound: replaces the source audio in the preview and the export |
+| [Audio Output](#audio_output) | The rendered sound of one output bus: replaces that bus's track mix in the preview and the export |
 | [Output](#output) | The rendered result: RGB, or mono shown as grayscale |
 
 ### `audio_output`
 
-**Audio Output**: The rendered sound: replaces the source audio in the preview and the export
+**Audio Output**: The rendered sound of one output bus: replaces that bus's track mix in the preview and the export
 
-Optional. Without it, or with nothing connected, the source audio is used untouched; so is a track wired straight in. Mono and stereo signals are written as they are; any other signal is written as interleaved samples to a stereo track. Each frame's block is resampled from its own rate to the project's audio rate, and clipped to -1 to 1.
+Optional, and at most one per bus. Without one, or with nothing connected, the bus plays its track mix: the audio tracks routed to it, at their volumes; a track wired straight in is also used as it is. A mono signal is written to every channel of the bus; any other signal is written as interleaved samples across the bus's channels (a stereo signal to a stereo bus as it is). Each frame's block is resampled from its own rate to the project's audio rate, and clipped to -1 to 1.
 
 **Inputs**
 
@@ -1109,6 +1109,7 @@ Optional. Without it, or with nothing connected, the source audio is used untouc
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
 | `volume` (Volume) | 0 dB | -48 to 12 (up to -120 to 60) | yes | Louder or quieter, in decibels, before the sound is clipped to -1 to 1. 0 changes nothing; the meter shows the peak after the volume, so a peak above 0 dB will clip. |
+| `bus` (Bus) | `Main` | text | no | The output bus this sound goes to, from the buses in Project settings. The project's first bus (Main unless renamed) is the one the preview plays and the export writes. An output naming a bus the project doesn't have is not rendered. |
 
 ### `output`
 

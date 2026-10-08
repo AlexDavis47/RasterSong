@@ -101,6 +101,7 @@ fn graphs(c: &mut Criterion) {
                 sources: HashMap::from([("video".to_owned(), video), ("audio".to_owned(), audio)]),
                 output: video,
                 pixel_scale: 1.0,
+                audio_bus: "Main".to_owned(),
             },
         )
         .unwrap();

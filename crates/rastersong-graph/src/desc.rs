@@ -71,6 +71,28 @@ pub struct NodeDesc {
     pub exposed: Option<Vec<String>>,
 }
 
+impl NodeDesc {
+    /// A node of type `kind` with every setting at its default.
+    pub fn new(id: String, kind: &str) -> Self {
+        Self {
+            id,
+            kind: kind.to_owned(),
+            params: BTreeMap::new(),
+            interpolation: Interpolation::default(),
+            grouping: Grouping::default(),
+            channels: Channels::default(),
+            layout: GeneratorLayout::default(),
+            bypass: false,
+            label: None,
+            position: None,
+            modulation: BTreeMap::new(),
+            integer: Vec::new(),
+            ranges: BTreeMap::new(),
+            exposed: None,
+        }
+    }
+}
+
 /// How a signal connected to a parameter moves it. The `amount` is a percentage of the size of
 /// the parameter's slider range (the node's `ranges` entry, else its usual range), and is the one
 /// thing stored: a full-scale signal moves the value `amount` of that range away from where it

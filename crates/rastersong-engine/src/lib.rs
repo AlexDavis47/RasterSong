@@ -33,7 +33,8 @@ pub use project::{
 pub use rastersong_graph::dsp::Fft;
 pub use rastersong_graph::nodes::support::UNBOUNDED_WARMUP;
 pub use rastersong_graph::nodes::{
-    AUDIO_INPUT, CHANNEL_PORTS, COMBINE, MAX_CHANNELS, OUTPUT, SOURCE_PARAM, SPLIT, VIDEO_INPUT,
+    AUDIO_INPUT, AUDIO_OUTPUT, BUS_PARAM, CHANNEL_PORTS, COMBINE, DEFAULT_BUS, MAX_CHANNELS,
+    OUTPUT, SOURCE_PARAM, SPLIT, VIDEO_INPUT,
 };
 pub use rastersong_graph::{
     Category, ChannelMap, Channels, CompileOptions, Connection, Diagnostic, FORMAT_VERSION,
@@ -41,7 +42,7 @@ pub use rastersong_graph::{
     MODULATION_AMOUNT_LIMITS, Meter, MeterKind, ModMode, Modulation, NodeCost, NodeDesc,
     NodeDiagnostic, NodeMeters, NodeStats, NodeType, OutputLevel, OutputSpec, ParamKind,
     ParamLevel, ParamSpec, ParamValue, Part, Range, Registry, Severity, ShownWhen, Tag, TagRule,
-    Tempo, range_span,
+    Tempo, range_span, render_form,
 };
 pub use rastersong_media::{
     AudioCache, AudioClip, AudioOptions, BackendInfo, FakeBackend, FakeVideo, FfmpegBackend,
@@ -56,7 +57,7 @@ pub use service::{
 };
 pub use tap::{PICTURE_SIDE, Picture, Tap, TapOutcome, TapRequest, picture_size};
 pub use thumbnails::{THUMBNAIL_HEIGHT, Thumbnails};
-pub use timeline::{Item, Timebase, Timeline, TrackKind, TrackSpec};
+pub use timeline::{Bus, Item, MAX_BUS_CHANNELS, Timebase, Timeline, TrackKind, TrackSpec};
 pub use waveform::Waveform;
 
 /// Initializes the engine and its media backend, and reports what was loaded.

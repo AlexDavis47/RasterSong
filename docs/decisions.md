@@ -223,6 +223,22 @@ Built as the second step of the timeline model.
   the log. Tests and the engine's default configuration use no cache; the app and the CLI use the user's cache
   directory.
 
+### Track mix and output buses (October 2026)
+
+Built as the third step of the timeline model.
+
+- **One bus is rendered at a time.** The renderer compiles only the Audio Output of the bus it renders (the
+  master, unless the CLI's `--bus` picks another), so a graph with outputs for stems costs nothing extra in the
+  preview. Export of every bus waits for GUI export.
+- **Removing a bus moves its tracks to the master** and leaves Audio Outputs that write to it pointing at a bus
+  that isn't there (not rendered, shown in red), rather than silently re-pointing them, which could put two on the
+  master. The removal warning lists both. Renaming follows through to tracks and Audio Outputs.
+- **Mono fills every channel; other signals map channel for channel.** A stereo track on a 5.1 bus plays in its
+  first two channels; a mono Audio Output on a stereo bus plays in both. The preview plays a bus's first two
+  channels.
+- **Until graph items exist, bypassing the whole graph is the "no graph" case**: it shows the track mix's picture
+  (the top video track with an item) and plays the master's track mix.
+
 ## Open
 
 

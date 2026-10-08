@@ -4,7 +4,7 @@
 use rastersong_graph::{GraphDesc, Registry, Tempo};
 use rastersong_media::MediaBackend;
 
-use crate::timeline::Timebase;
+use crate::timeline::{Bus, Timebase};
 use crate::{
     AudioBlock, AudioSink, DEFAULT_AUDIO_RATE, EngineError, OutputSize, RenderInfo, RenderTrack,
     Renderer,
@@ -22,6 +22,8 @@ pub struct RenderSettings {
     pub tempo: Tempo,
     /// The rate the graph's sound is rendered at; `None` is [`DEFAULT_AUDIO_RATE`].
     pub audio_rate: Option<u32>,
+    /// The output bus whose sound is rendered.
+    pub bus: Bus,
 }
 
 /// One rendered frame, as packed RGB8.
@@ -57,6 +59,7 @@ pub fn render(
         tracks,
         graph,
         settings.tempo,
+        &settings.bus,
         Registry::shared(),
         settings
             .size

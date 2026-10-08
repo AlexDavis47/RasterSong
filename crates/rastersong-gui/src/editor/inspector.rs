@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use eframe::egui::{self, RichText, Ui};
-use rastersong_engine::{AUDIO_INPUT, SOURCE_PARAM};
+use rastersong_engine::{AUDIO_INPUT, AUDIO_OUTPUT, BUS_PARAM, SOURCE_PARAM};
 use rastersong_engine::{
     Channels, GeneratorLayout, Grouping, Interpolation, MeterKind, Modulation, NodeMeters,
     NodeStats, NodeType, ParamKind, ParamLevel, ParamSpec, ParamValue, Severity, ShownWhen,
@@ -20,6 +20,8 @@ use crate::theme::Theme;
 pub struct InspectorContext<'a> {
     /// Names of the project's audio tracks, offered by audio inputs.
     pub tracks: &'a [String],
+    /// Names of the project's output buses, offered by audio outputs.
+    pub buses: &'a [String],
     /// Modulated parameters' values at the playhead, for their ghost handles.
     pub params: &'a [ParamLevel],
     /// What the nodes' meters read at the playhead.
@@ -255,8 +257,21 @@ impl GraphEditor {
                         ui.add_space(PARAM_GAP);
                         continue;
                     }
-                    let tracks = (node.kind == AUDIO_INPUT && spec.name == SOURCE_PARAM)
-                        .then_some(ctx.tracks);
+                    let tracks = if node.kind == AUDIO_INPUT && spec.name == SOURCE_PARAM {
+                        Some(Names {
+                            names: ctx.tracks,
+                            missing: "editor.param.no_such_track",
+                            empty: "editor.param.no_tracks",
+                        })
+                    } else if node.kind == AUDIO_OUTPUT && spec.name == BUS_PARAM {
+                        Some(Names {
+                            names: ctx.buses,
+                            missing: "editor.param.no_such_bus",
+                            empty: "editor.param.no_tracks",
+                        })
+                    } else {
+                        None
+                    };
                     let (exposed, wire) = pins[index];
                     // A parameter the node's settings leave unused is hidden, unless a signal is
                     // wired to it (or its pin shown): that stays in view, greyed, with the reason.
@@ -395,14 +410,23 @@ fn unused_reason(kind: &NodeType, when: &ShownWhen) -> String {
     )
 }
 
+/// Names a text parameter picks from, and the lang keys for a name that isn't among them and
+/// for none at all.
+#[derive(Debug, Clone, Copy)]
+struct Names<'a> {
+    names: &'a [String],
+    missing: &'static str,
+    empty: &'static str,
+}
+
 /// What one parameter row shows and edits.
 struct ParamRow<'a, 'u> {
     ui: &'u mut Ui,
     kind: &'a NodeType,
     spec: &'a ParamSpec,
     params: &'a mut BTreeMap<String, ParamValue>,
-    /// For an audio input's track: the project's tracks.
-    tracks: Option<&'a [String]>,
+    /// For an audio input's track or an audio output's bus: the names to pick from.
+    tracks: Option<Names<'a>>,
     track_width: f32,
     /// Whether the number is rounded to whole numbers.
     integer: Option<&'a mut bool>,
@@ -635,11 +659,12 @@ fn param_row(row: ParamRow) -> bool {
             });
         }
         (ParamKind::Text { .. }, ParamValue::Text(s)) => match tracks {
-            // Audio inputs pick one of the project's tracks.
-            Some(tracks) => {
+            // Audio inputs pick one of the project's tracks, audio outputs one of its buses.
+            Some(names) => {
+                let tracks = names.names;
                 let missing = !tracks.contains(s);
                 let shown = if missing {
-                    tr_args("editor.param.no_such_track", &[("track", s)])
+                    tr_args(names.missing, &[("track", s)])
                 } else {
                     s.clone()
                 };
@@ -652,7 +677,7 @@ fn param_row(row: ParamRow) -> bool {
                     .width(150.0)
                     .show_ui(ui, |ui| {
                         if tracks.is_empty() {
-                            ui.weak(tr("editor.param.no_tracks"));
+                            ui.weak(tr(names.empty));
                         }
                         for track in tracks {
                             ui.selectable_value(s, track.clone(), track);

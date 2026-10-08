@@ -3,11 +3,13 @@
 
 use eframe::egui::{self, RichText, Ui};
 use rastersong_engine::{
-    INSPECT_RATE_RANGE, MAX_WARMUP_FRAMES_LIMIT, PreviewScale, Tempo, UNBOUNDED_WARMUP,
+    Bus, INSPECT_RATE_RANGE, MAX_BUS_CHANNELS, MAX_WARMUP_FRAMES_LIMIT, PreviewScale, Tempo,
+    UNBOUNDED_WARMUP,
 };
 use rastersong_lang::{tr, tr_args};
 
 use super::{AUDIO_RATES, App};
+use crate::name_edit::name_edit;
 use crate::settings::Settings;
 use crate::theme::{ThemeChoice, WireStyle};
 use crate::value_box::ValueBox;
@@ -106,6 +108,129 @@ impl App {
                 }
             });
         self.show_settings = open;
+        self.bus_removal_dialog(ctx);
+    }
+
+    /// The output buses: name, channels and remove for each, master first, and a button to add
+    /// one.
+    fn bus_settings(&mut self, ui: &mut Ui) {
+        section(ui, tr("settings.buses"));
+        let count = self.project.buses.len();
+        let mut rename = None;
+        let mut remove = None;
+        for (i, bus) in self.project.buses.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                let edit = name_edit(ui, ui.id().with(("bus-name", i)), &bus.name, |e| {
+                    e.desired_width(120.0)
+                });
+                edit.response.on_hover_text(tr("settings.buses.name.help"));
+                if let Some(name) = edit.committed {
+                    rename = Some((bus.name.clone(), name));
+                }
+                egui::ComboBox::from_id_salt(("bus-channels", i))
+                    .width(90.0)
+                    .selected_text(channels_label(bus.channels))
+                    .show_ui(ui, |ui| {
+                        for channels in 1..=MAX_BUS_CHANNELS {
+                            ui.selectable_value(
+                                &mut bus.channels,
+                                channels,
+                                channels_label(channels),
+                            );
+                        }
+                    })
+                    .response
+                    .on_hover_text(tr("settings.buses.channels.help"));
+                if i == 0 {
+                    ui.weak(tr("settings.buses.master"))
+                        .on_hover_text(tr("settings.buses.master.help"));
+                } else if ui
+                    .add_enabled(count > 1, egui::Button::new("×").frame(false))
+                    .on_hover_text(tr("settings.buses.remove"))
+                    .clicked()
+                {
+                    remove = Some(bus.name.clone());
+                }
+            });
+        }
+        if ui.button(tr("settings.buses.add")).clicked() {
+            let name = self.project.unused_bus_name();
+            self.project.buses.push(Bus { name, channels: 2 });
+        }
+        help(ui, tr("settings.buses.help"));
+        if let Some((old, new)) = rename {
+            self.project.rename_bus(&old, &new);
+        }
+        if let Some(name) = remove {
+            let (tracks, outputs) = self.project.bus_users(&name);
+            if tracks.is_empty() && outputs.is_empty() {
+                self.project.remove_bus(&name);
+            } else {
+                self.bus_removal = Some(name);
+            }
+        }
+    }
+
+    /// The warning before removing a bus something uses, listing the tracks routed to it and the
+    /// Audio Outputs writing to it.
+    fn bus_removal_dialog(&mut self, ctx: &egui::Context) {
+        let Some(name) = self.bus_removal.clone() else {
+            return;
+        };
+        let (tracks, outputs) = self.project.bus_users(&name);
+        let master = self
+            .project
+            .buses
+            .iter()
+            .map(|b| b.name.as_str())
+            .find(|b| *b != name)
+            .unwrap_or_default()
+            .to_owned();
+        let output_names: Vec<String> = outputs
+            .iter()
+            .map(|id| {
+                self.project
+                    .graph
+                    .nodes
+                    .iter()
+                    .find(|n| n.id == *id)
+                    .and_then(|n| n.label.clone())
+                    .unwrap_or_else(|| id.clone())
+            })
+            .collect();
+        let mut close = false;
+        egui::Modal::new(egui::Id::new("remove-bus")).show(ctx, |ui| {
+            ui.set_width(360.0);
+            ui.heading(tr_args("dialog.remove_bus.title", &[("bus", &name)]));
+            ui.add_space(4.0);
+            if !tracks.is_empty() {
+                ui.label(tr_args(
+                    "dialog.remove_bus.tracks",
+                    &[("master", &master), ("tracks", &tracks.join(", "))],
+                ));
+            }
+            if !output_names.is_empty() {
+                ui.label(tr_args(
+                    "dialog.remove_bus.outputs",
+                    &[("outputs", &output_names.join(", "))],
+                ));
+            }
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if ui.button(tr("dialog.remove")).clicked() {
+                    self.project.remove_bus(&name);
+                    close = true;
+                }
+                if ui.button(tr("dialog.cancel")).clicked()
+                    || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                {
+                    close = true;
+                }
+            });
+        });
+        if close {
+            self.bus_removal = None;
+        }
     }
 
     fn application_settings(&mut self, ui: &mut Ui) {
@@ -342,5 +467,17 @@ impl App {
                 });
         });
         help(ui, tr("settings.audio_rate.help"));
+        self.bus_settings(ui);
+    }
+}
+
+/// "Mono", "Stereo", "5.1", … for a bus of `channels`.
+fn channels_label(channels: u32) -> String {
+    match channels {
+        1 => tr("settings.buses.mono").to_owned(),
+        2 => tr("settings.buses.stereo").to_owned(),
+        6 => tr("settings.buses.surround_5_1").to_owned(),
+        8 => tr("settings.buses.surround_7_1").to_owned(),
+        n => tr_args("settings.buses.channels", &[("count", &n.to_string())]),
     }
 }

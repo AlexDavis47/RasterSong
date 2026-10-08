@@ -5,6 +5,7 @@
 window.title = {name} — RasterSong
 window.title_dirty = {name} • — RasterSong
 project.untitled = Untitled
+project.bus.new_name = Bus {n}
 
 # --- Menus ---
 menu.file = File
@@ -34,6 +35,10 @@ dialog.problem = Problem
 dialog.save = Save
 dialog.dont_save = Don't Save
 dialog.cancel = Cancel
+dialog.remove = Remove
+dialog.remove_bus.title = Remove the bus {bus}?
+dialog.remove_bus.tracks = These tracks are routed to it and will move to {master}: {tracks}.
+dialog.remove_bus.outputs = These Audio Outputs write to it and won't be rendered until set to another bus: {outputs}.
 dialog.save_changes.title = Save changes to {name}?
 dialog.save_changes.body = Your changes will be lost if you don't save them.
 dialog.filter.project = RasterSong project
@@ -114,11 +119,12 @@ timeline.track.unmute = Unmute (Alt+click to solo)
 timeline.track.remove = Remove track
 timeline.track.offset = Offset
 timeline.track.offset.help = Seconds this track starts after the video
+timeline.track.bus.help = The output bus this track is summed into in the track mix, at its volume. Graphs read the track whatever its bus.
 timeline.track.offset_drag = Drag to move this track against the video
 
 # --- Graph editor ---
 editor.bypass_graph = Bypass graph
-editor.bypass_graph.help = Skip every node: the video goes straight to the output, to compare with the original
+editor.bypass_graph.help = Skip every node: show and play the track mix (the top video track, and the tracks routed to the master bus), to compare with the original
 inspect.picture = Picture
 inspect.scope = Scope
 inspect.spectrum = Spectrum
@@ -221,6 +227,7 @@ editor.param.reset = Reset to default
 editor.param.int = int
 editor.param.int.help = Round to whole numbers: the value, and, when a signal modulates it, the result at every sample
 editor.param.no_such_track = {track} (no such track)
+editor.param.no_such_bus = {track} (no such bus: not rendered)
 editor.param.no_tracks = No audio tracks yet
 editor.param.track_help = Click or drag to set. Alt+click or right-click to reset to the default.
 editor.param.slider_range = Slider range
@@ -274,6 +281,19 @@ settings.warmup.warning = ⚠ {node} {needs}, above the limit of {limit}: jumpin
 settings.audio = Audio
 settings.audio_rate = Audio output rate
 settings.audio_rate.help = The sample rate of the sound an Audio Output node renders.
+settings.buses = Output buses
+settings.buses.help = Audio tracks are summed into a bus at their volumes (the track mix), and each Audio Output node writes to one bus, replacing its track mix. The first bus is the master, which the preview plays and the export writes; add buses for stems.
+settings.buses.name.help = The bus's name. Renaming it renames it on its tracks and Audio Outputs too.
+settings.buses.channels.help = How many channels the bus has. Mono tracks play in every channel; other tracks' channels go to the bus's channels in order.
+settings.buses.master = master
+settings.buses.master.help = The first bus is the master: the preview plays it and the export writes it.
+settings.buses.remove = Remove this bus
+settings.buses.add = + Add bus
+settings.buses.mono = Mono
+settings.buses.stereo = Stereo
+settings.buses.surround_5_1 = 5.1
+settings.buses.surround_7_1 = 7.1
+settings.buses.channels = {count} channels
 
 # --- Themes ---
 theme.dark = Dark

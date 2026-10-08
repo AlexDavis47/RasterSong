@@ -450,7 +450,9 @@ memory maps read ordinary files. Saving rewrites the zip, copying unchanged entr
      can only be set in the project file.
    - [ ] **feature** Tracks of items for video and audio, item header bars with mute, track solo and height, linking.
    - [ ] **feature** Item editing (move, trim, split, delete, rate drag, snapping, multi-select, copy/paste, undo).
-   - [ ] **feature** Track mix and output buses, with the warning on removal.
+   - [x] **feature** Track mix and output buses, with the warning on removal *(done: see
+     [Track mix and output buses](engine.md#track-mix-and-output-buses); with no graph items yet, bypassing the
+     graph plays the track mix, and the CLI's `--bus` renders a bus other than the master)*.
    - [x] **feature** Track readers in the engine: video conformed to the project's grid and size, audio placed item
      by item, gaps read zeros.
    - [x] **feature** Audio decoded to cache files and memory-mapped (`Modulator` and the waveform read the mapped

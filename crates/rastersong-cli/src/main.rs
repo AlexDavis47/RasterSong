@@ -8,8 +8,8 @@ use clap::{Parser, Subcommand};
 use rastersong_engine::playback::MixTrack;
 use rastersong_engine::sources::Modulator;
 use rastersong_engine::{
-    AudioOptions, DEFAULT_AUDIO_TRACK, FfmpegBackend, GraphDesc, Item, MediaBackend, Project,
-    RenderSettings, RenderTrack, Timeline, TrackKind, VIDEO_SOURCE,
+    AudioOptions, Bus, DEFAULT_AUDIO_TRACK, FfmpegBackend, GraphDesc, MediaBackend, Project,
+    RenderSettings, RenderTrack, Timeline, TrackKind, TrackSpec, VIDEO_SOURCE,
 };
 use rastersong_lang::tr_args;
 
@@ -38,9 +38,9 @@ struct RenderArgs {
     /// `video` and any file with an audio stream as the track `audio`, through a graph file
     /// (JSON).
     ///
-    /// The output is a `.mkv` file (lossless FFV1 video with the graph's Audio Output as its
-    /// sound, or the mix of the audio tracks when it has none), or a directory to fill with a
-    /// PNG sequence.
+    /// The output is a `.mkv` file (lossless FFV1 video with the master bus's sound: the graph's
+    /// Audio Output for it, or else the mix of the audio tracks routed to it), or a directory to
+    /// fill with a PNG sequence.
     #[arg(num_args = 2..=4, required = true, value_names = ["INPUTS", "OUT"])]
     paths: Vec<PathBuf>,
     /// Process and output at this size instead of the project's, e.g. `320x180`.
@@ -56,6 +56,10 @@ struct RenderArgs {
     /// Sample rate of the sound (Hz). Defaults to the project's, or 48000.
     #[arg(long)]
     audio_rate: Option<u32>,
+    /// The output bus whose sound is written: its Audio Output, or its track mix when the graph
+    /// has none. Defaults to the project's first bus, the master.
+    #[arg(long)]
+    bus: Option<String>,
 }
 
 fn parse_size(s: &str) -> Result<(u32, u32), String> {
@@ -118,8 +122,6 @@ struct Job {
     graph: GraphDesc,
     tempo: rastersong_engine::Tempo,
     audio_rate: u32,
-    /// Volume and mute of each audio track, for the mix.
-    mix: Vec<(String, f32)>,
 }
 
 /// A project on its own, from `rastersong render <project> <out>`.
@@ -130,17 +132,11 @@ fn project_job(path: &Path, args: &RenderArgs) -> Result<Job> {
         );
     }
     let project = Project::load(path).map_err(anyhow::Error::msg)?;
-    let mix = project
-        .audio_tracks
-        .iter()
-        .map(|t| (t.name.clone(), if t.muted { 0.0 } else { t.volume }))
-        .collect();
     Ok(Job {
         timeline: project.timeline(),
         audio_rate: args.audio_rate.unwrap_or(project.audio_rate),
         tempo: project.tempo,
         graph: project.graph,
-        mix,
     })
 }
 
@@ -151,32 +147,21 @@ fn files_job(video: &Path, audio: &Path, graph: &Path, args: &RenderArgs) -> Res
     let graph =
         GraphDesc::from_json(&json).with_context(|| format!("loading {}", graph.display()))?;
     let offset = args.audio_offset.unwrap_or(0.0);
-    let mut song = rastersong_engine::TrackSpec {
-        name: DEFAULT_AUDIO_TRACK.to_owned(),
-        kind: TrackKind::Audio,
-        path: audio.to_owned(),
-        items: vec![Item::whole(0.0)],
-    };
+    let mut song = TrackSpec::new(DEFAULT_AUDIO_TRACK, TrackKind::Audio, audio);
     // Starting earlier than the video starts the item partway into the audio.
     song.items[0].position = offset.max(0.0);
     song.items[0].start = (-offset).max(0.0);
-    let video = rastersong_engine::TrackSpec {
-        name: VIDEO_SOURCE.to_owned(),
-        kind: TrackKind::Video,
-        path: video.to_owned(),
-        items: vec![Item::whole(0.0)],
-    };
+    let video = TrackSpec::new(VIDEO_SOURCE, TrackKind::Video, video);
     Ok(Job {
         timeline: Timeline {
-            timebase: None,
             tracks: vec![video, song],
+            ..Timeline::default()
         },
         graph,
         tempo: Default::default(),
         audio_rate: args
             .audio_rate
             .unwrap_or(rastersong_engine::DEFAULT_AUDIO_RATE),
-        mix: vec![(DEFAULT_AUDIO_TRACK.to_owned(), 1.0)],
     })
 }
 
@@ -185,6 +170,18 @@ fn render(args: RenderArgs) -> Result<()> {
         [project, out] => (project_job(project, &args)?, out),
         [video, audio, graph, out] => (files_job(video, audio, graph, &args)?, out),
         _ => bail!("expected `<project> <out>` or `<video> <audio> <graph> <out>`"),
+    };
+
+    let bus = match &args.bus {
+        None => job.timeline.master(),
+        Some(name) => job
+            .timeline
+            .buses
+            .iter()
+            .chain(job.timeline.buses.is_empty().then(Bus::main).as_ref())
+            .find(|b| b.name == *name)
+            .cloned()
+            .with_context(|| format!("the project has no bus named `{name}`"))?,
     };
 
     let backend = FfmpegBackend::new()?;
@@ -200,18 +197,14 @@ fn render(args: RenderArgs) -> Result<()> {
                     None => backend.load_audio(&spec.path, AudioOptions::default()),
                 }
                 .with_context(|| format!("loading audio from {}", spec.path.display()))?;
-                let gain = job
-                    .mix
-                    .iter()
-                    .find(|(name, _)| *name == spec.name)
-                    .map_or(1.0, |&(_, gain)| gain);
                 let modulator = Arc::new(Modulator::new(&clip));
                 sources.push(SourceTrack {
                     name: spec.name.clone(),
+                    bus: spec.bus.clone(),
                     track: MixTrack {
                         clip: Arc::new(clip),
                         items: spec.items.clone(),
-                        gain,
+                        gain: spec.gain,
                     },
                 });
                 rastersong_engine::TrackMedia::Audio(modulator)
@@ -224,13 +217,14 @@ fn render(args: RenderArgs) -> Result<()> {
         });
     }
 
-    let mut sink = output::Output::new(out, sources, job.audio_rate);
+    let mut sink = output::Output::new(out, sources, job.audio_rate, bus.clone());
     let settings = RenderSettings {
         timebase: job.timeline.timebase,
         size: args.size,
         frames: args.frames,
         tempo: job.tempo,
         audio_rate: Some(job.audio_rate),
+        bus,
     };
     let started = std::time::Instant::now();
     let info = rastersong_engine::render(&backend, &tracks, &job.graph, &settings, &mut sink)?;

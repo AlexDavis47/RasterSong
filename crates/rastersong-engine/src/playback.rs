@@ -63,6 +63,31 @@ impl Mixer {
         if let Some((source, gain)) = &self.rendered {
             render_blocks(source.as_ref(), *gain, start, rate, out);
         }
+        self.mix_tracks(start, rate, out.as_chunks_mut::<2>().0);
+    }
+
+    /// Writes the tracks' mix as `out.len() / channels` interleaved frames of `channels` at `rate`
+    /// Hz, starting at `start` seconds, as a bus of that many channels sums them: a mono track
+    /// plays in every channel, any other track's channels go to the bus's channels in order
+    /// (channels the bus doesn't have are left out, and channels the track doesn't have are
+    /// silent). Rendered sound, if any, is left out.
+    pub fn render_channels(&self, start: f64, rate: f64, channels: usize, out: &mut [f32]) {
+        out.fill(0.0);
+        match channels {
+            1 => self.mix_tracks(start, rate, out.as_chunks_mut::<1>().0),
+            2 => self.mix_tracks(start, rate, out.as_chunks_mut::<2>().0),
+            3 => self.mix_tracks(start, rate, out.as_chunks_mut::<3>().0),
+            4 => self.mix_tracks(start, rate, out.as_chunks_mut::<4>().0),
+            5 => self.mix_tracks(start, rate, out.as_chunks_mut::<5>().0),
+            6 => self.mix_tracks(start, rate, out.as_chunks_mut::<6>().0),
+            7 => self.mix_tracks(start, rate, out.as_chunks_mut::<7>().0),
+            8 => self.mix_tracks(start, rate, out.as_chunks_mut::<8>().0),
+            _ => {}
+        }
+    }
+
+    /// Adds the tracks to `out`, frames of `N` channels at `rate` from `start` seconds.
+    fn mix_tracks<const N: usize>(&self, start: f64, rate: f64, out: &mut [[f32; N]]) {
         for track in self.tracks.iter().filter(|t| t.gain > 0.0) {
             let clip = &track.clip;
             let channels = clip.channels as usize;
@@ -71,12 +96,20 @@ impl Mixer {
                 continue;
             }
             let duration = clip.duration_secs();
-            let at = |f: usize, c: usize| clip.samples[f * channels + c.min(channels - 1)];
-            for (j, frame) in out.as_chunks_mut::<2>().0.iter_mut().enumerate() {
+            // A mono track plays in every channel; channels a track doesn't have are silent.
+            let source_channel = |c: usize| {
+                if channels == 1 {
+                    Some(0)
+                } else {
+                    (c < channels).then_some(c)
+                }
+            };
+            let at = |f: usize, c: usize| clip.samples[f * channels + c];
+            for (j, frame) in out.iter_mut().enumerate() {
                 let t = start + j as f64 / rate;
                 // Each item is mixed over the ones before it by its gain, which fades at its
                 // edges, as the renderer's track readers do (`Modulator::fill_items`).
-                let mut mixed = [0.0f32; 2];
+                let mut mixed = [0.0f32; N];
                 for item in &track.items {
                     let g = item.gain_at(t, duration) as f32;
                     if g <= 0.0 {
@@ -84,7 +117,10 @@ impl Mixer {
                     }
                     let pos = item.source_time(t) * f64::from(clip.sample_rate);
                     for (c, mixed) in mixed.iter_mut().enumerate() {
-                        let x = if pos >= 0.0 && pos < (frames - 1) as f64 {
+                        let x = if let Some(c) = source_channel(c)
+                            && pos >= 0.0
+                            && pos < (frames - 1) as f64
+                        {
                             let i = pos as usize;
                             let a = at(i, c);
                             a + (at(i + 1, c) - a) * (pos - i as f64) as f32

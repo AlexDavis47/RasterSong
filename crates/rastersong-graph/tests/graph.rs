@@ -19,6 +19,7 @@ fn options() -> CompileOptions {
         ]),
         output: Layout::rgb(W, H),
         pixel_scale: 1.0,
+        audio_bus: "Main".to_owned(),
     }
 }
 
@@ -196,14 +197,25 @@ fn render_form_ignores_nodes_that_do_not_feed_the_output() {
 }
 
 #[test]
-fn render_form_with_global_bypass_wires_the_video_to_the_output() {
+fn render_form_with_global_bypass_wires_the_track_mix_to_the_output() {
     let form = render_form_of(CHAIN, true);
     let ids: Vec<&str> = form.nodes.iter().map(|n| n.id.as_str()).collect();
-    assert_eq!(ids, ["video", "out"]);
-    let mut graph = Graph::compile(&form, &Registry::default(), &options()).unwrap();
-    let out = graph
-        .process(0, &sources(|i| i as f32 / 10.0, |_| 0.0))
-        .unwrap();
+    assert_eq!(ids, ["@track_mix", "out"]);
+    // The host supplies the track mix's picture like any other video source.
+    let mut options = options();
+    options
+        .sources
+        .insert("@track_mix".into(), Layout::rgb(W, H));
+    let mut graph = Graph::compile(&form, &Registry::default(), &options).unwrap();
+    let mut input = sources(|_| 0.0, |_| 0.0);
+    input.insert(
+        "@track_mix".into(),
+        Signal {
+            layout: Layout::rgb(W, H),
+            data: (0..(W * H * 3) as usize).map(|i| i as f32 / 10.0).collect(),
+        },
+    );
+    let out = graph.process(0, &input).unwrap();
     assert_eq!(out.data[3], 0.3);
 }
 
@@ -1087,8 +1099,26 @@ fn only_one_audio_output_and_nothing_reads_an_output() {
     );
     assert!(matches!(
         compile(&two),
-        Err(GraphError::AudioOutputCount(2))
+        Err(GraphError::AudioOutputCount { ref bus, count: 2 }) if bus == "Main"
     ));
+    // One per bus is fine, and only the rendered bus's is compiled.
+    let buses = GraphDesc::from_json(&two.replace(
+        r#""id": "b", "type": "audio_output""#,
+        r#""id": "b", "type": "audio_output", "params": { "bus": "Stems" }"#,
+    ))
+    .unwrap();
+    let audio_for = |bus: &str| {
+        let options = CompileOptions {
+            audio_bus: bus.to_owned(),
+            ..options()
+        };
+        Graph::compile(&buses, &Registry::default(), &options)
+            .unwrap()
+            .audio_layout()
+    };
+    assert!(audio_for("Main").is_some());
+    assert!(audio_for("Stems").is_some());
+    assert!(audio_for("Drums").is_none());
     let reads = graph_json(
         r#"{ "id": "video", "type": "video_input" }, { "id": "audio", "type": "audio_input" },
            { "id": "a", "type": "audio_output" }, { "id": "d", "type": "delay" }, { "id": "out", "type": "output" }"#,
@@ -1130,7 +1160,7 @@ fn both_outputs_line_up_at_the_later_latency() {
 }
 
 #[test]
-fn odd_audio_output_layouts_are_written_as_stereo_with_a_warning() {
+fn odd_audio_output_layouts_are_written_across_the_bus_with_a_warning() {
     let json = graph_json(
         r#"{ "id": "video", "type": "video_input" }, { "id": "a", "type": "to_audio" },
            { "id": "sound", "type": "audio_output" }, { "id": "out", "type": "output" }"#,
@@ -1139,7 +1169,7 @@ fn odd_audio_output_layouts_are_written_as_stereo_with_a_warning() {
     let graph = compile(&json).unwrap();
     let warnings = graph.diagnostics();
     assert_eq!(warnings.len(), 1, "{warnings:?}");
-    assert!(warnings[0].message.contains("stereo"));
+    assert!(warnings[0].message.contains("bus"));
 }
 
 /// A generator's parameter driven by a constant signal gives what the same value set by hand does.

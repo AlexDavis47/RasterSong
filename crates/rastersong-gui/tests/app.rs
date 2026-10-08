@@ -19,6 +19,11 @@ fn app() -> App {
 
 /// The app with the starter graph changed by `edit`.
 fn app_with(edit: impl FnOnce(&mut GraphDesc)) -> App {
+    app_with_project(|project| edit(&mut project.graph))
+}
+
+/// The app with the starter project (the starter graph, the video and the song) changed by `edit`.
+fn app_with_project(edit: impl FnOnce(&mut Project)) -> App {
     let backend = FakeBackend::new()
         .with_video(
             "clip",
@@ -37,15 +42,14 @@ fn app_with(edit: impl FnOnce(&mut GraphDesc)) -> App {
                 samples: (0..16_000).map(|i| (i as f32 * 0.05).sin()).collect(),
             },
         );
-    let mut graph = GraphDesc::from_json(STARTER_GRAPH).unwrap();
-    edit(&mut graph);
-    let mut project = Project::new(graph);
+    let mut project = Project::new(GraphDesc::from_json(STARTER_GRAPH).unwrap());
     project
         .video_tracks
         .push(ProjectTrack::new("video".into(), PathBuf::from("clip")));
     project
         .audio_tracks
         .push(ProjectTrack::new("audio".into(), PathBuf::from("song")));
+    edit(&mut project);
     App::new(Arc::new(backend), project, None, AudioOut::silent(None))
 }
 
@@ -814,6 +818,37 @@ fn ctrl_comma_opens_the_settings_window_with_both_pages() {
     harness.get_by_label("Project").click();
     harness.run_steps(3);
     harness.get_by_label("Audio output rate");
+}
+
+#[test]
+fn tracks_offer_the_buses_and_project_settings_add_them() {
+    let mut harness = harness(app_with_project(|project| {
+        project.buses.push(rastersong_engine::Bus {
+            name: "Stems".into(),
+            channels: 1,
+        });
+        project.audio_tracks[0].bus = "Stems".into();
+    }));
+    step_until(&mut harness, "the project to load", |app| {
+        app.engine().info().is_some()
+    });
+    harness.run_steps(2);
+    // With two buses, the track's header shows which it is routed to.
+    harness.get_by_value("Stems");
+    shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Comma);
+    harness.get_by_label("Project").click();
+    harness.run_steps(3);
+    harness.get_by_label("Output buses");
+    harness.get_by_label("+ Add bus").click();
+    harness.run_steps(2);
+    let names: Vec<&str> = harness
+        .state()
+        .project()
+        .buses
+        .iter()
+        .map(|b| b.name.as_str())
+        .collect();
+    assert_eq!(names, ["Main", "Stems", "Bus 2"]);
 }
 
 #[test]

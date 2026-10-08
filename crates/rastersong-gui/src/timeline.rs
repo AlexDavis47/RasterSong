@@ -51,6 +51,8 @@ pub struct TrackView {
     pub offset: f64,
     pub muted: bool,
     pub waveform: Option<Arc<Waveform>>,
+    /// The output bus the track is summed into in the track mix.
+    pub bus: String,
 }
 
 /// A thumbnail ready to draw.
@@ -78,6 +80,9 @@ pub struct TimelineModel<'a> {
     /// The project tempo, which the ruler follows in [`TimelineMode::Tempo`].
     pub tempo: Tempo,
     pub mode: TimelineMode,
+    /// The project's output buses, master first. Track headers offer them when there are
+    /// several.
+    pub buses: Vec<String>,
 }
 
 /// Something the user did to a track.
@@ -94,6 +99,8 @@ pub enum TrackAction {
         to: usize,
     },
     Rename(usize, String),
+    /// Route the track to the named output bus.
+    SetBus(usize, String),
     RenameVideo(String),
     Remove(usize),
     Add,
@@ -628,7 +635,7 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         }
         grip.on_hover_text(tr("timeline.track.reorder"));
         header(ui, rect, header_clip, |ui| {
-            audio_header(ui, track, i, &mut response);
+            audio_header(ui, track, &model.buses, i, &mut response);
         });
     }
     // Where a dragged header would land.
@@ -1038,8 +1045,15 @@ pub fn move_destination(from: usize, slot: usize) -> Option<usize> {
     (to != from).then_some(to)
 }
 
-/// The widgets of an audio track's header: name, mute and remove; then the offset.
-fn audio_header(ui: &mut Ui, track: &TrackView, index: usize, response: &mut TimelineResponse) {
+/// The widgets of an audio track's header: name, mute and remove; then the offset, and the bus
+/// when the project has several (or the track's is gone).
+fn audio_header(
+    ui: &mut Ui,
+    track: &TrackView,
+    buses: &[String],
+    index: usize,
+    response: &mut TimelineResponse,
+) {
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
         ui.horizontal(|ui| {
@@ -1092,6 +1106,22 @@ fn audio_header(ui: &mut Ui, track: &TrackView, index: usize, response: &mut Tim
                 .on_hover_text(tr("timeline.track.offset.help"));
             if edit.changed() {
                 response.actions.push(TrackAction::SetOffset(index, offset));
+            }
+            if buses.len() > 1 || !buses.contains(&track.bus) {
+                let mut bus = track.bus.clone();
+                egui::ComboBox::from_id_salt(("track-bus", index))
+                    .width(64.0)
+                    .selected_text(&bus)
+                    .show_ui(ui, |ui| {
+                        for name in buses {
+                            ui.selectable_value(&mut bus, name.clone(), name);
+                        }
+                    })
+                    .response
+                    .on_hover_text(tr("timeline.track.bus.help"));
+                if bus != track.bus {
+                    response.actions.push(TrackAction::SetBus(index, bus));
+                }
             }
         });
     });
@@ -1233,6 +1263,7 @@ mod tests {
                 offset_secs: 0.25,
             },
             mode,
+            buses: Vec::new(),
         };
         let grid = RulerGrid::new(&model(TimelineMode::Tempo), 360.0);
         // Ticks every quarter beat (0.125 s), starting at the offset.

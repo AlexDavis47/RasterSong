@@ -27,6 +27,15 @@ fn app_with_tracks(theme: ThemeChoice, tracks: usize) -> App {
 }
 
 fn app_in_mode(theme: ThemeChoice, tracks: usize, mode: TimelineMode) -> App {
+    app_edited(theme, tracks, mode, |_| {})
+}
+
+fn app_edited(
+    theme: ThemeChoice,
+    tracks: usize,
+    mode: TimelineMode,
+    edit: impl FnOnce(&mut Project),
+) -> App {
     let backend = FakeBackend::new()
         .with_video(
             "clip",
@@ -55,9 +64,43 @@ fn app_in_mode(theme: ThemeChoice, tracks: usize, mode: TimelineMode) -> App {
             .audio_tracks
             .push(ProjectTrack::new(name.into(), PathBuf::from("song")));
     }
+    edit(&mut project);
     let mut app = App::new(Arc::new(backend), project, None, AudioOut::silent(None));
     with_theme(&mut app, theme);
     app
+}
+
+#[test]
+#[ignore = "needs a GPU; run explicitly to look at the UI"]
+fn bus_screenshots() {
+    let mut harness = gpu_harness(app_edited(
+        ThemeChoice::Dark,
+        3,
+        TimelineMode::Time,
+        |project| {
+            project.buses.push(rastersong_engine::Bus {
+                name: "Stems".into(),
+                channels: 6,
+            });
+            project.audio_tracks[1].bus = "Stems".into();
+        },
+    ));
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while harness.state().engine().info().is_none() {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for the project"
+        );
+        harness.step();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    harness.run_steps(3);
+    save(&mut harness, "buses-timeline");
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
+    harness.run_steps(2);
+    harness.get_by_label("Project").click();
+    harness.run_steps(3);
+    save(&mut harness, "buses-settings");
 }
 
 fn with_theme(app: &mut App, theme: ThemeChoice) {

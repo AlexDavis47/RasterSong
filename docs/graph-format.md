@@ -57,13 +57,17 @@ region:
   "timebase": { "width": 1280, "height": 720, "frame_rate": "30" },
   "video_tracks": [ { "name": "clip.mp4", "path": "media/clip.mp4" } ],
   "audio_tracks": [ { "name": "song", "path": "media/song.wav", "volume": 0.8,
-                      "items": [ { "position": 1.5, "start": 12.0, "end": 40.0 } ] } ],
+                      "items": [ { "position": 1.5, "start": 12.0, "end": 40.0 } ] },
+                    { "name": "kick", "path": "media/kick.wav", "bus": "Stems" } ],
+  "buses": [ { "name": "Main", "channels": 2 }, { "name": "Stems", "channels": 1 } ],
   "graph": { "version": 0, "nodes": [] } }
 ```
 
 Media paths inside the project's folder are saved relative to it, so a project folder can be moved or shared.
 Project files have the same version-0 policy. Graphs can also be imported and exported on their own. The project
 also keeps the Audio Output rate and the *max warmup frames* limit (omitted from the file while at their defaults).
+`buses` lists the output buses, master first (omitted while it is just Main in stereo), and a track's `bus` is the
+one it is routed to (omitted for Main). A track's `volume` and `muted` are its level in the track mix.
 
 ## Examples
 

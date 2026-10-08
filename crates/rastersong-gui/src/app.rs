@@ -26,7 +26,8 @@ use crate::audio_out::AudioOut;
 const AUDIO_RATES: [u32; 4] = [44_100, 48_000, 88_200, 96_000];
 
 /// One track as playback mixes it: its name, items and gain.
-type MixEntry = (String, Vec<Item>, f32);
+/// A track as playback mixes it: name, items, level, and whether it is routed to the master bus.
+type MixEntry = (String, Vec<Item>, f32, bool);
 use crate::editor::{CanvasContext, GraphEditor, InspectorContext, LinkedRename, without_layout};
 use crate::history::History;
 use crate::preview::{Feed, PreviewView, clamp_split, split_rects, split_sides};
@@ -135,6 +136,8 @@ pub struct App {
     show_about: bool,
     show_settings: bool,
     settings_tab: settings_window::SettingsTab,
+    /// The output bus waiting on the "remove bus?" warning.
+    bus_removal: Option<String>,
     initialized: bool,
     title: String,
 }
@@ -204,6 +207,7 @@ impl App {
             show_about: false,
             show_settings: false,
             settings_tab: settings_window::SettingsTab::default(),
+            bus_removal: None,
             initialized: false,
             title: String::new(),
         };
@@ -560,6 +564,8 @@ impl App {
                     .iter()
                     .map(|t| t.name.clone())
                     .collect();
+                let buses: Vec<String> =
+                    self.project.buses.iter().map(|b| b.name.clone()).collect();
                 let frame = self.engine.frame(self.clock.frame());
                 let params = frame.as_ref().map_or(&[][..], |f| &f.params[..]);
                 let meters = frame.as_ref().map_or(&[][..], |f| &f.meters[..]);
@@ -568,6 +574,7 @@ impl App {
                         ui,
                         &InspectorContext {
                             tracks: &tracks,
+                            buses: &buses,
                             params,
                             meters,
                         },
@@ -726,11 +733,10 @@ impl App {
             .map(|video| Timeline {
                 timebase: self.project.timebase,
                 tracks: vec![TrackSpec {
-                    name: VIDEO_SOURCE.to_owned(),
-                    kind: TrackKind::Video,
-                    path: video.path.clone(),
                     items: video.items.clone(),
+                    ..TrackSpec::new(VIDEO_SOURCE, TrackKind::Video, video.path.clone())
                 }],
+                ..Timeline::default()
             });
         if self.source_video_sent != video {
             self.source_engine
@@ -804,8 +810,10 @@ impl App {
             .set_max_warmup_frames(self.project.max_warmup_frames);
         self.sync_source_engine();
 
-        // Rebuild the playback mix when tracks, offsets or levels change, once decoded, or when
-        // the graph starts or stops rendering its own sound.
+        // Rebuild the playback mix when tracks, offsets, levels or routing change, once decoded,
+        // or when the graph starts or stops rendering its own sound. The preview plays the master
+        // bus: its track mix is the tracks routed to it.
+        let master = self.project.master_bus().to_owned();
         let mix: Vec<MixEntry> = self
             .project
             .audio_tracks
@@ -815,6 +823,7 @@ impl App {
                     t.name.clone(),
                     t.items.clone(),
                     if t.muted { 0.0 } else { t.volume },
+                    t.bus == master,
                 )
             })
             .collect();
@@ -829,7 +838,7 @@ impl App {
             let mixer = match sink {
                 // The graph's sound replaces the tracks; their volumes and mutes don't apply.
                 AudioSink::Rendered { .. } => Mixer::rendered(self.engine.rendered_audio(), 1.0),
-                AudioSink::Source | AudioSink::Passthrough(_) => {
+                AudioSink::TrackMix | AudioSink::Passthrough(_) => {
                     Mixer::new(Self::mix_tracks(sink, mix, &loaded))
                 }
             };
@@ -838,15 +847,15 @@ impl App {
         }
     }
 
-    /// The tracks playback mixes: every one for the source audio, or just the track an audio
-    /// output passes through.
+    /// The tracks playback mixes: the master bus's track mix, or just the track an audio output
+    /// passes through.
     fn mix_tracks(sink: &AudioSink, mix: &[MixEntry], loaded: &[LoadedTrack]) -> Vec<MixTrack> {
         mix.iter()
-            .filter(|(name, ..)| match sink {
+            .filter(|(name, _, _, on_master)| match sink {
                 AudioSink::Passthrough(track) => name == track,
-                _ => true,
+                _ => *on_master,
             })
-            .filter_map(|(name, items, gain)| {
+            .filter_map(|(name, items, gain, _)| {
                 let clip = loaded.iter().find(|l| &l.name == name)?.clip.clone();
                 Some(MixTrack {
                     clip,
@@ -1545,6 +1554,7 @@ impl App {
                     offset: t.offset(),
                     muted: t.muted,
                     waveform: loaded.map(|l| l.waveform.clone()),
+                    bus: t.bus.clone(),
                 }
             })
             .collect();
@@ -1577,6 +1587,7 @@ impl App {
             loop_region: self.project.loop_region,
             tempo: self.project.tempo,
             mode: self.project.timeline_mode,
+            buses: self.project.buses.iter().map(|b| b.name.clone()).collect(),
         };
         self.timeline_area = ui.available_rect_before_wrap();
         let response = timeline(ui, &model, &mut self.timeline_view);
@@ -1684,6 +1695,11 @@ impl App {
             TrackAction::SetOffset(i, offset) => {
                 if let Some(track) = self.project.audio_tracks.get_mut(i) {
                     track.set_offset(offset);
+                }
+            }
+            TrackAction::SetBus(i, bus) => {
+                if let Some(track) = self.project.audio_tracks.get_mut(i) {
+                    track.bus = bus;
                 }
             }
             TrackAction::ToggleMute(i) => {

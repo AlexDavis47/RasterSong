@@ -111,20 +111,31 @@ bottom. Audio tracks show their waveform.
 
 ## Preview audio
 
-Mixes the unmuted tracks and follows the playhead. When the graph has an **Audio Output**, playback plays its
-rendered sound instead (track volume and mute don't apply to it); a track wired straight into the Audio Output
-plays as it is. When playback slows because rendering can't keep up, the audio is time-stretched (WSOLA: slowed
-without lowering the pitch) to stay with the picture, and fades out when playback all but stops. Volume and mute
-only affect playback, never rendering.
+Plays the master bus (the first output bus) and follows the playhead: its **track mix**, the unmuted audio tracks
+routed to it at their volumes. When the graph has an **Audio Output** writing to the master bus, playback plays its
+rendered sound instead (track volume and mute don't apply to it); a track wired straight into that Audio Output
+plays as it is. A bus with more than two channels plays its first two. When playback slows because rendering can't
+keep up, the audio is time-stretched (WSOLA: slowed without lowering the pitch) to stay with the picture, and fades
+out when playback all but stops. Volume, mute and routing shape the track mix (in playback and the CLI's export),
+never what graphs read.
+
+With several buses, each audio track's header shows the bus it is routed to, with a menu to change it.
 
 ## Settings
 
 **File → Settings…** (Ctrl+,) opens a window with two pages. **Application** is remembered on this computer: theme,
 wire style, the node latency and warmup display, and keeping input connections when duplicating and pasting.
 **Project** is saved in the project file: tempo (bpm, beats per bar, first beat), *Max warmup frames* (how much
-is pre-rendered after a jump in the timeline; the page warns when the graph needs more) and the Audio Output rate. Each
+is pre-rendered after a jump in the timeline; the page warns when the graph needs more), the Audio Output rate and
+the **output buses** (below). Each
 setting has a line of help. The tempo bar in the timeline edits the same tempo fields. The preview resolution and
 volume stay on the transport bar, where they are used while playing.
+
+**Output buses** lists the project's buses, master first, each with a name and a channel count (mono, stereo, 3 to
+8 channels; 5.1 is six). *+ Add bus* adds one; renaming a bus renames it on its tracks and Audio Outputs too. The
+master can't be removed. Removing a bus that tracks are routed to, or that Audio Outputs write to, asks first and
+lists them: the tracks move to the master, and the Audio Outputs are left writing to a bus that isn't there (shown
+in red in the inspector) and aren't rendered until set to another.
 
 ## Keys
 

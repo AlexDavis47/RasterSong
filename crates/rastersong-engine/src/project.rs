@@ -2,12 +2,13 @@
 
 use std::path::{Path, PathBuf};
 
-use rastersong_graph::{GraphDesc, Tempo};
+use rastersong_graph::nodes::{AUDIO_OUTPUT, BUS_PARAM, DEFAULT_BUS};
+use rastersong_graph::{GraphDesc, ParamValue, Tempo, audio_output_bus};
 use rastersong_lang::tr_args;
 use serde::{Deserialize, Serialize};
 
 use crate::DEFAULT_AUDIO_TRACK;
-use crate::timeline::{Item, Timebase, Timeline, TrackKind, TrackSpec};
+use crate::timeline::{Bus, Item, Timebase, Timeline, TrackKind, TrackSpec};
 
 /// The project file format version. Like the graph format it stays 0 until 1.0: files change
 /// freely, with no migrations, and projects saved by another version are rejected.
@@ -30,6 +31,10 @@ pub struct Project {
     pub video_tracks: Vec<ProjectTrack>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub audio_tracks: Vec<ProjectTrack>,
+    /// The output buses, master first: audio tracks are summed into them in the track mix, and
+    /// each Audio Output writes to one. Never empty; Main, stereo, by default.
+    #[serde(default = "default_buses", skip_serializing_if = "is_default_buses")]
+    pub buses: Vec<Bus>,
     pub graph: GraphDesc,
     /// The loop region on the timeline, if one has been made.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -40,7 +45,7 @@ pub struct Project {
     /// Whether the timeline ruler shows time or bars and beats (tempo).
     #[serde(default)]
     pub timeline_mode: TimelineMode,
-    /// Skips the whole graph in the preview, as if the video were plugged into the output.
+    /// Skips the whole graph in the preview: it shows and plays the track mix.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub bypass_graph: bool,
     /// Sample rate of the sound a graph with an Audio Output renders, in the preview and export.
@@ -94,6 +99,22 @@ fn is_default_max_warmup_frames(frames: &u32) -> bool {
     *frames == DEFAULT_MAX_WARMUP_FRAMES
 }
 
+fn default_buses() -> Vec<Bus> {
+    vec![Bus::main()]
+}
+
+fn is_default_buses(buses: &Vec<Bus>) -> bool {
+    *buses == default_buses()
+}
+
+fn is_main_bus(bus: &str) -> bool {
+    bus == DEFAULT_BUS
+}
+
+fn main_bus() -> String {
+    DEFAULT_BUS.to_owned()
+}
+
 fn default_audio_rate() -> u32 {
     crate::DEFAULT_AUDIO_RATE
 }
@@ -140,12 +161,15 @@ pub struct ProjectTrack {
     /// Where the file plays on the timeline.
     #[serde(default = "whole")]
     pub items: Vec<Item>,
-    /// Playback volume, 0 to 1. Doesn't affect rendering.
+    /// Level in the track mix, 0 to 1. Graphs read the track as it is.
     #[serde(default = "full_volume")]
     pub volume: f32,
-    /// Silent in playback. Doesn't affect rendering.
+    /// Left out of the track mix. Graphs still read the track.
     #[serde(default)]
     pub muted: bool,
+    /// The output bus an audio track is summed into in the track mix.
+    #[serde(default = "main_bus", skip_serializing_if = "is_main_bus")]
+    pub bus: String,
 }
 
 fn full_volume() -> f32 {
@@ -165,6 +189,7 @@ impl ProjectTrack {
             items: whole(),
             volume: 1.0,
             muted: false,
+            bus: main_bus(),
         }
     }
 
@@ -195,6 +220,8 @@ impl ProjectTrack {
             kind,
             path: self.path.clone(),
             items: self.items.clone(),
+            bus: self.bus.clone(),
+            gain: if self.muted { 0.0 } else { self.volume },
         }
     }
 }
@@ -206,6 +233,7 @@ impl Project {
             timebase: None,
             video_tracks: Vec::new(),
             audio_tracks: Vec::new(),
+            buses: default_buses(),
             graph,
             loop_region: None,
             tempo: Tempo::default(),
@@ -227,7 +255,86 @@ impl Project {
                 .map(|t| t.spec(TrackKind::Video))
                 .chain(self.audio_tracks.iter().map(|t| t.spec(TrackKind::Audio)))
                 .collect(),
+            buses: self.buses.clone(),
         }
+    }
+
+    /// The master bus: the first, which the preview plays and the export writes.
+    pub fn master_bus(&self) -> &str {
+        self.buses.first().map_or(DEFAULT_BUS, |b| b.name.as_str())
+    }
+
+    pub fn has_bus(&self, name: &str) -> bool {
+        self.buses.iter().any(|b| b.name == name)
+    }
+
+    /// The first `Bus 2`, `Bus 3`, … no bus has, for a new bus.
+    pub fn unused_bus_name(&self) -> String {
+        (2..)
+            .map(|n| tr_args("project.bus.new_name", &[("n", &n.to_string())]))
+            .find(|name| !self.has_bus(name))
+            .unwrap()
+    }
+
+    /// What removing bus `name` affects: the audio tracks routed to it, and the ids of the
+    /// graph's Audio Outputs that write to it.
+    pub fn bus_users(&self, name: &str) -> (Vec<String>, Vec<String>) {
+        let tracks = self
+            .audio_tracks
+            .iter()
+            .filter(|t| t.bus == name)
+            .map(|t| t.name.clone())
+            .collect();
+        let outputs = self
+            .graph
+            .nodes
+            .iter()
+            .filter(|n| n.kind == AUDIO_OUTPUT && audio_output_bus(n) == name)
+            .map(|n| n.id.clone())
+            .collect();
+        (tracks, outputs)
+    }
+
+    /// Removes bus `name`, unless it is the last. Its tracks move to the master bus (the first
+    /// left); Audio Outputs writing to it are left as they are, writing to a bus that isn't
+    /// there, so they aren't rendered until pointed at another.
+    pub fn remove_bus(&mut self, name: &str) -> bool {
+        if self.buses.len() <= 1 || !self.has_bus(name) {
+            return false;
+        }
+        self.buses.retain(|b| b.name != name);
+        let master = self.master_bus().to_owned();
+        for track in &mut self.audio_tracks {
+            if track.bus == name {
+                track.bus = master.clone();
+            }
+        }
+        true
+    }
+
+    /// Renames bus `old` to `new`, with the tracks routed to it and the Audio Outputs writing
+    /// to it. Refused when `new` is empty or another bus has it.
+    pub fn rename_bus(&mut self, old: &str, new: &str) -> bool {
+        let new = new.trim();
+        if new.is_empty() || old == new || self.has_bus(new) {
+            return false;
+        }
+        let Some(bus) = self.buses.iter_mut().find(|b| b.name == old) else {
+            return false;
+        };
+        bus.name = new.to_owned();
+        for track in &mut self.audio_tracks {
+            if track.bus == old {
+                track.bus = new.to_owned();
+            }
+        }
+        for node in &mut self.graph.nodes {
+            if node.kind == AUDIO_OUTPUT && audio_output_bus(node) == old {
+                node.params
+                    .insert(BUS_PARAM.to_owned(), ParamValue::Text(new.to_owned()));
+            }
+        }
+        true
     }
 
     /// Every track, video first.
@@ -337,6 +444,7 @@ impl Project {
             DEFAULT_INSPECT_RATE
         };
         project.graph.upgrade();
+        project.buses = sanitized_buses(std::mem::take(&mut project.buses));
         let dir = path.parent().unwrap_or(Path::new(""));
         for track in project.tracks_mut() {
             if track.path.is_relative() {
@@ -362,9 +470,29 @@ impl Project {
     }
 }
 
+/// `buses` with channel counts in range, nameless and repeated names dropped, and Main when
+/// nothing is left.
+fn sanitized_buses(buses: Vec<Bus>) -> Vec<Bus> {
+    let mut kept: Vec<Bus> = Vec::new();
+    for bus in buses {
+        let bus = Bus {
+            name: bus.name.trim().to_owned(),
+            ..bus.sanitized()
+        };
+        if !bus.name.is_empty() && !kept.iter().any(|b| b.name == bus.name) {
+            kept.push(bus);
+        }
+    }
+    if kept.is_empty() {
+        kept.push(Bus::main());
+    }
+    kept
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::timeline::MAX_BUS_CHANNELS;
 
     fn graph() -> GraphDesc {
         GraphDesc::from_json(
@@ -394,6 +522,91 @@ mod tests {
         // The video's own sound is named without the extension, so it doesn't clash.
         assert_eq!(project.track_name_for(&video), "take 3");
         assert_eq!(project.video_track_name_for(&video), "take 3.mp4_2");
+    }
+
+    #[test]
+    fn buses_route_tracks_and_audio_outputs_and_follow_renames_and_removals() {
+        let mut project = Project::new(
+            GraphDesc::from_json(
+                r#"{ "version": 0, "nodes": [
+                    { "id": "sound", "type": "audio_output" },
+                    { "id": "stems", "type": "audio_output", "params": { "bus": "Stems" } } ] }"#,
+            )
+            .unwrap(),
+        );
+        assert_eq!(project.buses, [Bus::main()]);
+        assert_eq!(project.unused_bus_name(), "Bus 2");
+        project.buses.push(Bus {
+            name: "Stems".into(),
+            channels: 1,
+        });
+        project
+            .audio_tracks
+            .push(ProjectTrack::new("kick".into(), "kick.wav".into()));
+        project.audio_tracks[0].bus = "Stems".into();
+        project.audio_tracks[0].volume = 0.5;
+        let timeline = project.timeline();
+        assert_eq!(timeline.master(), Bus::main());
+        assert_eq!(timeline.tracks_on("Stems").count(), 1);
+        assert_eq!(timeline.tracks[0].gain, 0.5);
+        assert_eq!(
+            project.bus_users("Stems"),
+            (vec!["kick".to_owned()], vec!["stems".to_owned()])
+        );
+
+        // Renaming follows the tracks and outputs; Main's output had no bus set and gets one.
+        assert!(!project.rename_bus("Stems", "Main"));
+        assert!(project.rename_bus("Stems", "Drums"));
+        assert!(project.rename_bus("Main", "Music"));
+        assert_eq!(project.audio_tracks[0].bus, "Drums");
+        let bus_of = |p: &Project, id: &str| {
+            audio_output_bus(p.graph.nodes.iter().find(|n| n.id == id).unwrap()).to_owned()
+        };
+        assert_eq!(bus_of(&project, "sound"), "Music");
+        assert_eq!(bus_of(&project, "stems"), "Drums");
+
+        // Removing moves its tracks to the master and leaves its outputs pointing nowhere. The
+        // last bus stays.
+        assert!(project.remove_bus("Drums"));
+        assert_eq!(project.audio_tracks[0].bus, "Music");
+        assert_eq!(bus_of(&project, "stems"), "Drums");
+        assert!(!project.remove_bus("Music"));
+    }
+
+    #[test]
+    fn buses_are_saved_only_when_changed_and_sanitized_on_load() {
+        let dir = temp_dir("buses");
+        let path = dir.join("buses.rastersong");
+        let mut project = Project::new(graph());
+        project
+            .audio_tracks
+            .push(ProjectTrack::new("song".into(), "song.wav".into()));
+        project.save(&path).unwrap();
+        let json = std::fs::read_to_string(&path).unwrap();
+        assert!(!json.contains("buses") && !json.contains("\"bus\""));
+        project.buses.push(Bus {
+            name: " Stems ".into(),
+            channels: 99,
+        });
+        project.buses.push(Bus {
+            name: "Main".into(),
+            channels: 1,
+        });
+        project.audio_tracks[0].bus = "Stems".into();
+        project.save(&path).unwrap();
+        let loaded = Project::load(&path).unwrap();
+        assert_eq!(
+            loaded.buses,
+            [
+                Bus::main(),
+                Bus {
+                    name: "Stems".into(),
+                    channels: MAX_BUS_CHANNELS
+                }
+            ]
+        );
+        assert_eq!(loaded.audio_tracks[0].bus, "Stems");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

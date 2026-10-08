@@ -8,6 +8,7 @@
 
 use std::path::PathBuf;
 
+use rastersong_graph::nodes::DEFAULT_BUS;
 use rastersong_media::Rational;
 use serde::{Deserialize, Serialize};
 
@@ -198,21 +199,105 @@ pub struct TrackSpec {
     pub kind: TrackKind,
     pub path: PathBuf,
     pub items: Vec<Item>,
+    /// The output bus an audio track is summed into in the track mix.
+    pub bus: String,
+    /// The track's level in the track mix: its volume, or 0 when muted. Graphs read the track
+    /// as it is, whatever its level.
+    pub gain: f32,
 }
 
-/// What the engine renders: the timebase and the tracks.
+impl TrackSpec {
+    /// A track at full level on the master bus.
+    pub fn new(name: impl Into<String>, kind: TrackKind, path: impl Into<PathBuf>) -> Self {
+        Self {
+            name: name.into(),
+            kind,
+            path: path.into(),
+            items: vec![Item::whole(0.0)],
+            bus: DEFAULT_BUS.to_owned(),
+            gain: 1.0,
+        }
+    }
+}
+
+/// The most channels a bus can have.
+pub const MAX_BUS_CHANNELS: u32 = 8;
+
+/// An output bus: a named set of channels that audio tracks are summed into and an Audio Output
+/// writes to. The first bus of a project is the master, which the preview plays and the export
+/// writes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Bus {
+    pub name: String,
+    /// 1 for mono, 2 for stereo, 6 for 5.1, … up to [`MAX_BUS_CHANNELS`].
+    pub channels: u32,
+}
+
+impl Default for Bus {
+    fn default() -> Self {
+        Self::main()
+    }
+}
+
+impl Bus {
+    /// The bus a project starts with: Main, stereo.
+    pub fn main() -> Self {
+        Self {
+            name: DEFAULT_BUS.to_owned(),
+            channels: 2,
+        }
+    }
+
+    /// The bus with its channel count limited to `1..=MAX_BUS_CHANNELS`.
+    pub fn sanitized(self) -> Self {
+        Self {
+            channels: self.channels.clamp(1, MAX_BUS_CHANNELS),
+            ..self
+        }
+    }
+}
+
+/// What the engine renders: the timebase, the tracks and the output buses.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Timeline {
     /// The project's timebase. `None` takes it from the first video track, or
     /// [`Timebase::DEFAULT`] when there is none.
     pub timebase: Option<Timebase>,
+    /// Video tracks top first, then audio tracks.
     pub tracks: Vec<TrackSpec>,
+    /// The output buses, master first. Empty means just [`Bus::main`].
+    pub buses: Vec<Bus>,
 }
 
 impl Timeline {
     /// The first video track, which a project without a timebase of its own takes it from.
     pub fn first_video(&self) -> Option<&TrackSpec> {
         self.tracks.iter().find(|t| t.kind == TrackKind::Video)
+    }
+
+    /// The master bus: the first, which the preview plays and the export writes.
+    pub fn master(&self) -> Bus {
+        self.buses.first().cloned().unwrap_or_else(Bus::main)
+    }
+
+    /// Whether the two render the same frames and graph sound: they differ at most in the
+    /// tracks' levels and routing, and in buses other than the master, which only shape the
+    /// track mix.
+    pub fn renders_like(&self, other: &Self) -> bool {
+        self.timebase == other.timebase
+            && self.master() == other.master()
+            && self.tracks.len() == other.tracks.len()
+            && self.tracks.iter().zip(&other.tracks).all(|(a, b)| {
+                (&a.name, a.kind, &a.path, &a.items) == (&b.name, b.kind, &b.path, &b.items)
+            })
+    }
+
+    /// The audio tracks summed into `bus` in the track mix.
+    pub fn tracks_on<'a>(&'a self, bus: &'a str) -> impl Iterator<Item = &'a TrackSpec> {
+        self.tracks
+            .iter()
+            .filter(move |t| t.kind == TrackKind::Audio && t.bus == bus)
     }
 }
 

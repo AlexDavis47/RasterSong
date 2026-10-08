@@ -124,15 +124,30 @@ The user can choose a preview scale (e.g. full, ½, ¼). Processing cost scales 
 roughly 16× cheaper. Because all parameters are in normalized units, a reduced-resolution preview is a faithful
 rough version of the full-resolution render. Export always renders at full project resolution.
 
+## Track mix and output buses
+
+The project's master audio is a set of **output buses** (`Bus`: a name and 1 to 8 channels), Main in stereo by
+default; the first is the master, which the preview plays and the export writes. Each audio track is routed to one
+bus (Main by default), and its volume and mute set its level there.
+
+The **track mix** is what the timeline plays with no graph in the way: the picture of the top video track with an
+item at each frame (the renderer's `@track_mix` source), and for each bus the sum of the unmuted tracks routed to
+it at their volumes. A mono track plays in every channel of its bus; any other track's channels go to the bus's
+channels in order. Bypassing the whole graph shows the track mix's picture and plays the master's track mix.
+Track levels and routing only shape the track mix, so changing them keeps every rendered frame.
+
 ## Audio Output
 
-A graph can have one **Audio Output** node (optional; add it from the node menu). Its sound replaces the source
-audio in the preview and the export. Without one, with nothing connected to it, or with the graph bypassed, the
-source audio is used untouched; a track wired straight into it is also used as it is, not re-rendered.
+A graph can have one **Audio Output** node per bus (optional; add it from the node menu), naming its bus in its
+`bus` setting (Main by default). Its sound replaces that bus's track mix in the preview and the export. Without
+one, with nothing connected to it, or with the graph bypassed, the bus plays its track mix; a track wired straight
+into it is also used as it is, not re-rendered. The renderer renders one bus, the master by default (the CLI's
+`--bus` picks another): only the Audio Output writing to it is compiled.
 
-- **Any signal goes in.** One sample per pixel is mono, two are stereo; anything else (a picture, say) is written
-  as interleaved samples to a stereo track, with a note. Nothing is converted on the way in: wire a
-  video through Video to Audio first if you want its range mapped to `-1..1`.
+- **Any signal goes in.** One sample per pixel is mono and goes to every channel of the bus; anything else is
+  written as interleaved samples across the bus's channels (a stereo signal to a stereo bus as it is; a picture,
+  say, makes a raw sound, with a note). Nothing is converted on the way in: wire a video through Video to Audio
+  first if you want its range mapped to `-1..1`.
 - **Resampling.** The graph works in one block per frame, so the sink treats the blocks as one stream at
   `block length × frame rate` samples a second and resamples it to the project's audio rate (`audio_rate` in the
   project file, 48 kHz by default) with a windowed-sinc kernel. History carries across blocks, so block edges don't

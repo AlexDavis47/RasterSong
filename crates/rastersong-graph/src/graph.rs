@@ -8,7 +8,10 @@ use crate::desc::{
     Channels, Connection, GeneratorLayout, GraphDesc, Grouping, Interpolation, Modulation, NodeDesc,
 };
 use crate::dsp::{DelayLine, resample};
-use crate::nodes::{AUDIO_INPUT, AUDIO_OUTPUT, MAX_METERS, Meter, OUTPUT, Registry, VIDEO_INPUT};
+use crate::nodes::{
+    AUDIO_INPUT, AUDIO_OUTPUT, BUS_PARAM, DEFAULT_BUS, MAX_METERS, Meter, OUTPUT, Registry,
+    SOURCE_PARAM, TRACK_MIX_SOURCE, VIDEO_INPUT,
+};
 
 use crate::{
     Diagnostic, GraphError, InputSpec, Layout, LayoutContext, Node, OutputSpec, ParamSpec,
@@ -44,6 +47,9 @@ pub struct CompileOptions {
     /// The size of a render pixel against a project pixel: 1 at full size, 0.5 for a
     /// half-resolution preview. The `pixel` unit follows it.
     pub pixel_scale: f64,
+    /// The output bus being rendered. Only the audio output writing to it is compiled; the
+    /// others are left out, as if they weren't there.
+    pub audio_bus: String,
 }
 
 /// The level of one node output in the last processed frame.
@@ -398,7 +404,8 @@ impl Graph {
     ) -> Result<Self, GraphError> {
         let bypassed = apply_bypass(desc, registry);
         let desc = bypassed.as_ref().unwrap_or(desc);
-        let active = without_idle_audio_outputs(desc);
+        check_audio_outputs(desc)?;
+        let active = without_inactive_audio_outputs(desc, &options.audio_bus);
         let desc = active.as_ref().unwrap_or(desc);
         let filled = fill_missing_inputs(desc, registry);
         let desc = filled.as_ref().unwrap_or(desc);
@@ -415,9 +422,6 @@ impl Graph {
             return Err(GraphError::OutputCount(outputs.len()));
         };
         let audio_outputs = of_kind(AUDIO_OUTPUT);
-        if audio_outputs.len() > 1 {
-            return Err(GraphError::AudioOutputCount(audio_outputs.len()));
-        }
         let sinks: Vec<usize> = std::iter::once(output).chain(audio_outputs).collect();
         // Sinks are the ends of the graph: nothing may read them, so they can be compiled last.
         if let Some(reader) = pending
@@ -1399,7 +1403,8 @@ fn connect(desc: &GraphDesc, pending: &mut [Pending]) -> Result<(), GraphError> 
 /// exposed pins, modulation settings of unconnected parameters) cleared. Two graphs with equal
 /// render forms render identically, so the host re-renders only when it changes.
 ///
-/// With `bypass_all` the graph is skipped: the first video input feeds the output directly.
+/// With `bypass_all` the graph is skipped: the output shows the track mix
+/// ([`TRACK_MIX_SOURCE`]) and every bus plays its track mix.
 pub fn render_form(desc: &GraphDesc, registry: &Registry, bypass_all: bool) -> GraphDesc {
     let mut form = if bypass_all {
         passthrough(desc)
@@ -1428,18 +1433,22 @@ pub fn render_form(desc: &GraphDesc, registry: &Registry, bypass_all: bool) -> G
     form
 }
 
-/// Just the first video input wired to the output.
+/// Just a video input reading the track mix, wired to the output.
 fn passthrough(desc: &GraphDesc) -> GraphDesc {
-    let video = desc.nodes.iter().find(|n| n.kind == VIDEO_INPUT);
     let output = desc.nodes.iter().find(|n| n.kind == OUTPUT);
-    let nodes: Vec<NodeDesc> = video.into_iter().chain(output).cloned().collect();
-    let connections = match (video, output) {
-        (Some(v), Some(o)) => vec![Connection {
-            from: v.id.clone(),
+    let mut video = NodeDesc::new(TRACK_MIX_SOURCE.to_owned(), VIDEO_INPUT);
+    video.params.insert(
+        SOURCE_PARAM.to_owned(),
+        ParamValue::Text(TRACK_MIX_SOURCE.to_owned()),
+    );
+    let connections = match output {
+        Some(o) => vec![Connection {
+            from: video.id.clone(),
             to: o.id.clone(),
         }],
-        _ => Vec::new(),
+        None => Vec::new(),
     };
+    let nodes: Vec<NodeDesc> = std::iter::once(video).chain(output.cloned()).collect();
     GraphDesc {
         version: desc.version,
         nodes,
@@ -1454,14 +1463,62 @@ fn is_fed(desc: &GraphDesc, id: &str) -> bool {
         .any(|c| split_endpoint(&c.to).0 == id)
 }
 
-/// `desc` without audio outputs that have nothing connected: those leave the source audio as it
-/// is, rather than outputting silence. `None` when there are none.
-fn without_idle_audio_outputs(desc: &GraphDesc) -> Option<GraphDesc> {
-    let idle = |n: &NodeDesc| n.kind == AUDIO_OUTPUT && !is_fed(desc, &n.id);
-    desc.nodes.iter().any(idle).then(|| GraphDesc {
+/// The bus an audio output node writes to.
+pub fn audio_output_bus(node: &NodeDesc) -> &str {
+    match node.params.get(BUS_PARAM) {
+        Some(ParamValue::Text(bus)) => bus,
+        _ => DEFAULT_BUS,
+    }
+}
+
+/// Fails when two audio outputs with something connected write to the same bus.
+fn check_audio_outputs(desc: &GraphDesc) -> Result<(), GraphError> {
+    let mut seen: Vec<(&str, usize)> = Vec::new();
+    for node in &desc.nodes {
+        if node.kind == AUDIO_OUTPUT && is_fed(desc, &node.id) {
+            let bus = audio_output_bus(node);
+            match seen.iter_mut().find(|(b, _)| *b == bus) {
+                Some((_, count)) => *count += 1,
+                None => seen.push((bus, 1)),
+            }
+        }
+    }
+    match seen.into_iter().find(|&(_, count)| count > 1) {
+        Some((bus, count)) => Err(GraphError::AudioOutputCount {
+            bus: bus.to_owned(),
+            count,
+        }),
+        None => Ok(()),
+    }
+}
+
+/// `desc` without the audio outputs that aren't rendered: those writing to another bus than
+/// `bus`, and those with nothing connected, which leave the bus's track mix as it is rather than
+/// outputting silence. `None` when there are none.
+fn without_inactive_audio_outputs(desc: &GraphDesc, bus: &str) -> Option<GraphDesc> {
+    let idle = |n: &NodeDesc| {
+        n.kind == AUDIO_OUTPUT && (!is_fed(desc, &n.id) || audio_output_bus(n) != bus)
+    };
+    let removed: HashSet<&str> = desc
+        .nodes
+        .iter()
+        .filter(|n| idle(n))
+        .map(|n| n.id.as_str())
+        .collect();
+    (!removed.is_empty()).then(|| GraphDesc {
         version: desc.version,
-        nodes: desc.nodes.iter().filter(|n| !idle(n)).cloned().collect(),
-        connections: desc.connections.clone(),
+        nodes: desc
+            .nodes
+            .iter()
+            .filter(|n| !removed.contains(n.id.as_str()))
+            .cloned()
+            .collect(),
+        connections: desc
+            .connections
+            .iter()
+            .filter(|c| !removed.contains(split_endpoint(&c.to).0))
+            .cloned()
+            .collect(),
     })
 }
 
@@ -1531,22 +1588,7 @@ fn fill_missing_inputs(desc: &GraphDesc, registry: &Registry) -> Option<GraphDes
                 from: id.clone(),
                 to: format!("{}.{}", node.id, input.name),
             });
-            filled.nodes.push(NodeDesc {
-                id,
-                kind: CONSTANT.to_owned(),
-                params: BTreeMap::new(),
-                interpolation: Interpolation::default(),
-                grouping: Grouping::default(),
-                channels: Channels::default(),
-                layout: GeneratorLayout::default(),
-                bypass: false,
-                label: None,
-                position: None,
-                modulation: BTreeMap::new(),
-                integer: Vec::new(),
-                ranges: BTreeMap::new(),
-                exposed: None,
-            });
+            filled.nodes.push(NodeDesc::new(id, CONSTANT));
         }
     }
     (added > 0).then_some(filled)

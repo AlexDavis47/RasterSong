@@ -12,8 +12,9 @@ pub const DEFAULT_AUDIO_RATE: u32 = 48_000;
 /// What the audio of a render is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AudioSink {
-    /// The graph has no audio output: the source audio is used as it is.
-    Source,
+    /// The graph has no audio output for the bus: the bus plays its track mix, the audio tracks
+    /// routed to it at their levels.
+    TrackMix,
     /// An audio track is wired straight to the audio output: that track, as it is.
     Passthrough(String),
     /// The graph's audio output, rendered.
@@ -26,7 +27,7 @@ pub struct AudioBlock {
     /// Index of the first sample frame, counting from the start of the video at `sample_rate`.
     pub start: u64,
     pub sample_rate: u32,
-    /// 1 (mono) or 2 (stereo).
+    /// The bus's channels: 1 for mono, 2 for stereo, …
     pub channels: u32,
     /// Interleaved samples in `-1..=1`.
     pub samples: Vec<f32>,
@@ -61,8 +62,11 @@ const MAX_HALF_WIDTH: usize = 512;
 pub struct SinkResampler {
     rate: f64,
     fps: f64,
-    /// Output channels, and samples per pixel of the input.
+    /// Output channels: the bus's.
     channels: usize,
+    /// Channels the input is read as: 1 for mono (written to every output channel), or the
+    /// output's.
+    in_channels: usize,
     /// Sample frames per input block, before and after averaging.
     frames_in: usize,
     group: usize,
@@ -81,10 +85,18 @@ pub struct SinkResampler {
 
 impl SinkResampler {
     /// For blocks of `block_len` samples at `fps` blocks a second, with `samples_per_pixel`
-    /// interleaved: 1 is mono, 2 stereo, anything else is read as interleaved stereo.
-    pub fn new(block_len: usize, samples_per_pixel: u32, fps: f64, rate: u32) -> Self {
-        let channels = if samples_per_pixel == 1 { 1 } else { 2 };
-        let frames_in = block_len / channels;
+    /// interleaved, written to a bus of `channels`: one sample per pixel is mono and goes to
+    /// every channel; anything else is read as interleaved samples across the bus's channels.
+    pub fn new(
+        block_len: usize,
+        samples_per_pixel: u32,
+        channels: u32,
+        fps: f64,
+        rate: u32,
+    ) -> Self {
+        let channels = channels.max(1) as usize;
+        let in_channels = if samples_per_pixel == 1 { 1 } else { channels };
+        let frames_in = block_len / in_channels;
         let rate = f64::from(rate);
         let ratio = frames_in as f64 * fps / rate;
         // Average groups that divide the block evenly, leaving at most about twice the output rate.
@@ -100,12 +112,13 @@ impl SinkResampler {
             rate,
             fps,
             channels,
+            in_channels,
             frames_in,
             group,
             step,
             half_width,
             cutoff,
-            history: vec![Vec::new(); channels],
+            history: vec![Vec::new(); in_channels],
             base: 0,
             next: None,
             weights: Vec::with_capacity(2 * half_width + 1),
@@ -146,7 +159,7 @@ impl SinkResampler {
             let samples = data
                 .iter()
                 .skip(c)
-                .step_by(self.channels)
+                .step_by(self.in_channels)
                 .take(self.frames_in);
             let mut sum = 0.0f32;
             for (j, &x) in samples.enumerate() {
@@ -175,7 +188,7 @@ impl SinkResampler {
     }
 
     /// Output sample `k` of every channel: the input around `half_width` samples before `k`'s
-    /// time, so only input up to `k`'s time is needed.
+    /// time, so only input up to `k`'s time is needed. Mono input goes to every channel.
     fn sample(&mut self, k: i64, out: &mut [f32]) {
         let w = self.half_width as f64;
         let center = k as f64 * self.step - w;
@@ -194,7 +207,7 @@ impl SinkResampler {
         } else {
             0.0
         };
-        for (history, out) in self.history.iter().zip(out) {
+        for (history, out) in self.history.iter().zip(out.iter_mut()) {
             let mut acc = 0.0;
             for (s, &weight) in (lo..=hi).zip(&self.weights) {
                 let i = s - self.base;
@@ -203,6 +216,10 @@ impl SinkResampler {
                 }
             }
             *out = ((acc * norm) as f32).clamp(-1.0, 1.0);
+        }
+        if self.in_channels == 1 {
+            let mono = out[0];
+            out.fill(mono);
         }
     }
 
@@ -263,7 +280,7 @@ mod tests {
     fn blocks_tile_the_timeline_exactly() {
         // 48 kHz out at 29.97 fps: 1601.6 samples a frame, as 1601 or 1602, without gaps.
         let fps = 30_000.0 / 1001.0;
-        let mut r = SinkResampler::new(1470, 1, fps, 48_000);
+        let mut r = SinkResampler::new(1470, 1, 1, fps, 48_000);
         let blocks = run(&mut r, 0..10, 1470, 1, |_, _| 0.0);
         let mut next = 0;
         for b in &blocks {
@@ -280,7 +297,7 @@ mod tests {
         // from the start, every output sample matches the sine, delayed by the kernel.
         let (fps, rate_in) = (30.0, 44_100.0);
         let tone = |s: i64| (std::f64::consts::TAU * 440.0 * s as f64 / rate_in).sin();
-        let mut r = SinkResampler::new(1470, 1, fps, 48_000);
+        let mut r = SinkResampler::new(1470, 1, 1, fps, 48_000);
         let delay = r.half_width as f64 / rate_in;
         let blocks = run(&mut r, 0..6, 1470, 1, |s, _| tone(s) as f32 * 0.5);
         let mut worst = 0.0f64;
@@ -297,17 +314,36 @@ mod tests {
     #[test]
     fn seeking_gives_the_same_audio_after_one_frame_of_history() {
         let f = |s: i64, c: usize| ((s * 7 + c as i64 * 3) % 23) as f32 / 23.0 - 0.5;
-        let mut sequential = SinkResampler::new(1000, 2, 25.0, 48_000);
+        let mut sequential = SinkResampler::new(1000, 2, 2, 25.0, 48_000);
         let all = run(&mut sequential, 0..8, 1000, 2, f);
-        let mut seeking = SinkResampler::new(1000, 2, 25.0, 48_000);
+        let mut seeking = SinkResampler::new(1000, 2, 2, 25.0, 48_000);
         let resumed = run(&mut seeking, 4..8, 1000, 2, f);
         assert_eq!(resumed[1..], all[5..]);
         assert_eq!(resumed[0].channels, 2);
     }
 
     #[test]
+    fn mono_fills_every_channel_and_wider_buses_read_interleaved_samples() {
+        let mut r = SinkResampler::new(480, 1, 2, 100.0, 48_000);
+        let blocks = run(&mut r, 0..3, 480, 1, |s, _| (s % 7) as f32 / 10.0);
+        assert_eq!(blocks[2].channels, 2);
+        for frame in blocks[2].samples.as_chunks::<2>().0 {
+            assert_eq!(frame[0], frame[1]);
+        }
+        // Six channels in, six out: each channel keeps its own constant.
+        let mut r = SinkResampler::new(480 * 6, 6, 6, 100.0, 48_000);
+        let blocks = run(&mut r, 0..3, 480 * 6, 6, |_, c| c as f32 / 10.0);
+        assert_eq!(blocks[2].channels, 6);
+        for frame in blocks[2].samples.as_chunks::<6>().0 {
+            for (c, &x) in frame.iter().enumerate() {
+                assert!((x - c as f32 / 10.0).abs() < 1e-4, "{c}: {x}");
+            }
+        }
+    }
+
+    #[test]
     fn sanitizes_and_clips() {
-        let mut r = SinkResampler::new(480, 1, 100.0, 48_000);
+        let mut r = SinkResampler::new(480, 1, 1, 100.0, 48_000);
         let blocks = run(&mut r, 0..3, 480, 1, |s, _| match s % 3 {
             0 => f32::NAN,
             1 => f32::INFINITY,
@@ -322,7 +358,7 @@ mod tests {
     fn pictures_are_averaged_down_to_audio() {
         // A 1920×1080 RGB frame read as stereo at 30 fps is ~93 MHz: averaged in groups first.
         let len = 1920 * 1080 * 3;
-        let r = SinkResampler::new(len, 3, 30.0, 48_000);
+        let r = SinkResampler::new(len, 3, 2, 30.0, 48_000);
         assert_eq!(r.channels(), 2);
         assert!(r.group > 1 && (len / 2).is_multiple_of(r.group));
         assert!(r.step <= 2.5, "step {}", r.step);

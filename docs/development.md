@@ -24,9 +24,9 @@ cargo test --workspace
 cargo run -p rastersong-gui
 
 # Render a project, or a video through a graph modulated by an audio file, to a lossless .mkv or
-# to a directory of PNG frames. The .mkv's soundtrack is the graph's Audio Output (rendered at
-# --audio-rate: the project's, or 48000), or the mix of the audio tracks, in stereo at that rate,
-# when the graph has none
+# to a directory of PNG frames. The .mkv's soundtrack is the master bus (or --bus <name>): the
+# graph's Audio Output for it (rendered at --audio-rate: the project's, or 48000), or the mix of
+# the audio tracks routed to it when the graph has none, with the bus's channels
 cargo run --release -p rastersong-cli -- render my-project.rastersong out.mkv
 cargo run --release -p rastersong-cli -- render video.mp4 song.wav examples/graphs/am_bands.json out.mkv
 cargo run --release -p rastersong-cli -- render video.mp4 song.wav graph.json frames/ --size 320x180 --frames 60

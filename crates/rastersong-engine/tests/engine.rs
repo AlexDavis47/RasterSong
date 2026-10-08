@@ -19,21 +19,14 @@ fn engine() -> Engine {
 
 /// The video, and an audio track of the song for each name, starting at the given time.
 fn set_tracks(engine: &Engine, audio: &[(&str, f64)]) {
-    let video = TrackSpec {
-        name: "video".into(),
-        kind: TrackKind::Video,
-        path: PathBuf::from(VIDEO),
-        items: vec![Item::whole(0.0)],
-    };
+    let video = TrackSpec::new("video", TrackKind::Video, PathBuf::from(VIDEO));
     let tracks = audio.iter().map(|&(name, position)| TrackSpec {
-        name: name.into(),
-        kind: TrackKind::Audio,
-        path: PathBuf::from(AUDIO),
         items: vec![Item::whole(position)],
+        ..TrackSpec::new(name, TrackKind::Audio, PathBuf::from(AUDIO))
     });
     engine.set_timeline(Timeline {
-        timebase: None,
         tracks: std::iter::once(video).chain(tracks).collect(),
+        ..Timeline::default()
     });
 }
 
@@ -355,20 +348,21 @@ fn cached_frames_carry_rendered_sound_that_playback_reads() {
         engine.audio_sink(),
         AudioSink::Rendered {
             sample_rate: 48_000,
-            channels: 1
+            channels: 2
         }
     );
     let block = engine.frame(5).unwrap().audio.clone().unwrap();
     assert_eq!((block.start, block.frames()), (8_000, 1600));
 
-    // Playback of the rendered sound: frames 2 to 4 at 30 fps, mixed to stereo at 48 kHz.
+    // Playback of the rendered sound: frames 2 to 4 at 30 fps, mixed to stereo at 48 kHz. The
+    // mono sound went to both channels of the stereo Main bus.
     let mixer = Mixer::rendered(engine.rendered_audio(), 1.0);
     let mut out = vec![0.0; 4800 * 2];
     mixer.render(2.0 / 30.0, 48_000.0, &mut out);
     let cached = engine.frame(2).unwrap().audio.clone().unwrap();
     for (j, pair) in out[..200].chunks(2).enumerate() {
         assert_eq!(pair[0], pair[1], "mono plays in both channels");
-        assert!((pair[0] - cached.samples[j]).abs() < 1e-6, "sample {j}");
+        assert!((pair[0] - cached.samples[2 * j]).abs() < 1e-6, "sample {j}");
     }
 }
 

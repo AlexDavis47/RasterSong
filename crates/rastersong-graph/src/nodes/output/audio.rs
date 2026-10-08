@@ -1,17 +1,19 @@
 use crate::dsp::db_to_gain;
-use crate::nodes::{AUDIO_OUTPUT, Category, Meter, NodeKind, NodeSpec};
+use crate::nodes::{AUDIO_OUTPUT, BUS_PARAM, Category, DEFAULT_BUS, Meter, NodeKind, NodeSpec};
 use crate::{
     Diagnostic, InputSpec, LayoutContext, Node, OutputSpec, ParamSpec, Params, ProcessContext,
     Range, Signal, TagRule,
 };
 use rastersong_lang::tr_args;
 
-/// The graph's sound, written to the export and played in the preview instead of the source
-/// audio. Optional: without one, the source audio is used untouched.
+/// The graph's sound for one output bus of the project, written to the export and played in the
+/// preview instead of that bus's track mix. Optional: without one, the bus plays its track mix.
+/// A graph has at most one per bus.
 ///
-/// Accepts any signal. One sample per pixel is mono and two are stereo; anything else is written
-/// as interleaved samples to a stereo track. Each block is resampled to the project's audio rate
-/// from its own rate (its length per frame), and clipped to `-1..1` on the way out.
+/// Accepts any signal. One sample per pixel is mono and is written to every channel of the bus;
+/// anything else is written as interleaved samples across the bus's channels. Each block is
+/// resampled to the project's audio rate from its own rate (its length per frame), and clipped to
+/// `-1..1` on the way out.
 #[derive(Debug)]
 pub struct AudioOutput {
     gain: f32,
@@ -25,6 +27,7 @@ params! { AudioOutput {
         12.0)
     .unit("dB")
     .limits(-120.0, 60.0),
+    BUS: ParamSpec::text(BUS_PARAM, DEFAULT_BUS),
 } }
 
 impl NodeKind for AudioOutput {

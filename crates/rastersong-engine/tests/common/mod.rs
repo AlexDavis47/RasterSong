@@ -93,6 +93,7 @@ pub fn renderer_with(graph: &str, registry: &Registry, size: OutputSize) -> Rend
         )]),
         &GraphDesc::from_json(graph).unwrap(),
         Default::default(),
+        &rastersong_engine::Bus::main(),
         registry,
         size,
     )

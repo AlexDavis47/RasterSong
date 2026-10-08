@@ -289,7 +289,7 @@ impl Engine {
                 compile_options: None,
                 audio_rate: DEFAULT_AUDIO_RATE,
                 max_warmup_frames: DEFAULT_MAX_WARMUP_FRAMES,
-                audio_sink: AudioSink::Source,
+                audio_sink: AudioSink::TrackMix,
                 tap: None,
                 listen: None,
                 changes: 0,
@@ -337,8 +337,17 @@ impl Engine {
     /// The timebase and tracks to render. Input nodes naming a track that isn't here read
     /// zeros. Setting the timeline already in use changes nothing.
     pub fn set_timeline(&self, timeline: Timeline) {
-        if lock(&self.shared.state).timeline == timeline {
-            return;
+        {
+            let mut state = lock(&self.shared.state);
+            if state.timeline == timeline {
+                return;
+            }
+            // Track levels and routing only shape the track mix, which isn't rendered here:
+            // changing them keeps every rendered frame.
+            if state.timeline.renders_like(&timeline) {
+                state.timeline = timeline;
+                return;
+            }
         }
         self.edit(|state| state.timeline = timeline);
     }
@@ -361,7 +370,7 @@ impl Engine {
         self.edit(|state| state.graph = Some(graph));
     }
 
-    /// Skips the whole graph, as if the video were plugged straight into the output.
+    /// Skips the whole graph: the output shows and plays the track mix.
     pub fn set_bypass_all(&self, bypass: bool) {
         if lock(&self.shared.state).bypass_all == bypass {
             return;
@@ -886,7 +895,7 @@ impl Worker {
                 state.status = EngineStatus::Failed(failure);
                 state.info = video_info;
                 state.node_stats.clear();
-                state.audio_sink = AudioSink::Source;
+                state.audio_sink = AudioSink::TrackMix;
                 self.failed_at = Some(state.changes);
             }
         }
@@ -907,6 +916,7 @@ impl Worker {
             tracks,
             &project.graph,
             project.tempo,
+            &project.timeline.master(),
             Registry::shared(),
             key.scale.output_size(),
         )
@@ -1019,6 +1029,8 @@ impl Worker {
                             resampler: SinkResampler::new(
                                 shape.0,
                                 shape.1,
+                                // Played in stereo, as the preview is.
+                                if shape.1 == 1 { 1 } else { 2 },
                                 info.frame_rate.as_f64(),
                                 rate,
                             ),

@@ -31,6 +31,13 @@ pub const AUDIO_INPUT: &str = "audio_input";
 pub const DEFAULT_VIDEO: &str = "video";
 /// The default signal name of an audio input node.
 pub const DEFAULT_AUDIO: &str = "audio";
+/// The host signal holding the track mix's picture: the top video track with an item at each
+/// frame. Bypassing the whole graph shows it.
+pub const TRACK_MIX_SOURCE: &str = "@track_mix";
+/// The parameter of the audio output that names the output bus it writes to.
+pub const BUS_PARAM: &str = "bus";
+/// The bus an audio output writes to unless set otherwise: the project's first, master bus.
+pub const DEFAULT_BUS: &str = "Main";
 /// The parameter of both input nodes that names the host signal they read.
 pub const SOURCE_PARAM: &str = "source";
 /// The node type names of the channel splitter and combiner, whose port counts follow the signal.

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use rastersong_graph::nodes::{
-    AUDIO_INPUT, DEFAULT_AUDIO, DEFAULT_VIDEO, SOURCE_PARAM, VIDEO_INPUT,
+    AUDIO_INPUT, DEFAULT_AUDIO, DEFAULT_VIDEO, SOURCE_PARAM, TRACK_MIX_SOURCE, VIDEO_INPUT,
 };
 use rastersong_graph::{
     CompileOptions, Graph, GraphDesc, Layout, OutputLevel, ParamValue, Registry, Signal, Tempo,
@@ -16,7 +16,7 @@ use crate::EngineError;
 use crate::audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE, SinkResampler};
 use crate::project::{DEFAULT_MAX_WARMUP_FRAMES, MAX_WARMUP_FRAMES_LIMIT};
 use crate::sources::{Modulator, fill_video, to_rgb8};
-use crate::timeline::{Item, Timebase, item_at, items_end};
+use crate::timeline::{Bus, Item, Timebase, item_at, items_end};
 
 /// The source a video input reads by default.
 pub const VIDEO_SOURCE: &str = DEFAULT_VIDEO;
@@ -159,6 +159,9 @@ pub struct Renderer {
     /// The next source frame to process, if the graph's state is positioned somewhere.
     next_source: Option<usize>,
     rgb: Vec<u8>,
+    /// The bus rendered: only the Audio Output writing to it is compiled, and its sound has
+    /// the bus's channels.
+    bus: Bus,
     /// Turns the audio output into audio at the project rate, when the graph renders sound.
     resampler: Option<SinkResampler>,
     /// The audio of the last rendered frame, when the graph renders sound.
@@ -178,14 +181,18 @@ impl std::fmt::Debug for Renderer {
 
 impl Renderer {
     /// Opens the video tracks at `size` and compiles `graph` for the project's `tracks` on its
-    /// `timebase`. Without a timebase the first video track sets it, or [`Timebase::DEFAULT`]
-    /// when there is none. Input nodes that name a track that isn't there read zeros.
+    /// `timebase`, rendering the sound of output bus `bus`. Without a timebase the first video
+    /// track sets it, or [`Timebase::DEFAULT`] when there is none. Input nodes that name a track
+    /// that isn't there read zeros. Video tracks are listed top first: the track mix's picture
+    /// ([`TRACK_MIX_SOURCE`]) shows the first with an item at each frame.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         backend: &dyn MediaBackend,
         timebase: Option<Timebase>,
         tracks: &[RenderTrack],
         graph: &GraphDesc,
         tempo: Tempo,
+        bus: &Bus,
         registry: &Registry,
         size: OutputSize,
     ) -> Result<Self, EngineError> {
@@ -284,9 +291,11 @@ impl Renderer {
             sources: layouts.clone(),
             output: video_layout,
             pixel_scale: f64::from(width) / f64::from(timebase.width),
+            audio_bus: bus.name.clone(),
         };
         let graph = Graph::compile(graph, registry, &options)?;
-        let resampler = Self::resampler(&graph, fps, DEFAULT_AUDIO_RATE);
+        let bus = bus.clone().sanitized();
+        let resampler = Self::resampler(&graph, &bus, fps, DEFAULT_AUDIO_RATE);
 
         Ok(Self {
             videos,
@@ -314,6 +323,7 @@ impl Renderer {
                 .collect(),
             next_source: None,
             rgb: Vec::with_capacity(video_layout.len()),
+            bus,
             resampler,
             audio: None,
         })
@@ -321,7 +331,7 @@ impl Renderer {
 
     /// A resampler for the graph's audio output, unless there is none or it just passes a track
     /// through.
-    fn resampler(graph: &Graph, fps: f64, rate: u32) -> Option<SinkResampler> {
+    fn resampler(graph: &Graph, bus: &Bus, fps: f64, rate: u32) -> Option<SinkResampler> {
         let layout = graph.audio_layout()?;
         if graph.audio_passthrough().is_some() {
             return None;
@@ -329,6 +339,7 @@ impl Renderer {
         Some(SinkResampler::new(
             layout.len(),
             layout.samples_per_pixel,
+            bus.channels,
             fps,
             rate,
         ))
@@ -352,13 +363,19 @@ impl Renderer {
 
     /// Renders the audio output at `rate` samples a second (48 kHz unless set).
     pub fn set_audio_rate(&mut self, rate: u32) {
-        self.resampler = Self::resampler(&self.graph, self.fps, rate.max(1));
+        self.resampler = Self::resampler(&self.graph, &self.bus, self.fps, rate.max(1));
         self.warmup = Self::warmup(&self.graph, self.resampler.is_some(), self.max_warmup);
         self.audio = None;
         self.next_source = None;
     }
 
-    /// What the render's audio is: the source's, a track passed through, or rendered sound.
+    /// The output bus whose sound is rendered.
+    pub fn bus(&self) -> &Bus {
+        &self.bus
+    }
+
+    /// What the render's audio is: the bus's track mix, a track passed through, or rendered
+    /// sound.
     pub fn audio_sink(&self) -> AudioSink {
         match (&self.resampler, self.graph.audio_passthrough()) {
             (Some(r), _) => AudioSink::Rendered {
@@ -366,7 +383,7 @@ impl Renderer {
                 channels: r.channels(),
             },
             (None, Some(track)) => AudioSink::Passthrough(track.to_owned()),
-            (None, None) => AudioSink::Source,
+            (None, None) => AudioSink::TrackMix,
         }
     }
 
@@ -520,6 +537,31 @@ impl Renderer {
                 Err(e) => {
                     self.next_source = None;
                     return Err(e.into());
+                }
+            }
+        }
+        // The track mix's picture: the top video track with an item now, or zeros.
+        if self.sources.contains_key(TRACK_MIX_SOURCE) {
+            let top = self
+                .videos
+                .iter()
+                .find(|v| {
+                    v.name != TRACK_MIX_SOURCE
+                        && item_at(&v.items, start + 1e-9, v.duration).is_some()
+                })
+                .map(|v| v.name.as_str());
+            match top {
+                Some(top) => {
+                    if let [Some(mix), Some(video)] =
+                        self.sources.get_disjoint_mut([TRACK_MIX_SOURCE, top])
+                    {
+                        mix.data.copy_from_slice(&video.data);
+                    }
+                }
+                None => {
+                    if let Some(mix) = self.sources.get_mut(TRACK_MIX_SOURCE) {
+                        mix.data.fill(0.0);
+                    }
                 }
             }
         }
