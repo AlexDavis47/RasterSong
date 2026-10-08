@@ -10,6 +10,10 @@ use serde::{Deserialize, Serialize};
 use crate::DEFAULT_AUDIO_TRACK;
 use crate::timeline::{Bus, Item, Timebase, Timeline, TrackKind, TrackSpec};
 
+mod editing;
+
+pub use editing::{Edge, ItemRef, MIN_ITEM_LENGTH, RATE_RANGE, snap_offset};
+
 /// The project file format version. Like the graph format it stays 0 until 1.0: files change
 /// freely, with no migrations, and projects saved by another version are rejected.
 pub const PROJECT_VERSION: u32 = 0;
@@ -431,74 +435,6 @@ impl Project {
                 }
             }
         }
-    }
-
-    /// Moves item `item` of track `name` by `delta` seconds, with the items of linked tracks
-    /// that overlap it, and returns how far they moved: no item moves before the start of the
-    /// timeline, so a move left stops when the first of them reaches it. `duration` gives a
-    /// track's resource length, `None` while unknown (its items then last forever).
-    pub fn move_item(
-        &mut self,
-        name: &str,
-        item: usize,
-        delta: f64,
-        duration: impl Fn(&ProjectTrack) -> Option<f64>,
-    ) -> f64 {
-        let span = |track: &ProjectTrack, item: &Item| {
-            let length = duration(track).unwrap_or(f64::INFINITY);
-            (item.position, item.timeline_end(length))
-        };
-        let Some((start, end)) = self
-            .track(name)
-            .and_then(|t| t.items.get(item).map(|i| span(t, i)))
-        else {
-            return 0.0;
-        };
-        let linked = self.linked_to(name);
-        // Which items move: the one dragged, and those of linked tracks it overlaps.
-        let moving: Vec<(String, Vec<usize>)> = self
-            .tracks()
-            .filter_map(|t| {
-                if t.name == name {
-                    return Some((t.name.clone(), vec![item]));
-                }
-                linked.contains(&t.name).then(|| {
-                    let overlapping = t
-                        .items
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, i)| {
-                            let (s, e) = span(t, i);
-                            s < end && e > start
-                        })
-                        .map(|(k, _)| k)
-                        .collect();
-                    (t.name.clone(), overlapping)
-                })
-            })
-            .collect();
-        let earliest = moving
-            .iter()
-            .flat_map(|(n, items)| {
-                let track = self.track(n);
-                items
-                    .iter()
-                    .filter_map(move |&k| track.and_then(|t| t.items.get(k)))
-                    .map(|i| i.position)
-            })
-            .fold(f64::INFINITY, f64::min);
-        let delta = delta.max(-earliest);
-        if !delta.is_finite() || delta == 0.0 {
-            return 0.0;
-        }
-        for track in self.tracks_mut() {
-            if let Some((_, items)) = moving.iter().find(|(n, _)| *n == track.name) {
-                for &k in items {
-                    track.items[k].position = (track.items[k].position + delta).max(0.0);
-                }
-            }
-        }
-        delta
     }
 
     /// The track, of either kind, called `name`.

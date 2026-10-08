@@ -26,9 +26,9 @@ pub use error::EngineError;
 pub use listen::ListenTarget;
 pub use offline::{FrameSink, RenderSettings, RenderedFrame, render};
 pub use project::{
-    DEFAULT_INSPECT_RATE, DEFAULT_MAX_WARMUP_FRAMES, INSPECT_RATE_RANGE, LoopRegion,
-    MAX_WARMUP_FRAMES_LIMIT, PROJECT_EXTENSION, PROJECT_VERSION, Project, ProjectTrack,
-    TimelineMode,
+    DEFAULT_INSPECT_RATE, DEFAULT_MAX_WARMUP_FRAMES, Edge, INSPECT_RATE_RANGE, ItemRef, LoopRegion,
+    MAX_WARMUP_FRAMES_LIMIT, MIN_ITEM_LENGTH, PROJECT_EXTENSION, PROJECT_VERSION, Project,
+    ProjectTrack, RATE_RANGE, TimelineMode, snap_offset,
 };
 pub use rastersong_graph::dsp::Fft;
 pub use rastersong_graph::nodes::support::UNBOUNDED_WARMUP;

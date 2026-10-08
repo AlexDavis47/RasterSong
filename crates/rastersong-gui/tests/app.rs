@@ -508,6 +508,68 @@ fn linked_tracks_move_their_overlapping_items_together() {
     assert_eq!(project.video_tracks[0].items[0].position, audio);
 }
 
+/// Clicks the ruler at `seconds`, moving the playhead there.
+fn seek_on_ruler(harness: &mut Harness<'_, App>, seconds: f64) {
+    let mut spot = timeline_point(harness, seconds, 0);
+    spot.y = harness.state().timeline_area().top() + 11.0;
+    click(harness, spot, PointerButton::Primary);
+}
+
+#[test]
+fn s_splits_under_the_playhead_and_delete_removes_the_selected_items() {
+    let mut harness = loaded();
+    seek_on_ruler(&mut harness, 1.0);
+    harness.event(Event::PointerMoved(timeline_point(&harness, 1.5, 1)));
+    // Nothing selected: every item under the playhead is split.
+    shortcut(&mut harness, Modifiers::NONE, egui::Key::S);
+    let project = harness.state().project();
+    assert_eq!(project.audio_tracks[0].items.len(), 2);
+    assert_eq!(project.video_tracks[0].items.len(), 2);
+    let second = item_bar_point(&harness, 1.5, 1);
+    click(&mut harness, second, PointerButton::Primary);
+    shortcut(&mut harness, Modifiers::NONE, egui::Key::Delete);
+    let project = harness.state().project();
+    assert_eq!(project.audio_tracks[0].items.len(), 1);
+    assert_eq!(project.audio_tracks[0].items[0].end, Some(1.0));
+    // The video isn't linked, so it keeps both halves.
+    assert_eq!(project.video_tracks[0].items.len(), 2);
+}
+
+#[test]
+fn copied_items_paste_at_the_playhead() {
+    let mut harness = loaded();
+    let nodes = harness.state().project().graph.nodes.len();
+    let bar = item_bar_point(&harness, 0.5, 1);
+    click(&mut harness, bar, PointerButton::Primary);
+    harness.event(Event::Copy);
+    harness.run_steps(2);
+    seek_on_ruler(&mut harness, 1.0);
+    harness.event(Event::Paste(String::new()));
+    harness.run_steps(2);
+    let project = harness.state().project();
+    let positions: Vec<f64> = project.audio_tracks[0]
+        .items
+        .iter()
+        .map(|i| i.position)
+        .collect();
+    assert_eq!(positions, [0.0, 1.0]);
+    // Over the timeline the clipboard is the timeline's, not the graph's.
+    assert_eq!(project.graph.nodes.len(), nodes);
+}
+
+#[test]
+fn dragging_an_items_edge_trims_it() {
+    let mut harness = loaded();
+    // The song is 2 s long; its end edge runs the item's whole height.
+    let from = timeline_point(&harness, 2.0, 1);
+    let to = timeline_point(&harness, 1.5, 1);
+    drag(&mut harness, from, to);
+    let item = harness.state().project().audio_tracks[0].items[0];
+    let end = item.end.unwrap();
+    assert!((end - 1.5).abs() < 0.02, "end {end}");
+    assert_eq!((item.position, item.start, item.rate), (0.0, 0.0, 1.0));
+}
+
 #[test]
 fn items_mute_from_their_header_bar_and_tracks_solo_from_theirs() {
     let mut harness = loaded();

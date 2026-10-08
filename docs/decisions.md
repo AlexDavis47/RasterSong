@@ -256,6 +256,26 @@ Built as the timeline's fourth step, before item editing.
 - The app still opens one video track (File → Open Video replaces it); thumbnails are drawn for it. More video
   tracks arrive with the Resources panel, which is how tracks get their files.
 
+### Item editing (October 2026)
+
+Built as the timeline's fifth step.
+
+- **Linked tracks act together on every edit.** Move, split, delete, copy and paste take the items of linked tracks
+  that overlap the ones edited, read from time as for moves. A trim takes only the linked edges at the same time
+  (within a millisecond), so trimming a cut that lines up on both tracks keeps it lined up, and an item that only
+  partly overlaps isn't cut short.
+- **S with nothing selected splits everything under the playhead**, as in Reaper. With a selection only the
+  selection (and its linked items) is split, and both halves stay selected.
+- **Rate drags keep the far edge and the in and out points**, within 0.05× to 20×. An edge can't be trimmed past
+  the file's ends or shorter than 10 ms.
+- **The timeline has its own clipboard** for items, separate from the graph's text clipboard. Ctrl+C, Ctrl+X and
+  Ctrl+V go to whichever the pointer is over. Pasting puts items back on the tracks they came from (a track of
+  one resource can't take another's items), the earliest at the playhead.
+- **Snapping works from the pointer's whole movement**, not frame by frame, so an item can be pulled off a target.
+  It snaps to the ruler's ticks (frames and seconds, or beats and bars), other items' edges and the playhead,
+  within 8 pixels. Shift drags freely; the Snap toggle is an app setting, on by default.
+- **The selection isn't part of the project**: it isn't saved, and undo keeps it where the items still exist.
+
 ## Open
 
 

@@ -12,9 +12,9 @@ use rastersong_engine::LoadedTrack;
 use rastersong_engine::playback::{MixTrack, Mixer};
 use rastersong_engine::{
     AudioSink, BackendInfo, CompileOptions, Engine, EngineConfig, EngineStatus, Frame, Graph,
-    GraphDesc, Item, MediaBackend, NodeStats, PROJECT_EXTENSION, PlaybackClock, PreviewScale,
-    Project, ProjectTrack, Registry, Thumbnails, Timeline, TimelineMode, TrackKind, TrackSpec,
-    VIDEO_SOURCE,
+    GraphDesc, Item, ItemRef, MediaBackend, NodeStats, PROJECT_EXTENSION, PlaybackClock,
+    PreviewScale, Project, ProjectTrack, Registry, Thumbnails, Timeline, TimelineMode, TrackKind,
+    TrackSpec, VIDEO_SOURCE,
 };
 use rastersong_lang::{tr, tr_args};
 
@@ -121,6 +121,10 @@ pub struct App {
     applied_theme: Option<ThemeChoice>,
     /// The selected row of the timeline: the video tracks, then the audio tracks.
     selected_track: Option<usize>,
+    /// The selected timeline items.
+    selected_items: Vec<ItemRef>,
+    /// Timeline items copied, with the names of their tracks.
+    item_clipboard: Vec<(String, Item)>,
     /// When (egui time) the preview started waiting on a frame to render, if it is.
     waiting_since: Option<f64>,
     preview: Option<(egui::TextureHandle, Arc<Frame>)>,
@@ -191,6 +195,8 @@ impl App {
             inspect_scroll: 0.0,
             waiting_since: None,
             selected_track: first_audio_row(&project),
+            selected_items: Vec::new(),
+            item_clipboard: Vec::new(),
             project,
             project_path: None,
             editor,
@@ -1547,6 +1553,7 @@ impl App {
             return;
         };
         self.tempo_bar(ui);
+        self.tidy_item_selection();
         let loaded = self.engine.loaded_tracks();
         self.update_thumbnails(ui.ctx());
         let video_info = self.thumbnails.info();
@@ -1561,6 +1568,12 @@ impl App {
             height: t.height.unwrap_or(LANE_HEIGHT),
             linked: self.project.linked_to(&t.name),
             bus: t.bus.clone(),
+            selected_items: self
+                .selected_items
+                .iter()
+                .filter(|r| r.track == t.name)
+                .map(|r| r.item)
+                .collect(),
             ..TrackView::new(t.name.clone(), kind)
         };
         let mut tracks: Vec<TrackView> = self
@@ -1613,12 +1626,16 @@ impl App {
             tempo: self.project.tempo,
             mode: self.project.timeline_mode,
             buses: self.project.buses.iter().map(|b| b.name.clone()).collect(),
+            snap: self.settings.snap,
         };
         self.timeline_area = ui.available_rect_before_wrap();
         let response = timeline(ui, &model, &mut self.timeline_view);
         self.thumbnails.request(&response.wanted_thumbnails);
         if let Some(region) = response.loop_region {
             self.project.loop_region = region;
+        }
+        if response.toggle_snap {
+            self.settings.snap = !self.settings.snap;
         }
         if response.toggle_mode {
             self.project.timeline_mode = match self.project.timeline_mode {
@@ -1747,22 +1764,115 @@ impl App {
             .map(|l| l.clip.duration_secs())
     }
 
+    /// Each track's resource length, as the item edits take it.
+    fn item_lengths(&self) -> impl Fn(&ProjectTrack) -> Option<f64> + use<> {
+        let lengths: Vec<(String, Option<f64>)> = self
+            .project
+            .tracks()
+            .map(|t| (t.name.clone(), self.track_duration(t)))
+            .collect();
+        move |t: &ProjectTrack| {
+            lengths
+                .iter()
+                .find(|(n, _)| *n == t.name)
+                .and_then(|(_, d)| *d)
+        }
+    }
+
+    /// Drops selected items that no longer exist (after an undo, or a track removed or renamed).
+    fn tidy_item_selection(&mut self) {
+        let project = &self.project;
+        self.selected_items.retain(|r| {
+            project
+                .track(&r.track)
+                .is_some_and(|t| r.item < t.items.len())
+        });
+    }
+
     fn track_action(&mut self, action: TrackAction) {
         let name = |app: &mut Self, row: usize| app.track_at(row).map(|t| t.name.clone());
         match action {
             TrackAction::Select(row) => self.selected_track = Some(row),
+            TrackAction::SelectItem { row, item, toggle } => {
+                let Some(track) = name(self, row) else { return };
+                let at = ItemRef::new(track, item);
+                self.selected_track = Some(row);
+                if !toggle {
+                    self.selected_items = vec![at];
+                } else if let Some(k) = self.selected_items.iter().position(|r| *r == at) {
+                    self.selected_items.remove(k);
+                } else {
+                    self.selected_items.push(at);
+                }
+            }
+            TrackAction::ClearItems => self.selected_items.clear(),
             TrackAction::MoveItem { row, item, delta } => {
                 let Some(track) = name(self, row) else { return };
-                let mut durations = Vec::new();
-                for t in self.project.tracks() {
-                    durations.push((t.name.clone(), self.track_duration(t)));
+                let at = ItemRef::new(track, item);
+                let lengths = self.item_lengths();
+                if self.selected_items.contains(&at) {
+                    self.project
+                        .move_items(&self.selected_items, delta, lengths);
+                } else {
+                    self.project.move_items(&[at], delta, lengths);
                 }
-                self.project.move_item(&track, item, delta, |t| {
-                    durations
-                        .iter()
-                        .find(|(n, _)| *n == t.name)
-                        .and_then(|(_, d)| *d)
-                });
+            }
+            TrackAction::TrimItem {
+                row,
+                item,
+                edge,
+                to,
+                stretch,
+            } => {
+                let Some(track) = name(self, row) else { return };
+                let lengths = self.item_lengths();
+                self.project
+                    .trim_item(&ItemRef::new(track, item), edge, to, stretch, lengths);
+            }
+            TrackAction::SplitItems { at } => {
+                let lengths = self.item_lengths();
+                if self.selected_items.is_empty() {
+                    // With nothing selected, every item under the playhead.
+                    let under: Vec<ItemRef> = self
+                        .project
+                        .tracks()
+                        .flat_map(|t| {
+                            let length = lengths(t).unwrap_or(f64::INFINITY);
+                            t.items
+                                .iter()
+                                .enumerate()
+                                .filter(move |(_, i)| {
+                                    i.position < at && at < i.timeline_end(length)
+                                })
+                                .map(|(k, _)| ItemRef::new(t.name.clone(), k))
+                        })
+                        .collect();
+                    self.project.split_items(&under, at, lengths);
+                } else {
+                    self.selected_items =
+                        self.project.split_items(&self.selected_items, at, lengths);
+                }
+            }
+            TrackAction::DeleteItems => {
+                let lengths = self.item_lengths();
+                self.project.delete_items(&self.selected_items, lengths);
+                self.selected_items.clear();
+            }
+            TrackAction::CopyItems | TrackAction::CutItems => {
+                if self.selected_items.is_empty() {
+                    return;
+                }
+                let lengths = self.item_lengths();
+                self.item_clipboard = self.project.copy_items(&self.selected_items, &lengths);
+                if action == TrackAction::CutItems {
+                    self.project.delete_items(&self.selected_items, lengths);
+                    self.selected_items.clear();
+                }
+            }
+            TrackAction::PasteItems { at } => {
+                if !self.item_clipboard.is_empty() {
+                    self.selected_items = self.project.paste_items(&self.item_clipboard, at);
+                }
             }
             TrackAction::ToggleItemMute { row, item } => {
                 if let Some(item) = self.track_at(row).and_then(|t| t.items.get_mut(item)) {

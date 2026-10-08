@@ -452,7 +452,8 @@ memory maps read ordinary files. Saving rewrites the zip, copying unchanged entr
      *(done: see [Timeline](app.md#timeline) and
      [Decisions](decisions.md#tracks-of-items-october-2026); the app still opens one video track until the
      Resources panel)*.
-   - [ ] **feature** Item editing (move, trim, split, delete, rate drag, snapping, multi-select, copy/paste, undo).
+   - [x] **feature** Item editing (move, trim, split, delete, rate drag, snapping, multi-select, copy/paste, undo)
+     *(done: see [Timeline](app.md#timeline) and [Decisions](decisions.md#item-editing-october-2026))*.
    - [x] **feature** Track mix and output buses, with the warning on removal *(done: see
      [Track mix and output buses](engine.md#track-mix-and-output-buses); with no graph items yet, bypassing the
      graph plays the track mix, and the CLI's `--bus` renders a bus other than the master)*.

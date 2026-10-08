@@ -104,8 +104,27 @@ for graphs too). Drag the bar to move the item; the area below it shows the item
 source video (decoded by a separate small decoder so they never slow rendering and survive graph edits) or the
 audio's waveform, and seeks like empty lane space. Items can't start before the timeline does.
 
-Right-click a header to **link** its track with another (or unlink it): dragging an item then moves the items of
-the linked tracks that overlap it, so a video and its sound stay together. Linked headers say so. Drag the bottom
+**Editing items:**
+
+- Click an item's bar to select it, Ctrl+click to add it to the selection or take it out; clicking empty lane
+  space selects none. Selected items are outlined. Dragging a selected item moves every selected item.
+- Drag an item's left or right edge (over its whole height) to **trim** it over its file; it stops at the file's
+  ends. **Alt+drag** an edge to change the item's **rate** instead, keeping its in and out points: longer plays
+  slower and lower, like tape (from 0.05× to 20×).
+- **S** splits at the playhead: the selected items, or with none selected every item under it. Both halves stay
+  selected.
+- **Delete** (or Backspace) removes the selected items. **Ctrl+C**, **Ctrl+X** and **Ctrl+V** copy, cut and paste
+  them; pasted items go back to the tracks they came from, the earliest at the playhead, and become the
+  selection. These keys act on the timeline while the pointer is over it, and on the graph otherwise. The bar's
+  right-click menu has the same commands.
+- **Snapping** is on by default (the Snap button in the ruler's corner): moves and edges snap to the ruler's
+  ticks (beats and bars in tempo mode), the edges of other items, the playhead and the timeline's start, within
+  a few pixels. Hold **Shift** to drag freely.
+- Every edit undoes as one step.
+
+Right-click a header to **link** its track with another (or unlink it): moving, splitting, deleting, copying an
+item then takes the items of the linked tracks that overlap it, and trimming takes the linked edges at the same
+time, so a video and its sound stay together. Linked headers say so. Drag the bottom
 edge of a header to change the track's **height** (double-click it, or the header's menu, for the default). Drag an
 audio header to reorder the audio tracks. Frames rendered so far are marked in green along the bottom of the ruler.
 Linking, heights, solo and mutes are saved with the project and undo like any edit.

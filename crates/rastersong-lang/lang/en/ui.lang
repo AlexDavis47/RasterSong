@@ -128,8 +128,13 @@ timeline.track.unlink = Unlink
 timeline.track.linked.mark = linked
 timeline.track.linked = Linked with {tracks}: dragging an item moves the items of these tracks it overlaps.
 timeline.track.reset_height = Default height
-timeline.item.drag = Drag to move this item
-timeline.item.drag_linked = Drag to move this item, and the items it overlaps on linked tracks
+timeline.item.drag = Click to select this item, Ctrl+click to add it to the selection. Drag to move the selected items. Right-click for more
+timeline.item.drag_linked = Click to select this item, Ctrl+click to add it to the selection. Drag to move the selected items, and the items they overlap on linked tracks. Right-click for more
+timeline.item.edge = Drag to trim this item; Alt+drag to change its speed (and pitch) instead. Shift drags without snapping
+timeline.item.split = Split at playhead
+timeline.item.delete = Delete
+timeline.snap = Snap
+timeline.snap.help = Snap dragged items and edges to the grid, item edges and the playhead. Hold Shift to drag freely
 timeline.item.mute = Mute this item: it reads as a gap, for graphs too
 timeline.item.unmute = Unmute this item
 

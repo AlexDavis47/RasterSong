@@ -39,6 +39,8 @@ pub struct Settings {
     pub cache_mib: u32,
     /// How far ahead of the playhead to render, in seconds.
     pub render_ahead_secs: f64,
+    /// Whether timeline items snap to the grid, item edges and the playhead while dragged.
+    pub snap: bool,
 }
 
 impl Default for Settings {
@@ -56,6 +58,7 @@ impl Default for Settings {
             language: rastersong_lang::ENGLISH_CODE.to_owned(),
             cache_mib: Self::DEFAULT_CACHE_MIB,
             render_ahead_secs: Self::DEFAULT_RENDER_AHEAD_SECS,
+            snap: true,
         }
     }
 }

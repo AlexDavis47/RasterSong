@@ -4,7 +4,13 @@
 //! - The scroll wheel zooms time around the pointer (over the headers it scrolls the tracks);
 //!   middle- or right-drag pans in both directions; F fits the whole project.
 //! - Click or drag on the ruler or empty lane space to seek; drag an item by its header bar to
-//!   move it (with the items it overlaps on linked tracks).
+//!   move it (with the other selected items, and the items they overlap on linked tracks).
+//! - Click an item's header bar to select it, Ctrl+click to add or remove it; drag an item's
+//!   edge to trim it, Alt+drag to change its rate. Drags snap to the grid, item edges and the
+//!   playhead while snapping is on; Shift drags freely.
+//! - Over the timeline, S splits at the playhead (the selected items, or with none selected
+//!   every item under it), Delete removes the selected items, and Ctrl+C, Ctrl+X and Ctrl+V
+//!   copy, cut and paste them at the playhead.
 //! - Ctrl+drag on the ruler makes a loop region (or moves one of its edges).
 //! - Drag a header to reorder audio tracks, its bottom edge to change the track's height;
 //!   right-click it to link tracks.
@@ -17,7 +23,9 @@ use eframe::egui::{
     self, Align2, CornerRadius, FontId, Key, PointerButton, Rect, Sense, Stroke, TextureId, Ui,
     UiBuilder, Vec2, pos2, vec2,
 };
-use rastersong_engine::{Item, LoopRegion, Tempo, TimelineMode, TrackKind, Waveform};
+use rastersong_engine::{
+    Edge, Item, LoopRegion, Tempo, TimelineMode, TrackKind, Waveform, snap_offset,
+};
 use rastersong_lang::{tr, tr_args};
 
 use crate::name_edit::name_edit;
@@ -36,6 +44,12 @@ pub const LANE_HEIGHT: f32 = 58.0;
 pub const LANE_HEIGHT_RANGE: std::ops::RangeInclusive<f32> = 46.0..=320.0;
 /// Height of the bar along the top of each item, which drags it and holds its mute button.
 const ITEM_BAR: f32 = 14.0;
+/// How close (pixels) to an item's edge the pointer must be to trim it.
+const EDGE_GRAB: f32 = 5.0;
+/// How close (pixels) a dragged edge must come to a snap target to snap to it.
+const SNAP_DISTANCE: f32 = 8.0;
+/// Width of the snapping button in the ruler header.
+const SNAP_WIDTH: f32 = 52.0;
 /// How close (pixels) to the bottom edge of a header the pointer must be to resize the track.
 const RESIZE_GRAB: f32 = 3.0;
 /// Width of the button that switches the ruler between time and tempo.
@@ -76,6 +90,8 @@ pub struct TrackView {
     pub details: Option<String>,
     /// Whether the model's thumbnails are of this track's file.
     pub thumbnails: bool,
+    /// The selected items, by index into [`Self::items`].
+    pub selected_items: Vec<usize>,
 }
 
 impl TrackView {
@@ -96,6 +112,7 @@ impl TrackView {
             bus: String::new(),
             details: None,
             thumbnails: false,
+            selected_items: Vec::new(),
         }
     }
 
@@ -134,6 +151,8 @@ pub struct TimelineModel<'a> {
     /// The project's output buses, master first. Track headers offer them when there are
     /// several.
     pub buses: Vec<String>,
+    /// Whether dragged items and edges snap.
+    pub snap: bool,
 }
 
 /// Something the user did to a track. Tracks are named by their row in
@@ -141,7 +160,17 @@ pub struct TimelineModel<'a> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TrackAction {
     Select(usize),
-    /// Item `item` of the track was dragged `delta` seconds along the timeline.
+    /// Item `item` of the track was clicked: select only it, or with `toggle` (Ctrl) add it to
+    /// the selection or take it out.
+    SelectItem {
+        row: usize,
+        item: usize,
+        toggle: bool,
+    },
+    /// Empty lane space was clicked: select no items.
+    ClearItems,
+    /// Item `item` of the track was dragged `delta` seconds along the timeline, with the other
+    /// selected items if it is selected.
     MoveItem {
         row: usize,
         item: usize,
@@ -150,6 +179,26 @@ pub enum TrackAction {
     ToggleItemMute {
         row: usize,
         item: usize,
+    },
+    /// An edge of item `item` was dragged to time `to` (seconds): trimmed, or with `stretch`
+    /// (Alt) its rate changed.
+    TrimItem {
+        row: usize,
+        item: usize,
+        edge: Edge,
+        to: f64,
+        stretch: bool,
+    },
+    /// Split at time `at` (the playhead).
+    SplitItems {
+        at: f64,
+    },
+    DeleteItems,
+    CopyItems,
+    CutItems,
+    /// Paste the copied items at time `at` (the playhead).
+    PasteItems {
+        at: f64,
     },
     ToggleMute(usize),
     ToggleSolo(usize),
@@ -181,6 +230,8 @@ pub struct TimelineResponse {
     pub loop_region: Option<Option<LoopRegion>>,
     /// The mode button was clicked: switch between the time and tempo rulers.
     pub toggle_mode: bool,
+    /// The snapping button was clicked: turn snapping on or off.
+    pub toggle_snap: bool,
 }
 
 /// How close (pixels) the pointer must be to a loop edge on the ruler to drag that edge.
@@ -564,6 +615,23 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
     {
         response.toggle_mode = true;
     }
+    let snap_button = Rect::from_min_size(
+        pos2(mode_button.left() - SNAP_WIDTH - 4.0, mode_button.top()),
+        vec2(SNAP_WIDTH, mode_button.height()),
+    );
+    if ui
+        .put(
+            snap_button,
+            egui::Button::selectable(model.snap, egui::RichText::new(tr("timeline.snap")).small()),
+        )
+        .on_hover_text(tr("timeline.snap.help"))
+        .clicked()
+    {
+        response.toggle_snap = true;
+    }
+    if over(area) && !ui.ctx().egui_wants_keyboard_input() {
+        item_keys(ui, model, &mut response);
+    }
     // F shows the whole project.
     if over(area) && !ui.ctx().egui_wants_keyboard_input() && ui.input(|i| i.key_pressed(Key::F)) {
         view.fit(width, duration);
@@ -588,10 +656,11 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
     {
         let frame = (view.seconds(lanes_left, p.x) * model.frame_rate).floor();
         response.seek = Some((frame.max(0.0) as usize).min(model.frame_count.saturating_sub(1)));
-        if background.clicked()
-            && let Some(row) = areas.row_at(view.scroll_y, p.y)
-        {
-            response.actions.push(TrackAction::Select(row));
+        if background.clicked() {
+            response.actions.push(TrackAction::ClearItems);
+            if let Some(row) = areas.row_at(view.scroll_y, p.y) {
+                response.actions.push(TrackAction::Select(row));
+            }
         }
     }
 
@@ -1059,6 +1128,60 @@ impl Lane<'_> {
             Sense::click_and_drag(),
         );
         let hovered = grab.hovered() || grab.dragged();
+        let selected = track.selected_items.contains(&k);
+        let (ctrl, alt) = ui.input(|i| (i.modifiers.command, i.modifiers.alt));
+        let span = track.item_span(item);
+        let drag_id = ui.id().with(("item-drag", row, k));
+        // The edges trim. They are made after the bar, so they win where they overlap it, and
+        // before the mute button, so it keeps its clicks.
+        for edge in [Edge::Start, Edge::End] {
+            let Some((start, end)) = span else { break };
+            if block.width() < EDGE_GRAB * 3.0 {
+                break;
+            }
+            let (ex, at) = match edge {
+                Edge::Start => (block.left(), start),
+                Edge::End => (block.right(), end),
+            };
+            let rect = Rect::from_min_max(
+                pos2(ex - EDGE_GRAB, block.top()),
+                pos2(ex + EDGE_GRAB, block.bottom()),
+            )
+            .intersect(self.clip);
+            if rect.width() <= 0.0 || rect.height() <= 0.0 {
+                continue;
+            }
+            let handle = ui.interact(
+                rect,
+                ui.id().with(("item-edge", row, k, edge == Edge::End)),
+                Sense::drag(),
+            );
+            if handle.hovered() || handle.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+            }
+            if handle.drag_started_by(PointerButton::Primary) {
+                let drag = ItemDrag {
+                    edge: Some(edge),
+                    origin: at,
+                    length: 0.0,
+                    targets: snap_targets(model, row, k, false),
+                };
+                ui.ctx().data_mut(|d| d.insert_temp(drag_id, drag));
+            }
+            if handle.dragged_by(PointerButton::Primary)
+                && let Some(drag) = ui.ctx().data(|d| d.get_temp::<ItemDrag>(drag_id))
+                && let Some(to) = drag_to(ui, model, view, &drag)
+            {
+                response.actions.push(TrackAction::TrimItem {
+                    row,
+                    item: k,
+                    edge,
+                    to,
+                    stretch: alt,
+                });
+            }
+            handle.on_hover_text(tr("timeline.item.edge"));
+        }
         let base = match track.kind {
             TrackKind::Video => theme.video_block,
             TrackKind::Audio => theme.audio_block,
@@ -1160,16 +1283,57 @@ impl Lane<'_> {
             });
         }
 
-        if grab.drag_started_by(PointerButton::Primary) || grab.clicked() {
-            response.actions.push(TrackAction::Select(row));
+        if selected {
+            painter.rect_stroke(
+                block,
+                CornerRadius::same(3),
+                Stroke::new(2.0, theme.accent),
+                egui::StrokeKind::Inside,
+            );
         }
-        if grab.dragged_by(PointerButton::Primary) && grab.drag_delta().x != 0.0 {
+
+        if grab.clicked() {
+            response.actions.push(TrackAction::SelectItem {
+                row,
+                item: k,
+                toggle: ctrl,
+            });
+        }
+        if grab.secondary_clicked() && !selected {
+            response.actions.push(TrackAction::SelectItem {
+                row,
+                item: k,
+                toggle: false,
+            });
+        }
+        if grab.drag_started_by(PointerButton::Primary) {
+            if !selected {
+                response.actions.push(TrackAction::SelectItem {
+                    row,
+                    item: k,
+                    toggle: ctrl,
+                });
+            }
+            let drag = ItemDrag {
+                edge: None,
+                origin: item.position,
+                length: span.map_or(f64::INFINITY, |(s, e)| e - s),
+                targets: snap_targets(model, row, k, selected || ctrl),
+            };
+            ui.ctx().data_mut(|d| d.insert_temp(drag_id, drag));
+        }
+        if grab.dragged_by(PointerButton::Primary)
+            && let Some(drag) = ui.ctx().data(|d| d.get_temp::<ItemDrag>(drag_id))
+            && let Some(to) = drag_to(ui, model, view, &drag)
+            && to != item.position
+        {
             response.actions.push(TrackAction::MoveItem {
                 row,
                 item: k,
-                delta: f64::from(grab.drag_delta().x) / view.px_per_sec,
+                delta: to - item.position,
             });
         }
+        grab.context_menu(|ui| item_menu(ui, model, response));
         if hovered {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }
@@ -1178,6 +1342,128 @@ impl Lane<'_> {
         } else {
             tr("timeline.item.drag_linked")
         });
+    }
+}
+
+/// A drag of an item or one of its edges, remembered from where it started so snapping can
+/// work from the pointer's whole movement.
+#[derive(Debug, Clone)]
+struct ItemDrag {
+    /// The edge being trimmed, or `None` when the item is being moved.
+    edge: Option<Edge>,
+    /// Where the item started, or the edge was, when the drag began (seconds).
+    origin: f64,
+    /// The item's length, for a move, so its end snaps too.
+    length: f64,
+    /// Times the drag snaps to.
+    targets: Vec<f64>,
+}
+
+/// Where a drag puts the item's start (or the edge), snapped unless snapping is off or Shift is
+/// held.
+fn drag_to(ui: &Ui, model: &TimelineModel, view: &TimelineView, drag: &ItemDrag) -> Option<f64> {
+    let (from, to, free) = ui.input(|i| {
+        (
+            i.pointer.press_origin(),
+            i.pointer.interact_pos(),
+            i.modifiers.shift,
+        )
+    });
+    let want = drag.origin + f64::from(to?.x - from?.x) / view.px_per_sec;
+    if !model.snap || free {
+        return Some(want);
+    }
+    let grid = RulerGrid::new(model, view.px_per_sec);
+    let line = |t: f64| grid.time(((t - grid.origin) / grid.minor).round() as i64);
+    let edges = match drag.edge {
+        Some(_) => vec![want],
+        None => vec![want, want + drag.length],
+    };
+    let reach = f64::from(SNAP_DISTANCE) / view.px_per_sec;
+    Some(want + snap_offset(&edges, &drag.targets, line, reach))
+}
+
+/// Where a drag of item `k` of row `row` can snap: the timeline's start, the playhead, and the
+/// edges of the items that don't move with it (the selected ones, when `with_selection`, and
+/// those of linked tracks that overlap it).
+fn snap_targets(model: &TimelineModel, row: usize, k: usize, with_selection: bool) -> Vec<f64> {
+    let dragged = &model.tracks[row];
+    let span = dragged.items.get(k).and_then(|i| dragged.item_span(i));
+    let mut targets = vec![0.0, model.playhead as f64 / model.frame_rate];
+    for (r, track) in model.tracks.iter().enumerate() {
+        let linked = dragged.linked.contains(&track.name);
+        for (j, item) in track.items.iter().enumerate() {
+            let Some((start, end)) = track.item_span(item) else {
+                continue;
+            };
+            let moving = (r == row && j == k)
+                || (with_selection && track.selected_items.contains(&j))
+                || (linked && span.is_some_and(|(a, b)| start < b && end > a));
+            if !moving {
+                targets.extend([start, end]);
+            }
+        }
+    }
+    targets
+}
+
+/// The item keys, while the pointer is over the timeline: S splits at the playhead, Delete and
+/// Backspace remove the selected items, and the clipboard events copy, cut and paste them. The
+/// clipboard events are taken out of the input so the graph, drawn later, doesn't see them.
+fn item_keys(ui: &Ui, model: &TimelineModel, response: &mut TimelineResponse) {
+    let at = model.playhead as f64 / model.frame_rate;
+    let (split, delete) = ui.input(|i| {
+        (
+            i.modifiers.is_none() && i.key_pressed(Key::S),
+            i.key_pressed(Key::Delete) || i.key_pressed(Key::Backspace),
+        )
+    });
+    if split {
+        response.actions.push(TrackAction::SplitItems { at });
+    }
+    if delete {
+        response.actions.push(TrackAction::DeleteItems);
+    }
+    ui.input_mut(|i| {
+        i.events.retain(|event| {
+            let action = match event {
+                egui::Event::Copy => TrackAction::CopyItems,
+                egui::Event::Cut => TrackAction::CutItems,
+                egui::Event::Paste(_) => TrackAction::PasteItems { at },
+                _ => return true,
+            };
+            response.actions.push(action);
+            false
+        });
+    });
+}
+
+/// An item's right-click menu: the item keys, for the selected items.
+fn item_menu(ui: &mut Ui, model: &TimelineModel, response: &mut TimelineResponse) {
+    let at = model.playhead as f64 / model.frame_rate;
+    let entries = [
+        (
+            tr("timeline.item.split"),
+            "S",
+            TrackAction::SplitItems { at },
+        ),
+        (tr("menu.edit.copy"), "Ctrl+C", TrackAction::CopyItems),
+        (tr("menu.edit.cut"), "Ctrl+X", TrackAction::CutItems),
+        (
+            tr("menu.edit.paste"),
+            "Ctrl+V",
+            TrackAction::PasteItems { at },
+        ),
+        (tr("timeline.item.delete"), "Del", TrackAction::DeleteItems),
+    ];
+    for (label, keys, action) in entries {
+        if ui
+            .add(egui::Button::new(label).shortcut_text(keys))
+            .clicked()
+        {
+            response.actions.push(action);
+            ui.close();
+        }
     }
 }
 
@@ -1609,6 +1895,7 @@ mod tests {
             },
             mode,
             buses: Vec::new(),
+            snap: true,
         };
         let grid = RulerGrid::new(&model(TimelineMode::Tempo), 360.0);
         // Ticks every quarter beat (0.125 s), starting at the offset.
