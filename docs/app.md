@@ -101,7 +101,16 @@ timeline** to add a track playing it from where it is dropped, or double-click i
 Timeline) to add one at the playhead. The track is named after the resource, and an audio track gets its Audio
 Input node as before. Right-click renames a resource (its tracks keep their names, since graphs select tracks by
 name) or removes it; removing a resource that tracks play asks first and removes those tracks with it. A resource
-whose file is missing is drawn in red, with its path in the tooltip.
+whose file is missing is drawn in red, with its path in the tooltip and a **Relocate…** button (also in the
+right-click menu, for any resource): pick where the file is now, and the other streams of the same file follow.
+Until it is found, the tracks that play it read as gaps and say so in their lanes. The panel checks about once a
+second, so a file that comes back (a drive plugged in) is picked up by itself.
+
+**Graphs** are resources too, listed below the media. A project can hold any number; **New graph** adds a
+passthrough (the video wired to Video Output, the sound to Audio Output) and opens it. Double-click a graph (or
+right-click → Open in editor) to open it in the node editor, which swaps it with the open one, so the open graph
+(in bold) is the one rendered. Right-click also renames, duplicates or removes a graph (the open graph can't be
+removed). Until graph layers can place several graphs on the timeline, only the open graph renders.
 
 ## Timeline
 
@@ -112,10 +121,16 @@ the track's name (which audio inputs select it by; renaming a track updates them
 its bus when the project has several. Every header has **mute** and **solo** (*S*: while any track of a kind is
 soloed, only soloed tracks of that kind are in the [track mix](engine.md#track-mix-and-output-buses)); audio headers
 also remove the track. Tracks left out of the mix are drawn dimmed. The project lasts to the end of its last item and
-runs at its [timebase](engine.md#timeline). **+ Audio track** (or File → Add Audio Tracks…) adds several files at
-once, each named after its file. Opening a video (File → Open Video…) replaces the first video track and adds the
+runs at its [timebase](engine.md#timeline). **+ Track** adds an empty video or audio track to drag a resource
+onto, or (Audio file…, also File → Add Audio Tracks…) several audio files at once, each named after its file.
+Dropping a resource on a track puts it there from the drop point: an empty track takes it, a track of the same
+resource gets another item, and any other track (a track holds one resource only) makes a new track instead.
+Header menus remove video tracks as well as audio tracks. Opening a video (File → Open Video…) replaces the first video track and adds the
 video's sound as an audio track too. Both go through [resources](#resources) for the file's best streams; the
-Resources panel adds more video tracks, and any stream of a file.
+Resources panel adds more video tracks, and any stream of a file. Every video track decodes its own thumbnails (two
+tracks of one resource share a decoder), so any number of video tracks, including several of the same resource, show
+their length and thumbnails. The unprocessed feed (a graph's source side by side with the result) still shows only the
+first video track.
 
 Every item has a **header bar** along its top with the track's name and a mute button (a muted item reads as a gap,
 for graphs too). Drag the bar to move the item; the area below it shows the item's content, thumbnails of the

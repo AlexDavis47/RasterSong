@@ -797,6 +797,31 @@ fn a_missing_file_leaves_its_tracks_as_gaps_until_relocated() {
 }
 
 #[test]
+fn a_new_graph_opens_as_a_passthrough_and_the_old_one_is_kept() {
+    let mut harness = loaded();
+    let before = harness.state().project().graph.clone();
+    let id = harness.state_mut().new_graph();
+    harness.run_steps(3);
+    let app = harness.state();
+    assert_eq!(app.project().graph_id, id);
+    assert_eq!(app.project().graphs.len(), 1);
+    assert_eq!(
+        app.project().graphs[0].graph.nodes.len(),
+        before.nodes.len()
+    );
+    // The editor shows the passthrough: the input nodes, Video Output and Audio Output.
+    assert!(
+        app.editor().node_count() <= 6,
+        "{}",
+        app.editor().node_count()
+    );
+    let old = app.project().graphs[0].id;
+    harness.state_mut().open_graph(old);
+    harness.run_steps(3);
+    assert_eq!(harness.state().project().graph_id, old);
+}
+
+#[test]
 fn adding_tracks_names_them_after_their_files_and_links_a_node_to_each() {
     let mut harness = loaded();
     let nodes = harness.state().editor().node_count();

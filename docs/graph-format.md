@@ -50,7 +50,11 @@ region:
   the file (left out: the file's best stream of that kind).
 - `video_tracks` and `audio_tracks`: each a `name` (the name input nodes select it by, unique among all tracks),
   the `resource` it plays (of its own kind), its `items`, and `volume` and `muted` for playback. Left out, `items`
-  is one item playing the whole resource from the start.
+  is one item playing the whole resource from the start. A track with no `resource` is empty (and has no items)
+  until a resource is dropped on it.
+- `graph`, `graph_id`, `graph_name` and `graphs`: the project's graphs. `graph` is the open one (the one the editor
+  shows and the engine renders), named `graph_name` with id `graph_id`; `graphs` holds the others, each an `id`,
+  a `name` and its `graph`, until one is opened and swaps places with the open graph.
 - An item: `position` (seconds into the project), `start` and `end` (its in and out points, in seconds of the
   file; no `end` plays to the end of the file), `rate` (seconds of file per second of timeline, 1 by default) and
   `muted`.

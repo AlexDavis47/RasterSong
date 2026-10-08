@@ -481,10 +481,15 @@ memory maps read ordinary files. Saving rewrites the zip, copying unchanged entr
      tracks)*.
 2. **Resources and graphs**
    - [x] **feature** Resources panel (linked resources only) and the multi-stream import dialog *(done: see
-     [Resources](app.md#resources) and [Decisions](decisions.md#resources-panel-october-2026); **+ Track**, dropping
-     onto an existing track, and Relocate for missing files are still to come)*.
-   - [ ] **feature** Graphs as resources; Input and Output port nodes replacing Video Input and Audio Input; the
-     passthrough template.
+     [Resources](app.md#resources) and [Decisions](decisions.md#resources-panel-october-2026))*.
+   - [x] **feature** **+ Track**, dropping a resource onto an existing track, and Relocate for missing files *(done:
+     see [Timeline](app.md#timeline) and [Decisions](decisions.md#empty-tracks-relocate-and-graph-resources-october-2026))*.
+   - [x] **feature** Graphs as resources, with the passthrough template *(done: see [Resources](app.md#resources)
+     and [Decisions](decisions.md#empty-tracks-relocate-and-graph-resources-october-2026); one graph is open and
+     rendered at a time until graph layers)*.
+   - [ ] **feature** Input and Output port nodes replacing Video Input and Audio Input *(deliberately after graph
+     layers: a port is filled by a layer item's bindings or a subgraph's pins, so before those it would only be the
+     current nodes under another name)*.
    - [ ] **feature** Graph layers: items, bindings in the item inspector, stacking, mute/solo, pre-roll setting.
    - [ ] **feature** Renderer switching graphs at item edges, one renderer state per layer, the new cache key.
    - [ ] **feature** Graph Progress node.

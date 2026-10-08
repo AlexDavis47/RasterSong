@@ -507,6 +507,28 @@ impl App {
         Some(name)
     }
 
+    /// Adds a passthrough graph and opens it. Returns its id.
+    pub fn new_graph(&mut self) -> u32 {
+        self.project.graph = self.editor.to_desc();
+        let id = self.project.add_graph("Graph", None);
+        self.open_graph(id);
+        id
+    }
+
+    /// Opens a graph from the Resources panel in the editor. It is the graph rendered, too:
+    /// there is one at a time until graph layers can place several.
+    pub fn open_graph(&mut self, id: u32) {
+        self.project.graph = self.editor.to_desc();
+        if !self.project.open_graph(id) {
+            return;
+        }
+        self.editor = linked_editor(&self.project);
+        if !self.editor.warnings.is_empty() {
+            self.error = Some(self.editor.warnings.join("\n"));
+        }
+        self.project.graph = self.editor.to_desc();
+    }
+
     /// Points the resource's file (and the other streams of it) at `path`.
     pub fn relocate_resource(&mut self, id: ResourceId, path: PathBuf) {
         if self.project.relocate_resource(id, path) > 0 {
@@ -565,6 +587,21 @@ impl App {
             ResourceAction::AddToTimeline(id) => {
                 let at = self.clock.frame() as f64 / self.clock_rate();
                 self.add_resource_track(id, at);
+            }
+            ResourceAction::NewGraph => {
+                self.new_graph();
+            }
+            ResourceAction::OpenGraph(id) => self.open_graph(id),
+            ResourceAction::RenameGraph(id, name) => {
+                self.project.rename_graph(id, &name);
+            }
+            ResourceAction::DuplicateGraph(id) => {
+                // The open graph is copied as it is in the editor now.
+                self.project.graph = self.editor.to_desc();
+                self.project.duplicate_graph(id);
+            }
+            ResourceAction::RemoveGraph(id) => {
+                self.project.remove_graph(id);
             }
             ResourceAction::Relocate(id) => {
                 let Some(old) = self.project.resource(id).map(|r| r.path.clone()) else {

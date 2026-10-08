@@ -11,9 +11,11 @@ use crate::DEFAULT_AUDIO_TRACK;
 use crate::timeline::{Bus, Item, Timebase, Timeline, TrackKind, TrackSpec};
 
 mod editing;
+mod graphs;
 mod resources;
 
 pub use editing::{Edge, ItemRef, MIN_ITEM_LENGTH, RATE_RANGE, snap_offset};
+pub use graphs::{GraphEntry, PASSTHROUGH_GRAPH, StoredGraph};
 pub use resources::{Resource, ResourceId, ResourceKind, resource_name_for};
 
 /// The project file format version. Like the graph format it stays 0 until 1.0: files change
@@ -43,7 +45,16 @@ pub struct Project {
     /// each Audio Output writes to one. Never empty; Main, stereo, by default.
     #[serde(default = "default_buses", skip_serializing_if = "is_default_buses")]
     pub buses: Vec<Bus>,
+    /// The open graph: what the editor shows and the engine renders.
     pub graph: GraphDesc,
+    /// The open graph's id and name among the project's graphs.
+    #[serde(default = "graphs::first_graph_id")]
+    pub graph_id: u32,
+    #[serde(default = "graphs::default_graph_name")]
+    pub graph_name: String,
+    /// The project's other graphs, kept until one is opened.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub graphs: Vec<StoredGraph>,
     /// The loop region on the timeline, if one has been made.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loop_region: Option<LoopRegion>,
@@ -283,6 +294,9 @@ impl Project {
             audio_tracks: Vec::new(),
             buses: default_buses(),
             graph,
+            graph_id: graphs::first_graph_id(),
+            graph_name: graphs::default_graph_name(),
+            graphs: Vec::new(),
             loop_region: None,
             tempo: Tempo::default(),
             timeline_mode: TimelineMode::default(),
@@ -1068,6 +1082,49 @@ mod inspect_rate_tests {
         )
         .unwrap();
         assert_eq!(Project::load(&path).unwrap().inspect_rate, 30.0);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn graphs_are_kept_and_swapped_in_when_opened() {
+        let starter = GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap();
+        let mut project = Project::new(starter.clone());
+        assert_eq!(project.graph_entries().len(), 1);
+        let new = project.add_graph("Graph", None);
+        // Names stay unique, and the template is the passthrough.
+        assert_eq!(project.graph_entries()[1].name, "Graph_2");
+        assert_eq!(project.graphs[0].graph.nodes.len(), 4);
+
+        assert!(project.open_graph(new));
+        assert_eq!(project.graph.nodes.len(), 4);
+        assert_eq!(
+            (project.graph_id, project.graph_name.as_str()),
+            (new, "Graph_2")
+        );
+        // The graph that was open is stored in its place, as it was.
+        assert_eq!(project.graphs[0].graph, starter);
+        // The open graph can't be opened again or removed; a stored one can.
+        assert!(!project.open_graph(new));
+        assert!(!project.remove_graph(new));
+        let copy = project.duplicate_graph(new).unwrap();
+        assert!(project.rename_graph(copy, "Copy"));
+        assert!(project.remove_graph(copy));
+        assert!(project.rename_graph(1, "Graph_2"));
+        assert_eq!(
+            project
+                .graph_entries()
+                .iter()
+                .filter(|g| g.name == "Graph_2")
+                .count(),
+            1
+        );
+
+        // They survive saving.
+        let dir = std::env::temp_dir().join("rastersong-graph-resources");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("p.rastersong");
+        project.save(&path).unwrap();
+        assert_eq!(Project::load(&path).unwrap(), project);
         std::fs::remove_dir_all(&dir).ok();
     }
 
