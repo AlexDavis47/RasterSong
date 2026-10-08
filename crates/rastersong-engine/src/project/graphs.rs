@@ -164,6 +164,7 @@ impl Project {
     pub fn remove_graph(&mut self, id: u32) -> bool {
         let before = self.graphs.len();
         self.graphs.retain(|g| g.id != id);
+        self.remove_graph_items(id);
         self.graphs.len() != before
     }
 }

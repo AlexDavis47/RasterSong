@@ -26,16 +26,17 @@ pub use error::EngineError;
 pub use listen::ListenTarget;
 pub use offline::{FrameSink, RenderSettings, RenderedFrame, render};
 pub use project::{
-    DEFAULT_INSPECT_RATE, DEFAULT_MAX_WARMUP_FRAMES, Edge, GraphEntry, INSPECT_RATE_RANGE, ItemRef,
-    LoopRegion, MAX_WARMUP_FRAMES_LIMIT, MIN_ITEM_LENGTH, PASSTHROUGH_GRAPH, PROJECT_EXTENSION,
-    PROJECT_VERSION, Project, ProjectTrack, RATE_RANGE, Resource, ResourceId, ResourceKind,
-    StoredGraph, TimelineMode, resource_name_for, snap_offset,
+    Binding, DEFAULT_INSPECT_RATE, DEFAULT_MAX_WARMUP_FRAMES, Edge, GraphEntry, GraphItem,
+    GraphLayer, INSPECT_RATE_RANGE, InputKind, InputPort, ItemRef, LayerSet, LoopRegion,
+    MAX_WARMUP_FRAMES_LIMIT, MIN_ITEM_LENGTH, PASSTHROUGH_GRAPH, PROJECT_EXTENSION,
+    PROJECT_VERSION, Project, ProjectTrack, RATE_RANGE, RenderItem, Resource, ResourceId,
+    ResourceKind, StoredGraph, TimelineMode, input_ports, resource_name_for, snap_offset,
 };
 pub use rastersong_graph::dsp::Fft;
 pub use rastersong_graph::nodes::support::UNBOUNDED_WARMUP;
 pub use rastersong_graph::nodes::{
-    AUDIO_INPUT, AUDIO_OUTPUT, BUS_PARAM, CHANNEL_PORTS, COMBINE, DEFAULT_BUS, MAX_CHANNELS,
-    OUTPUT, SOURCE_PARAM, SPLIT, VIDEO_INPUT,
+    AUDIO_INPUT, AUDIO_OUTPUT, BUS_PARAM, CHANNEL_PORTS, COMBINE, DEFAULT_BUS, LAYER_BELOW_SOURCE,
+    MAX_CHANNELS, NO_SOURCE, OUTPUT, SOURCE_PARAM, SPLIT, VIDEO_INPUT,
 };
 pub use rastersong_graph::{
     Category, ChannelMap, Channels, CompileOptions, Connection, Diagnostic, FORMAT_VERSION,

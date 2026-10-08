@@ -12,10 +12,14 @@ use crate::timeline::{Bus, Item, Timebase, Timeline, TrackKind, TrackSpec};
 
 mod editing;
 mod graphs;
+mod layers;
 mod resources;
 
 pub use editing::{Edge, ItemRef, MIN_ITEM_LENGTH, RATE_RANGE, snap_offset};
 pub use graphs::{GraphEntry, PASSTHROUGH_GRAPH, StoredGraph};
+pub use layers::{
+    Binding, GraphItem, GraphLayer, InputKind, InputPort, LayerSet, RenderItem, input_ports,
+};
 pub use resources::{Resource, ResourceId, ResourceKind, resource_name_for};
 
 /// The project file format version. Like the graph format it stays 0 until 1.0: files change
@@ -55,6 +59,10 @@ pub struct Project {
     /// The project's other graphs, kept until one is opened.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub graphs: Vec<StoredGraph>,
+    /// Graph layers, bottom first: lanes of graph items above the tracks. See
+    /// [`Self::layer_set`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<GraphLayer>,
     /// The loop region on the timeline, if one has been made.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loop_region: Option<LoopRegion>,
@@ -297,6 +305,7 @@ impl Project {
             graph_id: graphs::first_graph_id(),
             graph_name: graphs::default_graph_name(),
             graphs: Vec::new(),
+            layers: Vec::new(),
             loop_region: None,
             tempo: Tempo::default(),
             timeline_mode: TimelineMode::default(),
@@ -568,6 +577,7 @@ impl Project {
             DEFAULT_INSPECT_RATE
         };
         project.graph.upgrade();
+        layers::sanitize(&mut project.layers);
         project.buses = sanitized_buses(std::mem::take(&mut project.buses));
         let dir = path.parent().unwrap_or(Path::new(""));
         for resource in &mut project.resources {

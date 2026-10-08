@@ -16,7 +16,7 @@ use crate::audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE, SinkResampler};
 use crate::cache::{CacheKey, Frame, FrameCache};
 use crate::listen::{self, ListenTarget, Listened};
 use crate::playback::RenderedSource;
-use crate::project::{DEFAULT_MAX_WARMUP_FRAMES, MAX_WARMUP_FRAMES_LIMIT};
+use crate::project::{DEFAULT_MAX_WARMUP_FRAMES, LayerSet, MAX_WARMUP_FRAMES_LIMIT};
 use crate::renderer;
 use crate::sources::Modulator;
 use crate::tap::{self, TapOutcome, TapRequest};
@@ -220,6 +220,8 @@ struct TapDone {
 struct State {
     timeline: Timeline,
     graph: Option<GraphDesc>,
+    /// The graph items on the project's layers; `None` renders `graph` over the whole timeline.
+    layers: Option<LayerSet>,
     /// Skips the whole graph: the video goes straight to the output.
     bypass_all: bool,
     tempo: Tempo,
@@ -277,6 +279,7 @@ impl Engine {
             state: Mutex::new(State {
                 timeline: Timeline::default(),
                 graph: None,
+                layers: None,
                 bypass_all: false,
                 tempo: Tempo::default(),
                 key,
@@ -368,6 +371,15 @@ impl Engine {
             }
         }
         self.edit(|state| state.graph = Some(graph));
+    }
+
+    /// Sets the graph items on the project's layers, or `None` for none: the open graph
+    /// (see [`Self::set_graph`]) then renders over the whole timeline.
+    pub fn set_layers(&self, layers: Option<LayerSet>) {
+        if lock(&self.shared.state).layers == layers {
+            return;
+        }
+        self.edit(|state| state.layers = layers);
     }
 
     /// Skips the whole graph: the output shows and plays the track mix.
