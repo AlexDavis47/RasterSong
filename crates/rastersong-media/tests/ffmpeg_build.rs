@@ -32,6 +32,25 @@ fn loaded_ffmpeg_is_lgpl() {
 }
 
 #[test]
+fn the_license_link_names_the_loaded_lgpl_version() {
+    assert_eq!(
+        rastersong_media::lgpl_url("LGPL version 2.1 or later"),
+        "https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html"
+    );
+    assert_eq!(
+        rastersong_media::lgpl_url("LGPL version 3 or later"),
+        "https://www.gnu.org/licenses/lgpl-3.0.html"
+    );
+    let info = rastersong_media::backend_info();
+    let expected = if info.configuration.contains("--enable-version3") {
+        "https://www.gnu.org/licenses/lgpl-3.0.html"
+    } else {
+        "https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html"
+    };
+    assert_eq!(info.license_url(), expected, "{}", info.license());
+}
+
+#[test]
 fn loaded_libraries_match_bindings() {
     for lib in rastersong_media::backend_info().libraries {
         assert_eq!(

@@ -50,7 +50,7 @@ pub use rastersong_graph::{
 pub use rastersong_media::{
     AudioCache, AudioClip, AudioOptions, BackendInfo, FakeBackend, FakeVideo, FfmpegBackend,
     LibraryInfo, LosslessWriter, MediaBackend, MediaError, Rational, Samples, StreamInfo,
-    StreamKind, Version, VideoFrame, VideoInfo,
+    StreamKind, Version, VideoFrame, VideoInfo, lgpl_url,
 };
 pub use renderer::{
     DEFAULT_AUDIO_TRACK, OutputSize, RenderInfo, RenderTrack, Renderer, TrackMedia, VIDEO_SOURCE,

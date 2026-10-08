@@ -2707,7 +2707,10 @@ impl App {
                 ui.separator();
                 ui.label(tr("about.ffmpeg"));
                 ui.hyperlink_to("ffmpeg.org", "https://ffmpeg.org");
-                ui.hyperlink_to("GNU LGPL", "https://www.gnu.org/licenses/lgpl-3.0.html");
+                // The text of the version the loaded FFmpeg is under: the release build is LGPL 2.1
+                // or later, the development build LGPL 3.
+                let license = self.backend_info.as_ref().map_or("", BackendInfo::license);
+                ui.hyperlink_to("GNU LGPL", rastersong_engine::lgpl_url(license));
                 if let Some(info) = &self.backend_info {
                     ui.label(tr_args(
                         "about.ffmpeg_license",

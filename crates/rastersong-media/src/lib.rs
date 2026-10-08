@@ -16,7 +16,7 @@ pub use cache::AudioCache;
 pub use error::MediaError;
 pub use fake::{FakeBackend, FakeVideo};
 pub use ffmpeg::{
-    BackendInfo, FfmpegBackend, LibraryInfo, LosslessWriter, Version, backend_info, init,
+    BackendInfo, FfmpegBackend, LibraryInfo, LosslessWriter, Version, backend_info, init, lgpl_url,
 };
 pub use samples::Samples;
 pub use types::{
