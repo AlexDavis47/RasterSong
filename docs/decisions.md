@@ -14,7 +14,7 @@ registry stays in `nodes/mod.rs`. Each node also declares its own `SPEC`, which 
 ### Own node graph
 
 There is no library; the canvas (`editor/canvas.rs`) is already custom, so the issues are our own code. Keep it
-custom. Snapping, link colors, parameter modulation pins, tooltips and the Look/Listen tools all need that control.
+custom. Snapping, link colors, parameter modulation pins, tooltips and connection inspection all need that control.
 
 ### Categories stay as they are
 
@@ -42,28 +42,33 @@ Deferred on purpose:
 - Variable frame rate: the compiler assumes a constant frame rate; blocks keep their real timestamps, so VFR video
   works but its sound is resampled as if the rate were constant.
 - Export from the app: the engine and the CLI's `.mkv` mux handle the rendered sound, but there is no GUI export
-  yet. Source audio without an Audio Output is, for the CLI, its one audio file; a multi-track project needs a
-  decision on mixing or multiple streams.
+  yet. *(Resolved since: without an Audio Output the CLI writes the bus's track mix; see
+  [Track mix and output buses](#track-mix-and-output-buses-october-2026).)*
 
 ### Resampling is only applied when needed
 
 `graph.rs` creates a resample buffer only for secondary inputs that are unconnected or differ in length from the
-main input. Both gaps found are closed: `Modulator::fill_block` has a copy fast path at a ratio of exactly 1, and
-the decode-time `Resampler` is skipped when the file's rate already matches.
+main input. Both gaps found are closed: `Modulator::fill_block` copies directly when a block maps one-to-one onto
+whole source frames, and the decode-time `Resampler` is skipped when the decoded audio is already interleaved `f32`
+at the target rate and channel layout.
 
 ### Look/Listen replaces the Probe/Inspect tool (October 2026)
 
+*Superseded by [Inspection replaces the Look and Listen tools](#inspection-replaces-the-look-and-listen-tools-october-2026).*
+
 The earlier plan was a *probe tool*: a magnifying glass for audio that fades the master down and fades nearby links
-up, by distance from the cursor. It is **superseded** by the Look and Listen tools in the
-[roadmap](roadmap.md#look-and-listen-tools): hold a key and hover a connection to see (Look) or hear (Listen) that
-connection's output in a tooltip-style popup, with a toolbar to pick the default tool. The distance-based master
-fade mixer is dropped; Listen plays one tapped connection.
+up, by distance from the cursor. It was replaced by Look and Listen tools (hold a key and hover a connection to see
+or hear its output), which were in turn replaced by inspection on hover. The distance-based master fade mixer is
+dropped; listening plays one tapped connection.
 
 ### Modulation amounts become percentages of the parameter's span (October 2026)
 
+*Superseded in part by [Modulation is one rule](#modulation-is-one-rule-october-2026): the peak-to-peak and
+overshoot rules below no longer apply; the 25% one-way default for a new connection still does.*
+
 Hands-on testing showed that dialling in modulation with *minimum, maximum, base value and amount* all in the
 parameter's own units is unruly. The amount becomes a percentage of the parameter's min..max span, so the same
-number means the same swing on any parameter. The roadmap holds the details and the migration of existing graphs.
+number means the same swing on any parameter.
 
 Decided with it: *both ways*, the amount is the peak-to-peak swing, so 100% covers the span in either mode (an
 older "±2" becomes the percentage that gives the same ±2). *Octave* scaling was dropped (see below): every parameter, frequencies included, takes a percentage of its linear
@@ -71,8 +76,7 @@ span. A new connection starts at 25%, one way, whatever the parameter and its
 base value.
 
 Also decided: modulation keeps the value between the slider's ends by default (widened to include a base value
-typed beyond them), with a per-modulator toggle to allow overshoot up to the parameter's limits. Graphs from before
-the toggle load with it on, so nothing changes for them. The modulator menu takes the amount as a percentage or as
+typed beyond them), with a per-modulator toggle to allow overshoot up to the parameter's limits. The modulator menu takes the amount as a percentage or as
 a distance in the parameter's unit, kept in step.
 
 ### Modulation is one rule (October 2026)
@@ -82,18 +86,16 @@ a knob that could leave its range). Now: the percentage is the only stored amoun
 slider's range (the user's, else the usual one). A full-scale signal moves the value that far from where it is,
 either way for both ways. The value never leaves the slider's range (widen it for more room), so the overshoot
 toggle is gone. The knob, the percentage box and the distance box are views of the one number, all from −100% to
-100%. This supersedes the peak-to-peak and overshoot decisions above; format 9 migrates old graphs.
+100%. This supersedes the peak-to-peak and overshoot decisions above.
 
 ### Logarithmic and exponential sliders are removed (October 2026)
 
 They confuse users. Sliders are linear. Parameters that are naturally multiplicative (frequencies) get that
 behavior from their units, not from a warped slider. To keep linear sliders usable, the usual ranges of the frequency
-parameters were narrowed (Cutoff to 0.01–200, Phaser frequency to 20–5000 Hz, Equalizer corners to 0.01–500); 
+parameters were narrowed (Cutoff to 0.01–200, Phaser frequency to 20–5000 Hz, Equalizer corners to 0.01–500).
 
 Octave modulation is dropped too (also October 2026): with a linear slider, a percentage of a 14-octave span made the
-last few percent of the knob cover the whole slider. Frequencies modulate linearly. Graph format 6 converts saved
-octave amounts to the linear amount that moves the value as far at its base value (exact there, approximate
-elsewhere), so old graphs sound and look close to, but not identical with, what they did.
+last few percent of the knob cover the whole slider. Frequencies modulate linearly.
 
 ### Integer parameters are a real type (October 2026)
 
@@ -105,12 +107,11 @@ its spec, and the slider and value box always snap to whole values. A float is n
 Time and frequency are the same domain, and both are "samples per unit" converted by multiplying or dividing. They
 become one `Unit` enum (pixel, sample, row, frame, ms, second, beat, bar) with one label set. A time parameter
 multiplies by the unit's sample count; a frequency parameter divides, and its label says "cycles per". The old
-`Hertz` option is `second` read as a frequency. Old graphs are migrated.
+`Hertz` option is `second` read as a frequency.
 
 Done (October 2026), with the pixel and sample units from the next decision. Names are singular and lowercase
 (`pixel, sample, row, frame, ms, second, beat, bar`); a frequency parameter's dropdown is labelled **Cycles per**
-instead of **Unit**. Old graphs are upgraded by `migrate.rs` (`rows`/`Row` → `row`, `Hertz`/`seconds` → `second`, and
-so on, on every node with a `unit` parameter).
+instead of **Unit**.
 
 ### The "users never see samples" principle is dropped (October 2026)
 
@@ -123,8 +124,7 @@ because samples are forbidden.
 A small optional `mix` on a node is fine. Blend modes exist as the Blend node and are not a reason to strip `mix`.
 What changes is that `mix` is one shared parameter definition (`ParamSpec::mix()`) and one dry/wet helper
 (`dsp::mix`), and a node omits it only where it is meaningless. Every `mix` starts at 1 (fully processed): no
-per-node presets. Graphs from before version 10 keep the lower defaults Reverb (0.3), Phaser, Flanger and Chorus (0.5)
-used to have, written out on load. Wording specific to a node lives in its description, not in the `mix` help.
+per-node presets. Wording specific to a node lives in its description, not in the `mix` help.
 
 ### Modulation toggle off by default for constants (October 2026)
 
@@ -153,12 +153,16 @@ setting sets the default; the keybind does the opposite for one action. See the
 ### Timeline, resources and graph layers (October 2026)
 
 The one-video timeline, single graph and plain JSON project become a multi-track editor with several graphs. The
-plan is in the [roadmap](roadmap.md#timeline-resources-and-graph-layers); the reasons for its main choices:
+plan is in the [roadmap](roadmap.md#timeline-resources-and-routing); the reasons for its main choices are below.
+The graph-layer choices (*stacked graph layers*, *layer below*, track links) are superseded by
+[Timeline routing: folders and graphs as FX](#timeline-routing-folders-and-graphs-as-fx-october-2026).
 
 - **Explicit over hidden.** Every signal enters a graph through a port that something visibly filled; no
   fallbacks, no situational overrides. The old Audio Output rules (replace the source audio, except when nothing is
   connected, bypassed or a track is wired straight in) were hard to predict, and hidden fallbacks make failures hard
   to diagnose. Implicit behaviour needs a clear reason (Video Output's stretch) and is documented where it happens.
+  The code still has one interim exception: with no graph items, the open graph renders over the whole timeline
+  (see [Graph layers](#graph-layers-october-2026)); it is removed in roadmap stage 2a.
 - **The project has its own timebase**, like a Premiere sequence. With several videos, images and raw files, no
   source can be the clock.
 - **One resource per track.** A graph is compiled for a fixed layout per source; one resource per track keeps a
@@ -167,14 +171,14 @@ plan is in the [roadmap](roadmap.md#timeline-resources-and-graph-layers); the re
 - **The parent fills a graph's ports, with no fallback to a track.** As a subgraph the parent graph wires them; on
   a layer the item binds them. One rule for both, graphs become reusable tools, and a fallback binding was rejected
   as a second, hidden way in.
-- **Stacked graph layers rather than one graph lane.** A single lane forced every graph to rewire everything it
+- **Stacked graph layers rather than one graph lane** *(superseded: graphs become FX on tracks and folders)*. A single lane forced every graph to rewire everything it
   didn't change (all the audio, for a video effect). Layers stack like adjustment layers, with the track mix at the
   bottom, and new graphs start as a visible passthrough, so a graph only touches what it changes. Layers pass only
   master outputs; control signals are shared through subgraphs. The two systems work together: layers stack
   finished results, subgraphs share signals.
 - **Pre-roll by default, per item.** A graph item warms up as if it had been running before its left edge, as
   after a seek, so trimming the edge never changes what follows. Starting cold stays available.
-- **The project file is a zip** with embedded files stored uncompressed. Plain JSON can't hold multi-gigabyte media;
+- **The project file will be a zip** (planned; it is still plain JSON) with embedded files stored uncompressed. Plain JSON can't hold multi-gigabyte media;
   a project folder would not be one file. Embedding is an explicit action because saving rewrites the zip.
 - **Audio is decoded to cache files and memory-mapped**, not held in memory. In memory, 48 kHz stereo takes about
   23 MB a minute and each track was held about three times, so twenty 5-minute stems would take around 7 GB.
@@ -193,6 +197,9 @@ plan is in the [roadmap](roadmap.md#timeline-resources-and-graph-layers); the re
 
 ### Video and audio tracks are separate lists (October 2026)
 
+*Superseded by [Timeline routing: folders and graphs as FX](#timeline-routing-folders-and-graphs-as-fx-october-2026),
+which replaces the two lists with one track tree; the code still has two lists until roadmap stage 2b.*
+
 Built as the first stage of the timeline model. The project keeps video tracks and audio tracks in two lists, as
 Premiere does, rather than one mixed stack: the track mix needs an order among video tracks (the top one with an
 item wins) but audio tracks are summed, so an order between a video and an audio track would mean nothing. Images
@@ -207,8 +214,9 @@ Also decided with it:
   second. An item without an out point plays to the end of the file.
 - **The project lasts to the end of its last item**, audio included. An audio track longer than the video now
   lengthens the project; the extra frames show the gap's zeros.
-- **No timebase until one is set**: a project takes its first video track's, or 1920×1080 at 30 fps, so opening a
-  video still sets up the project the way it did.
+- **No timebase until one is set**: a project takes the timebase of its first video track that has a resource, or
+  1920×1080 at 30 fps, so opening a video still sets up the project the way it did.
+
 ### Audio item fades and the audio cache (October 2026)
 
 Built as the second step of the timeline model.
@@ -236,7 +244,7 @@ Built as the third step of the timeline model.
 - **Mono fills every channel; other signals map channel for channel.** A stereo track on a 5.1 bus plays in its
   first two channels; a mono Audio Output on a stereo bus plays in both. The preview plays a bus's first two
   channels.
-- **Until graph items exist, bypassing the whole graph is the "no graph" case**: it shows the track mix's picture
+- **Bypassing the whole graph (graph layers included) is the "no graph" case**: it shows the track mix's picture
   (the top video track with an item) and plays the master's track mix.
 
 ### Tracks of items (October 2026)
@@ -248,19 +256,21 @@ Built as the timeline's fourth step, before item editing.
 - **Solo is a flag, not a set of mutes.** A soloed track leaves the other tracks *of its kind* out of the track mix
   until it is un-soloed; mutes are untouched, so un-soloing needs no memory of them. This replaces Alt+click on
   mute. Video solo and mute pick which track the track mix's picture shows; graphs read every track either way.
-- **Linked tracks move the items that overlap the dragged one.** Items carry no link of their own, so which items
+- **Linked tracks move the items that overlap the dragged one** *(superseded: links move from tracks to item
+  groups, see [Timeline routing](#timeline-routing-folders-and-graphs-as-fx-october-2026))*. Items carry no link of their own, so which items
   belong together is read from time: a cut on one track and the matching cut on a linked track overlap. A move that
   would push any of them before the start of the timeline stops where the first reaches it. Splitting together
   comes with item editing.
 - **Track height and links are saved with the project** (`height`, `link` on the track), like mute and solo.
-- File → Open Video replaces the video track; the Resources panel adds more video tracks, which is how tracks
+- File → Open Video replaces the video tracks; the Resources panel adds more video tracks, which is how tracks
   get their files.
 
 ### Item editing (October 2026)
 
 Built as the timeline's fifth step.
 
-- **Linked tracks act together on every edit.** Move, split, delete, copy and paste take the items of linked tracks
+- **Linked tracks act together on every edit** *(to become item groups, see
+  [Timeline routing](#timeline-routing-folders-and-graphs-as-fx-october-2026))*. Move, split, delete, copy and paste take the items of linked tracks
   that overlap the ones edited, read from time as for moves. A trim takes only the linked edges at the same time
   (within a millisecond), so trimming a cut that lines up on both tracks keeps it lined up, and an item that only
   partly overlaps isn't cut short.
@@ -278,7 +288,7 @@ Built as the timeline's fifth step.
 
 ### Resources panel (October 2026)
 
-Built as the first step of stage 2 of [Timeline, resources and graph layers](roadmap.md#timeline-resources-and-graph-layers).
+Built as the first step of stage 2 of [Timeline, resources and routing](roadmap.md#timeline-resources-and-routing).
 
 - **Tracks point at resources, not files.** A resource is one stream of a linked file (`id`, `name`, `kind`,
   `path`, `stream`), and a track names its resource by id. The engine still receives a path and a stream per
@@ -320,7 +330,9 @@ Built as the second step of stage 2.
 
 ### Graph layers (October 2026)
 
-Built as the third step of stage 2 ([Graph layers](engine.md#graph-layers)).
+Built as the third step of stage 2 ([Graph layers](engine.md#graph-layers)). *Superseded by
+[Timeline routing: folders and graphs as FX](#timeline-routing-folders-and-graphs-as-fx-october-2026); this is how
+the code works until roadmap stage 2b replaces it.*
 
 - **Items on a layer never overlap, and the model enforces it.** Placing or moving an item trims, cuts or removes
   what it lands on (`Project::place_graph`), and loading a file repairs overlaps the same way, so the renderer can
@@ -330,11 +342,14 @@ Built as the third step of stage 2 ([Graph layers](engine.md#graph-layers)).
   left edge moves `start`, which is what keeps what follows unchanged.
 - **Bindings are keyed by input node id and rewrite the node's source at compile time.** Until the Input and Output
   port nodes exist, the Video Input and Audio Input nodes are the ports: an item binds each to *Layer below* (the
-  reserved source `@layer_below`), a track (its name) or nothing (`@none`, zeros). No fallback applies to an unbound
+  reserved sources `@layer_below` and `@layer_below_audio`), a track (its name) or nothing (`@none` and
+  `@none_audio`, zeros). The bottom layer's video *Layer below* is `@track_mix`. No fallback applies to an unbound
   input.
 - **With no graph items the open graph still renders over the whole timeline.** Once a layer holds an item the
   project renders only what the layers say, and a frame with no item is transparent. This keeps a fresh project
   working the way it did before layers, and makes the first placed item the explicit switch to layered rendering.
+  *(Reversed: it is an implicit graph, which the explicit-over-hidden rule rejects; see
+  [Timeline routing](#timeline-routing-folders-and-graphs-as-fx-october-2026).)*
 - **Each item has its own compiled graph and state; layers form a pipeline.** A layer's latency is the largest of its
   graphs and shorter ones are delayed to match, so output frame N always comes from source frame N plus the stack's
   total latency. Pre-roll runs the graph for its warm-up before the item's left edge.
@@ -347,35 +362,12 @@ Built as the third step of stage 2 ([Graph layers](engine.md#graph-layers)).
   shift every track row for projects that use no layers; instead a hint appears while a graph is dragged over
   anything but a layer.
 
-## Open
-
-
-### Open: "Audio to video" / "Video to audio" names
-
-They are confusing. The names should describe the effect, which is the range change, with the ranges stated in the
-node description. Candidates: "Brightness to Wave" / "Wave to Brightness". Not decided.
-
-### Open: Interleave and Pack semantics
-
-What `interleave` and `pack` should mean (currently a relabel between RGB and a 3×-wide mono carrier). The notes
-also ask for Pack's channel count to be a true integer.
-
-### Open: value ranges and mono-only modulators
-
-Value ranges (video `0..1`, audio `-1..1`) and mono-only modulators are still to be settled by using the app.
-
-## Open Questions
-
-- **License review:** the custom LICENSE is a first draft. Have it reviewed, or switch to an established source-available license (e.g. PolyForm Strict), before any paid release.
-- **Snapshots:** memory budget and spacing for state snapshots.
-- **Hardware encoder fallback:** what to offer for H.264 export on machines with no usable OS/hardware encoder.
-
 ### One Filter node; Low Pass removed (October 2026)
 
 Filter has a slope (6, 12, 24 or 48 dB/oct) for low and high pass, built from Butterworth stages so it is flat by
 default. Resonance is the filter's own Q: 0.707 is flat (the non-resonant setting) and higher peaks the cutoff, at
 every slope except 6 dB, a single pole, which cannot resonate. Low Pass was exactly that one pole, so it is the
-Filter at 6 dB/oct and old graphs are migrated. There is no separate "non-resonant" mode or node.
+Filter at 6 dB/oct. There is no separate "non-resonant" mode or node.
 
 ### No migrations before 1.0 (October 2026)
 
@@ -404,3 +396,66 @@ spectrum, readings only; any signal in any view), and listening is a second held
 so a connection can be watched and heard at once. The update rate while the playhead moves is a project setting,
 since how fast a project can afford to render is a property of the project. The views are shared widgets that take
 plain data. See [Inspecting connections](roadmap.md#inspecting-connections).
+
+### Timeline routing: folders and graphs as FX (October 2026)
+
+Hands-on use of graph layers showed two problems. *Layer below* was hard to reason about, because a stack of graph
+lanes sat apart from the tracks it read. It was also wrong for audio: the engine never mixed the audio tracks (the
+app and the CLI summed them only after rendering), so a bottom layer's audio input read zeros. Two models were
+weighed:
+
+- **Premiere-style:** three fixed groups (Video feeding a video bus, Audio feeding an audio bus, Control feeding
+  neither) with graph lanes above that read a bus or a track. This is the smaller change and readable for video
+  editors. But the topology is fixed: processing one track needs a per-track binding, which brings most of today's
+  binding complexity back. Lanes and tracks stay two worlds with their own timing, and stems or extra buses don't
+  fit three fixed groups.
+- **Reaper-style:** one track tree in which folders are buses and graphs are FX. This is the larger rewrite, and
+  routing in this style can overwhelm newcomers.
+
+**Chosen: Reaper-style routing, with the Premiere layout as the default template.**
+
+- **One track tree.** Any track holds items of any kind. A folder track composites its children's video top-down
+  and sums their audio, inside the renderer, then sends the result to its parent. Each track has a master send.
+  One mechanism covers groups, buses and stems, and folders collapse like Reaper's.
+- **New projects start with three folders:** *Video*, *Audio* and *Control*. Control has its master send off, so
+  text files, executables, automation clips and the like can drive graphs without reaching the output. A Premiere
+  user sees the familiar groups; a Reaper user can restructure them freely.
+- **Graphs are FX.** A graph sits in an FX chain on a track, a folder or the master, and its main input is the
+  signal of the track it is on, so *Layer below* disappears. Extra input ports are filled by **receives** from other
+  tracks, shown in the track's routing; this keeps "the parent fills the ports" without a binding per input. Graphs
+  that change over time are **item FX** (Reaper's take FX). They keep today's graph items' span, trim and pre-roll.
+- **An FX graph without an Audio Output (or Video Output) passes that stream through unchanged**, and the chain
+  shows a tag such as "audio: through". This is the DAW convention: an effect leaves alone the channels it doesn't
+  touch. It is not a hidden fallback, because the tag makes it visible; silence with a note would make every video
+  effect mute its track.
+- **Nothing placed means nothing applied.** With no FX anywhere, the output is the plain mix. The interim rule that
+  rendered the open graph over the whole timeline is dropped.
+- **Items are grouped, not tracks linked.** Select items, then right-click → *Group* (Ctrl+G). Grouped items move,
+  trim, split and delete together. A multi-stream import groups its items. Tracks can't be linked.
+- **Automation lanes.** An automation node in a graph shows as an envelope lane under the track hosting that graph,
+  edited as the automation-curve design already describes; automation clips stay available as items.
+- **Order:** the bugs that don't depend on the model (track height reset, drag feedback, drop preview, the implicit
+  graph, video track reorder) are fixed first, then the model is rebuilt. No migration is needed (version 0).
+
+See [Timeline, resources and routing](roadmap.md#timeline-resources-and-routing).
+
+## Open
+
+### Open: "Audio to video" / "Video to audio" names
+
+They are confusing. The names should describe the effect, which is the range change, with the ranges stated in the
+node description. Candidates: "Brightness to Wave" / "Wave to Brightness". Not decided.
+
+### Open: Interleave and Pack semantics
+
+What `interleave` and `pack` should mean (currently a relabel between RGB and a 3×-wide mono carrier).
+
+### Open: value ranges and mono-only modulators
+
+Value ranges (video `0..1`, audio `-1..1`) and mono-only modulators are still to be settled by using the app.
+
+## Open Questions
+
+- **License review:** the custom LICENSE is a first draft. Have it reviewed, or switch to an established source-available license (e.g. PolyForm Strict), before any paid release.
+- **Snapshots:** memory budget and spacing for state snapshots.
+- **Hardware encoder fallback:** what to offer for H.264 export on machines with no usable OS/hardware encoder.
