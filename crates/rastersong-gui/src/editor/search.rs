@@ -7,7 +7,7 @@ use rastersong_engine::NodeType;
 use rastersong_lang::{tr, tr_args};
 
 use super::canvas::{Geometry, Pin};
-use super::linked;
+use super::ports;
 use super::{GraphEditor, NodeKey};
 use crate::theme::Theme;
 
@@ -247,7 +247,7 @@ impl GraphEditor {
                     let bypassable = selection
                         .iter()
                         .filter_map(|&k| self.node(k))
-                        .filter(|n| n.kind != linked::OUTPUT)
+                        .filter(|n| n.kind != ports::OUTPUT)
                         .collect::<Vec<_>>();
                     if !bypassable.is_empty() {
                         let mut bypassed = bypassable.iter().all(|n| n.bypass);
@@ -302,10 +302,10 @@ mod tests {
         // "split" matches Split Channels by prefix and Three-Band Split by substring.
         assert_eq!(labels("split")[..2], ["Split Channels", "Three-Band Split"]);
         assert!(labels("zzz").is_empty());
-        // Everything but the project's inputs and output.
+        // Everything but the output, which every graph has one of; input ports are offered.
         let all = labels("");
-        assert_eq!(all.len(), types.len() - 3);
-        assert!(!all.contains(&"Output") && !all.contains(&"Video"));
+        assert_eq!(all.len(), types.len() - 1);
+        assert!(!all.contains(&"Output") && all.contains(&"Video In"));
     }
 
     #[test]

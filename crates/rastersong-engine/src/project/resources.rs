@@ -177,10 +177,28 @@ impl Project {
         name
     }
 
+    /// Whether [`Self::place_resource`] would put resource `id` on track `track`: an empty track
+    /// of its kind, or a track already playing it.
+    pub fn can_place_resource(&self, track: &str, id: ResourceId) -> bool {
+        let Some(kind) = self.resource(id).map(|r| r.kind.track_kind()) else {
+            return false;
+        };
+        let list = match kind {
+            TrackKind::Video => &self.video_tracks,
+            TrackKind::Audio => &self.audio_tracks,
+        };
+        list.iter()
+            .find(|t| t.name == track)
+            .is_some_and(|t| t.resource.is_none_or(|r| r == id))
+    }
+
     /// Puts the whole resource `id` on track `track` from `position` seconds. An empty track
     /// takes the resource; a track holds items of one resource only, so any other resource, or
     /// one of the wrong kind, is refused (false).
     pub fn place_resource(&mut self, track: &str, id: ResourceId, position: f64) -> bool {
+        if !self.can_place_resource(track, id) {
+            return false;
+        }
         let Some(kind) = self.resource(id).map(|r| r.kind.track_kind()) else {
             return false;
         };
@@ -191,9 +209,6 @@ impl Project {
         let Some(track) = list.iter_mut().find(|t| t.name == track) else {
             return false;
         };
-        if track.resource.is_some_and(|r| r != id) {
-            return false;
-        }
         track.resource = Some(id);
         let mut item = Item::whole(0.0);
         item.position = position.max(0.0);

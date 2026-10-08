@@ -326,7 +326,8 @@ Built as the second step of stage 2.
   plain entry in one list.
 - **Input and Output port nodes wait for graph layers.** A port is filled by a layer item's bindings or a
   subgraph's pins; with neither, a port node would be today's Video Input and Audio Input under another name, and
-  the project-linked node machinery would have to be rewritten twice.
+  the project-linked node machinery would have to be rewritten twice. *(Done in stage 2b: see
+  [Input ports](#input-ports-october-2026).)*
 
 ### Graph layers (October 2026)
 
@@ -340,7 +341,8 @@ the code works until roadmap stage 2b replaces it.*
 - **Graph items are not track items.** They have no resource, no rate and no stretch, so they get their own small
   type (`GraphItem`: position, length, `start` into the graph's own time, mute, pre-roll, bindings). Trimming the
   left edge moves `start`, which is what keeps what follows unchanged.
-- **Bindings are keyed by input node id and rewrite the node's source at compile time.** Until the Input and Output
+- **Bindings are keyed by input node id and rewrite the node's source at compile time** *(now by port name, see
+  [Input ports](#input-ports-october-2026))*. Until the Input and Output
   port nodes exist, the Video Input and Audio Input nodes are the ports: an item binds each to *Layer below* (the
   reserved sources `@layer_below` and `@layer_below_audio`), a track (its name) or nothing (`@none` and
   `@none_audio`, zeros). The bottom layer's video *Layer below* is `@track_mix`. No fallback applies to an unbound
@@ -438,6 +440,23 @@ weighed:
   graph, video track reorder) are fixed first, then the model is rebuilt. No migration is needed (version 0).
 
 See [Timeline, resources and routing](roadmap.md#timeline-resources-and-routing).
+
+### Input ports (October 2026)
+
+The first step of roadmap stage 2b. Video Input and Audio Input stop naming tracks and become the graph's input
+ports.
+
+- **The same two node types, with a `port` setting instead of `source`.** A port's kind (picture or sound) decides
+  its signal's layout, so the kind stays in the node type rather than becoming a setting. `Video` and `Audio` are
+  the main ports, which a host track fills once graphs are FX; any other name is a port filled by a receive.
+- **Ports are filled by name, not by node.** Two nodes reading one port read the same signal, so a graph can tap
+  its input in several places without wiring one node across the canvas. A video port and an audio port with the
+  same name read the picture and the sound of whatever fills that name. Graph item bindings are keyed by port name.
+- **The project no longer manages any node.** The linked nodes (one Video node for the video, one Audio node per
+  audio track, renamed and removed with their tracks) are gone: they tied a reusable graph to one project's track
+  names. Ports are added, renamed and deleted like any node; only the Output is kept, because every graph has
+  exactly one.
+- **Renaming a track renames what reads it**, which is now bindings (receives, once they exist), not graph nodes.
 
 ## Open
 

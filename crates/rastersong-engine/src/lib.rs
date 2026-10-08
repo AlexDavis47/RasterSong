@@ -31,13 +31,13 @@ pub use project::{
     GraphLayer, INSPECT_RATE_RANGE, InputKind, InputPort, ItemRef, LayerSet, LoopRegion,
     MAX_WARMUP_FRAMES_LIMIT, MIN_ITEM_LENGTH, PASSTHROUGH_GRAPH, PROJECT_EXTENSION,
     PROJECT_VERSION, Project, ProjectTrack, RATE_RANGE, RenderItem, Resource, ResourceId,
-    ResourceKind, StoredGraph, TimelineMode, input_ports, resource_name_for, snap_offset,
+    ResourceKind, StoredGraph, TimelineMode, input_ports, port_of, resource_name_for, snap_offset,
 };
 pub use rastersong_graph::dsp::Fft;
 pub use rastersong_graph::nodes::support::UNBOUNDED_WARMUP;
 pub use rastersong_graph::nodes::{
     AUDIO_INPUT, AUDIO_OUTPUT, BUS_PARAM, CHANNEL_PORTS, COMBINE, DEFAULT_BUS, LAYER_BELOW_SOURCE,
-    MAX_CHANNELS, NO_SOURCE, OUTPUT, SOURCE_PARAM, SPLIT, VIDEO_INPUT,
+    MAX_CHANNELS, NO_SOURCE, OUTPUT, PORT_PARAM, SPLIT, VIDEO_INPUT,
 };
 pub use rastersong_graph::{
     Category, ChannelMap, Channels, CompileOptions, Connection, Diagnostic, FORMAT_VERSION,
@@ -50,7 +50,7 @@ pub use rastersong_graph::{
 pub use rastersong_media::{
     AudioCache, AudioClip, AudioOptions, BackendInfo, FakeBackend, FakeVideo, FfmpegBackend,
     LibraryInfo, LosslessWriter, MediaBackend, MediaError, Rational, Samples, StreamInfo,
-    StreamKind, Version, VideoFrame, VideoInfo,
+    StreamKind, Version, VideoFrame, VideoInfo, lgpl_url,
 };
 pub use renderer::{
     DEFAULT_AUDIO_TRACK, OutputSize, RenderInfo, RenderTrack, Renderer, TrackMedia, VIDEO_SOURCE,

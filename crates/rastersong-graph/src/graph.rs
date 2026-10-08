@@ -9,8 +9,8 @@ use crate::desc::{
 };
 use crate::dsp::{DelayLine, resample};
 use crate::nodes::{
-    AUDIO_INPUT, AUDIO_OUTPUT, BUS_PARAM, DEFAULT_BUS, MAX_METERS, Meter, OUTPUT, Registry,
-    SOURCE_PARAM, TRACK_MIX_SOURCE, VIDEO_INPUT,
+    AUDIO_INPUT, AUDIO_OUTPUT, BUS_PARAM, DEFAULT_BUS, MAX_METERS, Meter, OUTPUT, PORT_PARAM,
+    Registry, TRACK_MIX_SOURCE, VIDEO_INPUT,
 };
 
 use crate::{
@@ -1444,7 +1444,7 @@ fn passthrough(desc: &GraphDesc) -> GraphDesc {
     let output = desc.nodes.iter().find(|n| n.kind == OUTPUT);
     let mut video = NodeDesc::new(TRACK_MIX_SOURCE.to_owned(), VIDEO_INPUT);
     video.params.insert(
-        SOURCE_PARAM.to_owned(),
+        PORT_PARAM.to_owned(),
         ParamValue::Text(TRACK_MIX_SOURCE.to_owned()),
     );
     let connections = match output {

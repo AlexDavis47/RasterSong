@@ -148,8 +148,12 @@ mod tests {
     fn run(settings: &RenderSettings, sink: &mut Recorder) -> Result<RenderInfo, EngineError> {
         let graph = GraphDesc::from_json(PASSTHROUGH).unwrap();
         let tracks = [
-            RenderTrack::video("video", "clip"),
-            RenderTrack::audio("audio", Arc::new(Modulator::new(&silence())), 0.0),
+            RenderTrack::video(crate::VIDEO_SOURCE, "clip"),
+            RenderTrack::audio(
+                crate::DEFAULT_AUDIO_TRACK,
+                Arc::new(Modulator::new(&silence())),
+                0.0,
+            ),
         ];
         render(&backend(), &tracks, &graph, settings, sink)
     }

@@ -19,7 +19,7 @@ fn engine() -> Engine {
 
 /// The video, and an audio track of the song for each name, starting at the given time.
 fn set_tracks(engine: &Engine, audio: &[(&str, f64)]) {
-    let video = TrackSpec::new("video", TrackKind::Video, PathBuf::from(VIDEO));
+    let video = TrackSpec::new("Video", TrackKind::Video, PathBuf::from(VIDEO));
     let tracks = audio.iter().map(|&(name, position)| TrackSpec {
         items: vec![Item::whole(position)],
         ..TrackSpec::new(name, TrackKind::Audio, PathBuf::from(AUDIO))
@@ -31,7 +31,7 @@ fn set_tracks(engine: &Engine, audio: &[(&str, f64)]) {
 }
 
 fn load(engine: &Engine, graph: &str) {
-    set_tracks(engine, &[("audio", 0.0)]);
+    set_tracks(engine, &[("Audio", 0.0)]);
     engine.set_graph(GraphDesc::from_json(graph).unwrap());
 }
 
@@ -220,7 +220,7 @@ fn audio_offset_changes_the_render_and_back() {
     assert!((engine.loaded_tracks()[0].clip.duration_secs() - 2.0).abs() < 1e-9);
     let original = engine.frame(30).unwrap();
 
-    set_tracks(&engine, &[("audio", 0.5)]);
+    set_tracks(&engine, &[("Audio", 0.5)]);
     // The project runs to the end of the last item: the song now ends half a second later.
     wait_until("re-render", || engine.buffered_from(0) == FRAMES + 15);
     assert_eq!(engine.info().unwrap().frames, FRAMES + 15);
@@ -230,7 +230,7 @@ fn audio_offset_changes_the_render_and_back() {
         "the offset moves the modulation"
     );
 
-    set_tracks(&engine, &[("audio", 0.0)]);
+    set_tracks(&engine, &[("Audio", 0.0)]);
     wait_until("re-render", || engine.buffered_from(0) == FRAMES);
     assert_eq!(
         engine.frame(30).unwrap().rgb,
@@ -243,7 +243,7 @@ fn audio_offset_changes_the_render_and_back() {
 const DRUMS: &str = r#"{ "version": 0,
   "nodes": [
     { "id": "video", "type": "video_input" },
-    { "id": "drums", "type": "audio_input", "params": { "source": "drums" } },
+    { "id": "drums", "type": "audio_input", "params": { "port": "drums" } },
     { "id": "am", "type": "am", "params": { "depth": 2 } },
     { "id": "out", "type": "output" }
   ],
@@ -257,14 +257,14 @@ fn audio_inputs_read_their_own_track_and_missing_tracks_are_silent() {
     set_tracks(&engine, &[]);
     engine.set_graph(GraphDesc::from_json(DRUMS).unwrap());
     // Only an `audio` track: `drums` reads silence, so AM leaves the video unchanged.
-    set_tracks(&engine, &[("audio", 0.0)]);
+    set_tracks(&engine, &[("Audio", 0.0)]);
     wait_until("silent render", || engine.buffered_from(0) == FRAMES);
     assert_eq!(engine.status(), EngineStatus::Ready);
     let silent = engine.frame(20).unwrap();
     let plain = sequential(FINITE_PASSTHROUGH, OutputSize::Native);
     assert_eq!(silent.rgb, plain[20]);
 
-    set_tracks(&engine, &[("audio", 0.0), ("drums", 0.0)]);
+    set_tracks(&engine, &[("Audio", 0.0), ("drums", 0.0)]);
     wait_until("drums render", || engine.buffered_from(0) == FRAMES);
     assert_ne!(
         engine.frame(20).unwrap().rgb,

@@ -118,6 +118,9 @@ pub struct Failure {
     pub node: Option<String>,
     /// The message without the "node `id`:" lead-in, for showing under the node's name.
     pub detail: String,
+    /// The placed graph at fault, by id, when a graph item's graph failed; `None` when the graph
+    /// given to [`Engine::set_graph`] did. `node` is a node of this graph.
+    pub graph: Option<u32>,
 }
 
 impl Failure {
@@ -127,6 +130,7 @@ impl Failure {
             detail: message.clone(),
             message,
             node: None,
+            graph: None,
         }
     }
 
@@ -134,11 +138,17 @@ impl Failure {
         Self {
             message: error.to_string(),
             detail: match error {
-                EngineError::Graph(e) => e.detail(),
+                EngineError::Graph(e) | EngineError::Layer { error: e, .. } => e.detail(),
                 other => other.to_string(),
             },
             node: match error {
-                EngineError::Graph(e) => e.node().map(str::to_owned),
+                EngineError::Graph(e) | EngineError::Layer { error: e, .. } => {
+                    e.node().map(str::to_owned)
+                }
+                _ => None,
+            },
+            graph: match error {
+                EngineError::Layer { graph, .. } => Some(*graph),
                 _ => None,
             },
         }

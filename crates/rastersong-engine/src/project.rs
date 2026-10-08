@@ -7,7 +7,6 @@ use rastersong_graph::{GraphDesc, ParamValue, Tempo, audio_output_bus};
 use rastersong_lang::tr_args;
 use serde::{Deserialize, Serialize};
 
-use crate::DEFAULT_AUDIO_TRACK;
 use crate::timeline::{Bus, Item, Timebase, Timeline, TrackKind, TrackSpec};
 
 mod editing;
@@ -19,6 +18,7 @@ pub use editing::{Edge, ItemRef, MIN_ITEM_LENGTH, RATE_RANGE, snap_offset};
 pub use graphs::{GraphEntry, PASSTHROUGH_GRAPH, StoredGraph};
 pub use layers::{
     Binding, GraphItem, GraphLayer, InputKind, InputPort, LayerSet, RenderItem, input_ports,
+    port_of,
 };
 pub use resources::{Resource, ResourceId, ResourceKind, resource_name_for};
 
@@ -488,6 +488,33 @@ impl Project {
         }
     }
 
+    /// Renames track `old` to `new`, and what refers to it by name (graph item bindings). Refused
+    /// (false, nothing changed) when there is no such track, or `new` is empty or another
+    /// track's. Renaming a track to its own name succeeds.
+    pub fn rename_track(&mut self, old: &str, new: &str) -> bool {
+        let new = new.trim();
+        if !self.has_track(old) || new.is_empty() {
+            return false;
+        }
+        if new == old {
+            return true;
+        }
+        if self.has_track(new) {
+            return false;
+        }
+        for track in self.tracks_mut().filter(|t| t.name == old) {
+            track.name = new.to_owned();
+        }
+        for item in self.layers.iter_mut().flat_map(|l| &mut l.items) {
+            for binding in item.bindings.values_mut() {
+                if *binding == Binding::Track(old.to_owned()) {
+                    *binding = Binding::Track(new.to_owned());
+                }
+            }
+        }
+        true
+    }
+
     /// The track, of either kind, called `name`.
     pub fn track(&self, name: &str) -> Option<&ProjectTrack> {
         self.tracks().find(|t| t.name == name)
@@ -519,11 +546,6 @@ impl Project {
             })
             .find(|name| !self.has_track(name))
             .unwrap()
-    }
-
-    /// A name no track has yet: `audio`, then `audio_2`, `audio_3`, …
-    pub fn unused_track_name(&self) -> String {
-        self.unique_name(DEFAULT_AUDIO_TRACK)
     }
 
     /// The video: the first video track that has a resource.
@@ -845,6 +867,29 @@ mod tests {
     }
 
     #[test]
+    fn renaming_a_track_follows_through_to_bindings() {
+        let mut project = three_tracks();
+        let layer = project.add_layer("FX");
+        let graph = project.graph_id;
+        let item = project.place_graph(layer, graph, 0.0, 1.0).unwrap();
+        project.set_graph_binding(layer, item, "Kick", Some(Binding::Track("a".into())));
+        // Taken, empty and unknown names are refused; its own name is fine.
+        assert!(!project.rename_track("a", "b"));
+        assert!(!project.rename_track("a", "  "));
+        assert!(!project.rename_track("nope", "c"));
+        assert!(project.rename_track("a", "a"));
+        assert!(project.rename_track("a", " kick "));
+        assert!(project.has_track("kick") && !project.has_track("a"));
+        assert_eq!(
+            project.layers[layer].items[item].bindings["Kick"],
+            Binding::Track("kick".into())
+        );
+        // Video tracks are renamed the same way.
+        assert!(project.rename_track("v", "clip"));
+        assert_eq!(project.video_tracks[0].name, "clip");
+    }
+
+    #[test]
     fn offsets_move_the_first_item_and_never_before_the_start() {
         let mut track = ProjectTrack::new("a".into(), ResourceId(1));
         assert_eq!(track.offset(), 0.0);
@@ -1053,14 +1098,6 @@ mod tests {
         std::fs::write(&path, serde_json::to_string(&project).unwrap()).unwrap();
         assert!(Project::load(&path).unwrap_err().contains("version"));
         std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn names_new_tracks_uniquely() {
-        let mut project = Project::new(graph());
-        assert_eq!(project.unused_track_name(), "audio");
-        project.add_track(TrackKind::Audio, "audio", "a.wav");
-        assert_eq!(project.unused_track_name(), "audio_2");
     }
 }
 

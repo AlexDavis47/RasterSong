@@ -148,25 +148,26 @@ pub struct CardResponse {
     pub fixed: bool,
 }
 
-/// Like [`Ui::dnd_drag_source`], but the body also senses clicks. egui's version only senses
-/// drags, so double-click and the right-click menu never reach it.
+/// Like [`Ui::dnd_drag_source`], but the body also senses clicks (egui's version only senses
+/// drags, so double-click and the right-click menu never reach it), and while it is dragged the
+/// [drag bubble](crate::widgets::drag_bubble) with `bubble` (icon, label) follows the pointer and
+/// the body stays put, faded.
 fn drag_source<P: std::any::Any + Send + Sync>(
     ui: &mut Ui,
     id: Id,
     payload: P,
+    bubble: (&str, &str),
     add_contents: impl FnOnce(&mut Ui),
 ) -> egui::Response {
     if ui.ctx().is_being_dragged(id) {
         egui::DragAndDrop::set_payload(ui.ctx(), payload);
-        let layer = egui::LayerId::new(egui::Order::Tooltip, id);
         let response = ui
-            .scope_builder(egui::UiBuilder::new().layer_id(layer), add_contents)
+            .scope(|ui| {
+                ui.multiply_opacity(0.4);
+                add_contents(ui);
+            })
             .response;
-        if let Some(pointer) = ui.ctx().pointer_interact_pos() {
-            let delta = pointer - response.rect.center();
-            ui.ctx()
-                .transform_layer_shapes(layer, egui::emath::TSTransform::from_translation(delta));
-        }
+        crate::widgets::drag_bubble(ui.ctx(), response.rect, bubble.0, bubble.1);
         response
     } else {
         let rect = ui.scope(add_contents).response.rect;
@@ -200,7 +201,7 @@ pub fn resource_card<P: std::any::Any + Send + Sync>(
     frame.show(ui, |ui| {
         ui.set_width(CARD_WIDTH - 10.0);
         ui.set_min_height(CARD_HEIGHT - 10.0);
-        let body = drag_source(ui, card.id, payload, |ui| {
+        let body = drag_source(ui, card.id, payload, (card.glyph, card.name), |ui| {
             ui.vertical_centered(|ui| {
                 ui.label(RichText::new(card.glyph).size(18.0))
                     .on_hover_text(card.glyph_help);
@@ -351,8 +352,8 @@ fn media_cards(
     });
 }
 
-/// What a graph card hands over while it is dragged. Nothing accepts it yet; it drags like media so
-/// every resource behaves the same.
+/// What a graph card hands over while it is dragged. The timeline takes it: dropped on a graph
+/// layer it places the graph there, anywhere else it makes a new layer for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DraggedGraph(pub u32);
 

@@ -68,9 +68,10 @@ resolution.
 
 ## Ports
 
-`?` marks optional inputs. Audio inputs read the project's audio track named by `source`; a track that doesn't
-exist reads as silence. In a graph placed on a graph layer, the item's bindings replace each input's `source`
-when it compiles (see [Graph layers](engine.md#graph-layers)).
+`?` marks optional inputs. Video In and Audio In are the graph's input ports: each reads the port its `port`
+setting names (`Video` and `Audio` are the main ports). Whoever uses the graph fills the ports: in a graph placed on
+a graph layer, the item's bindings, by port name, when it compiles (see [Graph layers](engine.md#graph-layers)). A
+port nothing fills reads zeros.
 
 ## Split and Combine Channels
 

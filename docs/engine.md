@@ -201,19 +201,22 @@ A project with graph items ([Graph layers](app.md#graph-layers), `Project::layer
 seconds, pre-roll, bindings), the stored graphs, and the id of the open graph, whose description the engine receives
 separately through `Engine::set_graph` because it changes as it is edited. `Engine::set_layers` stores it (graphs
 normalised with `render_form`, so labels and positions are not edits), it is part of what a render is built from, and
-a change cancels and re-renders like any edit. Without graph items (`None`) the open graph renders over the whole
-timeline exactly as before. Bypassing the whole graph drops the layers too, so the track mix shows. Offline, the
-CLI's `rastersong render <project> <out>` passes the project's layer set in `RenderSettings::layers`.
+a change cancels and re-renders like any edit. Without a layer set (`None`) the engine renders the graph it was given
+over the whole timeline, which the CLI's `render <video> <audio> <graph>` relies on. A *project* without graph items
+applies nothing: the app bypasses the whole graph (`Project::plays_track_mix`) and the CLI renders the graph's
+bypassed form, so both play the plain track mix. Bypassing the whole graph drops the layers too, so the track mix
+shows. Offline, the CLI's `rastersong render <project> <out>` passes the project's layer set in
+`RenderSettings::layers`.
 
 **The model.** Layer *k* shows the output of the item playing at each frame (timeline time `n / fps`, half-open
 spans like every item), and passes the picture of the layer below through where no item plays. The bottom layer's
 *Layer below* is the track mix's picture; the top layer's output is the master. Every item gets its own compiled graph
 and its own state; a graph placed twice is compiled twice. Before compiling, the item's bindings are written into
-its graph: a Video Input or Audio Input reads the bound track, `@layer_below` for *Layer below*, or `@none` (zeros) for
+its graph: each input port reads the bound track, `@layer_below` for *Layer below*, or `@none` (zeros) for
 no binding. The graph the editor has open is only a description until placed.
 
 - **Pictures.** *Layer below* is the picture the layer below output; an input bound to nothing reads a picture of zeros.
-- **Sound.** An Audio Input bound to *Layer below* reads the layer below's rendered sound (the Audio Output of the item
+- **Sound.** An audio port bound to *Layer below* reads the layer below's rendered sound (the Audio Output of the item
   playing there) when its layout is the same as the one the input was compiled for, which is the first Audio Output
   layout among the layer below's items; otherwise zeros. **Known limit:** the audio track mix is not available as a
   layer-below input (the engine never mixes the audio tracks; the app's playback mixer and the CLI sum them after

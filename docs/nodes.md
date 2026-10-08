@@ -6,36 +6,36 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 
 | Node | What it does |
 |---|---|
-| [Audio](#audio_input) | The audio track, one frame's worth per block, -1 to 1, channels interleaved |
-| [Video](#video_input) | The video as RGB, 0 to 1 |
+| [Audio In](#audio_input) | An input port for sound, one frame's worth per block, -1 to 1, channels interleaved. Audio is the main port, which the track the graph is on fills; other names are filled by receives |
+| [Video In](#video_input) | An input port for pictures, as RGB from 0 to 1. Video is the main port, which the track the graph is on fills; other names are filled by receives |
 
 ### `audio_input`
 
-**Audio**: The audio track, one frame's worth per block, -1 to 1, channels interleaved
+**Audio In**: An input port for sound, one frame's worth per block, -1 to 1, channels interleaved. Audio is the main port, which the track the graph is on fills; other names are filled by receives
 
 **Outputs**
 
-- `out` (audio, -1 to 1): The audio, one frame's worth per block, from -1 to 1; stereo comes as L, R, L, R, …
+- `out` (audio, -1 to 1): The sound, one frame's worth per block, from -1 to 1; stereo comes as L, R, L, R, …
 
 **Parameters**
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `source` (Source) | `audio` | text | no | Name of the host-supplied audio signal |
+| `port` (Port) | `Audio` | text | no | The port's name. Audio is the main port; any other name is a port of its own, filled by a receive |
 
 ### `video_input`
 
-**Video**: The video as RGB, 0 to 1
+**Video In**: An input port for pictures, as RGB from 0 to 1. Video is the main port, which the track the graph is on fills; other names are filled by receives
 
 **Outputs**
 
-- `out` (video, 0 to 1): The video, as RGB from 0 to 1
+- `out` (video, 0 to 1): The picture, as RGB from 0 to 1
 
 **Parameters**
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `source` (Source) | `video` | text | no | Name of the host-supplied video signal |
+| `port` (Port) | `Video` | text | no | The port's name. Video is the main port; any other name is a port of its own, filled by a receive |
 
 ## Generators
 

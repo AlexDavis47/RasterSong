@@ -1,13 +1,15 @@
-//! Source nodes: where host-supplied signals enter the graph.
+//! Input ports: where signals enter the graph. Each reads the port it names, and whoever uses the
+//! graph fills the ports: as an FX, the host track fills the main ports (`Video`, `Audio`) and
+//! receives fill the others.
 
 use crate::nodes::{
-    AUDIO_INPUT, Category, DEFAULT_AUDIO, DEFAULT_VIDEO, NodeKind, NodeSpec, SOURCE_PARAM,
+    AUDIO_INPUT, Category, DEFAULT_AUDIO, DEFAULT_VIDEO, NodeKind, NodeSpec, PORT_PARAM,
     VIDEO_INPUT,
 };
 use crate::{Layout, LayoutContext, Node, OutputSpec, ParamSpec, Params, TagRule};
 use crate::{ProcessContext, Signal};
 
-/// Reads a host-supplied signal by name.
+/// Reads a port by name.
 #[derive(Debug)]
 struct Source {
     name: String,
@@ -18,7 +20,7 @@ impl Source {
         ctx.sources
             .get(&self.name)
             .map(|&layout| vec![layout])
-            .ok_or_else(|| format!("the host provides no source named `{}`", self.name))
+            .ok_or_else(|| format!("nothing fills the port `{}`", self.name))
     }
 
     fn process(&self, ctx: &ProcessContext, outputs: &mut [Signal]) {
@@ -31,12 +33,12 @@ impl Source {
     }
 }
 
-/// Reads the video, as RGB in `0..=1`.
+/// An input port that reads a picture, as RGB in `0..=1`.
 #[derive(Debug)]
 pub struct VideoInput(Source);
 
 params! { VideoInput {
-    SOURCE: ParamSpec::text(SOURCE_PARAM, DEFAULT_VIDEO),
+    PORT: ParamSpec::text(PORT_PARAM, DEFAULT_VIDEO),
 } }
 
 impl NodeKind for VideoInput {
@@ -48,7 +50,7 @@ impl NodeKind for VideoInput {
 
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self(Source {
-            name: params.text_at(Self::SOURCE)?,
+            name: params.text_at(Self::PORT)?,
         }))
     }
 }
@@ -67,13 +69,13 @@ impl Node for VideoInput {
     }
 }
 
-/// Reads an audio track: one frame's worth of samples per block, in `-1..=1`, with the track's
+/// An input port that reads sound: one frame's worth of samples per block, in `-1..=1`, with the
 /// channels interleaved (L, R, L, R, … for stereo).
 #[derive(Debug)]
 pub struct AudioInput(Source);
 
 params! { AudioInput {
-    SOURCE: ParamSpec::text(SOURCE_PARAM, DEFAULT_AUDIO),
+    PORT: ParamSpec::text(PORT_PARAM, DEFAULT_AUDIO),
 } }
 
 impl NodeKind for AudioInput {
@@ -85,7 +87,7 @@ impl NodeKind for AudioInput {
 
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self(Source {
-            name: params.text_at(Self::SOURCE)?,
+            name: params.text_at(Self::PORT)?,
         }))
     }
 }

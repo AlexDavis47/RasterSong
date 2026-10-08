@@ -503,10 +503,15 @@ fn track_screenshots() {
     wait_for_frames(&mut harness, 10);
     save(&mut harness, "dark-16-two-tracks");
 
-    // Drag the second header above the first. The headers start where the timeline does, after
-    // the Resources panel.
-    let x = harness.state().timeline_area().left() + 197.0;
-    let from = egui::pos2(x, 842.0);
+    // Drag the second audio header above the first, by its kind icon.
+    let from = harness
+        .get_all_by_label("♪")
+        .nth(1)
+        .unwrap()
+        .rect()
+        .center();
+    let x = from.x;
+    let row = rastersong_gui::timeline::LANE_HEIGHT;
     harness.event(egui::Event::PointerMoved(from));
     harness.run_steps(1);
     harness.event(egui::Event::PointerButton {
@@ -516,13 +521,13 @@ fn track_screenshots() {
         modifiers: egui::Modifiers::NONE,
     });
     harness.run_steps(1);
-    for y in [830.0, 800.0, 760.0, 742.0] {
+    for y in [0.2, 0.5, 0.8, 1.0].map(|t| from.y - row * t) {
         harness.event(egui::Event::PointerMoved(egui::pos2(x, y)));
         harness.run_steps(2);
     }
     save(&mut harness, "dark-17-track-drag");
     harness.event(egui::Event::PointerButton {
-        pos: egui::pos2(x, 742.0),
+        pos: egui::pos2(x, from.y - row),
         button: egui::PointerButton::Primary,
         pressed: false,
         modifiers: egui::Modifiers::NONE,
@@ -770,4 +775,31 @@ fn meter_screenshots() {
     std::thread::sleep(Duration::from_millis(60));
     harness.step();
     save(&mut harness, "dark-24-inspect-transition");
+}
+
+/// A resource card dragged over the timeline: the drag bubble at the pointer, the card faded.
+#[test]
+#[ignore = "needs a GPU; run explicitly to look at the UI"]
+fn drag_bubble_screenshots() {
+    let mut harness = gpu_harness(app(ThemeChoice::Dark));
+    wait_for_frames(&mut harness, 10);
+    let card = harness.get_by_label("clip").rect().center();
+    let area = harness.state().timeline_area();
+    let to = egui::pos2(area.center().x, area.bottom() - 30.0);
+    harness.event(egui::Event::PointerMoved(card));
+    harness.run_steps(1);
+    harness.event(egui::Event::PointerButton {
+        pos: card,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.run_steps(1);
+    for t in [0.25, 0.5, 0.75, 1.0] {
+        harness.event(egui::Event::PointerMoved(card + (to - card) * t));
+        harness.run_steps(1);
+    }
+    // Past the pick-up bloop.
+    harness.run_steps(20);
+    save(&mut harness, "dark-30-drag-bubble");
 }

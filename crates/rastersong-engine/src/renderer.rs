@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use rastersong_graph::nodes::{
-    AUDIO_INPUT, DEFAULT_AUDIO, DEFAULT_VIDEO, LAYER_BELOW_SOURCE, NO_SOURCE, SOURCE_PARAM,
+    AUDIO_INPUT, DEFAULT_AUDIO, DEFAULT_VIDEO, LAYER_BELOW_SOURCE, NO_SOURCE, PORT_PARAM,
     TRACK_MIX_SOURCE, VIDEO_INPUT,
 };
 use rastersong_graph::{
@@ -417,8 +417,12 @@ impl Renderer {
         {
             layouts.entry(name).or_insert(video_layout);
         }
-        // A generator set to the audio layout needs one even when no track has the default
-        // name: the first track's shape, or silence at the default rate when there is none.
+        // Generators take their layout from the main ports, which are there even when nothing
+        // is called that: the picture, and the first audio track's shape (or silence at the
+        // default rate when there is none).
+        layouts
+            .entry(DEFAULT_VIDEO.to_owned())
+            .or_insert(video_layout);
         if !layouts.contains_key(DEFAULT_AUDIO) {
             let layout = audio.first().map_or_else(
                 || Modulator::silent().layout(fps),
@@ -730,7 +734,7 @@ fn source_names(graph: &GraphDesc, kind: &str, default: &str) -> Vec<String> {
         .nodes
         .iter()
         .filter(|n| n.kind == kind)
-        .map(|n| match n.params.get(SOURCE_PARAM) {
+        .map(|n| match n.params.get(PORT_PARAM) {
             Some(ParamValue::Text(name)) => name.clone(),
             _ => default.to_owned(),
         })

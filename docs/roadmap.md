@@ -539,32 +539,45 @@ memory maps read ordinary files. Saving rewrites the zip, copying unchanged entr
      limit is in [Graph layers](engine.md#graph-layers))*.
 
    **2a. Fixes before the routing rebuild.** These don't depend on the model, so they ship first.
-   - [ ] **bug** Double-clicking a track's resize edge doesn't reset its height, though its hint says it does. The
+   - [x] **bug** Double-clicking a track's resize edge doesn't reset its height, though its hint says it does. The
      edge senses drag only (`Sense::drag()` in `timeline.rs`), which never reports a double-click, and the test
-     only drags. Fix: `click_and_drag`, plus a kittest that double-clicks.
-   - [ ] **chore** Audit every hint and tooltip in `ui.lang` that promises an interaction (double-click,
+     only drags. Fix: `click_and_drag`, plus a kittest that double-clicks. *(Done: see [Timeline](app.md#timeline).)*
+   - [x] **chore** Audit every hint and tooltip in `ui.lang` that promises an interaction (double-click,
      right-click, drag, keys) and add the missing kittests (see the rule in [CONTRIBUTING](../CONTRIBUTING.md)).
-   - [ ] **feature** A shared **drag bubble** widget (`widgets/`): a rounded pill with an icon and a label that
+     *(Done: see [Testing](testing.md). It found three bugs, fixed below.)*
+   - [x] **bug** Clicking a parameter's slider track set the value a little off from where its handle is drawn
+     (the value was taken along the whole track, the handle runs along a rail inset 4 px at each end).
+   - [x] **bug** A failing graph item's error lost its node, so the error bar couldn't point at the node at fault;
+     the failure now names the node and its graph, and the bar shows it when that graph is open.
+   - [x] **bug** Clicking the error bar's message did nothing: the message label took the click (it was
+     selectable). Only the bar's empty end worked.
+   - [x] **feature** A shared **drag bubble** widget (`widgets/`): a rounded pill with an icon and a label that
      follows the pointer during any drag. It plays a short "bloop" scale animation on start and on drop, and
      shrinks back to the source when the drag is cancelled. Resource and graph cards use it first, then item and
-     track drags.
-   - [ ] **feature** **Drop preview:** while a resource or graph is dragged over the timeline, a ghost item shows
+     track drags. *(Done: `widgets::drag_bubble`, used by the cards and track headers; see
+     [Timeline](app.md#timeline). Items move in place while dragged, so they don't show it.)*
+   - [x] **feature** **Drop preview:** while a resource or graph is dragged over the timeline, a ghost item shows
      where it will land (its length and snapped time on the target track), or a ghost track row shows where a new
-     track will be made. The drop uses the same snapped time; today it is unsnapped.
-   - [ ] **bug** With no graph items the open graph still renders over the whole timeline, which is an implicit
+     track will be made. The drop uses the same snapped time; today it is unsnapped. *(Done: see
+     [Timeline](app.md#timeline).)*
+   - [ ] **feature** Know a resource's length before a track plays it (read it at import), so its drop ghost
+     shows its length rather than only its start.
+   - [x] **bug** With no graph items the open graph still renders over the whole timeline, which is an implicit
      graph ([Decisions](decisions.md#timeline-routing-folders-and-graphs-as-fx-october-2026)). With nothing placed,
-     play the plain track mix.
-   - [ ] **bug** Only audio tracks can be reordered; video tracks can't, and on audio tracks the header widgets
+     play the plain track mix. *(Done: the app and the CLI; see [Graph layers](engine.md#graph-layers).)*
+   - [x] **bug** Only audio tracks can be reordered; video tracks can't, and on audio tracks the header widgets
      cover most of the grip. Make every track draggable from its header background, and test it headless (the only
-     reorder test needs a GPU and has stale coordinates).
-   - [ ] **bug** Video tracks can't be removed from the app: only audio headers have a ×, and the header menu has
-     no Remove.
-   - [ ] **bug** Stale text:
+     reorder test needs a GPU and has stale coordinates). *(Done: header labels no longer select text, so a drag on
+     them reaches the header; see [Timeline](app.md#timeline).)*
+   - [x] **bug** Video tracks can't be removed from the app: only audio headers have a ×, and the header menu has
+     no Remove. *(Done: every header has a ×, and the menu has Remove track.)*
+   - [x] **bug** Stale text *(done)*:
      - The `resources.graph.open_now` hint says the open graph is the one rendered, which is only true with no
        graph items.
      - A comment in `timeline.rs` says empty lane space seeks; it box-selects.
      - A comment in `resources.rs` says nothing accepts `DraggedGraph` yet.
-   - [ ] **bug** About links the LGPL 3.0 text, but the release FFmpeg is LGPL 2.1 or later.
+   - [x] **bug** About links the LGPL 3.0 text, but the release FFmpeg is LGPL 2.1 or later. *(Done: it links the
+     version the loaded build reports; see [App](app.md).)*
 
    **2b. Routing rebuild** (the model above).
    - [ ] **chore** One track tree: folder tracks, master send, any track kind anywhere. Replaces the video and
@@ -574,7 +587,9 @@ memory maps read ordinary files. Saving rewrites the zip, copying unchanged entr
    - [ ] **feature** Graphs as FX chains on tracks, folders and the master: bypass, the "through" tag for a missing
      output, and receives filling extra inputs.
    - [ ] **feature** Item FX with trim, mute and pre-roll, replacing graph layers and `Binding::LayerBelow`.
-   - [ ] **feature** Input and Output port nodes replacing Video Input and Audio Input.
+   - [x] **feature** Input port nodes replacing Video Input and Audio Input *(done: the same nodes read a named
+     port; see [Decisions](decisions.md#input-ports-october-2026)). Output ports only matter to subgraphs, so they
+     move to stage 3.)*
    - [ ] **feature** Item groups (Group / Ungroup, Ctrl+G, multi-stream imports grouped), replacing track links.
    - [ ] **feature** Folder rows in the timeline (collapse triangle, indent, dragging into and out of folders),
      the FX button and chain popup, and the default Video / Audio / Control template.
@@ -584,6 +599,8 @@ memory maps read ordinary files. Saving rewrites the zip, copying unchanged entr
    - [ ] **feature** Inspecting connections in a graph that isn't under the playhead.
 3. **Subgraphs**
    - [ ] **feature** Subgraph nodes with pins, linked references, Make unique, cycle check, flattening at compile.
+   - [ ] **feature** Output port nodes (plain outputs besides Video Output and Audio Output), which become a
+     subgraph's output pins.
 4. **Embedding**
    - [ ] **feature** Zip project file, embed / embed all / unembed (with the relocate-or-save popup), change detection
      and Re-embed, relocating missing files, the user library in AppData.

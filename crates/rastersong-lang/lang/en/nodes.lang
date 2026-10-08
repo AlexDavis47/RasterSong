@@ -12,11 +12,11 @@ node.am.output.out = The processed signal
 node.am.param.depth.label = Depth
 node.am.param.depth.help = How strongly the modulator scales the carrier: carrier × (1 + depth × modulator)
 
-node.audio_input.label = Audio
-node.audio_input.description = The audio track, one frame's worth per block, -1 to 1, channels interleaved
-node.audio_input.output.out = The audio, one frame's worth per block, from -1 to 1; stereo comes as L, R, L, R, …
-node.audio_input.param.source.label = Source
-node.audio_input.param.source.help = Name of the host-supplied audio signal
+node.audio_input.label = Audio In
+node.audio_input.description = An input port for sound, one frame's worth per block, -1 to 1, channels interleaved. Audio is the main port, which the track the graph is on fills; other names are filled by receives
+node.audio_input.output.out = The sound, one frame's worth per block, from -1 to 1; stereo comes as L, R, L, R, …
+node.audio_input.param.port.label = Port
+node.audio_input.param.port.help = The port's name. Audio is the main port; any other name is a port of its own, filled by a receive
 
 node.audio_output.label = Audio Output
 node.audio_output.description = The rendered sound of one output bus: replaces that bus's track mix in the preview and the export
@@ -538,11 +538,11 @@ node.transpose.description = Swaps rows and columns: the picture's width and hei
 node.transpose.input.in = The signal to process
 node.transpose.output.out = The processed signal
 
-node.video_input.label = Video
-node.video_input.description = The video as RGB, 0 to 1
-node.video_input.output.out = The video, as RGB from 0 to 1
-node.video_input.param.source.label = Source
-node.video_input.param.source.help = Name of the host-supplied video signal
+node.video_input.label = Video In
+node.video_input.description = An input port for pictures, as RGB from 0 to 1. Video is the main port, which the track the graph is on fills; other names are filled by receives
+node.video_input.output.out = The picture, as RGB from 0 to 1
+node.video_input.param.port.label = Port
+node.video_input.param.port.help = The port's name. Video is the main port; any other name is a port of its own, filled by a receive
 
 node.three_band.param.slope.label = Slope (dB/oct)
 node.three_band.param.slope.help = How sharply each crossover separates the bands. The mid band is what remains, so the three bands always add back up to the input at any slope

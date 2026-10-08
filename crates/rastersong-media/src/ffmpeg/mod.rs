@@ -213,11 +213,27 @@ impl BackendInfo {
         self.library("avutil").license
     }
 
+    /// Where the text of the loaded build's LGPL version is published.
+    pub fn license_url(&self) -> &'static str {
+        lgpl_url(self.license())
+    }
+
     /// True when every loaded library is LGPL and the build enables no GPL or non-free components.
     pub fn is_lgpl(&self) -> bool {
         self.libraries.iter().all(|l| l.license.starts_with("LGPL"))
             && !self.configuration.contains("--enable-gpl")
             && !self.configuration.contains("--enable-nonfree")
+    }
+}
+
+/// Where the text of the LGPL version named in an FFmpeg license string (as libavutil reports it,
+/// e.g. `"LGPL version 2.1 or later"`) is published. Builds configured with `--enable-version3`
+/// are LGPL 3; every other LGPL build, the release FFmpeg among them, is LGPL 2.1 or later.
+pub fn lgpl_url(license: &str) -> &'static str {
+    if license.contains("version 3") {
+        "https://www.gnu.org/licenses/lgpl-3.0.html"
+    } else {
+        "https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html"
     }
 }
 

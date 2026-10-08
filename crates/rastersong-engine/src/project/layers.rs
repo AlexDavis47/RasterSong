@@ -3,14 +3,15 @@
 //! A graph item places a graph (a resource) on the timeline. Items on a layer never overlap:
 //! placing or moving one onto another trims what it covers. A layer has no item at some frames;
 //! it is transparent there. Layers stack from the first (bottom, which reads the track mix) to
-//! the last (top, whose outputs are the master). Each item binds the graph's Video Input and
-//! Audio Input nodes to *Layer below* or to a track; an input with no binding reads zeros.
+//! the last (top, whose outputs are the master). Each item binds the graph's input ports, by name,
+//! to *Layer below* or to a track; a port with no binding reads zeros.
 //! Bindings belong to the item, so one graph can sit twice reading different tracks.
 
 use std::collections::BTreeMap;
 
 use rastersong_graph::GraphDesc;
-use rastersong_graph::nodes::{AUDIO_INPUT, VIDEO_INPUT};
+use rastersong_graph::ParamValue;
+use rastersong_graph::nodes::{AUDIO_INPUT, DEFAULT_AUDIO, DEFAULT_VIDEO, PORT_PARAM, VIDEO_INPUT};
 use serde::{Deserialize, Serialize};
 
 use super::{Edge, MIN_ITEM_LENGTH, Project};
@@ -33,29 +34,49 @@ pub enum InputKind {
     Audio,
 }
 
-/// An input node of a graph: the ports an item's bindings fill.
+/// An input port of a graph: what an item's bindings fill, by name. Several input nodes can
+/// read one port.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InputPort {
-    pub node: String,
+    pub name: String,
+    /// What the port's first input node reads.
     pub kind: InputKind,
 }
 
-/// Graph `desc`'s input nodes in node order.
+/// The port a node of type `kind` with `params` reads, and whether it reads pictures or sound;
+/// `None` for nodes other than input ports.
+pub fn port_of<'a>(
+    kind: &str,
+    params: &'a BTreeMap<String, ParamValue>,
+) -> Option<(&'a str, InputKind)> {
+    let (kind, default) = match kind {
+        VIDEO_INPUT => (InputKind::Video, DEFAULT_VIDEO),
+        AUDIO_INPUT => (InputKind::Audio, DEFAULT_AUDIO),
+        _ => return None,
+    };
+    let name = match params.get(PORT_PARAM) {
+        Some(ParamValue::Text(name)) => name.as_str(),
+        _ => default,
+    };
+    Some((name, kind))
+}
+
+/// Graph `desc`'s input ports in the order their first nodes come.
 pub fn input_ports(desc: &GraphDesc) -> Vec<InputPort> {
-    desc.nodes
+    let mut ports: Vec<InputPort> = Vec::new();
+    for (name, kind) in desc
+        .nodes
         .iter()
-        .filter_map(|n| {
-            let kind = match n.kind.as_str() {
-                VIDEO_INPUT => InputKind::Video,
-                AUDIO_INPUT => InputKind::Audio,
-                _ => return None,
-            };
-            Some(InputPort {
-                node: n.id.clone(),
+        .filter_map(|n| port_of(&n.kind, &n.params))
+    {
+        if !ports.iter().any(|p| p.name == name) {
+            ports.push(InputPort {
+                name: name.to_owned(),
                 kind,
-            })
-        })
-        .collect()
+            });
+        }
+    }
+    ports
 }
 
 fn pre_roll_default() -> bool {
@@ -87,7 +108,7 @@ pub struct GraphItem {
     /// left edge never changes what follows. Off, it starts cold at the edge.
     #[serde(default = "pre_roll_default", skip_serializing_if = "is_true")]
     pub pre_roll: bool,
-    /// What each input node (by id) reads. An input without a binding reads zeros.
+    /// What each input port (by name) reads. A port without a binding reads zeros.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub bindings: BTreeMap<String, Binding>,
 }
@@ -146,10 +167,16 @@ pub struct LayerSet {
 }
 
 impl Project {
-    /// Whether any layer holds a graph item. Without one, the open graph renders over the
-    /// whole timeline, as before layers.
+    /// Whether any layer holds a graph item. Without one nothing is applied: the output is the
+    /// plain track mix, and the open graph is only a description until it is placed.
     pub fn has_graph_items(&self) -> bool {
         self.layers.iter().any(|l| !l.items.is_empty())
+    }
+
+    /// Whether the preview skips every graph and plays the track mix: the graph is bypassed, or
+    /// no graph item is placed.
+    pub fn plays_track_mix(&self) -> bool {
+        self.bypass_graph || !self.has_graph_items()
     }
 
     /// Whether any layer is soloed.
@@ -259,7 +286,7 @@ impl Project {
         let desc = self.graph_desc(graph)?;
         let bindings = input_ports(desc)
             .into_iter()
-            .map(|p| (p.node, Binding::LayerBelow))
+            .map(|p| (p.name, Binding::LayerBelow))
             .collect();
         let item = GraphItem {
             graph,
@@ -347,12 +374,12 @@ impl Project {
         }
     }
 
-    /// Binds input node `node` of an item to `binding`, or to nothing for `None`.
+    /// Binds input port `port` of an item to `binding`, or to nothing for `None`.
     pub fn set_graph_binding(
         &mut self,
         layer: usize,
         item: usize,
-        node: &str,
+        port: &str,
         binding: Option<Binding>,
     ) {
         let Some(it) = self
@@ -364,10 +391,10 @@ impl Project {
         };
         match binding {
             Some(b) => {
-                it.bindings.insert(node.to_owned(), b);
+                it.bindings.insert(port.to_owned(), b);
             }
             None => {
-                it.bindings.remove(node);
+                it.bindings.remove(port);
             }
         }
     }
@@ -379,16 +406,16 @@ impl Project {
         }
     }
 
-    /// The tracks that bindings refer to and no longer exist, per item: (layer, item, input).
+    /// The tracks that bindings refer to and no longer exist, per item: (layer, item, port).
     pub fn dangling_bindings(&self) -> Vec<(usize, usize, String)> {
         let mut found = Vec::new();
         for (l, layer) in self.layers.iter().enumerate() {
             for (i, item) in layer.items.iter().enumerate() {
-                for (node, binding) in &item.bindings {
+                for (port, binding) in &item.bindings {
                     if let Binding::Track(name) = binding
                         && !self.has_track(name)
                     {
-                        found.push((l, i, node.clone()));
+                        found.push((l, i, port.clone()));
                     }
                 }
             }

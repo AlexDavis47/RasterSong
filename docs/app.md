@@ -31,11 +31,12 @@ Our own editor, drawn on a pannable, zoomable canvas (see [Decisions](decisions.
 - Exposed parameters show as diamond pins under a node's inputs; a wire into one modulates that parameter.
   Each node type exposes its main parameters by default (e.g. Delay's time and feedback); the inspector's
   diamond toggles show or hide the others. Hiding a connected parameter disconnects it.
-- The project's inputs and output are **linked nodes**: opening a video adds its Video node, adding an audio
-  track adds an Audio node named after the track, and removing the track removes it. They're titled after
-  what they read (the video's file name, `♪ track`), can't be deleted, copied or added from the search,
-  and the graph always has its Output. An Audio node whose track doesn't exist (as in the starter graph
-  before any audio is added) is taken over by the first track added.
+- A graph's inputs are **ports**: **Video In** and **Audio In** nodes, each reading the port its *Port* setting
+  names (titled `▣ In: Video`, `♪ In: Audio`, … unless renamed). `Video` and `Audio` are the main ports; any other
+  name is a port of its own, and several nodes can read one port. Whoever uses the graph fills the ports (today a
+  graph item's bindings), so tracks add no nodes and renaming a track leaves the graph alone. Ports are added and
+  deleted like any node. Every graph has one **Output**, which can't be deleted or copied; a graph missing one gets
+  one when opened.
 - Right-click empty space to add a node there: the search box has focus immediately; type, use ↑/↓, and press
   Enter (or click). Right-click a node to copy, duplicate, bypass or delete it; Delete removes the selection,
   Backspace removes it and reconnects the wires around it, Ctrl+D duplicates it.
@@ -67,7 +68,8 @@ Our own editor, drawn on a pannable, zoomable canvas (see [Decisions](decisions.
   "i" badge; warnings (something lost or ignored) a yellow "!". Neither stops the render. With several inputs,
   the main input (which sets the output's length and layout) has a ring around its pin.
 - When the graph can't render, a bar along the bottom of the graph says why and outlines the node at fault in
-  red; clicking the bar shows the node.
+  red; clicking the bar shows the node. A placed graph that isn't the open one is named by its id in the
+  message, and the bar has no node to show.
 - Moving or renaming nodes doesn't re-render; any other edit does.
 
 ## Inspector
@@ -117,10 +119,9 @@ second, so a file that comes back (a drive plugged in) is picked up by itself.
 **Graphs** are resources too, on their own tab. A project can hold any number; **New graph** adds a
 passthrough (the video wired to Video Output, the sound to Audio Output) and opens it. Double-click a graph (or
 right-click → Open in editor) to open it in the node editor, which swaps it with the open one. The open graph is
-shown in bold. While no graph layer holds an item, the open graph is rendered over the whole timeline; once one
-does, only the layers are rendered (an interim rule the [roadmap](roadmap.md#timeline-resources-and-routing)
-removes). Right-click also renames, duplicates or removes a graph (the open graph can't be removed). Drag a graph
-card onto a [graph layer](#graph-layers) to place it on the timeline. **File → Import Graph…** and **Export
+shown in bold. A graph applies only where it is placed: while no graph layer holds an item, the preview and the
+CLI play the plain track mix, and the open graph is only a description to edit. Right-click also renames,
+duplicates or removes a graph (the open graph can't be removed). Drag a graph card onto a [graph layer](#graph-layers) to place it on the timeline. **File → Import Graph…** and **Export
 Graph…** read and write a graph as its own file.
 
 ## Timeline
@@ -130,16 +131,21 @@ the left. The ruler's corner has the **Time** / **Tempo** button (minutes and se
 tempo bar and its **Metronome** toggle) and the Snap button. Until a video is loaded, the timeline says it appears
 once one is, with a button to add an audio track. Each track
 is a lane of **items**, the stretches of its file placed on the timeline. The video header shows the track's name
-(its file's name until renamed; the video input reads it by that name), size and frame rate; each audio header has
-the track's name (which audio inputs select it by; renaming a track updates them), its volume in the track mix, and
+(its file's name until renamed), size and frame rate; each audio header has
+the track's name (renaming a track updates the bindings that read it), its volume in the track mix, and
 its bus when the project has several. Every header has **mute** and **solo** (*S*: while any track of a kind is
-soloed, only soloed tracks of that kind are in the [track mix](engine.md#track-mix-and-output-buses)); audio headers
-also have a × that removes the track. Video tracks can't be removed from the timeline yet (a
-[roadmap](roadmap.md#timeline-resources-and-routing) bug). Tracks left out of the mix are drawn dimmed. Each track's lane has its own outline (the selected track's is the accent color), so neighbouring tracks are easy to tell apart. The project lasts to the end of its last item and
+soloed, only soloed tracks of that kind are in the [track mix](engine.md#track-mix-and-output-buses)); every header
+also has a × that removes the track. Tracks left out of the mix are drawn dimmed. Each track's lane has its own outline (the selected track's is the accent color), so neighbouring tracks are easy to tell apart. The project lasts to the end of its last item and
 runs at its [timebase](engine.md#timeline). **+ Track** adds an empty video or audio track to drag a resource
 onto, or (Audio file…, also File → Add Audio Tracks…) several audio files at once, each named after its file.
 Dropping a resource on a track puts it there from the drop point: an empty track takes it, a track of the same
 resource gets another item, and any other track (a track holds one resource only) makes a new track instead.
+While a card is dragged a **drag bubble** (a pill with the card's icon and name) follows the pointer; it pops in,
+blooms where it is dropped, and shrinks back to the card when nothing takes it. Over the lanes a **ghost** shows
+where the drop will land: an outlined item on the track that takes it, or a ghost row where the new track will
+go, at the snapped time (snapping like an item drag, Shift for none). The drop uses that time. A resource no
+track plays yet has no known length, so its ghost marks only where it starts. Dragged track headers show the
+bubble too.
 Opening a video (File → Open Video…) replaces every video track and adds the
 video's sound as an audio track too. Both go through [resources](#resources) for the file's best streams; the
 Resources panel adds more video tracks, and any stream of a file. Every video track decodes its own thumbnails (two
@@ -174,13 +180,13 @@ audio's waveform, and behaves like empty lane space. Items can't start before th
 - Every edit undoes as one step.
 
 Right-click a header for its menu: **Link with ▸** lists the other tracks to link this one with, **Unlink** takes it
-out of its link, and **Default height** resets its height. Moving, splitting, deleting or copying an item of a
+out of its link, **Default height** resets its height, and **Remove track** removes it. Moving, splitting, deleting or copying an item of a
 linked track takes the items of the linked tracks that overlap it, and trimming takes the linked edges at the same
 time, so a video and its sound stay together. Linked headers say so. (Track links are to be replaced by item
 groups; see the [roadmap](roadmap.md#timeline-resources-and-routing).) Drag the bottom edge of a header to change
-the track's **height**; the header's menu resets it. The edge's hint also promises a double-click reset, which
-doesn't work yet (a roadmap bug). Drag an audio header's free space (not its name, volume or bus) to reorder the
-audio tracks; video tracks can't be reordered yet. Frames rendered so far are marked in green along the bottom of the ruler.
+the track's **height**; double-clicking the edge, or the header's menu, resets it. Drag a header by its free space
+or its labels (not its name field, buttons, volume or bus) to reorder the tracks of its kind: video tracks among
+the video tracks, audio tracks among the audio tracks. Frames rendered so far are marked in green along the bottom of the ruler.
 Linking, heights, solo and mutes are saved with the project and undo like any edit.
 
 - The scroll wheel zooms time around the pointer, from half the whole project down to a few frames (over the
@@ -203,8 +209,8 @@ to delete the layer with its items. With no layers the timeline looks as before.
 
 **Drag a graph card** from the Resources panel's Graphs tab onto a layer's lane to place it from the drop point
 for the project's length (5 seconds in an empty project). Dropping anywhere else on the timeline (a track, or
-empty space) makes a new layer on top first, and the lane under a dragged graph is outlined (or a hint says a layer
-will be made). Whatever the new item lands on is trimmed, cut or removed, so items on a layer never overlap.
+empty space) makes a new layer on top first. The lane under a dragged graph is outlined (or a hint says a layer
+will be made), and a ghost item shows where it will land, snapped, as for resources. Whatever the new item lands on is trimmed, cut or removed, so items on a layer never overlap.
 
 Graph items are drawn like track items, in their own color, with a **header bar** holding the graph's name and a mute
 button (a muted item reads as a gap). They share the track items' header bar, edge handles, selection outline and
@@ -223,10 +229,10 @@ snapping (to ticks, item edges of tracks and layers, the playhead and the start;
 
 Selecting a graph item shows its **item inspector** in place of the node inspector (picking another node in the
 graph brings the node inspector back). It names the graph and has the **Pre-roll** checkbox (warm the graph up as if
-it had run before the item, so trimming the left edge changes nothing after it) and one row per Video Input or
-Audio Input node of the graph with a combo box: **Layer below**, every track of the input's kind (video tracks for
-video inputs, audio tracks for audio inputs), or **Nothing** (the input reads zeros). A new item binds every input to
-*Layer below*. A row bound to a track that no longer exists says so in a note: that input reads nothing until
+it had run before the item, so trimming the left edge changes nothing after it) and one row per input port of
+the graph with a combo box: **Layer below**, every track of the port's kind (video tracks for
+video ports, audio tracks for audio ports), or **Nothing** (the port reads zeros). A new item binds every port to
+*Layer below*. A row bound to a track that no longer exists says so in a note: that port reads nothing until
 another is chosen. Bindings belong to the item, so one graph can sit twice reading different tracks. Layers and
 items are saved with the project and undo like any edit; how they render is described in
 [Graph layers](engine.md#graph-layers).
@@ -291,5 +297,6 @@ Project files are described in [Graph files](graph-format.md#projects).
   app paints itself comes from `crates/rastersong-gui/src/theme.rs`. The theme, preview resolution and volume are
   remembered between sessions.
 - **View** shows node latency and warmup, and node performance (processing time), under each node.
-- **Help → About RasterSong** credits FFmpeg and its LGPL license and lists the loaded FFmpeg libraries and build
+- **Help → About RasterSong** credits FFmpeg and links the text of the LGPL version the loaded build is under
+  (2.1 or later for the release build, 3 for the development build) and lists the loaded FFmpeg libraries and build
   configuration.
