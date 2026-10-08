@@ -318,6 +318,35 @@ Built as the second step of stage 2.
   subgraph's pins; with neither, a port node would be today's Video Input and Audio Input under another name, and
   the project-linked node machinery would have to be rewritten twice.
 
+### Graph layers (October 2026)
+
+Built as the third step of stage 2 ([Graph layers](engine.md#graph-layers)).
+
+- **Items on a layer never overlap, and the model enforces it.** Placing or moving an item trims, cuts or removes
+  what it lands on (`Project::place_graph`), and loading a file repairs overlaps the same way, so the renderer can
+  rely on one item per layer per frame.
+- **Graph items are not track items.** They have no resource, no rate and no stretch, so they get their own small
+  type (`GraphItem`: position, length, `start` into the graph's own time, mute, pre-roll, bindings). Trimming the
+  left edge moves `start`, which is what keeps what follows unchanged.
+- **Bindings are keyed by input node id and rewrite the node's source at compile time.** Until the Input and Output
+  port nodes exist, the Video Input and Audio Input nodes are the ports: an item binds each to *Layer below* (the
+  reserved source `@layer_below`), a track (its name) or nothing (`@none`, zeros). No fallback applies to an unbound
+  input.
+- **With no graph items the open graph still renders over the whole timeline.** Once a layer holds an item the
+  project renders only what the layers say, and a frame with no item is transparent. This keeps a fresh project
+  working the way it did before layers, and makes the first placed item the explicit switch to layered rendering.
+- **Each item has its own compiled graph and state; layers form a pipeline.** A layer's latency is the largest of its
+  graphs and shorter ones are delayed to match, so output frame N always comes from source frame N plus the stack's
+  total latency. Pre-roll runs the graph for its warm-up before the item's left edge.
+- **Moving a graph item is applied when the drag ends.** The model trims what a moved item lands on, which would
+  cut neighbours for good while the pointer merely passes over them, and re-sorts the items (so an item's index, and
+  with it its widget, changes mid-drag). The timeline draws where the item would land and sends one move on release;
+  trimming an edge stays within the neighbours, so it applies live. Track items and graph items share the header
+  bar, edge handles, snapping and drag state in `timeline.rs`; only what a drag emits differs.
+- **A new layer is made by dropping off the layers, with no permanent drop zone.** An empty "drop here" strip would
+  shift every track row for projects that use no layers; instead a hint appears while a graph is dragged over
+  anything but a layer.
+
 ## Open
 
 

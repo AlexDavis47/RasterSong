@@ -14,6 +14,7 @@ mod project;
 mod renderer;
 mod service;
 pub mod sources;
+mod stack;
 mod tap;
 mod thumbnails;
 pub mod timeline;

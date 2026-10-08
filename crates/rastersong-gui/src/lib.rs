@@ -6,6 +6,7 @@ pub mod audio_out;
 pub mod editor;
 pub mod effects;
 pub mod history;
+pub mod layer_inspector;
 pub mod name_edit;
 pub mod preview;
 pub mod resources;

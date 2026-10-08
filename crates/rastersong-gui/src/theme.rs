@@ -117,6 +117,8 @@ pub struct Theme {
     pub playhead: Color32,
     pub video_block: Color32,
     pub audio_block: Color32,
+    /// Graph items on the graph layers.
+    pub graph_block: Color32,
     pub block_text: Color32,
     pub cached: Color32,
 }
@@ -170,6 +172,7 @@ impl Theme {
         playhead: Color32::WHITE,
         video_block: Color32::from_rgb(0x2d, 0x4f, 0x7a),
         audio_block: Color32::from_rgb(0xa8, 0x6a, 0x26),
+        graph_block: Color32::from_rgb(0x8e, 0x6c, 0xc8),
         block_text: Color32::from_gray(20),
         cached: Color32::from_rgb(0x5c, 0xd6, 0x6a),
     };
@@ -222,6 +225,7 @@ impl Theme {
         playhead: Color32::from_gray(20),
         video_block: Color32::from_rgb(0x9c, 0xbc, 0xe8),
         audio_block: Color32::from_rgb(0xec, 0xb8, 0x78),
+        graph_block: Color32::from_rgb(0xc4, 0xb0, 0xe8),
         block_text: Color32::from_gray(30),
         cached: Color32::from_rgb(0x2c, 0x9e, 0x3c),
     };

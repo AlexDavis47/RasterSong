@@ -494,8 +494,20 @@ memory maps read ordinary files. Saving rewrites the zip, copying unchanged entr
    - [ ] **feature** Input and Output port nodes replacing Video Input and Audio Input *(deliberately after graph
      layers: a port is filled by a layer item's bindings or a subgraph's pins, so before those it would only be the
      current nodes under another name)*.
-   - [ ] **feature** Graph layers: items, bindings in the item inspector, stacking, mute/solo, pre-roll setting.
-   - [ ] **feature** Renderer switching graphs at item edges, one renderer state per layer, the new cache key.
+   - [x] **feature** Graph layers: items, bindings in the item inspector, stacking, mute/solo, pre-roll setting
+     *(done: see [Timeline](app.md#timeline), [Graph layers](engine.md#graph-layers) and
+     [Decisions](decisions.md#graph-layers-october-2026))*.
+     The timeline lanes, dragging graphs onto them, item editing and the item inspector are built *(see
+     [Graph layers](app.md#graph-layers))*; the rendering is the next item.
+   - [ ] **feature** Graph items in the timeline: copy, cut and paste, box select, and moving an item to another
+     layer by dragging.
+   - [x] **feature** Renderer switching graphs at item edges, one renderer state per item, layers as a pipeline
+     *(done: see [Graph layers](engine.md#graph-layers); the cache key is still the project version, so an edit
+     to one graph re-renders every frame)*.
+   - [ ] **feature** Layer-below sound under the bottom layer (the audio track mix as an input) and the track mix
+     sound under frames no item supplies sound for *(known limit, see [Graph layers](engine.md#graph-layers))*.
+   - [ ] **feature** A cache key made of the active graphs' versions, so editing one graph keeps frames rendered
+     only by others.
    - [ ] **feature** Graph Progress node.
    - [ ] **feature** Inspecting connections in a graph that isn't under the playhead.
 3. **Subgraphs**

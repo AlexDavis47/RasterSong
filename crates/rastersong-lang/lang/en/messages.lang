@@ -75,6 +75,7 @@ error.project.invalid = invalid project file: {error}
 error.project.version = unsupported project version {version} (this build reads version {supported}; there are no migrations before 1.0)
 error.import.no_streams = {path} has no video or audio to import
 error.project.track_resource = track "{track}" plays a resource the project doesn't have, or one of the other kind
+error.project.layer_graph = graph {graph} on a layer can't be rendered: {error}
 error.project.timebase = the project is {width}×{height} at {rate} frames a second, which can't be rendered
 error.audio_track = audio track `{name}`: {error}
 error.audio_unavailable = Audio playback is unavailable: {error}

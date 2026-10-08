@@ -13,9 +13,19 @@ pub enum EngineError {
     /// Raised by an output, e.g. when writing a file fails.
     #[error("{0}")]
     Output(String),
+    /// A graph placed on a layer can't be compiled.
+    #[error("{}", layer_message(*.graph, .error))]
+    Layer { graph: u32, error: GraphError },
     /// The project's size or frame rate can't be rendered.
     #[error("{}", timebase_message(.0))]
     Timebase(Timebase),
+}
+
+fn layer_message(graph: u32, error: &GraphError) -> String {
+    tr_args(
+        "error.project.layer_graph",
+        &[("graph", &graph.to_string()), ("error", &error.to_string())],
+    )
 }
 
 fn timebase_message(timebase: &Timebase) -> String {

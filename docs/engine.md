@@ -189,6 +189,60 @@ renders a connection's sound ahead of a position, for the listen key. Both are r
   connection first; while the playhead moves, a new frame is asked for at most as often as the project's
   `inspect_rate`, 5 a second by default).
 
+## Graph layers
+
+A project with graph items ([Graph layers](app.md#graph-layers), `Project::layer_set`) hands the engine a
+`LayerSet`: the layers bottom first, each a list of non-overlapping items (graph id, position, length and start in
+seconds, pre-roll, bindings), the stored graphs, and the id of the open graph, whose description the engine receives
+separately through `Engine::set_graph` because it changes as it is edited. `Engine::set_layers` stores it (graphs
+normalised with `render_form`, so labels and positions are not edits), it is part of what a render is built from, and
+a change cancels and re-renders like any edit. Without graph items (`None`) the open graph renders over the whole
+timeline exactly as before. Bypassing the whole graph drops the layers too, so the track mix shows. Offline, the
+CLI's `rastersong render <project> <out>` passes the project's layer set in `RenderSettings::layers`.
+
+**The model.** Layer *k* shows the output of the item playing at each frame (timeline time `n / fps`, half-open
+spans like every item), and passes the picture of the layer below through where no item plays. The bottom layer's
+*Layer below* is the track mix's picture; the top layer's output is the master. Every item gets its own compiled graph
+and its own state; a graph placed twice is compiled twice. Before compiling, the item's bindings are written into
+its graph: a Video Input or Audio Input reads the bound track, `@layer_below` for *Layer below*, or `@none` (zeros) for
+no binding. The graph the editor has open is only a description until placed.
+
+- **Pictures.** *Layer below* is the picture the layer below output; an input bound to nothing reads a picture of zeros.
+- **Sound.** An Audio Input bound to *Layer below* reads the layer below's rendered sound (the Audio Output of the item
+  playing there) when its layout is the same as the one the input was compiled for, which is the first Audio Output
+  layout among the layer below's items; otherwise zeros. **Known limit:** the audio track mix is not available as a
+  layer-below input yet, so the bottom layer's audio inputs bound to *Layer below* read zeros. Sound has its own host
+  names (`@layer_below_audio`, `@none_audio`) because one name carries one layout and a graph can read both a picture
+  and a sound from the layer below.
+- **Latency.** Layers run as a pipeline. A layer's latency *L* is the largest latency of its items' graphs; at
+  step *m* layer *k* processes source frame `m - (L of the layers below)`, reading tracks at that frame and the layer
+  below's output of the same step, and emits output frame `source - L`. The total latency is the sum, and output frame
+  *n* is ready at step `n + total`, as with one graph. An item with a latency below the layer's has its output held back
+  in a small ring so every item of a layer is frame aligned, and the picture passed through where no item plays is
+  held back likewise. The track readers are shared: one set of decoders serves all layers, and a second read of the
+  tracks happens only for a layer whose offset differs from the one before.
+- **Pre-roll and seeking.** An item with pre-roll runs, its output discarded, for its graph's warmup frames before its
+  left edge (limited by **Max warmup frames**, and at least one frame when it renders sound); without pre-roll its
+  state is reset at its first frame. A render that is not a continuation of the last resets every item, then warms up
+  for the sum of the layers' longest warmups (limited by the same setting, as with one graph). Items already
+  underway at that point simply run from there, so a seek into the middle of an item gives exactly what playing through
+  gives for nodes with finite memory, as long as the memory fits the warmup.
+- **Time.** An item's graph time counts from its `start` at its first frame; pre-roll frames before the start of the
+  timeline count from zero.
+- **Sound out.** The render's sound (`AudioSink::Rendered`) is that of the top-most layer whose item playing at the
+  frame has an Audio Output on the rendered bus; every such item has its own resampler. Any item with an Audio Output
+  on the bus makes the sink rendered. **Known limit:** frames where no
+  item supplies sound are silent (the audio track mix is not mixed in under the layers yet), and an Audio Input wired
+  straight to an Audio Output is rendered rather than played from its track as it is.
+- **Taps, levels and statistics.** `tap` looks in the items that played at the last rendered frame, the open graph's
+  first and then the top-most layer's down, and reads each item's graph at the last source frame it processed (which,
+  with latency, is a little after the frame shown). `levels`, `costs`, `meters` and `param_levels` come from the open
+  graph's item playing then, else the top-most one; frames where no item plays have none. `node_stats` and
+  `compile_options` describe the open graph's first item, else the first. The tap renderer is built the same way as
+  the render-ahead renderer.
+- **Errors.** A graph item that cannot compile fails the build, and the failure names the graph's id. An item of a
+  graph the project does not have is left out.
+
 ## Export / Offline Rendering
 
 Export uses the same graph and engine as preview, rendering every frame in order from the start at full resolution

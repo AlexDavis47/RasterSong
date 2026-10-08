@@ -254,7 +254,10 @@ struct State {
 /// The parts of the project a renderer is built from.
 struct Snapshot {
     timeline: Timeline,
+    /// The open graph.
     graph: GraphDesc,
+    /// The graph items on the layers, unless the whole graph is bypassed.
+    layers: Option<LayerSet>,
     tempo: Tempo,
     audio_rate: u32,
     max_warmup_frames: u32,
@@ -374,8 +377,19 @@ impl Engine {
     }
 
     /// Sets the graph items on the project's layers, or `None` for none: the open graph
-    /// (see [`Self::set_graph`]) then renders over the whole timeline.
+    /// (see [`Self::set_graph`]) then renders over the whole timeline. With items, each renders
+    /// its own graph where it plays and the layers compose over the track mix; see
+    /// [Graph layers](../../../docs/engine.md#graph-layers). Like [`Self::set_graph`], changes
+    /// that don't alter what the graphs render (labels, positions, nodes that feed nothing) are
+    /// not edits.
     pub fn set_layers(&self, layers: Option<LayerSet>) {
+        let layers = layers.map(|mut set| {
+            let registry = Registry::shared();
+            for (_, graph) in &mut set.graphs {
+                *graph = render_form(graph, registry, false);
+            }
+            set
+        });
         if lock(&self.shared.state).layers == layers {
             return;
         }
@@ -850,6 +864,7 @@ impl Worker {
         Snapshot {
             timeline: state.timeline.clone(),
             graph: render_form(graph, Registry::shared(), state.bypass_all),
+            layers: state.layers.clone().filter(|_| !state.bypass_all),
             tempo: state.tempo,
             audio_rate: state.audio_rate,
             max_warmup_frames: state.max_warmup_frames,
@@ -923,11 +938,12 @@ impl Worker {
         key: CacheKey,
         project: &Snapshot,
     ) -> Result<Renderer, Failure> {
-        Renderer::new(
+        Renderer::with_layers(
             self.shared.backend.as_ref(),
             project.timeline.timebase,
             tracks,
             &project.graph,
+            project.layers.as_ref(),
             project.tempo,
             &project.timeline.master(),
             Registry::shared(),

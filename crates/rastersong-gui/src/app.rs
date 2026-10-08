@@ -31,16 +31,17 @@ const AUDIO_RATES: [u32; 4] = [44_100, 48_000, 88_200, 96_000];
 type MixEntry = (String, Vec<Item>, f32, bool);
 use crate::editor::{CanvasContext, GraphEditor, InspectorContext, LinkedRename, without_layout};
 use crate::history::History;
+use crate::layer_inspector::{ItemEdit, graph_item_inspector};
 use crate::preview::{Feed, PreviewView, clamp_split, split_rects, split_sides};
 use crate::resources::{
-    DraggedResource, PendingImport, ResourceAction, import_dialog, remove_dialog, resource_kind,
-    resource_name, resources_panel,
+    DraggedGraph, DraggedResource, PendingImport, ResourceAction, import_dialog, remove_dialog,
+    resource_kind, resource_name, resources_panel,
 };
 use crate::settings::Settings;
 use crate::theme::{Theme, ThemeChoice, apply_style};
 use crate::timeline::{
-    LANE_HEIGHT, Thumbnail, TimelineModel, TimelineView, TrackAction, TrackThumbnails, TrackView,
-    timecode, timeline,
+    GraphItemView, LANE_HEIGHT, LayerAction, LayerView, Thumbnail, TimelineModel, TimelineView,
+    TrackAction, TrackThumbnails, TrackView, timecode, timeline,
 };
 use crate::track_ops::move_track;
 
@@ -56,6 +57,9 @@ pub const STARTER_GRAPH: &str = include_str!("../../../examples/graphs/am_bands.
 const SOURCE_GRAPH: &str = r#"{ "version": 0,
     "nodes": [ { "id": "video", "type": "video_input" }, { "id": "out", "type": "output" } ],
     "connections": [ { "from": "video", "to": "out" } ] }"#;
+
+/// How long a graph item is when dropped on an empty project.
+const DEFAULT_GRAPH_ITEM_SECS: f64 = 5.0;
 
 /// What copying timeline items puts on the system clipboard. The items themselves stay in the app.
 pub const ITEM_CLIPBOARD_MARKER: &str = "RasterSong timeline items";
@@ -139,6 +143,11 @@ pub struct App {
     selected_track: Option<usize>,
     /// The selected timeline items.
     selected_items: Vec<ItemRef>,
+    /// The selected graph item: its layer and its index among the layer's items. Exclusive with
+    /// [`Self::selected_items`].
+    selected_graph_item: Option<(usize, usize)>,
+    /// The graph node that was active last frame, to tell when another is picked.
+    seen_active_node: Option<u64>,
     /// Timeline items copied, with the names of their tracks.
     item_clipboard: Vec<(String, Item)>,
     /// When (egui time) the preview started waiting on a frame to render, if it is.
@@ -217,6 +226,8 @@ impl App {
             waiting_since: None,
             selected_track: first_audio_row(&project),
             selected_items: Vec::new(),
+            selected_graph_item: None,
+            seen_active_node: None,
             item_clipboard: Vec::new(),
             project,
             project_path: None,
@@ -323,6 +334,7 @@ impl App {
         self.engine.set_preview_scale(self.settings.preview_scale());
         self.refresh_missing(true);
         self.engine.set_timeline(self.timeline_of(&self.project));
+        self.engine.set_layers(self.project.layer_set());
         self.sent_graph = without_layout(&self.project.graph);
         self.engine.set_graph(self.sent_graph.clone());
         self.engine.set_tempo(self.project.tempo);
@@ -340,6 +352,7 @@ impl App {
         self.saved = project.clone();
         self.history = History::new(project.clone());
         self.selected_track = first_audio_row(&project);
+        self.selected_graph_item = None;
         self.project = project;
         self.project_path = path;
         self.clock = PlaybackClock::new(30.0, 0);
@@ -808,6 +821,7 @@ impl App {
     /// Puts the project back to an earlier (or later) state from the history.
     fn restore(&mut self, project: Project) {
         self.engine.set_timeline(self.timeline_of(&project));
+        self.engine.set_layers(project.layer_set());
         self.editor.restore(&project.graph);
         let rows = project.video_tracks.len() + project.audio_tracks.len();
         self.selected_track = self
@@ -894,12 +908,27 @@ impl App {
             .min_size(280.0)
             .frame(panel(8))
             .show(ui, |ui| self.preview_column(ui));
+        // Picking a different node in the graph brings its inspector back over a graph item's.
+        let active = self.editor.active().map(|n| n.key);
+        if active != self.seen_active_node {
+            if active.is_some() {
+                self.selected_graph_item = None;
+            }
+            self.seen_active_node = active;
+        }
+        let mut item_edits = Vec::new();
         self.inspector_rect = egui::Panel::right("inspector")
             .resizable(true)
             .default_size(340.0)
             .min_size(300.0)
             .frame(panel(10))
             .show(ui, |ui| {
+                if let Some((layer, item)) = self.selected_graph_item {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        item_edits = graph_item_inspector(ui, &self.project, layer, item);
+                    });
+                    return;
+                }
                 let tracks: Vec<String> = self
                     .project
                     .audio_tracks
@@ -925,6 +954,9 @@ impl App {
             })
             .response
             .rect;
+        for edit in item_edits {
+            self.graph_item_edit(edit);
+        }
         egui::CentralPanel::default()
             .frame(egui::Frame::new().inner_margin(Margin::ZERO))
             .show(ui, |ui| self.graph(ui));
@@ -1143,6 +1175,7 @@ impl App {
         self.project.graph = graph;
         self.refresh_missing(false);
         self.engine.set_timeline(self.timeline_of(&self.project));
+        self.engine.set_layers(self.project.layer_set());
         self.engine.set_tempo(self.project.tempo);
         self.engine.set_bypass_all(self.project.bypass_graph);
         self.engine.set_audio_rate(self.project.audio_rate);
@@ -1988,7 +2021,44 @@ impl App {
             }
         }));
         let cached = self.engine.cached_ranges();
+        let graph_names: HashMap<u32, String> = self
+            .project
+            .graph_entries()
+            .into_iter()
+            .map(|g| (g.id, g.name))
+            .collect();
+        let soloing_layers = self.project.soloing_layers();
+        // The top layer first, as the timeline draws them.
+        let layers: Vec<LayerView> = self
+            .project
+            .layers
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(index, l)| LayerView {
+                index,
+                name: l.name.clone(),
+                muted: l.muted,
+                solo: l.solo,
+                silenced: l.muted || (soloing_layers && !l.solo),
+                items: l
+                    .items
+                    .iter()
+                    .map(|i| GraphItemView {
+                        name: graph_names.get(&i.graph).cloned().unwrap_or_default(),
+                        position: i.position,
+                        length: i.length,
+                        muted: i.muted,
+                    })
+                    .collect(),
+                selected_item: self
+                    .selected_graph_item
+                    .filter(|&(layer, _)| layer == index)
+                    .map(|(_, item)| item),
+            })
+            .collect();
         let model = TimelineModel {
+            layers,
             frame_count: info.frames,
             frame_rate: info.frame_rate.as_f64(),
             playhead: self.clock.frame(),
@@ -2009,6 +2079,13 @@ impl App {
                 .map_or(response.lanes_left, |p| p.x.max(response.lanes_left));
             let at = self.timeline_view.seconds(response.lanes_left, x).max(0.0);
             self.drop_resource(id, response.row_under_pointer, at);
+        }
+        if let Some(graph) = dropped_graph(ui, area) {
+            let x = ui
+                .input(|i| i.pointer.interact_pos())
+                .map_or(response.lanes_left, |p| p.x.max(response.lanes_left));
+            let at = self.timeline_view.seconds(response.lanes_left, x).max(0.0);
+            self.drop_graph(graph, response.layer_under_pointer, at);
         }
         for track in &self.project.video_tracks {
             let frames: Vec<usize> = response
@@ -2036,9 +2113,149 @@ impl App {
         if let Some(frame) = response.seek {
             self.clock.seek(frame);
         }
+        for action in response.layer_actions {
+            self.layer_action(action);
+        }
         for action in response.actions {
             self.track_action(ui.ctx(), action);
         }
+    }
+
+    /// How long a graph item is when it is dropped: the whole project, or 5 seconds for an
+    /// empty one.
+    fn default_graph_item_length(&self) -> f64 {
+        let frames = self.engine.info().map_or(0, |info| info.frames);
+        if frames == 0 {
+            DEFAULT_GRAPH_ITEM_SECS
+        } else {
+            frames as f64 / self.clock_rate()
+        }
+    }
+
+    /// Drops graph `graph` on the layer with project index `layer` at `position` seconds, for the
+    /// project's length; off the layers (`None`) it makes a new layer on top first. Whatever it
+    /// lands on is trimmed. Returns the layer and item index it landed at, and selects it.
+    pub fn drop_graph(
+        &mut self,
+        graph: u32,
+        layer: Option<usize>,
+        position: f64,
+    ) -> Option<(usize, usize)> {
+        self.project.graph_desc(graph)?;
+        let layer = match layer.filter(|&l| l < self.project.layers.len()) {
+            Some(layer) => layer,
+            None => self.project.add_layer(tr("timeline.layer.default_name")),
+        };
+        let length = self.default_graph_item_length();
+        let item = self.project.place_graph(layer, graph, position, length)?;
+        self.select_graph_item(layer, item);
+        Some((layer, item))
+    }
+
+    fn select_graph_item(&mut self, layer: usize, item: usize) {
+        self.selected_items.clear();
+        self.selected_graph_item = Some((layer, item));
+    }
+
+    /// Applies a change from the graph item inspector to the selected item.
+    fn graph_item_edit(&mut self, edit: ItemEdit) {
+        let Some((layer, item)) = self.selected_graph_item else {
+            return;
+        };
+        match edit {
+            ItemEdit::PreRoll(on) => {
+                if let Some(it) = self
+                    .project
+                    .layers
+                    .get_mut(layer)
+                    .and_then(|l| l.items.get_mut(item))
+                {
+                    it.pre_roll = on;
+                }
+            }
+            ItemEdit::Bind { node, binding } => {
+                self.project.set_graph_binding(layer, item, &node, binding);
+            }
+        }
+    }
+
+    fn layer_action(&mut self, action: LayerAction) {
+        match action {
+            LayerAction::Add => {
+                self.project.add_layer(tr("timeline.layer.default_name"));
+            }
+            LayerAction::SelectItem { layer, item } => self.select_graph_item(layer, item),
+            LayerAction::MoveItem { layer, item, delta } => {
+                if let Some(item) = self.project.move_graph_item(layer, item, delta) {
+                    self.select_graph_item(layer, item);
+                }
+            }
+            LayerAction::TrimItem {
+                layer,
+                item,
+                edge,
+                to,
+            } => self.project.trim_graph_item(layer, item, edge, to),
+            LayerAction::ToggleItemMute { layer, item } => {
+                if let Some(it) = self
+                    .project
+                    .layers
+                    .get_mut(layer)
+                    .and_then(|l| l.items.get_mut(item))
+                {
+                    it.muted = !it.muted;
+                }
+            }
+            LayerAction::SplitItem { layer, item, at } => {
+                self.project.split_graph_item(layer, item, at);
+            }
+            LayerAction::DeleteItem { layer, item } => self.delete_graph_item(layer, item),
+            LayerAction::OpenItem { layer, item } => {
+                let graph = self
+                    .project
+                    .layers
+                    .get(layer)
+                    .and_then(|l| l.items.get(item))
+                    .map(|i| i.graph);
+                if let Some(graph) = graph {
+                    self.open_graph(graph);
+                }
+            }
+            LayerAction::ToggleMute(layer) => {
+                if let Some(l) = self.project.layers.get_mut(layer) {
+                    l.muted = !l.muted;
+                }
+            }
+            LayerAction::ToggleSolo(layer) => {
+                if let Some(l) = self.project.layers.get_mut(layer) {
+                    l.solo = !l.solo;
+                }
+            }
+            LayerAction::Rename(layer, name) => {
+                self.project.rename_layer(layer, &name);
+            }
+            LayerAction::Remove(layer) => {
+                if self.project.remove_layer(layer) {
+                    self.selected_graph_item = match self.selected_graph_item {
+                        Some((l, _)) if l == layer => None,
+                        Some((l, i)) if l > layer => Some((l - 1, i)),
+                        other => other,
+                    };
+                }
+            }
+        }
+    }
+
+    /// Removes a graph item, keeping the selection on what it was on.
+    fn delete_graph_item(&mut self, layer: usize, item: usize) {
+        if !self.project.delete_graph_item(layer, item) {
+            return;
+        }
+        self.selected_graph_item = match self.selected_graph_item {
+            Some((l, i)) if l == layer && i == item => None,
+            Some((l, i)) if l == layer && i > item => Some((l, i - 1)),
+            other => other,
+        };
     }
 
     /// In tempo mode, the tempo of the music that beat and bar units follow. Time mode shows
@@ -2219,6 +2436,12 @@ impl App {
     /// Drops selected items that no longer exist (after an undo, or a track removed or renamed).
     fn tidy_item_selection(&mut self) {
         let project = &self.project;
+        self.selected_graph_item = self.selected_graph_item.filter(|&(layer, item)| {
+            project
+                .layers
+                .get(layer)
+                .is_some_and(|l| item < l.items.len())
+        });
         self.selected_items.retain(|r| {
             project
                 .track(&r.track)
@@ -2234,6 +2457,7 @@ impl App {
                 let Some(track) = name(self, row) else { return };
                 let at = ItemRef::new(track, item);
                 self.selected_track = Some(row);
+                self.selected_graph_item = None;
                 if !toggle {
                     self.selected_items = vec![at];
                 } else if let Some(k) = self.selected_items.iter().position(|r| *r == at) {
@@ -2242,8 +2466,12 @@ impl App {
                     self.selected_items.push(at);
                 }
             }
-            TrackAction::ClearItems => self.selected_items.clear(),
+            TrackAction::ClearItems => {
+                self.selected_items.clear();
+                self.selected_graph_item = None;
+            }
             TrackAction::SelectItems { items, additive } => {
+                self.selected_graph_item = None;
                 if !additive {
                     self.selected_items.clear();
                 }
@@ -2281,8 +2509,18 @@ impl App {
                     .trim_item(&ItemRef::new(track, item), edge, to, stretch, lengths);
             }
             TrackAction::SplitItems { at } => {
+                if let Some((layer, item)) = self.selected_graph_item {
+                    self.project.split_graph_item(layer, item, at);
+                    return;
+                }
                 let lengths = self.item_lengths();
                 if self.selected_items.is_empty() {
+                    // With nothing selected, graph items under the playhead split too.
+                    for layer in 0..self.project.layers.len() {
+                        for item in (0..self.project.layers[layer].items.len()).rev() {
+                            self.project.split_graph_item(layer, item, at);
+                        }
+                    }
                     // With nothing selected, every item under the playhead.
                     let under: Vec<ItemRef> = self
                         .project
@@ -2305,6 +2543,10 @@ impl App {
                 }
             }
             TrackAction::DeleteItems => {
+                if let Some((layer, item)) = self.selected_graph_item {
+                    self.delete_graph_item(layer, item);
+                    return;
+                }
                 let lengths = self.item_lengths();
                 self.project.delete_items(&self.selected_items, lengths);
                 self.selected_items.clear();
@@ -2521,14 +2763,24 @@ const BUSY_DELAY_SECS: f64 = 0.25;
 /// A spinner in the middle of the preview, with a line of text under it when there is one.
 /// The resource dragged from the Resources panel and released over `area` this frame, taken.
 fn dropped_resource(ui: &Ui, area: egui::Rect) -> Option<ResourceId> {
+    dropped_payload::<DraggedResource>(ui, area).map(|p| p.0)
+}
+
+/// The graph dragged from the Resources panel and released over `area` this frame, taken.
+fn dropped_graph(ui: &Ui, area: egui::Rect) -> Option<u32> {
+    dropped_payload::<DraggedGraph>(ui, area).map(|p| p.0)
+}
+
+/// The drag-and-drop payload of type `T` released over `area` this frame, taken.
+fn dropped_payload<T: std::any::Any + Send + Sync>(ui: &Ui, area: egui::Rect) -> Option<Arc<T>> {
     let released = ui.input(|i| i.pointer.any_released());
     let over = ui
         .input(|i| i.pointer.interact_pos())
         .is_some_and(|p| area.contains(p));
-    if !(released && over) || !egui::DragAndDrop::has_payload_of_type::<DraggedResource>(ui.ctx()) {
+    if !(released && over) || !egui::DragAndDrop::has_payload_of_type::<T>(ui.ctx()) {
         return None;
     }
-    egui::DragAndDrop::take_payload::<DraggedResource>(ui.ctx()).map(|p| p.0)
+    egui::DragAndDrop::take_payload::<T>(ui.ctx())
 }
 
 fn busy_centered(ui: &mut Ui, rect: egui::Rect, text: Option<&str>) {

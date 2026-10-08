@@ -6,8 +6,8 @@ use rastersong_media::MediaBackend;
 
 use crate::timeline::{Bus, Timebase};
 use crate::{
-    AudioBlock, AudioSink, DEFAULT_AUDIO_RATE, EngineError, OutputSize, RenderInfo, RenderTrack,
-    Renderer,
+    AudioBlock, AudioSink, DEFAULT_AUDIO_RATE, EngineError, LayerSet, OutputSize, RenderInfo,
+    RenderTrack, Renderer,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -24,6 +24,10 @@ pub struct RenderSettings {
     pub audio_rate: Option<u32>,
     /// The output bus whose sound is rendered.
     pub bus: Bus,
+    /// The project's graph items ([`crate::Project::layer_set`]): with them each item renders its
+    /// graph where it plays and `graph` is the open graph's description. `None` renders `graph`
+    /// over the whole timeline.
+    pub layers: Option<LayerSet>,
 }
 
 /// One rendered frame, as packed RGB8.
@@ -45,7 +49,8 @@ pub trait FrameSink {
     fn frame(&mut self, frame: RenderedFrame) -> Result<(), EngineError>;
 }
 
-/// Renders `tracks` through `graph` into `sink`, starting from frame 0 so the result is exact.
+/// Renders `tracks` through `graph` (or `settings.layers`) into `sink`, starting from frame 0 so
+/// the result is exact.
 pub fn render(
     backend: &dyn MediaBackend,
     tracks: &[RenderTrack],
@@ -53,11 +58,12 @@ pub fn render(
     settings: &RenderSettings,
     sink: &mut dyn FrameSink,
 ) -> Result<RenderInfo, EngineError> {
-    let mut renderer = Renderer::new(
+    let mut renderer = Renderer::with_layers(
         backend,
         settings.timebase,
         tracks,
         graph,
+        settings.layers.as_ref(),
         settings.tempo,
         &settings.bus,
         Registry::shared(),
