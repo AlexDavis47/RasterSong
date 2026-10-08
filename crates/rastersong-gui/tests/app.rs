@@ -1839,11 +1839,14 @@ fn dragging_a_header_reorders_the_tracks_of_its_kind() {
         .unwrap()
         .rect()
         .center();
-    drag(
-        &mut harness,
-        first_video,
-        first_video + vec2(0.0, LANE_HEIGHT * 1.5),
-    );
+    let to = first_video + vec2(0.0, LANE_HEIGHT * 1.5);
+    drag_to(&mut harness, first_video, to);
+    // The drag bubble follows the pointer meanwhile.
+    assert!(matches!(
+        bubble_phase(&harness.ctx),
+        Some(Phase::Dragging { .. })
+    ));
+    press(&mut harness, to, PointerButton::Primary, false);
     assert_eq!(
         track_names(&harness.state().project().video_tracks),
         ["video 2", "video"]
@@ -2251,4 +2254,172 @@ fn the_add_track_menu_adds_empty_tracks() {
     let project = harness.state().project();
     assert_eq!(project.video_tracks.len(), 2);
     assert_eq!(project.video_tracks[1].resource, None);
+}
+
+// --- The drag bubble ---
+
+use rastersong_gui::widgets::{Phase, bubble_phase};
+
+/// Presses on `from` and moves to `to`, keeping the button down.
+fn drag_to(harness: &mut Harness<'_, App>, from: Pos2, to: Pos2) {
+    harness.event(Event::PointerMoved(from));
+    harness.run_steps(1);
+    press(harness, from, PointerButton::Primary, true);
+    for t in [0.25, 0.5, 0.75, 1.0] {
+        harness.event(Event::PointerMoved(from + (to - from) * t));
+        harness.run_steps(1);
+    }
+}
+
+#[test]
+fn a_dragged_card_shows_the_bubble_which_blooms_where_it_is_dropped() {
+    let mut harness = loaded();
+    let name = harness.state().project().resources[0].name.clone();
+    let card = harness
+        .get_all_by_label(&name)
+        .next()
+        .unwrap()
+        .rect()
+        .center();
+    let mut to = timeline_point(&harness, 0.5, 1);
+    to.y += LANE_HEIGHT * 1.5;
+    drag_to(&mut harness, card, to);
+    assert!(matches!(
+        bubble_phase(&harness.ctx),
+        Some(Phase::Dragging { .. })
+    ));
+    press(&mut harness, to, PointerButton::Primary, false);
+    assert!(
+        matches!(bubble_phase(&harness.ctx), Some(Phase::Dropped { .. })),
+        "{:?}",
+        bubble_phase(&harness.ctx)
+    );
+    assert_eq!(harness.state().project().video_tracks.len(), 2);
+    // The bloom fades and the bubble goes.
+    harness.run_steps(30);
+    assert!(bubble_phase(&harness.ctx).is_none());
+}
+
+#[test]
+fn a_card_dropped_where_nothing_takes_it_sends_the_bubble_back() {
+    let mut harness = loaded();
+    let name = harness.state().project().resources[0].name.clone();
+    let card = harness
+        .get_all_by_label(&name)
+        .next()
+        .unwrap()
+        .rect()
+        .center();
+    // The preview takes no resources.
+    let to = harness.state().preview_rect().center();
+    drag_to(&mut harness, card, to);
+    press(&mut harness, to, PointerButton::Primary, false);
+    assert!(
+        matches!(bubble_phase(&harness.ctx), Some(Phase::Cancelled { .. })),
+        "{:?}",
+        bubble_phase(&harness.ctx)
+    );
+    assert_eq!(harness.state().project().video_tracks.len(), 1);
+}
+
+// --- The drop preview ---
+
+/// Where text reading `text` was painted over the timeline's lanes this frame.
+fn painted_text(harness: &Harness<'_, App>, text: &str) -> Vec<Pos2> {
+    let lanes_left = harness.state().timeline_area().left() + HEADER_WIDTH;
+    harness
+        .output()
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(t) if t.galley.text() == text && t.pos.x > lanes_left => Some(t.pos),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_dragged_resource_shows_its_ghost_and_lands_where_it_was_drawn() {
+    let mut harness = loaded();
+    seek_on_ruler(&mut harness, 1.0);
+    let song = harness.state().project().audio_tracks[0].resource.unwrap();
+    let name = harness
+        .state()
+        .project()
+        .resource(song)
+        .unwrap()
+        .name
+        .clone();
+    let card = harness
+        .get_all_by_label(&name)
+        .next()
+        .unwrap()
+        .rect()
+        .center();
+    // Over the song's own track, a few pixels after the playhead: it snaps to it.
+    let near = 1.0 + 3.0 / harness.state().timeline_view().px_per_sec;
+    let to = timeline_point(&harness, near, 1);
+    drag_to(&mut harness, card, to);
+    harness.run_steps(1);
+    let playhead_x = timeline_point(&harness, 1.0, 1).x;
+    let ghost = painted_text(&harness, &name);
+    assert!(
+        ghost.iter().any(|p| (p.x - (playhead_x + 6.0)).abs() < 1.0),
+        "the ghost is drawn at the playhead: {ghost:?} vs {playhead_x}"
+    );
+    press(&mut harness, to, PointerButton::Primary, false);
+    let items = &harness.state().project().audio_tracks[0].items;
+    assert_eq!(items.len(), 2, "it landed on the song's track");
+    assert!((items[1].position - 1.0).abs() < 1e-9, "{items:?}");
+}
+
+#[test]
+fn a_resource_no_track_takes_shows_a_ghost_row_and_makes_a_track() {
+    let mut harness = loaded();
+    let video = harness.state().project().video_tracks[0].resource.unwrap();
+    let name = harness
+        .state()
+        .project()
+        .resource(video)
+        .unwrap()
+        .name
+        .clone();
+    let card = harness
+        .get_all_by_label(&name)
+        .next()
+        .unwrap()
+        .rect()
+        .center();
+    // The video over the audio track, which can't take it.
+    let to = timeline_point(&harness, 0.5, 1);
+    drag_to(&mut harness, card, to);
+    harness.run_steps(1);
+    // The ghost row sits where the new video track will go: after the video, over the audio.
+    let ghost = painted_text(&harness, &name);
+    let boundary = harness.state().timeline_area().top() + 22.0 + LANE_HEIGHT;
+    assert!(
+        ghost.iter().any(|p| (p.y - boundary).abs() < 20.0),
+        "{ghost:?} vs {boundary}"
+    );
+    press(&mut harness, to, PointerButton::Primary, false);
+    assert_eq!(harness.state().project().video_tracks.len(), 2);
+}
+
+#[test]
+fn a_dragged_graph_shows_its_ghost_on_the_layer() {
+    let mut harness = loaded_with(layered_app(|_, _, _| {}));
+    let card = graph_card(&mut harness, "Second graph");
+    let to = layer_point(&harness, 0.5, 0, false);
+    drag_to(&mut harness, card, to);
+    harness.run_steps(1);
+    let lane_top = harness.state().timeline_area().top() + 22.0;
+    let ghost = painted_text(&harness, "Second graph");
+    assert!(
+        ghost
+            .iter()
+            .any(|p| p.y > lane_top && p.y < lane_top + LAYER_HEIGHT),
+        "{ghost:?}"
+    );
+    press(&mut harness, to, PointerButton::Primary, false);
+    assert_eq!(harness.state().project().layers[0].items.len(), 1);
 }

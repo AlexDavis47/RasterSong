@@ -196,6 +196,32 @@ pub struct TimelineModel<'a> {
     pub buses: Vec<String>,
     /// Whether dragged items and edges snap.
     pub snap: bool,
+    /// A resource or graph being dragged from the Resources panel, for the drop preview.
+    pub drop_ghost: Option<DropGhost>,
+}
+
+/// What is being dragged over the timeline from the Resources panel. While the pointer is over
+/// the lanes a ghost shows where it would land: an item on the track or layer that takes it, or
+/// a ghost row where a new track or layer would be made.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DropGhost {
+    pub name: String,
+    /// Its length in seconds. `None` for a resource no track plays yet, whose length isn't
+    /// known: the ghost then marks only where it starts.
+    pub length: Option<f64>,
+    pub target: GhostTarget,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum GhostTarget {
+    /// A resource for tracks of `kind`; `lands_on[row]` says whether the track in that row of
+    /// [`TimelineModel::tracks`] takes it (anywhere else, a new track is made).
+    Media {
+        kind: TrackKind,
+        lands_on: Vec<bool>,
+    },
+    /// A graph: on the layer under the pointer, or a new layer on top.
+    Graph,
 }
 
 /// Something the user did to a track. Tracks are named by their row in
@@ -341,6 +367,9 @@ pub struct TimelineResponse {
     pub lanes_left: f32,
     /// The row of the lanes the pointer is over, for dropping a resource on a track.
     pub row_under_pointer: Option<usize>,
+    /// Where a resource or graph dragged over the lanes would start (seconds), snapped like an
+    /// item drag. A drop lands there, where its ghost was drawn.
+    pub drop_at: Option<f64>,
 }
 
 /// How close (pixels) the pointer must be to a loop edge on the ruler to drag that edge.
@@ -931,6 +960,36 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         };
         lane.show(ui, &lane_painter, model, view, theme, &mut response);
     }
+    if let Some(ghost) = &model.drop_ghost
+        && let Some(p) = pointer.filter(|p| body_lanes.contains(*p))
+    {
+        let want = view.seconds(lanes_left, p.x).max(0.0);
+        let at = snap_time(
+            ui,
+            model,
+            view,
+            want,
+            ghost.length,
+            &layer_snap_targets(model, None),
+        );
+        response.drop_at = Some(at);
+        let (band, new_row) = ghost_band(&areas, model, view, ghost, &response);
+        if new_row {
+            lane_painter.rect_filled(
+                band,
+                CornerRadius::same(3),
+                theme.accent.gamma_multiply(0.1),
+            );
+        }
+        paint_ghost(
+            &lane_painter,
+            theme,
+            band,
+            x(at),
+            ghost.length.map(|l| x(at + l)),
+            &ghost.name,
+        );
+    }
     if let Some(selection) = dragged_box {
         lane_painter.rect_filled(
             selection,
@@ -1026,6 +1085,7 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         }
         if movable && grip.dragged() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            crate::widgets::drag_bubble(ui.ctx(), rect, track_icon(track.kind), &track.name);
         } else if movable && grip.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }
@@ -1822,7 +1882,7 @@ impl LayerLane<'_> {
             block,
             Some((item.position, item.position + item.length)),
             (("layer-item-edge", index, k), drag_id),
-            &|| layer_snap_targets(model, index, k),
+            &|| layer_snap_targets(model, Some((index, k))),
             tr("timeline.layer.item.edge"),
             |edge, to| {
                 response.layer_actions.push(LayerAction::TrimItem {
@@ -1841,7 +1901,7 @@ impl LayerLane<'_> {
                 edge: None,
                 origin: item.position,
                 length: item.length,
-                targets: layer_snap_targets(model, index, k),
+                targets: layer_snap_targets(model, Some((index, k))),
             };
             ctx.data_mut(|d| d.insert_temp(drag_id, drag));
         }
@@ -1925,7 +1985,7 @@ impl LayerLane<'_> {
 
 /// Where a drag of graph item `k` of layer `layer` can snap: the timeline's start, the playhead,
 /// and the edges of every track item and of the layers' other items.
-fn layer_snap_targets(model: &TimelineModel, layer: usize, k: usize) -> Vec<f64> {
+fn layer_snap_targets(model: &TimelineModel, skip: Option<(usize, usize)>) -> Vec<f64> {
     let mut targets = vec![0.0, model.playhead as f64 / model.frame_rate];
     for track in &model.tracks {
         for item in &track.items {
@@ -1936,7 +1996,7 @@ fn layer_snap_targets(model: &TimelineModel, layer: usize, k: usize) -> Vec<f64>
     }
     for l in &model.layers {
         for (j, item) in l.items.iter().enumerate() {
-            if !(l.index == layer && j == k) {
+            if skip != Some((l.index, j)) {
                 targets.extend([item.position, item.position + item.length]);
             }
         }
@@ -2030,25 +2090,121 @@ struct ItemDrag {
 /// Where a drag puts the item's start (or the edge), snapped unless snapping is off or Shift is
 /// held.
 fn drag_to(ui: &Ui, model: &TimelineModel, view: &TimelineView, drag: &ItemDrag) -> Option<f64> {
-    let (from, to, free) = ui.input(|i| {
-        (
-            i.pointer.press_origin(),
-            i.pointer.interact_pos(),
-            i.modifiers.shift,
-        )
-    });
+    let (from, to) = ui.input(|i| (i.pointer.press_origin(), i.pointer.interact_pos()));
     let want = drag.origin + f64::from(to?.x - from?.x) / view.px_per_sec;
-    if !model.snap || free {
-        return Some(want);
+    let length = drag.edge.is_none().then_some(drag.length);
+    Some(snap_time(ui, model, view, want, length, &drag.targets))
+}
+
+/// `want` (seconds) snapped to the grid and `targets`, as an item of `length` starting there
+/// snaps (its start, or its end): unchanged when snapping is off or Shift is held.
+fn snap_time(
+    ui: &Ui,
+    model: &TimelineModel,
+    view: &TimelineView,
+    want: f64,
+    length: Option<f64>,
+    targets: &[f64],
+) -> f64 {
+    if !model.snap || ui.input(|i| i.modifiers.shift) {
+        return want;
     }
     let grid = RulerGrid::new(model, view.px_per_sec);
     let line = |t: f64| grid.time(((t - grid.origin) / grid.minor).round() as i64);
-    let edges = match drag.edge {
-        Some(_) => vec![want],
-        None => vec![want, want + drag.length],
+    let edges = match length {
+        Some(length) => vec![want, want + length],
+        None => vec![want],
     };
     let reach = f64::from(SNAP_DISTANCE) / view.px_per_sec;
-    Some(want + snap_offset(&edges, &drag.targets, line, reach))
+    want + snap_offset(&edges, targets, line, reach)
+}
+
+/// Height of the ghost row drawn where a dropped resource or graph would make a new track or
+/// layer.
+const GHOST_ROW_HEIGHT: f32 = 26.0;
+
+/// Where the drop ghost goes (screen space, before clipping): the lane of the track or layer
+/// that takes it, or a ghost row (`true`) where a new one would be made.
+fn ghost_band(
+    areas: &Areas,
+    model: &TimelineModel,
+    view: &TimelineView,
+    ghost: &DropGhost,
+    response: &TimelineResponse,
+) -> (Rect, bool) {
+    let row = |y: f32| {
+        Rect::from_center_size(
+            pos2(areas.lanes.center().x, y),
+            vec2(areas.lanes.width(), GHOST_ROW_HEIGHT),
+        )
+    };
+    match &ghost.target {
+        GhostTarget::Media { kind, lands_on } => {
+            if let Some(r) = response
+                .row_under_pointer
+                .filter(|&r| lands_on.get(r).copied().unwrap_or(false))
+            {
+                return (areas.lane(r, view.scroll_y), false);
+            }
+            // A new track goes after the last track of its kind.
+            let rows = model.tracks.len();
+            let first_audio = model
+                .tracks
+                .iter()
+                .position(|t| t.kind == TrackKind::Audio)
+                .unwrap_or(rows);
+            let after = match kind {
+                TrackKind::Video => first_audio,
+                TrackKind::Audio => rows,
+            };
+            (row(areas.row_top(after, view.scroll_y)), true)
+        }
+        GhostTarget::Graph => match response.layer_under_pointer {
+            Some(index) => {
+                let display = model
+                    .layers
+                    .iter()
+                    .position(|l| l.index == index)
+                    .unwrap_or(0);
+                (areas.layer_lane(display, view.scroll_y), false)
+            }
+            // A new layer goes on top.
+            None => (
+                row(areas.body.top() - view.scroll_y + GHOST_ROW_HEIGHT / 2.0),
+                true,
+            ),
+        },
+    }
+}
+
+/// The drop ghost: a translucent item from `x0` to `x1` in `band`, or a start marker when the
+/// length isn't known, labelled with what is dragged.
+fn paint_ghost(
+    painter: &egui::Painter,
+    theme: &Theme,
+    band: Rect,
+    x0: f32,
+    x1: Option<f32>,
+    name: &str,
+) {
+    let block = Rect::from_min_max(
+        pos2(x0, band.top()),
+        pos2(x1.unwrap_or(x0 + 2.0).max(x0 + 2.0), band.bottom()),
+    );
+    painter.rect(
+        block,
+        CornerRadius::same(3),
+        theme.accent.gamma_multiply(0.25),
+        Stroke::new(1.5, theme.accent),
+        egui::StrokeKind::Inside,
+    );
+    painter.text(
+        pos2(x0 + 6.0, band.top() + 3.0),
+        Align2::LEFT_TOP,
+        name,
+        FontId::proportional(11.0),
+        theme.accent,
+    );
 }
 
 /// Where a drag of item `k` of row `row` can snap: the timeline's start, the playhead, and the
@@ -2290,6 +2446,14 @@ pub fn move_destination(from: usize, slot: usize) -> Option<usize> {
     (to != from).then_some(to)
 }
 
+/// The glyph a track of `kind` is marked with, in its header and while it is dragged.
+fn track_icon(kind: TrackKind) -> &'static str {
+    match kind {
+        TrackKind::Video => "▣",
+        TrackKind::Audio => "♪",
+    }
+}
+
 /// The widgets of a track's header: name, mute, solo and remove; then the video's
 /// size and frame rate, or an audio track's volume and its bus when the project has several (or
 /// the track's is gone); and a link mark when it is linked.
@@ -2306,10 +2470,7 @@ fn track_header(
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
         ui.horizontal(|ui| {
-            ui.label(match track.kind {
-                TrackKind::Video => "▣",
-                TrackKind::Audio => "♪",
-            });
+            ui.label(track_icon(track.kind));
             let edit = name_edit(ui, ui.id().with(("track-name", row)), &track.name, |e| {
                 e.desired_width(NAME_WIDTH)
             });
@@ -2603,6 +2764,7 @@ mod tests {
             mode,
             buses: Vec::new(),
             snap: true,
+            drop_ghost: None,
         };
         let grid = RulerGrid::new(&model(TimelineMode::Tempo), 360.0);
         // Ticks every quarter beat (0.125 s), starting at the offset.

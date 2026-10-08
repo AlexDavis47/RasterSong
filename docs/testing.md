@@ -33,4 +33,4 @@ Work in the [roadmap](roadmap.md) carries its own test obligations, so they aren
 - Taps (inspection and listening) never change the rendered output or the cache (they are read-only probes).
 - Routing: with no FX the output equals the plain mix; an audio FX on a folder hears the sum of its children; a graph
   with no Audio Output passes its track's audio through; a Control folder with master send off reaches no output.
-- Timeline interactions: a drop lands where its ghost was drawn; grouped items move together.
+- Timeline interactions: grouped items move together.

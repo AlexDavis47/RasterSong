@@ -139,6 +139,12 @@ runs at its [timebase](engine.md#timeline). **+ Track** adds an empty video or a
 onto, or (Audio file…, also File → Add Audio Tracks…) several audio files at once, each named after its file.
 Dropping a resource on a track puts it there from the drop point: an empty track takes it, a track of the same
 resource gets another item, and any other track (a track holds one resource only) makes a new track instead.
+While a card is dragged a **drag bubble** (a pill with the card's icon and name) follows the pointer; it pops in,
+blooms where it is dropped, and shrinks back to the card when nothing takes it. Over the lanes a **ghost** shows
+where the drop will land: an outlined item on the track that takes it, or a ghost row where the new track will
+go, at the snapped time (snapping like an item drag, Shift for none). The drop uses that time. A resource no
+track plays yet has no known length, so its ghost marks only where it starts. Dragged track headers show the
+bubble too.
 Opening a video (File → Open Video…) replaces every video track and adds the
 video's sound as an audio track too. Both go through [resources](#resources) for the file's best streams; the
 Resources panel adds more video tracks, and any stream of a file. Every video track decodes its own thumbnails (two
@@ -202,8 +208,8 @@ to delete the layer with its items. With no layers the timeline looks as before.
 
 **Drag a graph card** from the Resources panel's Graphs tab onto a layer's lane to place it from the drop point
 for the project's length (5 seconds in an empty project). Dropping anywhere else on the timeline (a track, or
-empty space) makes a new layer on top first, and the lane under a dragged graph is outlined (or a hint says a layer
-will be made). Whatever the new item lands on is trimmed, cut or removed, so items on a layer never overlap.
+empty space) makes a new layer on top first. The lane under a dragged graph is outlined (or a hint says a layer
+will be made), and a ghost item shows where it will land, snapped, as for resources. Whatever the new item lands on is trimmed, cut or removed, so items on a layer never overlap.
 
 Graph items are drawn like track items, in their own color, with a **header bar** holding the graph's name and a mute
 button (a muted item reads as a gap). They share the track items' header bar, edge handles, selection outline and

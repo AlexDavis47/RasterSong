@@ -121,6 +121,9 @@ pub struct Theme {
     pub graph_block: Color32,
     pub block_text: Color32,
     pub cached: Color32,
+    /// The drag bubble that follows the pointer during a drag, and its text.
+    pub bubble: Color32,
+    pub bubble_text: Color32,
 }
 
 impl Theme {
@@ -175,6 +178,8 @@ impl Theme {
         graph_block: Color32::from_rgb(0x8e, 0x6c, 0xc8),
         block_text: Color32::from_gray(20),
         cached: Color32::from_rgb(0x5c, 0xd6, 0x6a),
+        bubble: Color32::from_rgb(0x3a, 0x6f, 0xc4),
+        bubble_text: Color32::from_gray(250),
     };
 
     pub const LIGHT: Theme = Theme {
@@ -228,6 +233,8 @@ impl Theme {
         graph_block: Color32::from_rgb(0xc4, 0xb0, 0xe8),
         block_text: Color32::from_gray(30),
         cached: Color32::from_rgb(0x2c, 0x9e, 0x3c),
+        bubble: Color32::from_rgb(0x2f, 0x6b, 0xd6),
+        bubble_text: Color32::from_gray(255),
     };
 
     /// The theme egui is currently showing.

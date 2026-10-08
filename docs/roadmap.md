@@ -551,13 +551,17 @@ memory maps read ordinary files. Saving rewrites the zip, copying unchanged entr
      the failure now names the node and its graph, and the bar shows it when that graph is open.
    - [x] **bug** Clicking the error bar's message did nothing: the message label took the click (it was
      selectable). Only the bar's empty end worked.
-   - [ ] **feature** A shared **drag bubble** widget (`widgets/`): a rounded pill with an icon and a label that
+   - [x] **feature** A shared **drag bubble** widget (`widgets/`): a rounded pill with an icon and a label that
      follows the pointer during any drag. It plays a short "bloop" scale animation on start and on drop, and
      shrinks back to the source when the drag is cancelled. Resource and graph cards use it first, then item and
-     track drags.
-   - [ ] **feature** **Drop preview:** while a resource or graph is dragged over the timeline, a ghost item shows
+     track drags. *(Done: `widgets::drag_bubble`, used by the cards and track headers; see
+     [Timeline](app.md#timeline). Items move in place while dragged, so they don't show it.)*
+   - [x] **feature** **Drop preview:** while a resource or graph is dragged over the timeline, a ghost item shows
      where it will land (its length and snapped time on the target track), or a ghost track row shows where a new
-     track will be made. The drop uses the same snapped time; today it is unsnapped.
+     track will be made. The drop uses the same snapped time; today it is unsnapped. *(Done: see
+     [Timeline](app.md#timeline).)*
+   - [ ] **feature** Know a resource's length before a track plays it (read it at import), so its drop ghost
+     shows its length rather than only its start.
    - [x] **bug** With no graph items the open graph still renders over the whole timeline, which is an implicit
      graph ([Decisions](decisions.md#timeline-routing-folders-and-graphs-as-fx-october-2026)). With nothing placed,
      play the plain track mix. *(Done: the app and the CLI; see [Graph layers](engine.md#graph-layers).)*

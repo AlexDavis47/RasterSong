@@ -40,8 +40,8 @@ use crate::resources::{
 use crate::settings::Settings;
 use crate::theme::{Theme, ThemeChoice, apply_style};
 use crate::timeline::{
-    GraphItemView, LANE_HEIGHT, LayerAction, LayerView, Thumbnail, TimelineModel, TimelineView,
-    TrackAction, TrackThumbnails, TrackView, timecode, timeline,
+    DropGhost, GhostTarget, GraphItemView, LANE_HEIGHT, LayerAction, LayerView, Thumbnail,
+    TimelineModel, TimelineView, TrackAction, TrackThumbnails, TrackView, timecode, timeline,
 };
 use crate::track_ops::move_track;
 
@@ -504,6 +504,19 @@ impl App {
         name
     }
 
+    /// The track in timeline row `row`, if it would take resource `id` dropped on it: an empty
+    /// track of its kind, or a track already playing it. The drop preview and the drop both ask
+    /// this.
+    fn takes_resource(&self, id: ResourceId, row: usize) -> Option<&ProjectTrack> {
+        let track = match self.track_row(row)? {
+            (TrackKind::Video, i) => self.project.video_tracks.get(i)?,
+            (TrackKind::Audio, i) => self.project.audio_tracks.get(i)?,
+        };
+        self.project
+            .can_place_resource(&track.name, id)
+            .then_some(track)
+    }
+
     /// Drops resource `id` on the track in timeline row `row` at `position` seconds: an empty
     /// track takes it, a track of the same resource gets another item. Any other track can't
     /// take it, so a new track plays it instead. Returns the name of the track it landed on.
@@ -514,18 +527,12 @@ impl App {
         position: f64,
     ) -> Option<String> {
         let target = row
-            .and_then(|row| self.track_row(row))
-            .and_then(|(kind, i)| match kind {
-                TrackKind::Video => self.project.video_tracks.get(i),
-                TrackKind::Audio => self.project.audio_tracks.get(i),
-            })
+            .and_then(|row| self.takes_resource(id, row))
             .map(|t| (t.name.clone(), t.resource.is_none()));
         let Some((name, was_empty)) = target else {
             return self.add_resource_track(id, position);
         };
-        if !self.project.place_resource(&name, id, position) {
-            return self.add_resource_track(id, position);
-        }
+        self.project.place_resource(&name, id, position);
         if was_empty {
             let audio = self.project.audio_tracks.iter().any(|t| t.name == name);
             if audio {
@@ -988,6 +995,8 @@ impl App {
         self.resource_dialogs(ui);
         self.confirm_dialog(ui);
         self.update_title(ui);
+        // Last, once every drop target has had its chance at a dragged payload.
+        crate::widgets::paint_bubble(ui.ctx());
     }
 
     fn graph(&mut self, ui: &mut Ui) {
@@ -2096,21 +2105,17 @@ impl App {
             mode: self.project.timeline_mode,
             buses: self.project.buses.iter().map(|b| b.name.clone()).collect(),
             snap: self.settings.snap,
+            drop_ghost: self.drop_ghost(ui.ctx()),
         };
         self.timeline_area = ui.available_rect_before_wrap();
         let response = timeline(ui, &model, &mut self.timeline_view);
+        // A drop lands where its ghost was drawn: at the snapped time, or (released over the
+        // headers) at the start.
+        let at = response.drop_at.unwrap_or(0.0);
         if let Some(id) = dropped_resource(ui, area) {
-            let x = ui
-                .input(|i| i.pointer.interact_pos())
-                .map_or(response.lanes_left, |p| p.x.max(response.lanes_left));
-            let at = self.timeline_view.seconds(response.lanes_left, x).max(0.0);
             self.drop_resource(id, response.row_under_pointer, at);
         }
         if let Some(graph) = dropped_graph(ui, area) {
-            let x = ui
-                .input(|i| i.pointer.interact_pos())
-                .map_or(response.lanes_left, |p| p.x.max(response.lanes_left));
-            let at = self.timeline_view.seconds(response.lanes_left, x).max(0.0);
             self.drop_graph(graph, response.layer_under_pointer, at);
         }
         for track in &self.project.video_tracks {
@@ -2149,6 +2154,43 @@ impl App {
 
     /// How long a graph item is when it is dropped: the whole project, or 5 seconds for an
     /// empty one.
+    /// What the Resources panel is dragging over the timeline, for the drop preview.
+    fn drop_ghost(&self, ctx: &egui::Context) -> Option<DropGhost> {
+        if let Some(dragged) = egui::DragAndDrop::payload::<DraggedResource>(ctx) {
+            let id = dragged.0;
+            let resource = self.project.resource(id)?;
+            let rows = self.project.video_tracks.len() + self.project.audio_tracks.len();
+            // Known once a track plays it.
+            let length = self
+                .project
+                .tracks()
+                .find(|t| t.resource == Some(id))
+                .and_then(|t| self.track_duration(t));
+            return Some(DropGhost {
+                name: resource.name.clone(),
+                length,
+                target: GhostTarget::Media {
+                    kind: resource.kind.track_kind(),
+                    lands_on: (0..rows)
+                        .map(|row| self.takes_resource(id, row).is_some())
+                        .collect(),
+                },
+            });
+        }
+        let graph = egui::DragAndDrop::payload::<DraggedGraph>(ctx)?.0;
+        let name = self
+            .project
+            .graph_entries()
+            .into_iter()
+            .find(|g| g.id == graph)?
+            .name;
+        Some(DropGhost {
+            name,
+            length: Some(self.default_graph_item_length()),
+            target: GhostTarget::Graph,
+        })
+    }
+
     fn default_graph_item_length(&self) -> f64 {
         let frames = self.engine.info().map_or(0, |info| info.frames);
         if frames == 0 {

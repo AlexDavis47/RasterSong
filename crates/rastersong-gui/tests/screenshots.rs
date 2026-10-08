@@ -776,3 +776,30 @@ fn meter_screenshots() {
     harness.step();
     save(&mut harness, "dark-24-inspect-transition");
 }
+
+/// A resource card dragged over the timeline: the drag bubble at the pointer, the card faded.
+#[test]
+#[ignore = "needs a GPU; run explicitly to look at the UI"]
+fn drag_bubble_screenshots() {
+    let mut harness = gpu_harness(app(ThemeChoice::Dark));
+    wait_for_frames(&mut harness, 10);
+    let card = harness.get_by_label("clip").rect().center();
+    let area = harness.state().timeline_area();
+    let to = egui::pos2(area.center().x, area.bottom() - 30.0);
+    harness.event(egui::Event::PointerMoved(card));
+    harness.run_steps(1);
+    harness.event(egui::Event::PointerButton {
+        pos: card,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.run_steps(1);
+    for t in [0.25, 0.5, 0.75, 1.0] {
+        harness.event(egui::Event::PointerMoved(card + (to - card) * t));
+        harness.run_steps(1);
+    }
+    // Past the pick-up bloop.
+    harness.run_steps(20);
+    save(&mut harness, "dark-30-drag-bubble");
+}
