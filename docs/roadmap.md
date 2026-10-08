@@ -424,8 +424,9 @@ graph's extra input ports. With no FX anywhere, the output is the plain mix, bec
   *Main*, stereo; 5.1 is *Main* with six channels; stems are extra buses, or folders sent to a bus). Tracks route
   to a bus (*Main* by default), and each Audio Output picks one. Adding buses or channels breaks nothing; removing
   them warns first, listing the connections and tracks affected.
-- *Today* (before stage 2b) the code has separate video and audio lists, and the audio sum happens after rendering,
-  in the app's playback mixer and the CLI. Graphs therefore can't hear the track mix.
+- *Today* the track tree and folders exist, but the audio sum happens after rendering, in the app's playback mixer
+  and the CLI, with each track's level multiplied down through its folders. Graphs therefore can't hear the track
+  mix.
 
 **Graphs and ports.** Graphs are resources; a project can have any number.
 
@@ -580,8 +581,9 @@ memory maps read ordinary files. Saving rewrites the zip, copying unchanged entr
      version the loaded build reports; see [App](app.md).)*
 
    **2b. Routing rebuild** (the model above).
-   - [ ] **chore** One track tree: folder tracks, master send, any track kind anywhere. Replaces the video and
-     audio lists.
+   - [x] **chore** One track tree: folder tracks, master send, any track kind anywhere. Replaces the video and
+     audio lists. *(Done: see [Decisions](decisions.md#the-track-tree-october-2026). Until folders mix in the
+     renderer, their levels are multiplied into each track's.)*
    - [ ] **feature** Folder mixing inside the renderer (video composite, audio sum). Replaces `@track_mix` and the
      after-render audio sum in the app and the CLI.
    - [ ] **feature** Graphs as FX chains on tracks, folders and the master: bypass, the "through" tag for a missing
@@ -591,8 +593,9 @@ memory maps read ordinary files. Saving rewrites the zip, copying unchanged entr
      port; see [Decisions](decisions.md#input-ports-october-2026)). Output ports only matter to subgraphs, so they
      move to stage 3.)*
    - [ ] **feature** Item groups (Group / Ungroup, Ctrl+G, multi-stream imports grouped), replacing track links.
-   - [ ] **feature** Folder rows in the timeline (collapse triangle, indent, dragging into and out of folders),
-     the FX button and chain popup, and the default Video / Audio / Control template.
+   - [x] **feature** Folder rows in the timeline (collapse triangle, indent, dragging into and out of folders)
+     and the default Video / Audio / Control template.
+   - [ ] **feature** The FX button and chain popup on track, folder and master headers.
    - [ ] **feature** A cache key made of the active graphs' versions, so editing one graph keeps frames rendered
      only by others.
    - [ ] **feature** Graph Progress node.

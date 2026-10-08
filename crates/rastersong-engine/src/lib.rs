@@ -31,7 +31,8 @@ pub use project::{
     GraphLayer, INSPECT_RATE_RANGE, InputKind, InputPort, ItemRef, LayerSet, LoopRegion,
     MAX_WARMUP_FRAMES_LIMIT, MIN_ITEM_LENGTH, PASSTHROUGH_GRAPH, PROJECT_EXTENSION,
     PROJECT_VERSION, Project, ProjectTrack, RATE_RANGE, RenderItem, Resource, ResourceId,
-    ResourceKind, StoredGraph, TimelineMode, input_ports, port_of, resource_name_for, snap_offset,
+    ResourceKind, StoredGraph, TimelineMode, drop_depths, input_ports, port_of, resource_name_for,
+    snap_offset,
 };
 pub use rastersong_graph::dsp::Fft;
 pub use rastersong_graph::nodes::support::UNBOUNDED_WARMUP;

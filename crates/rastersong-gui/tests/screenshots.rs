@@ -16,6 +16,9 @@ use rastersong_engine::{
     AudioClip, FakeBackend, FakeVideo, GraphDesc, Project, Rational, TimelineMode, TrackKind,
 };
 use rastersong_gui::theme::WireStyle;
+
+mod common;
+use common::TrackLists;
 use rastersong_gui::{App, AudioOut, STARTER_GRAPH, ThemeChoice};
 
 fn app(theme: ThemeChoice) -> App {
@@ -78,7 +81,7 @@ fn bus_screenshots() {
                 name: "Stems".into(),
                 channels: 6,
             });
-            project.audio_tracks[1].bus = "Stems".into();
+            project.track_of_mut(TrackKind::Audio, 1).bus = "Stems".into();
         },
     ));
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -537,7 +540,7 @@ fn track_screenshots() {
     let names: Vec<String> = harness
         .state()
         .project()
-        .audio_tracks
+        .audios()
         .iter()
         .map(|t| t.name.clone())
         .collect();
@@ -550,11 +553,32 @@ fn track_screenshots() {
     let solo: Vec<bool> = harness
         .state()
         .project()
-        .audio_tracks
+        .audios()
         .iter()
         .map(|t| t.solo)
         .collect();
     assert_eq!(solo, [true, false]);
+}
+
+/// The track tree: a folder holding the audio tracks, one level in, then collapsed.
+#[test]
+#[ignore = "needs a GPU; run explicitly to look at the UI"]
+fn folder_screenshots() {
+    let app = app_edited(ThemeChoice::Dark, 2, TimelineMode::Time, |project| {
+        let mut folder = rastersong_engine::ProjectTrack::new_folder("Music".into());
+        folder.volume = 0.8;
+        project.tracks.insert(1, folder);
+        for track in &mut project.tracks[2..] {
+            track.depth = 1;
+        }
+    });
+    let mut harness = gpu_harness(app);
+    wait_for_frames(&mut harness, 10);
+    save(&mut harness, "dark-28-folder");
+    harness.get_by_label("⏷").click();
+    harness.run_steps(4);
+    save(&mut harness, "dark-29-folder-collapsed");
+    assert!(harness.state().project().tracks[1].collapsed);
 }
 
 /// Tracks of several items, a muted item, linked tracks and a taller track.
@@ -563,7 +587,7 @@ fn track_screenshots() {
 fn item_screenshots() {
     use rastersong_engine::Item;
     let app = app_edited(ThemeChoice::Dark, 2, TimelineMode::Time, |project| {
-        project.video_tracks[0].items = vec![
+        project.track_of_mut(TrackKind::Video, 0).items = vec![
             Item {
                 end: Some(1.5),
                 ..Item::whole(0.0)
@@ -573,8 +597,8 @@ fn item_screenshots() {
                 ..Item::whole(2.0)
             },
         ];
-        project.audio_tracks[0].items = project.video_tracks[0].items.clone();
-        project.audio_tracks[1].items = vec![
+        project.track_of_mut(TrackKind::Audio, 0).items = project.videos()[0].items.clone();
+        project.track_of_mut(TrackKind::Audio, 1).items = vec![
             Item {
                 end: Some(1.0),
                 ..Item::whole(0.5)
@@ -585,10 +609,10 @@ fn item_screenshots() {
                 ..Item::whole(2.5)
             },
         ];
-        project.audio_tracks[1].height = Some(110.0);
+        project.track_of_mut(TrackKind::Audio, 1).height = Some(110.0);
         let (video, audio) = (
-            project.video_tracks[0].name.clone(),
-            project.audio_tracks[0].name.clone(),
+            project.videos()[0].name.clone(),
+            project.audios()[0].name.clone(),
         );
         project.link_tracks(&video, &audio);
     });

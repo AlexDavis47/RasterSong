@@ -51,11 +51,15 @@ tempo and the loop region:
 - `resources`: the media the project uses, as the Resources panel lists them. Each has an `id` (what tracks point
   at), a `name`, a `kind` (`video` or `audio`), the linked file's `path`, and the `stream` it plays, by its index in
   the file (left out: the file's best stream of that kind).
-- `video_tracks` and `audio_tracks`: each a `name` (the name input nodes select it by, unique among all tracks),
-  the `resource` it plays (of its own kind), its `items`, `volume`, `muted` and `solo` for the track mix, its
-  `bus`, its `height` on the timeline and its `link` group (tracks with the same number move their items
-  together). Left out, `items` is one item playing the whole resource from the start. A track with no `resource`
-  is empty (and has no items) until a resource is dropped on it.
+- `tracks`: the track tree, top first, as the timeline lists it. Each track has a `name` (the port name graphs
+  read it by, unique among all tracks), its `depth` (0 at the top; a folder holds the deeper tracks right after
+  it), the `resource` it plays (video or audio), its `items`, `volume`, `muted`, `solo` and `master_send` (true by
+  default) for the track mix, its `bus` (for a top-level track), its `height` on the timeline and its `link` group
+  (tracks with the same number move their items together). A `folder` has no resource or items, may be
+  `collapsed`, and may take `new_tracks` of a kind (`"video"` or `"audio"`). Left out, `items` is one item
+  playing the whole resource from the start. A track with no `resource` is empty (and has no items) until a
+  resource is dropped on it. A tree read from a file is repaired: the first track is at depth 0, and none is more
+  than one level deeper than a folder above it.
 - `graph`, `graph_id`, `graph_name` and `graphs`: the project's graphs. `graph` is the open one (the one the editor
   shows and the engine renders), named `graph_name` with id `graph_id`; `graphs` holds the others, each an `id`,
   a `name` and its `graph`, until one is opened and swaps places with the open graph.
@@ -75,16 +79,17 @@ tempo and the loop region:
   "resources": [ { "id": 1, "name": "clip.mp4", "kind": "video", "path": "media/clip.mp4", "stream": 0 },
                  { "id": 2, "name": "song", "kind": "audio", "path": "media/song.wav" },
                  { "id": 3, "name": "kick", "kind": "audio", "path": "media/kick.wav" } ],
-  "video_tracks": [ { "name": "clip.mp4", "resource": 1 } ],
-  "audio_tracks": [ { "name": "song", "resource": 2, "volume": 0.8,
-                      "items": [ { "position": 1.5, "start": 12.0, "end": 40.0 } ] },
-                    { "name": "kick", "resource": 3, "bus": "Stems" } ],
+  "tracks": [ { "name": "clip.mp4", "resource": 1 },
+              { "name": "Music", "folder": true, "items": [], "volume": 0.8 },
+              { "name": "song", "depth": 1, "resource": 2,
+                "items": [ { "position": 1.5, "start": 12.0, "end": 40.0 } ] },
+              { "name": "kick", "resource": 3, "bus": "Stems" } ],
   "buses": [ { "name": "Main", "channels": 2 }, { "name": "Stems", "channels": 1 } ],
   "graph": { "version": 0, "nodes": [] } }
 ```
 
 Resource paths inside the project's folder are saved relative to it, so a project folder can be moved or shared.
-A track pointing at a resource the project doesn't have, or one of the other kind, is an error on open.
+A track pointing at a resource the project doesn't have is an error on open.
 Project files have the same version-0 policy. Graphs can also be imported and exported on their own. The project
 also keeps `audio_rate` (the Audio Output rate), `max_warmup_frames` and `inspect_rate` (how often connection
 inspection updates while playing, 5 a second by default), each omitted from the file while at its default.

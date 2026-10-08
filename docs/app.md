@@ -126,18 +126,25 @@ Graph…** read and write a graph as its own file.
 
 ## Timeline
 
-A ruler, any number of **video tracks** and **audio tracks** (video above audio), with Reaper-style track headers on
-the left. The ruler's corner has the **Time** / **Tempo** button (minutes and seconds, or bars and beats with the
+A ruler and one **track tree** with Reaper-style track headers on the left: video, audio and empty tracks in any
+order, and **folders** holding the tracks below them. A new project starts with three folders, *Video*, *Audio*
+and *Control*: new video tracks go at the bottom of Video and new audio tracks at the bottom of Audio, and Control
+sends nowhere, for tracks only graphs read. A folder header has a ⏷ / ⏵ toggle that hides or shows the tracks in it,
+its name, its volume (which scales everything in it), mute, solo and ×; its lane is a plain band, since a folder
+holds no items of its own. Each folder level indents the header, with a guide line down the left. A folder's mute
+or solo, or its master send turned off, applies to everything in it, and removing a folder moves what was in it up
+a level. The ruler's corner has the **Time** / **Tempo** button (minutes and seconds, or bars and beats with the
 tempo bar and its **Metronome** toggle) and the Snap button. Until a video is loaded, the timeline says it appears
 once one is, with a button to add an audio track. Each track
 is a lane of **items**, the stretches of its file placed on the timeline. The video header shows the track's name
 (its file's name until renamed), size and frame rate; each audio header has
-the track's name (renaming a track updates the bindings that read it), its volume in the track mix, and
-its bus when the project has several. Every header has **mute** and **solo** (*S*: while any track of a kind is
-soloed, only soloed tracks of that kind are in the [track mix](engine.md#track-mix-and-output-buses)); every header
-also has a × that removes the track. Tracks left out of the mix are drawn dimmed. Each track's lane has its own outline (the selected track's is the accent color), so neighbouring tracks are easy to tell apart. The project lasts to the end of its last item and
-runs at its [timebase](engine.md#timeline). **+ Track** adds an empty video or audio track to drag a resource
-onto, or (Audio file…, also File → Add Audio Tracks…) several audio files at once, each named after its file.
+the track's name (renaming a track updates the bindings that read it), its volume in the track mix, and, at the
+top of the tree, its bus when the project has several (a track in a folder goes where the folder goes). Every
+header has **mute** and **solo** (*S*: while any track of a kind is soloed, only soloed tracks of that kind are in
+the [track mix](engine.md#track-mix-and-output-buses); soloing a folder solos what is in it); every header also has
+a × that removes the track. Tracks left out of the mix are drawn dimmed. Each track's lane has its own outline (the selected track's is the accent color), so neighbouring tracks are easy to tell apart. The project lasts to the end of its last item and
+runs at its [timebase](engine.md#timeline). **+ Track** adds an empty track to drag a resource onto, a folder,
+or (Audio file…, also File → Add Audio Tracks…) several audio files at once, each named after its file.
 Dropping a resource on a track puts it there from the drop point: an empty track takes it, a track of the same
 resource gets another item, and any other track (a track holds one resource only) makes a new track instead.
 While a card is dragged a **drag bubble** (a pill with the card's icon and name) follows the pointer; it pops in,
@@ -179,15 +186,19 @@ audio's waveform, and behaves like empty lane space. Items can't start before th
   a few pixels. Hold **Shift** to drag freely.
 - Every edit undoes as one step.
 
-Right-click a header for its menu: **Link with ▸** lists the other tracks to link this one with, **Unlink** takes it
-out of its link, **Default height** resets its height, and **Remove track** removes it. Moving, splitting, deleting or copying an item of a
+Right-click a header for its menu: **Send to master** turns the track's master send off or on (off leaves it, and
+everything in it, out of the track mix; graphs still read it), **Link with ▸** lists the other tracks to link this
+one with, **Unlink** takes it out of its link, **Default height** resets its height, and **Remove track** removes it. Moving, splitting, deleting or copying an item of a
 linked track takes the items of the linked tracks that overlap it, and trimming takes the linked edges at the same
 time, so a video and its sound stay together. Linked headers say so. (Track links are to be replaced by item
 groups; see the [roadmap](roadmap.md#timeline-resources-and-routing).) Drag the bottom edge of a header to change
 the track's **height**; double-clicking the edge, or the header's menu, resets it. Drag a header by its free space
-or its labels (not its name field, buttons, volume or bus) to reorder the tracks of its kind: video tracks among
-the video tracks, audio tracks among the audio tracks. Frames rendered so far are marked in green along the bottom of the ruler.
-Linking, heights, solo and mutes are saved with the project and undo like any edit.
+or its labels (not its name field, buttons, volume or bus) to move the track, with everything in it: up or down
+among all the tracks, and left or right (one indent per level) to take it out of a folder or put it in the folder
+it lands under. A marker line shows where it goes, indented as deep as it will sit; a drop that would leave the
+tree invalid (a folder into itself) is refused. Frames rendered so far are marked in green along the bottom of the ruler.
+The tree, collapsed folders, linking, heights, solo, mutes and master sends are saved with the project and undo like
+any edit.
 
 - The scroll wheel zooms time around the pointer, from half the whole project down to a few frames (over the
   headers it scrolls the tracks); middle- or right-drag pans in both directions; F shows the whole project.
@@ -249,7 +260,8 @@ keep up, the audio is time-stretched (WSOLA: slowed without lowering the pitch) 
 out when playback all but stops. Volume, mute and routing shape the track mix (in playback and the CLI's export),
 never what graphs read.
 
-With several buses, each audio track's header shows the bus it is routed to, with a menu to change it.
+With several buses, each top-level audio track's and folder's header shows the bus it is routed to, with a menu to
+change it.
 
 ## Settings
 

@@ -458,6 +458,36 @@ ports.
   exactly one.
 - **Renaming a track renames what reads it**, which is now bindings (receives, once they exist), not graph nodes.
 
+### The track tree (October 2026)
+
+The second step of roadmap stage 2b. The separate video and audio lists become one list of tracks, and folders
+group them.
+
+- **Stored flat, with a depth.** The project keeps tracks top first, as the timeline lists them, each with how many
+  folders it is in; a folder holds the deeper run of tracks after it. The file reads like the timeline, moving a
+  track is moving a slice of a list, and a tree read from a file is repaired rather than refused: the first track
+  goes to the top and none sits deeper than the folder above it allows. Nested children lists were the
+  alternative; they make every row lookup and drag a walk of the tree.
+- **A track's kind comes from its resource.** A track has no kind of its own: video and audio tracks, empty tracks
+  and folders go anywhere, and an empty track takes any resource dropped on it.
+- **Folders hold no items** and play nothing themselves. Removing a folder keeps what was in it, one level up,
+  because deleting a whole subtree from one × is too easy to do by accident.
+- **The bus comes from the top-level ancestor.** Only top-level tracks and folders pick a bus, as in Reaper,
+  where a child's output goes to its parent. A bus picker on a nested track would be a setting with no effect.
+- **Solo stays per kind and is inherited.** Soloing a folder solos everything in it; a soloed video track still
+  leaves the audio alone. Mute, volume and the master send multiply down the tree the same way. Until the renderer
+  mixes folders (the next step), the project multiplies these levels into each track's own, so the playback mix
+  and the CLI keep summing tracks as before.
+- **New projects start from a template**: *Video*, *Audio* and *Control* folders. The first two take new tracks of
+  their kind (`new_tracks`), so a new video lands at the bottom of Video; Control has its master send off. Opening
+  an existing project or a test fixture uses no template, and a project without such folders puts new tracks at
+  the bottom of the list.
+- **The timeline selects tracks by name**, since rows shift when a folder collapses or a track moves.
+- **Dragging sets the depth from the pointer's x**, one indent per level, clamped to the depths that keep the tree
+  valid where it lands (no deeper than inside the folder above, no shallower than leaves the track below
+  stranded). Collapsed folders' tracks are hidden rows, so a drop below a collapsed folder lands after everything
+  in it.
+
 ## Open
 
 ### Open: "Audio to video" / "Video to audio" names

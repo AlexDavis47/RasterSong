@@ -28,7 +28,7 @@ use eframe::egui::{
     UiBuilder, Vec2, pos2, vec2,
 };
 use rastersong_engine::{
-    Edge, Item, LoopRegion, Tempo, TimelineMode, TrackKind, Waveform, snap_offset,
+    Edge, Item, LoopRegion, Tempo, TimelineMode, TrackKind, Waveform, drop_depths, snap_offset,
 };
 use rastersong_lang::{tr, tr_args};
 
@@ -43,6 +43,10 @@ const GAP: f32 = 6.0;
 /// Width of the name fields in the track headers, leaving room for the buttons beside them.
 const NAME_WIDTH: f32 = HEADER_WIDTH - 136.0;
 const RULER_HEIGHT: f32 = 22.0;
+/// How far a track's header is indented for each folder it is in.
+const INDENT: f32 = 14.0;
+/// The narrowest a deeply indented track's name gets.
+const MIN_NAME_WIDTH: f32 = 40.0;
 /// A track's height until the user changes it: tall enough for a header's two rows of widgets.
 pub const LANE_HEIGHT: f32 = 58.0;
 /// The shortest and tallest a track can be made.
@@ -76,7 +80,16 @@ const MAX_THUMBNAIL_REQUEST: usize = 200;
 #[derive(Debug, Clone)]
 pub struct TrackView {
     pub name: String,
-    pub kind: TrackKind,
+    /// What the track plays; `None` for a folder or an empty track.
+    pub kind: Option<TrackKind>,
+    /// A folder holds the deeper tracks below it and has no items of its own.
+    pub folder: bool,
+    /// How many folders the track is in.
+    pub depth: u32,
+    /// A folder whose tracks are hidden.
+    pub collapsed: bool,
+    /// Whether the track feeds the master; a track that doesn't is left out of the mix.
+    pub master_send: bool,
     /// Length of the track's file in seconds, once known.
     pub duration: Option<f64>,
     pub items: Vec<Item>,
@@ -104,11 +117,15 @@ pub struct TrackView {
 }
 
 impl TrackView {
-    /// A track of `kind` with nothing loaded yet, at the default height.
-    pub fn new(name: impl Into<String>, kind: TrackKind) -> Self {
+    /// A track of `kind` with nothing loaded yet, at the top of the tree and the default height.
+    pub fn new(name: impl Into<String>, kind: Option<TrackKind>) -> Self {
         Self {
             name: name.into(),
             kind,
+            folder: false,
+            depth: 0,
+            collapsed: false,
+            master_send: true,
             duration: None,
             items: Vec::new(),
             muted: false,
@@ -183,7 +200,7 @@ pub struct TimelineModel<'a> {
     pub cached: &'a [Range<usize>],
     /// The graph layers above the tracks, top layer first.
     pub layers: Vec<LayerView>,
-    /// Every track, top first: the video tracks, then the audio tracks.
+    /// The tracks shown, top first: every track but those in a collapsed folder.
     pub tracks: Vec<TrackView>,
     /// The selected row of [`Self::tracks`].
     pub selected_track: Option<usize>,
@@ -214,12 +231,10 @@ pub struct DropGhost {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum GhostTarget {
-    /// A resource for tracks of `kind`; `lands_on[row]` says whether the track in that row of
-    /// [`TimelineModel::tracks`] takes it (anywhere else, a new track is made).
-    Media {
-        kind: TrackKind,
-        lands_on: Vec<bool>,
-    },
+    /// A resource for tracks; `lands_on[row]` says whether the track in that row of
+    /// [`TimelineModel::tracks`] takes it. Anywhere else a new track is made, before row
+    /// `new_row` (the number of rows for the bottom).
+    Media { lands_on: Vec<bool>, new_row: usize },
     /// A graph: on the layer under the pointer, or a new layer on top.
     Graph,
 }
@@ -229,8 +244,10 @@ pub enum GhostTarget {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TrackAction {
     Select(usize),
-    /// The "+ Track" menu asked for an empty track of this kind.
-    AddEmpty(TrackKind),
+    /// The "+ Track" menu asked for an empty track.
+    AddEmpty,
+    /// The "+ Track" menu asked for a folder.
+    AddFolder,
     /// Item `item` of the track was clicked: select only it, or with `toggle` (Ctrl) add it to
     /// the selection or take it out.
     SelectItem {
@@ -282,16 +299,22 @@ pub enum TrackAction {
     },
     ToggleMute(usize),
     ToggleSolo(usize),
+    /// Show or hide what is in the folder.
+    ToggleCollapsed(usize),
+    /// Send the track to the master or leave it out of the mix.
+    SetMasterSend(usize, bool),
     SetVolume(usize, f32),
     SetHeight(usize, f32),
     /// Link the track with the one in the second row.
     Link(usize, usize),
     Unlink(usize),
-    /// A track's header was dragged to a new place among the tracks of its kind: the track in row `from` moves to row
-    /// `to`.
+    /// A track's header was dragged to a new place: the track in row `from` (with what is in
+    /// it) moves before the track in row `slot` (the number of rows for the bottom), `depth`
+    /// folders deep.
     Move {
         from: usize,
-        to: usize,
+        slot: usize,
+        depth: u32,
     },
     Rename(usize, String),
     /// Route the track to the named output bus.
@@ -1036,13 +1059,9 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
             layer_header(ui, layer, &mut response);
         });
     }
-    // Tracks reorder within their own list: the video rows, then the audio rows.
-    let first_audio = model
-        .tracks
-        .iter()
-        .position(|t| t.kind == TrackKind::Audio)
-        .unwrap_or(rows);
-    let mut dragging: Option<(usize, usize)> = None;
+    // The shown tree, for where a dragged header can land.
+    let shape: Vec<(u32, bool)> = model.tracks.iter().map(|t| (t.depth, t.folder)).collect();
+    let mut dragging: Option<(usize, usize, Option<u32>)> = None;
     for (row, track) in model.tracks.iter().enumerate() {
         let rect = areas.header(row, view.scroll_y);
         if !rect.intersects(header_clip) {
@@ -1050,13 +1069,15 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         }
         let fill = if model.selected_track == Some(row) {
             theme.accent.gamma_multiply(0.18)
+        } else if track.folder {
+            ui.visuals().widgets.noninteractive.bg_fill
         } else {
             ui.visuals().faint_bg_color
         };
         header_painter.rect_filled(rect, CornerRadius::same(3), fill);
-        // The header's background selects the track, drags it to a new place among the tracks
-        // of its kind and has the track menu. It goes under the widgets (which are made after it), so they keep
-        // their clicks.
+        // The header's background selects the track, drags it (with what is in it) to a new
+        // place in the tree and has the track menu. It goes under the widgets (which are made
+        // after it), so they keep their clicks.
         let grip = ui.interact(
             rect.intersect(header_clip),
             ui.id().with(("track-grip", row)),
@@ -1065,27 +1086,29 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         if grip.clicked() || grip.drag_started() {
             response.actions.push(TrackAction::Select(row));
         }
-        let group = if row < first_audio {
-            0..first_audio
-        } else {
-            first_audio..rows
-        };
-        let movable = group.len() > 1;
+        let movable = rows > 1;
         if movable
             && (grip.dragged() || grip.drag_stopped())
             && let Some(p) = grip.interact_pointer_pos()
         {
-            let boundaries: Vec<f32> = areas.tops[group.start..=group.end].to_vec();
-            let slot = group.start + drop_slot(p.y - areas.body.top() + view.scroll_y, &boundaries);
+            let boundaries: Vec<f32> = areas.tops[..=rows].to_vec();
+            let slot = drop_slot(p.y - areas.body.top() + view.scroll_y, &boundaries);
+            let wanted = ((p.x - areas.headers.left() - INDENT / 2.0) / INDENT).max(0.0) as u32;
+            let depth = drop_depths(&shape, row, slot)
+                .map(|range| wanted.clamp(*range.start(), *range.end()));
             if grip.dragged() {
-                dragging = Some((row, slot));
-            } else if let Some(to) = move_destination(row, slot) {
-                response.actions.push(TrackAction::Move { from: row, to });
+                dragging = Some((row, slot, depth));
+            } else if let Some(depth) = depth.filter(|&d| moves(&shape, row, slot, d)) {
+                response.actions.push(TrackAction::Move {
+                    from: row,
+                    slot,
+                    depth,
+                });
             }
         }
         if movable && grip.dragged() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-            crate::widgets::drag_bubble(ui.ctx(), rect, track_icon(track.kind), &track.name);
+            crate::widgets::drag_bubble(ui.ctx(), rect, track_icon(track), &track.name);
         } else if movable && grip.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }
@@ -1095,9 +1118,25 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
             tr("timeline.track.header.help")
         });
         grip.context_menu(|ui| track_menu(ui, model, row, &mut response));
-        header(ui, rect, header_clip, |ui| {
-            track_header(ui, track, &model.buses, row, &mut response);
-        });
+        let indent = track.depth as f32 * INDENT;
+        if indent > 0.0 {
+            // A guide down the left of the header for each folder the track is in.
+            for level in 0..track.depth {
+                let gx = rect.left() + level as f32 * INDENT + INDENT / 2.0;
+                header_painter.line_segment(
+                    [pos2(gx, rect.top()), pos2(gx, rect.bottom())],
+                    Stroke::new(1.0, ui.visuals().weak_text_color().gamma_multiply(0.4)),
+                );
+            }
+        }
+        header(
+            ui,
+            rect.with_min_x(rect.left() + indent),
+            header_clip,
+            |ui| {
+                track_header(ui, track, &model.buses, row, &mut response);
+            },
+        );
         // The bottom edge resizes the track.
         let edge = Rect::from_min_max(
             pos2(rect.left(), rect.bottom() + 2.0 - RESIZE_GRAB),
@@ -1124,15 +1163,13 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         }
         resize.on_hover_text(tr("timeline.track.resize"));
     }
-    // Where a dragged header would land.
-    if let Some((from, slot)) = dragging {
+    // Where a dragged header would land, indented as deep as it would go.
+    if let Some((from, slot, depth)) = dragging {
         let y = areas.row_top(slot, view.scroll_y);
-        let marker = move_destination(from, slot).is_some();
+        let marker = depth.is_some_and(|d| moves(&shape, from, slot, d));
+        let left = areas.headers.left() + depth.unwrap_or(0) as f32 * INDENT;
         header_painter.line_segment(
-            [
-                pos2(areas.headers.left(), y),
-                pos2(areas.headers.right(), y),
-            ],
+            [pos2(left, y), pos2(areas.headers.right(), y)],
             Stroke::new(
                 2.5,
                 if marker {
@@ -1149,16 +1186,20 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
     );
     header(ui, add_row, header_clip, |ui| {
         ui.menu_button(tr("timeline.track.add"), |ui| {
-            if ui.button(tr("timeline.track.add_video")).clicked() {
-                response
-                    .actions
-                    .push(TrackAction::AddEmpty(TrackKind::Video));
+            if ui
+                .button(tr("timeline.track.add_empty"))
+                .on_hover_text(tr("timeline.track.add_empty.help"))
+                .clicked()
+            {
+                response.actions.push(TrackAction::AddEmpty);
                 ui.close();
             }
-            if ui.button(tr("timeline.track.add_audio")).clicked() {
-                response
-                    .actions
-                    .push(TrackAction::AddEmpty(TrackKind::Audio));
+            if ui
+                .button(tr("timeline.track.add_folder"))
+                .on_hover_text(tr("timeline.track.add_folder.help"))
+                .clicked()
+            {
+                response.actions.push(TrackAction::AddFolder);
                 ui.close();
             }
             if ui
@@ -1202,13 +1243,48 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
     response
 }
 
-/// The header's right-click menu: link the track with another or take it out of its link, reset
-/// its height, and remove it.
+/// The header's right-click menu: send the track to the master or not, link it with another or
+/// take it out of its link, reset its height, and remove it.
 fn track_menu(ui: &mut Ui, model: &TimelineModel, row: usize, response: &mut TimelineResponse) {
+    let track = &model.tracks[row];
+    let mut send = track.master_send;
+    if ui
+        .checkbox(&mut send, tr("timeline.track.master_send"))
+        .on_hover_text(tr("timeline.track.master_send.help"))
+        .clicked()
+    {
+        response.actions.push(TrackAction::SetMasterSend(row, send));
+        ui.close();
+    }
+    ui.separator();
+    if !track.folder {
+        track_link_menu(ui, model, row, response);
+    }
+    if track.height != LANE_HEIGHT && ui.button(tr("timeline.track.reset_height")).clicked() {
+        response
+            .actions
+            .push(TrackAction::SetHeight(row, LANE_HEIGHT));
+        ui.close();
+    }
+    ui.separator();
+    if ui.button(tr("timeline.track.remove")).clicked() {
+        response.actions.push(TrackAction::Remove(row));
+        ui.close();
+    }
+}
+
+/// Linking a track with another, or taking it out of its link. Folders hold no items, so they
+/// aren't offered.
+fn track_link_menu(
+    ui: &mut Ui,
+    model: &TimelineModel,
+    row: usize,
+    response: &mut TimelineResponse,
+) {
     let track = &model.tracks[row];
     ui.menu_button(tr("timeline.track.link"), |ui| {
         for (other, candidate) in model.tracks.iter().enumerate() {
-            if other == row || track.linked.contains(&candidate.name) {
+            if other == row || candidate.folder || track.linked.contains(&candidate.name) {
                 continue;
             }
             if ui.button(&candidate.name).clicked() {
@@ -1227,17 +1303,6 @@ fn track_menu(ui: &mut Ui, model: &TimelineModel, row: usize, response: &mut Tim
             .clicked()
     {
         response.actions.push(TrackAction::Unlink(row));
-        ui.close();
-    }
-    if track.height != LANE_HEIGHT && ui.button(tr("timeline.track.reset_height")).clicked() {
-        response
-            .actions
-            .push(TrackAction::SetHeight(row, LANE_HEIGHT));
-        ui.close();
-    }
-    ui.separator();
-    if ui.button(tr("timeline.track.remove")).clicked() {
-        response.actions.push(TrackAction::Remove(row));
         ui.close();
     }
 }
@@ -1449,7 +1514,13 @@ impl Lane<'_> {
         if !lane.intersects(self.clip) {
             return;
         }
-        painter.rect_filled(lane, CornerRadius::same(3), theme.lane_bg);
+        // A folder's lane is a plain band: it holds no items of its own.
+        let fill = if track.folder {
+            ui.visuals().widgets.noninteractive.bg_fill
+        } else {
+            theme.lane_bg
+        };
+        painter.rect_filled(lane, CornerRadius::same(3), fill);
         let (outline, width) = if model.selected_track == Some(row) {
             (theme.accent, 1.5)
         } else {
@@ -1461,6 +1532,9 @@ impl Lane<'_> {
             Stroke::new(width, outline),
             egui::StrokeKind::Inside,
         );
+        if track.folder || (track.kind.is_none() && !track.missing) {
+            return;
+        }
         if track.missing {
             painter.text(
                 lane.left_center() + vec2(6.0, 0.0),
@@ -1545,8 +1619,8 @@ impl Lane<'_> {
             },
         );
         let base = match track.kind {
-            TrackKind::Video => theme.video_block,
-            TrackKind::Audio => theme.audio_block,
+            Some(TrackKind::Video) => theme.video_block,
+            _ => theme.audio_block,
         };
         let mut fill = if hovered {
             base.gamma_multiply(1.2)
@@ -1560,7 +1634,7 @@ impl Lane<'_> {
         painter.rect_filled(block, CornerRadius::same(3), fill);
         let content = Rect::from_min_max(pos2(block.left(), bar.bottom()), block.max);
         match track.kind {
-            TrackKind::Video if track.thumbnails.is_some() => {
+            Some(TrackKind::Video) if track.thumbnails.is_some() => {
                 let duration = track.duration.unwrap_or_default();
                 thumbnails(
                     painter,
@@ -1573,8 +1647,8 @@ impl Lane<'_> {
                     response,
                 );
             }
-            TrackKind::Video => {}
-            TrackKind::Audio => {
+            Some(TrackKind::Video) | None => {}
+            Some(TrackKind::Audio) => {
                 if let Some(waveform) = &track.waveform {
                     let color = theme
                         .block_text
@@ -2139,25 +2213,14 @@ fn ghost_band(
         )
     };
     match &ghost.target {
-        GhostTarget::Media { kind, lands_on } => {
+        GhostTarget::Media { lands_on, new_row } => {
             if let Some(r) = response
                 .row_under_pointer
                 .filter(|&r| lands_on.get(r).copied().unwrap_or(false))
             {
                 return (areas.lane(r, view.scroll_y), false);
             }
-            // A new track goes after the last track of its kind.
-            let rows = model.tracks.len();
-            let first_audio = model
-                .tracks
-                .iter()
-                .position(|t| t.kind == TrackKind::Audio)
-                .unwrap_or(rows);
-            let after = match kind {
-                TrackKind::Video => first_audio,
-                TrackKind::Audio => rows,
-            };
-            (row(areas.row_top(after, view.scroll_y)), true)
+            (row(areas.row_top(*new_row, view.scroll_y)), true)
         }
         GhostTarget::Graph => match response.layer_under_pointer {
             Some(index) => {
@@ -2439,24 +2502,29 @@ fn drop_slot(y: f32, boundaries: &[f32]) -> usize {
         .map_or(0, |(i, _)| i)
 }
 
-/// The index a track dragged from `from` ends up at when dropped in gap `slot`, or `None` if that
-/// leaves it where it is.
-pub fn move_destination(from: usize, slot: usize) -> Option<usize> {
-    let to = if slot > from { slot - 1 } else { slot };
-    (to != from).then_some(to)
+/// Whether dropping track `from` of the shown tree `shape` (see [`drop_depths`]) in gap `slot`,
+/// `depth` folders deep, changes anything: not when it lands where it is, at its own depth.
+pub fn moves(shape: &[(u32, bool)], from: usize, slot: usize, depth: u32) -> bool {
+    let end = (from + 1..shape.len())
+        .find(|&j| shape[j].0 <= shape[from].0)
+        .unwrap_or(shape.len());
+    !((slot == from || slot == end) && depth == shape[from].0)
 }
 
-/// The glyph a track of `kind` is marked with, in its header and while it is dragged.
-fn track_icon(kind: TrackKind) -> &'static str {
-    match kind {
-        TrackKind::Video => "▣",
-        TrackKind::Audio => "♪",
+/// The glyph a track is marked with, in its header and while it is dragged.
+fn track_icon(track: &TrackView) -> &'static str {
+    match track.kind {
+        _ if track.folder => "🗀",
+        Some(TrackKind::Video) => "▣",
+        Some(TrackKind::Audio) => "♪",
+        None => "○",
     }
 }
 
-/// The widgets of a track's header: name, mute, solo and remove; then the video's
-/// size and frame rate, or an audio track's volume and its bus when the project has several (or
-/// the track's is gone); and a link mark when it is linked.
+/// The widgets of a track's header: a folder's open/closed toggle, then name, mute, solo and
+/// remove; then the video's size and frame rate, or the volume of an audio track or folder and,
+/// at the top of the tree, its bus when the project has several (or the track's is gone); and a
+/// link mark when it is linked.
 fn track_header(
     ui: &mut Ui,
     track: &TrackView,
@@ -2470,13 +2538,29 @@ fn track_header(
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
         ui.horizontal(|ui| {
-            ui.label(track_icon(track.kind));
+            if track.folder {
+                let (glyph, help) = if track.collapsed {
+                    ("⏵", tr("timeline.folder.expand"))
+                } else {
+                    ("⏷", tr("timeline.folder.collapse"))
+                };
+                if ui
+                    .add(egui::Button::new(glyph).frame(false))
+                    .on_hover_text(help)
+                    .clicked()
+                {
+                    response.actions.push(TrackAction::ToggleCollapsed(row));
+                }
+            }
+            ui.label(track_icon(track));
+            let width = (NAME_WIDTH - track.depth as f32 * INDENT).max(MIN_NAME_WIDTH);
             let edit = name_edit(ui, ui.id().with(("track-name", row)), &track.name, |e| {
-                e.desired_width(NAME_WIDTH)
+                e.desired_width(width)
             });
-            let help = match track.kind {
-                TrackKind::Video => tr("timeline.video_name.help"),
-                TrackKind::Audio => tr("timeline.track.name.help"),
+            let help = if track.folder {
+                tr("timeline.folder.name.help")
+            } else {
+                tr("timeline.track.name.help")
             };
             let edit_response = edit.response.on_hover_text(help);
             if edit_response.gained_focus() {
@@ -2522,7 +2606,8 @@ fn track_header(
                     ));
             }
             match track.kind {
-                TrackKind::Video => {
+                _ if track.folder => audio_controls(ui, track, buses, row, response),
+                Some(TrackKind::Video) => {
                     if let Some(details) = &track.details {
                         ui.add(
                             egui::Label::new(egui::RichText::new(details).weak().small())
@@ -2530,13 +2615,17 @@ fn track_header(
                         );
                     }
                 }
-                TrackKind::Audio => audio_controls(ui, track, buses, row, response),
+                Some(TrackKind::Audio) => audio_controls(ui, track, buses, row, response),
+                None => {
+                    ui.weak(tr("timeline.track.empty"));
+                }
             }
         });
     });
 }
 
-/// An audio track's volume, and its bus when there is a choice to make.
+/// The volume of an audio track or folder, and at the top of the tree its bus when there is a
+/// choice to make.
 fn audio_controls(
     ui: &mut Ui,
     track: &TrackView,
@@ -2560,7 +2649,7 @@ fn audio_controls(
             .actions
             .push(TrackAction::SetVolume(row, (percent / 100.0) as f32));
     }
-    if buses.len() > 1 || !buses.contains(&track.bus) {
+    if track.depth == 0 && (buses.len() > 1 || !buses.contains(&track.bus)) {
         let mut bus = track.bus.clone();
         egui::ComboBox::from_id_salt(("track-bus", row))
             .width(64.0)
@@ -2601,13 +2690,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn dropping_in_a_gap_moves_the_track_there() {
-        // Three tracks: gaps 0..=3. Dragging track 0 below track 1 (gap 2) puts it at index 1.
-        assert_eq!(move_destination(0, 2), Some(1));
-        assert_eq!(move_destination(2, 0), Some(0));
-        assert_eq!(move_destination(1, 1), None);
-        assert_eq!(move_destination(1, 2), None);
-        assert_eq!(move_destination(0, 3), Some(2));
+    fn dropping_a_track_where_it_is_moves_nothing() {
+        // A folder holding one track, then a track at the top: gaps 0..=3.
+        let shape = [(0, true), (1, false), (0, false)];
+        assert!(!moves(&shape, 0, 0, 0));
+        assert!(!moves(&shape, 0, 2, 0), "just below its own subtree");
+        assert!(moves(&shape, 0, 3, 0));
+        assert!(!moves(&shape, 1, 1, 1));
+        assert!(moves(&shape, 1, 2, 0), "out of the folder in place");
+        assert!(moves(&shape, 2, 2, 1), "into the folder in place");
     }
 
     #[test]
@@ -2625,9 +2716,9 @@ mod tests {
     fn rows_stack_at_their_own_heights() {
         let tall = TrackView {
             height: 100.0,
-            ..TrackView::new("b", TrackKind::Audio)
+            ..TrackView::new("b", Some(TrackKind::Audio))
         };
-        let tracks = [TrackView::new("a", TrackKind::Video), tall];
+        let tracks = [TrackView::new("a", Some(TrackKind::Video)), tall];
         let areas = Areas::new(
             Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 400.0)),
             &tracks,
@@ -2644,7 +2735,7 @@ mod tests {
 
     #[test]
     fn graph_layers_sit_above_the_tracks() {
-        let tracks = [TrackView::new("a", TrackKind::Video)];
+        let tracks = [TrackView::new("a", Some(TrackKind::Video))];
         let areas = Areas::new(
             Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 400.0)),
             &tracks,

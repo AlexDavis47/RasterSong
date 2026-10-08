@@ -13,7 +13,6 @@ pub mod resources;
 pub mod settings;
 pub mod theme;
 pub mod timeline;
-pub mod track_ops;
 pub mod value_box;
 pub mod widgets;
 

@@ -43,12 +43,6 @@ use crate::timeline::{
     DropGhost, GhostTarget, GraphItemView, LANE_HEIGHT, LayerAction, LayerView, Thumbnail,
     TimelineModel, TimelineView, TrackAction, TrackThumbnails, TrackView, timecode, timeline,
 };
-use crate::track_ops::move_track;
-
-/// The timeline row of the first audio track, if there is one.
-fn first_audio_row(project: &Project) -> Option<usize> {
-    (!project.audio_tracks.is_empty()).then_some(project.video_tracks.len())
-}
 
 /// The graph a new project starts with: the basic workflow from docs/concepts.md.
 pub const STARTER_GRAPH: &str = include_str!("../../../examples/graphs/am_bands.json");
@@ -140,8 +134,8 @@ pub struct App {
     settings: Settings,
     /// The theme last handed to egui.
     applied_theme: Option<ThemeChoice>,
-    /// The selected row of the timeline: the video tracks, then the audio tracks.
-    selected_track: Option<usize>,
+    /// The selected track, by name.
+    selected_track: Option<String>,
     /// The selected timeline items.
     selected_items: Vec<ItemRef>,
     /// The selected graph item: its layer and its index among the layer's items. Exclusive with
@@ -226,7 +220,7 @@ impl App {
             listening: None,
             inspect_scroll: 0.0,
             waiting_since: None,
-            selected_track: first_audio_row(&project),
+            selected_track: None,
             selected_items: Vec::new(),
             selected_graph_item: None,
             seen_active_node: None,
@@ -270,7 +264,7 @@ impl App {
         audio: AudioOut,
     ) -> Self {
         let graph = GraphDesc::from_json(STARTER_GRAPH).expect("the starter graph is valid");
-        Self::new(backend, Project::new(graph), backend_info, audio)
+        Self::new(backend, Project::with_template(graph), backend_info, audio)
     }
 
     pub fn clock(&self) -> &PlaybackClock {
@@ -322,8 +316,10 @@ impl App {
 
     /// Each video track's file length in seconds, once it is known.
     pub fn video_durations(&self) -> Vec<Option<f64>> {
-        let tracks = &self.project.video_tracks;
-        tracks.iter().map(|t| self.track_duration(t)).collect()
+        self.project
+            .tracks_of(TrackKind::Video)
+            .map(|t| self.track_duration(t))
+            .collect()
     }
 
     /// How many video thumbnails are ready to draw.
@@ -370,7 +366,7 @@ impl App {
         project.graph = self.editor.to_desc();
         self.saved = project.clone();
         self.history = History::new(project.clone());
-        self.selected_track = first_audio_row(&project);
+        self.selected_track = None;
         self.selected_graph_item = None;
         self.project = project;
         self.project_path = path;
@@ -392,7 +388,12 @@ impl App {
     /// track already plays it).
     pub fn open_video(&mut self, path: PathBuf) {
         let has_audio = self.backend.has_audio(&path);
-        self.project.video_tracks.clear();
+        while let Some(i) = (0..self.project.tracks.len())
+            .rev()
+            .find(|&i| self.project.track_kind(&self.project.tracks[i]) == Some(TrackKind::Video))
+        {
+            self.project.remove_track(i);
+        }
         let name = resource_name_for(&path, ResourceKind::Video);
         let id = self
             .project
@@ -400,7 +401,7 @@ impl App {
         self.project.add_track_for(id, 0.0);
         self.engine.set_timeline(self.timeline_of(&self.project));
         self.clock.seek(0);
-        let known = self.project.audio_tracks.iter().any(|t| {
+        let known = self.project.tracks_of(TrackKind::Audio).any(|t| {
             self.project
                 .track_resource(t)
                 .is_some_and(|r| r.path == path && r.stream.is_none())
@@ -477,34 +478,29 @@ impl App {
     /// Adds a track playing resource `id` from `position` seconds, named after it. Returns the
     /// track's name.
     pub fn add_resource_track(&mut self, id: ResourceId, position: f64) -> Option<String> {
-        let kind = self.project.resource(id)?.kind;
         let name = self.project.add_track_for(id, position)?;
-        if kind == ResourceKind::Audio {
-            self.selected_track =
-                Some(self.project.video_tracks.len() + self.project.audio_tracks.len() - 1);
-        }
+        self.selected_track = Some(name.clone());
         Some(name)
     }
 
-    /// Adds an empty track of `kind` to drag a resource onto, and selects it. Returns its name.
-    pub fn add_empty_track(&mut self, kind: TrackKind) -> String {
-        let name = self.project.add_empty_track(kind);
-        let videos = self.project.video_tracks.len();
-        self.selected_track = Some(match kind {
-            TrackKind::Video => videos - 1,
-            TrackKind::Audio => videos + self.project.audio_tracks.len() - 1,
-        });
+    /// Adds an empty track to drag a resource onto, and selects it. Returns its name.
+    pub fn add_empty_track(&mut self) -> String {
+        let name = self.project.add_empty_track();
+        self.selected_track = Some(name.clone());
+        name
+    }
+
+    /// Adds a folder at the bottom of the tree, and selects it. Returns its name.
+    pub fn add_folder(&mut self) -> String {
+        let name = self.project.add_folder(tr("project.folder.new"));
+        self.selected_track = Some(name.clone());
         name
     }
 
     /// The track in timeline row `row`, if it would take resource `id` dropped on it: an empty
-    /// track of its kind, or a track already playing it. The drop preview and the drop both ask
-    /// this.
+    /// track, or a track already playing it. The drop preview and the drop both ask this.
     fn takes_resource(&self, id: ResourceId, row: usize) -> Option<&ProjectTrack> {
-        let track = match self.track_row(row)? {
-            (TrackKind::Video, i) => self.project.video_tracks.get(i)?,
-            (TrackKind::Audio, i) => self.project.audio_tracks.get(i)?,
-        };
+        let track = &self.project.tracks[self.track_index_of_row(row)?];
         self.project
             .can_place_resource(&track.name, id)
             .then_some(track)
@@ -594,11 +590,7 @@ impl App {
             self.project.unlink_track(name);
         }
         self.selected_items.retain(|r| !removed.contains(&r.track));
-        let rows = self.project.video_tracks.len() + self.project.audio_tracks.len();
-        self.selected_track = self
-            .selected_track
-            .filter(|&s| s < rows)
-            .or(first_audio_row(&self.project));
+        self.tidy_track_selection();
     }
 
     fn resource_action(&mut self, action: ResourceAction) {
@@ -724,7 +716,7 @@ impl App {
             }
             Pending::NewProject => {
                 let graph = GraphDesc::from_json(STARTER_GRAPH).unwrap();
-                self.load_project(Project::new(graph), None);
+                self.load_project(Project::with_template(graph), None);
             }
             Pending::OpenProject => {
                 if let Some(path) = rfd::FileDialog::new()
@@ -809,12 +801,14 @@ impl App {
         self.engine.set_timeline(self.timeline_of(&project));
         self.engine.set_layers(project.layer_set());
         self.editor.restore(&project.graph);
-        let rows = project.video_tracks.len() + project.audio_tracks.len();
-        self.selected_track = self
-            .selected_track
-            .filter(|&i| i < rows)
-            .or(first_audio_row(&project));
         self.project = project;
+        self.tidy_track_selection();
+    }
+
+    /// Drops the selected track when it no longer exists.
+    fn tidy_track_selection(&mut self) {
+        let project = &self.project;
+        self.selected_track = self.selected_track.take().filter(|n| project.has_track(n));
     }
 
     /// Records the project in the undo history once the user has finished a gesture: no button
@@ -1163,19 +1157,12 @@ impl App {
         // or when the graph starts or stops rendering its own sound. The preview plays the master
         // bus: its track mix is the tracks routed to it.
         let master = self.project.master_bus().to_owned();
-        let soloing = self.project.soloing(TrackKind::Audio);
         let mix: Vec<MixEntry> = self
-            .project
-            .audio_tracks
-            .iter()
-            .map(|t| {
-                (
-                    t.name.clone(),
-                    t.items.clone(),
-                    t.mix_gain(TrackKind::Audio, soloing),
-                    t.bus == master,
-                )
-            })
+            .timeline_of(&self.project)
+            .tracks
+            .into_iter()
+            .filter(|t| t.kind == TrackKind::Audio)
+            .map(|t| (t.name, t.items, t.gain, t.bus == master))
             .collect();
         let loaded = self.engine.loaded_tracks();
         let decoded = mix
@@ -1928,75 +1915,88 @@ impl App {
         self.tidy_item_selection();
         let loaded = self.engine.loaded_tracks();
         self.update_thumbnails(ui.ctx());
-        let view = |t: &ProjectTrack, kind: TrackKind| TrackView {
-            name: t.name.clone(),
-            kind,
-            items: t.items.clone(),
-            muted: t.muted,
-            solo: t.solo,
-            silenced: t.mix_gain(kind, self.project.soloing(kind)) == 0.0,
-            volume: t.volume,
-            height: t.height.unwrap_or(LANE_HEIGHT),
-            linked: self.project.linked_to(&t.name),
-            bus: t.bus.clone(),
-            missing: t.resource.is_some_and(|r| self.missing.contains(&r)),
-            selected_items: self
-                .selected_items
-                .iter()
-                .filter(|r| r.track == t.name)
-                .map(|r| r.item)
-                .collect(),
-            ..TrackView::new(t.name.clone(), kind)
+        let soloing = |kind: Option<TrackKind>| kind.is_some_and(|k| self.project.soloing(k));
+        let view = |i: usize| {
+            let t = &self.project.tracks[i];
+            let kind = self.project.track_kind(t);
+            TrackView {
+                folder: t.folder,
+                depth: t.depth,
+                collapsed: t.collapsed,
+                master_send: t.master_send,
+                items: t.items.clone(),
+                muted: t.muted,
+                solo: t.solo,
+                silenced: self.project.mix_gain(i, soloing(kind)) == 0.0,
+                volume: t.volume,
+                height: t.height.unwrap_or(LANE_HEIGHT),
+                linked: self.project.linked_to(&t.name),
+                bus: t.bus.clone(),
+                missing: t.resource.is_some_and(|r| self.missing.contains(&r)),
+                selected_items: self
+                    .selected_items
+                    .iter()
+                    .filter(|r| r.track == t.name)
+                    .map(|r| r.item)
+                    .collect(),
+                ..TrackView::new(t.name.clone(), kind)
+            }
         };
-        let mut tracks: Vec<TrackView> = self
-            .project
-            .video_tracks
+        let shown = self.project.shown_tracks();
+        let tracks: Vec<TrackView> = shown
             .iter()
-            .map(|t| {
-                let key = self.video_key(t);
-                let own = key.as_ref().and_then(|k| self.thumbnails.get(k));
-                let shown = own.and_then(|o| o.service.info());
-                let shown = shown.as_ref();
-                TrackView {
-                    duration: if t.resource.is_none() {
-                        Some(0.0)
-                    } else {
-                        shown.map(|v| v.frame_count as f64 / v.frame_rate.as_f64())
+            .map(|&i| {
+                let t = &self.project.tracks[i];
+                let base = view(i);
+                match base.kind {
+                    Some(TrackKind::Video) => {
+                        let key = self.video_key(t);
+                        let own = key.as_ref().and_then(|k| self.thumbnails.get(k));
+                        let info = own.and_then(|o| o.service.info());
+                        let info = info.as_ref();
+                        TrackView {
+                            duration: info.map(|v| v.frame_count as f64 / v.frame_rate.as_f64()),
+                            details: info.map(|v| {
+                                format!(
+                                    "{}×{} · {:.3} fps",
+                                    v.width,
+                                    v.height,
+                                    v.frame_rate.as_f64()
+                                )
+                                .replace(".000 fps", " fps")
+                            }),
+                            thumbnails: own.zip(info).map(|(o, v)| TrackThumbnails {
+                                frames: Arc::new(
+                                    o.textures
+                                        .iter()
+                                        .map(|(&frame, (_, thumbnail))| (frame, *thumbnail))
+                                        .collect(),
+                                ),
+                                rate: v.frame_rate.as_f64(),
+                            }),
+                            ..base
+                        }
+                    }
+                    Some(TrackKind::Audio) => {
+                        let loaded = loaded.iter().find(|l| l.name == t.name);
+                        TrackView {
+                            duration: loaded.map(|l| l.clip.duration_secs()),
+                            waveform: loaded.map(|l| l.waveform.clone()),
+                            ..base
+                        }
+                    }
+                    None => TrackView {
+                        duration: Some(0.0),
+                        ..base
                     },
-                    details: shown.map(|v| {
-                        format!(
-                            "{}×{} · {:.3} fps",
-                            v.width,
-                            v.height,
-                            v.frame_rate.as_f64()
-                        )
-                        .replace(".000 fps", " fps")
-                    }),
-                    thumbnails: own.zip(shown).map(|(o, v)| TrackThumbnails {
-                        frames: Arc::new(
-                            o.textures
-                                .iter()
-                                .map(|(&frame, (_, thumbnail))| (frame, *thumbnail))
-                                .collect(),
-                        ),
-                        rate: v.frame_rate.as_f64(),
-                    }),
-                    ..view(t, TrackKind::Video)
                 }
             })
             .collect();
-        tracks.extend(self.project.audio_tracks.iter().map(|t| {
-            let loaded = loaded.iter().find(|l| l.name == t.name);
-            TrackView {
-                duration: if t.resource.is_none() {
-                    Some(0.0)
-                } else {
-                    loaded.map(|l| l.clip.duration_secs())
-                },
-                waveform: loaded.map(|l| l.waveform.clone()),
-                ..view(t, TrackKind::Audio)
-            }
-        }));
+        let selected_row = self.selected_track.as_deref().and_then(|name| {
+            shown
+                .iter()
+                .position(|&i| self.project.tracks[i].name == name)
+        });
         let cached = self.engine.cached_ranges();
         let graph_names: HashMap<u32, String> = self
             .project
@@ -2041,7 +2041,7 @@ impl App {
             playhead: self.clock.frame(),
             cached: &cached,
             tracks,
-            selected_track: self.selected_track,
+            selected_track: selected_row,
             loop_region: self.project.loop_region,
             tempo: self.project.tempo,
             mode: self.project.timeline_mode,
@@ -2060,7 +2060,7 @@ impl App {
         if let Some(graph) = dropped_graph(ui, area) {
             self.drop_graph(graph, response.layer_under_pointer, at);
         }
-        for track in &self.project.video_tracks {
+        for track in self.project.tracks_of(TrackKind::Video) {
             let frames: Vec<usize> = response
                 .wanted_thumbnails
                 .iter()
@@ -2101,7 +2101,7 @@ impl App {
         if let Some(dragged) = egui::DragAndDrop::payload::<DraggedResource>(ctx) {
             let id = dragged.0;
             let resource = self.project.resource(id)?;
-            let rows = self.project.video_tracks.len() + self.project.audio_tracks.len();
+            let shown = self.project.shown_tracks();
             // Known once a track plays it.
             let length = self
                 .project
@@ -2112,10 +2112,15 @@ impl App {
                 name: resource.name.clone(),
                 length,
                 target: GhostTarget::Media {
-                    kind: resource.kind.track_kind(),
-                    lands_on: (0..rows)
+                    lands_on: (0..shown.len())
                         .map(|row| self.takes_resource(id, row).is_some())
                         .collect(),
+                    new_row: {
+                        let (at, _) = self
+                            .project
+                            .new_track_slot(Some(resource.kind.track_kind()));
+                        shown.iter().filter(|&&i| i < at).count()
+                    },
                 },
             });
         }
@@ -2300,8 +2305,7 @@ impl App {
     fn update_thumbnails(&mut self, ctx: &egui::Context) {
         let keys: Vec<VideoKey> = self
             .project
-            .video_tracks
-            .iter()
+            .tracks_of(TrackKind::Video)
             .filter_map(|t| self.video_key(t))
             .collect();
         let first = keys.first().cloned();
@@ -2349,22 +2353,15 @@ impl App {
         self.project.rename_track(old, new)
     }
 
-    /// The track in timeline row `row`: its kind and index among the tracks of that kind.
-    fn track_row(&self, row: usize) -> Option<(TrackKind, usize)> {
-        let videos = self.project.video_tracks.len();
-        if row < videos {
-            Some((TrackKind::Video, row))
-        } else {
-            (row - videos < self.project.audio_tracks.len())
-                .then(|| (TrackKind::Audio, row - videos))
-        }
+    /// Where the track in timeline row `row` is in the project's list. Rows skip the tracks of
+    /// collapsed folders.
+    fn track_index_of_row(&self, row: usize) -> Option<usize> {
+        self.project.shown_tracks().get(row).copied()
     }
 
     fn track_at(&mut self, row: usize) -> Option<&mut ProjectTrack> {
-        match self.track_row(row)? {
-            (TrackKind::Video, i) => self.project.video_tracks.get_mut(i),
-            (TrackKind::Audio, i) => self.project.audio_tracks.get_mut(i),
-        }
+        let i = self.track_index_of_row(row)?;
+        self.project.tracks.get_mut(i)
     }
 
     /// The length of a track's file in seconds, once it is known.
@@ -2372,12 +2369,7 @@ impl App {
         if track.resource.is_none() {
             return Some(0.0);
         }
-        if self
-            .project
-            .video_tracks
-            .iter()
-            .any(|v| v.name == track.name)
-        {
+        if self.project.track_kind(track) == Some(TrackKind::Video) {
             return self
                 .video_key(track)
                 .and_then(|k| self.thumbnails.get(&k))
@@ -2425,11 +2417,11 @@ impl App {
     fn track_action(&mut self, ctx: &egui::Context, action: TrackAction) {
         let name = |app: &mut Self, row: usize| app.track_at(row).map(|t| t.name.clone());
         match action {
-            TrackAction::Select(row) => self.selected_track = Some(row),
+            TrackAction::Select(row) => self.selected_track = name(self, row),
             TrackAction::SelectItem { row, item, toggle } => {
                 let Some(track) = name(self, row) else { return };
+                self.selected_track = Some(track.clone());
                 let at = ItemRef::new(track, item);
-                self.selected_track = Some(row);
                 self.selected_graph_item = None;
                 if !toggle {
                     self.selected_items = vec![at];
@@ -2584,61 +2576,49 @@ impl App {
                     track.bus = bus;
                 }
             }
-            TrackAction::Move { from, to } => {
-                let (Some((kind, from)), Some((to_kind, to))) =
-                    (self.track_row(from), self.track_row(to))
-                else {
+            TrackAction::Move { from, slot, depth } => {
+                let shown = self.project.shown_tracks();
+                let (Some(&from), Some(slot)) = (
+                    shown.get(from),
+                    shown
+                        .get(slot)
+                        .copied()
+                        .or((slot == shown.len()).then_some(self.project.tracks.len())),
+                ) else {
                     return;
                 };
-                if kind != to_kind {
-                    return;
+                self.project.move_track(from, slot, Some(depth));
+            }
+            TrackAction::ToggleCollapsed(row) => {
+                if let Some(track) = self.track_at(row).filter(|t| t.folder) {
+                    track.collapsed = !track.collapsed;
                 }
-                // Rows of this kind start at `first`; a selected track of the other kind stays
-                // selected where it is.
-                let (tracks, first) = match kind {
-                    TrackKind::Video => (&mut self.project.video_tracks, 0),
-                    TrackKind::Audio => {
-                        let videos = self.project.video_tracks.len();
-                        (&mut self.project.audio_tracks, videos)
-                    }
-                };
-                let selected = self
-                    .selected_track
-                    .and_then(|row| row.checked_sub(first))
-                    .filter(|&i| i < tracks.len());
-                if let Some(moved) = move_track(tracks, from, to, selected) {
-                    self.selected_track = Some(first + moved);
+            }
+            TrackAction::SetMasterSend(row, send) => {
+                if let Some(track) = self.track_at(row) {
+                    track.master_send = send;
                 }
             }
             TrackAction::Rename(row, new) => {
-                if let Some(old) = self.track_at(row).map(|t| t.name.clone()) {
-                    self.project.rename_track(&old, &new);
+                if let Some(old) = self.track_at(row).map(|t| t.name.clone())
+                    && self.project.rename_track(&old, &new)
+                    && self.selected_track.as_deref() == Some(old.as_str())
+                {
+                    self.selected_track = Some(new);
                 }
             }
             TrackAction::Remove(row) => {
-                let Some((kind, i)) = self.track_row(row) else {
-                    return;
-                };
-                if kind == TrackKind::Video {
-                    let removed = self.project.video_tracks.remove(i);
-                    self.project.unlink_track(&removed.name);
-                    let rows = self.project.video_tracks.len() + self.project.audio_tracks.len();
-                    self.selected_track = self.selected_track.filter(|&s| s < rows);
-                    return;
+                if let Some(i) = self.track_index_of_row(row) {
+                    self.project.remove_track(i);
+                    self.tidy_track_selection();
                 }
-                let removed = self.project.audio_tracks.remove(i);
-                self.project.unlink_track(&removed.name);
-                let rows = self.project.video_tracks.len() + self.project.audio_tracks.len();
-                self.selected_track = match self.selected_track {
-                    Some(s) if s >= row && s > 0 => Some(s - 1),
-                    other => other,
-                }
-                .filter(|&s| s < rows)
-                .or(first_audio_row(&self.project));
             }
             TrackAction::Add => self.pick_audio_tracks(),
-            TrackAction::AddEmpty(kind) => {
-                self.add_empty_track(kind);
+            TrackAction::AddEmpty => {
+                self.add_empty_track();
+            }
+            TrackAction::AddFolder => {
+                self.add_folder();
             }
         }
     }

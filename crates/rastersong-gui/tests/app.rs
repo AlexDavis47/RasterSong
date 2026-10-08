@@ -14,6 +14,9 @@ use rastersong_engine::{
 };
 use rastersong_gui::{App, AudioOut, STARTER_GRAPH};
 
+mod common;
+use common::TrackLists;
+
 fn app() -> App {
     app_with(|_| {})
 }
@@ -483,27 +486,18 @@ fn dragging_an_item_by_its_header_bar_moves_it() {
     let from = item_bar_point(&harness, 0.5, 1);
     let to = item_bar_point(&harness, 1.0, 1);
     drag(&mut harness, from, to);
-    let position = harness.state().project().audio_tracks[0].items[0].position;
+    let position = harness.state().project().audios()[0].items[0].position;
     assert!((position - 0.5).abs() < 0.02, "position {position}");
     // The video isn't linked, so it stays.
-    assert_eq!(
-        harness.state().project().video_tracks[0].items[0].position,
-        0.0
-    );
+    assert_eq!(harness.state().project().videos()[0].items[0].position, 0.0);
     shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
-    assert_eq!(
-        harness.state().project().audio_tracks[0].items[0].position,
-        0.0
-    );
+    assert_eq!(harness.state().project().audios()[0].items[0].position, 0.0);
     // Below the bar the item is content: dragging there box-selects instead, and leaves the
     // playhead alone.
     let body = timeline_point(&harness, 0.5, 1);
     let to = timeline_point(&harness, 1.0, 1);
     drag(&mut harness, body, to);
-    assert_eq!(
-        harness.state().project().audio_tracks[0].items[0].position,
-        0.0
-    );
+    assert_eq!(harness.state().project().audios()[0].items[0].position, 0.0);
     assert_eq!(harness.state().clock().frame(), 0);
 }
 
@@ -585,8 +579,8 @@ fn dragging_over_the_lanes_box_selects_items() {
     // The selected items edit together: Delete removes both.
     shortcut(&mut harness, Modifiers::NONE, egui::Key::Delete);
     let project = harness.state().project();
-    assert_eq!(project.audio_tracks[0].items.len(), 1);
-    assert_eq!(project.video_tracks[0].items.len(), 1);
+    assert_eq!(project.audios()[0].items.len(), 1);
+    assert_eq!(project.videos()[0].items.len(), 1);
 
     // A click on empty lane space selects nothing.
     let empty = timeline_point(&harness, 0.3, 1);
@@ -612,9 +606,9 @@ fn linked_tracks_move_their_overlapping_items_together() {
     let to = item_bar_point(&harness, 1.0, 1);
     drag(&mut harness, from, to);
     let project = harness.state().project();
-    let audio = project.audio_tracks[0].items[0].position;
+    let audio = project.audios()[0].items[0].position;
     assert!((audio - 0.5).abs() < 0.02, "audio at {audio}");
-    assert_eq!(project.video_tracks[0].items[0].position, audio);
+    assert_eq!(project.videos()[0].items[0].position, audio);
 }
 
 /// Clicks the ruler at `seconds`, moving the playhead there.
@@ -632,16 +626,16 @@ fn s_splits_under_the_playhead_and_delete_removes_the_selected_items() {
     // Nothing selected: every item under the playhead is split.
     shortcut(&mut harness, Modifiers::NONE, egui::Key::S);
     let project = harness.state().project();
-    assert_eq!(project.audio_tracks[0].items.len(), 2);
-    assert_eq!(project.video_tracks[0].items.len(), 2);
+    assert_eq!(project.audios()[0].items.len(), 2);
+    assert_eq!(project.videos()[0].items.len(), 2);
     let second = item_bar_point(&harness, 1.5, 1);
     click(&mut harness, second, PointerButton::Primary);
     shortcut(&mut harness, Modifiers::NONE, egui::Key::Delete);
     let project = harness.state().project();
-    assert_eq!(project.audio_tracks[0].items.len(), 1);
-    assert_eq!(project.audio_tracks[0].items[0].end, Some(1.0));
+    assert_eq!(project.audios()[0].items.len(), 1);
+    assert_eq!(project.audios()[0].items[0].end, Some(1.0));
     // The video isn't linked, so it keeps both halves.
-    assert_eq!(project.video_tracks[0].items.len(), 2);
+    assert_eq!(project.videos()[0].items.len(), 2);
 }
 
 /// The system clipboard as the platform layer (egui-winit) handles it: Ctrl+C and Ctrl+X send
@@ -689,7 +683,7 @@ fn copied_items_paste_at_the_playhead() {
     seek_on_ruler(&mut harness, 1.0);
     clipboard.paste(&mut harness);
     let positions = |harness: &Harness<'_, App>| -> Vec<f64> {
-        harness.state().project().audio_tracks[0]
+        harness.state().project().audios()[0]
             .items
             .iter()
             .map(|i| i.position)
@@ -719,7 +713,7 @@ fn dragging_an_items_edge_trims_it() {
     let from = timeline_point(&harness, 2.0, 1);
     let to = timeline_point(&harness, 1.5, 1);
     drag(&mut harness, from, to);
-    let item = harness.state().project().audio_tracks[0].items[0];
+    let item = harness.state().project().audios()[0].items[0];
     let end = item.end.unwrap();
     assert!((end - 1.5).abs() < 0.02, "end {end}");
     assert_eq!((item.position, item.start, item.rate), (0.0, 0.0, 1.0));
@@ -732,12 +726,12 @@ fn items_mute_from_their_header_bar_and_tracks_solo_from_theirs() {
     let mut mute = item_bar_point(&harness, 2.0, 1);
     mute.x -= 8.0;
     click(&mut harness, mute, PointerButton::Primary);
-    assert!(harness.state().project().audio_tracks[0].items[0].muted);
+    assert!(harness.state().project().audios()[0].items[0].muted);
     // Each header has a solo button, the video's first.
     harness.get_all_by_label("S").nth(1).unwrap().click();
     harness.run_steps(2);
-    assert!(harness.state().project().audio_tracks[0].solo);
-    assert!(!harness.state().project().video_tracks[0].solo);
+    assert!(harness.state().project().audios()[0].solo);
+    assert!(!harness.state().project().videos()[0].solo);
 }
 
 #[test]
@@ -747,7 +741,7 @@ fn dragging_a_headers_bottom_edge_changes_the_track_height() {
     // The video's header, the first row.
     let edge = pos2(area.left() + 60.0, area.top() + 22.0 + LANE_HEIGHT);
     drag(&mut harness, edge, edge + vec2(0.0, 40.0));
-    let height = harness.state().project().video_tracks[0].height.unwrap();
+    let height = harness.state().project().videos()[0].height.unwrap();
     assert!(
         (height - (LANE_HEIGHT + 40.0)).abs() < 2.0,
         "height {height}"
@@ -772,10 +766,10 @@ fn double_clicking_a_headers_bottom_edge_resets_the_track_height() {
     let area = harness.state().timeline_area();
     let edge = pos2(area.left() + 60.0, area.top() + 22.0 + LANE_HEIGHT);
     drag(&mut harness, edge, edge + vec2(0.0, 40.0));
-    assert!(harness.state().project().video_tracks[0].height.is_some());
+    assert!(harness.state().project().videos()[0].height.is_some());
     // The edge moved down with the track.
     double_click(&mut harness, edge + vec2(0.0, 40.0));
-    let height = harness.state().project().video_tracks[0].height;
+    let height = harness.state().project().videos()[0].height;
     assert!(
         height.is_none_or(|h| (h - LANE_HEIGHT).abs() < 0.5),
         "height {height:?}"
@@ -791,11 +785,11 @@ fn thumbnails_of_the_source_video_arrive() {
 #[test]
 fn the_same_video_on_two_tracks_loads_both() {
     let mut harness = loaded();
-    let resource = harness.state().project().video_tracks[0].resource.unwrap();
+    let resource = harness.state().project().videos()[0].resource.unwrap();
     harness.state_mut().add_resource_track(resource, 1.0);
     harness.state_mut().add_resource_track(resource, 2.0);
     harness.run_steps(2);
-    assert_eq!(harness.state().project().video_tracks.len(), 3);
+    assert_eq!(harness.state().project().videos().len(), 3);
     // Neither new track is left on "loading", and each gets its thumbnails.
     step_until(&mut harness, "both lengths", |app| {
         app.video_durations().iter().all(Option::is_some)
@@ -810,20 +804,22 @@ fn empty_tracks_take_resources_dropped_on_them() {
     app.finish_import(Some(&[true, true, false]));
     let ids: Vec<_> = app.project().resources.iter().map(|r| r.id).collect();
     let (video, band) = (ids[0], ids[1]);
-    let name = app.add_empty_track(TrackKind::Video);
-    assert_eq!(app.project().video_tracks[0].resource, None);
+    let name = app.add_empty_track();
+    assert_eq!(app.project().track(&name).unwrap().resource, None);
+    let i = app.project().track_index(&name).unwrap();
+    let row = app.project().shown_tracks().iter().position(|&j| j == i);
     // Dropped on the empty track, the video fills it; the same again adds an item.
-    assert_eq!(app.drop_resource(video, Some(0), 2.0), Some(name.clone()));
-    assert_eq!(app.drop_resource(video, Some(0), 9.0), Some(name.clone()));
-    assert_eq!(app.project().video_tracks.len(), 1);
-    assert_eq!(app.project().video_tracks[0].items.len(), 2);
+    assert_eq!(app.drop_resource(video, row, 2.0), Some(name.clone()));
+    assert_eq!(app.drop_resource(video, row, 9.0), Some(name.clone()));
+    assert_eq!(app.project().videos().len(), 1);
+    assert_eq!(app.project().videos()[0].items.len(), 2);
     // Audio on a video track starts a track of its own.
-    let other = app.drop_resource(band, Some(0), 0.0).unwrap();
+    let other = app.drop_resource(band, row, 0.0).unwrap();
     assert_ne!(other, name);
-    assert_eq!(app.project().audio_tracks.len(), 1);
+    assert_eq!(app.project().audios().len(), 1);
     // Off the tracks, a resource makes a new track.
     app.drop_resource(video, None, 0.0);
-    assert_eq!(app.project().video_tracks.len(), 2);
+    assert_eq!(app.project().videos().len(), 2);
 }
 
 #[test]
@@ -884,7 +880,7 @@ fn adding_tracks_names_them_after_their_files_and_leaves_the_graph_alone() {
     let names: Vec<String> = harness
         .state()
         .project()
-        .audio_tracks
+        .audios()
         .iter()
         .map(|t| t.name.clone())
         .collect();
@@ -1119,7 +1115,7 @@ fn tracks_are_renamed_without_touching_the_graph() {
     let graph = harness.state().project().graph.clone();
     assert!(harness.state_mut().rename_track("audio", "drums"));
     harness.run_steps(2);
-    assert_eq!(harness.state().project().audio_tracks[0].name, "drums");
+    assert_eq!(harness.state().project().audios()[0].name, "drums");
     assert_eq!(harness.state().project().graph, graph);
 
     // A name another track has, or an empty one, is refused.
@@ -1168,14 +1164,14 @@ fn opening_a_video_with_sound_adds_its_audio_track() {
     app.open_video(PathBuf::from("movie.mp4"));
     let tracks: Vec<(String, Option<&Path>)> = app
         .project()
-        .audio_tracks
+        .audios()
         .iter()
         .map(|t| (t.name.clone(), app.project().track_path(t)))
         .collect();
     assert_eq!(tracks, [("movie".to_owned(), Some(Path::new("movie.mp4")))]);
     // Opening it again doesn't add the track twice.
     app.open_video(PathBuf::from("movie.mp4"));
-    assert_eq!(app.project().audio_tracks.len(), 1);
+    assert_eq!(app.project().audios().len(), 1);
 }
 
 #[test]
@@ -1198,7 +1194,7 @@ fn tracks_offer_the_buses_and_project_settings_add_them() {
             name: "Stems".into(),
             channels: 1,
         });
-        project.audio_tracks[0].bus = "Stems".into();
+        project.track_of_mut(TrackKind::Audio, 0).bus = "Stems".into();
     }));
     step_until(&mut harness, "the project to load", |app| {
         app.engine().info().is_some()
@@ -1447,7 +1443,7 @@ fn importing_a_file_with_several_streams_asks_which_to_import() {
         ]
     );
     // Nothing is on the timeline until a resource is placed there.
-    assert!(app.project().audio_tracks.is_empty());
+    assert!(app.project().audios().is_empty());
 }
 
 #[test]
@@ -1462,8 +1458,8 @@ fn resources_become_tracks_and_take_their_tracks_with_them() {
     );
     app.add_resource_track(ids[0], 0.0);
     let project = app.project();
-    assert_eq!(project.audio_tracks[0].items[0].position, 1.5);
-    assert_eq!(project.video_tracks.len(), 1);
+    assert_eq!(project.audios()[0].items[0].position, 1.5);
+    assert_eq!(project.videos().len(), 1);
     let band = project.timeline();
     let band = band
         .tracks
@@ -1478,7 +1474,7 @@ fn resources_become_tracks_and_take_their_tracks_with_them() {
     assert_eq!(app.project().resources.len(), 2);
 
     app.remove_resource(ids[1]);
-    assert!(app.project().audio_tracks.is_empty());
+    assert!(app.project().audios().is_empty());
     assert_eq!(app.project().resources.len(), 1);
 }
 
@@ -1594,7 +1590,7 @@ fn layers_mute_and_solo_from_their_headers() {
     harness.get_all_by_label("S").next().unwrap().click();
     harness.run_steps(2);
     assert!(harness.state().project().layers[0].solo);
-    assert!(!harness.state().project().video_tracks[0].solo);
+    assert!(!harness.state().project().videos()[0].solo);
     let area = harness.state().timeline_area();
     let mute = harness
         .get_all_by_label("🔊")
@@ -1767,7 +1763,7 @@ fn without_graph_items_the_preview_plays_the_track_mix() {
 
 // --- Track headers ---
 
-fn track_names(tracks: &[rastersong_engine::ProjectTrack]) -> Vec<String> {
+fn track_names(tracks: Vec<&rastersong_engine::ProjectTrack>) -> Vec<String> {
     tracks.iter().map(|t| t.name.clone()).collect()
 }
 
@@ -1780,21 +1776,22 @@ fn four_track_app() -> App {
 }
 
 #[test]
-fn dragging_a_header_reorders_the_tracks_of_its_kind() {
+fn dragging_a_header_moves_the_track_among_the_others() {
     let mut harness = loaded_with(four_track_app());
+    // Rows: video, audio, video 2, audio 2.
     assert_eq!(
-        track_names(&harness.state().project().video_tracks),
+        track_names(harness.state().project().videos()),
         ["video", "video 2"]
     );
     // Dragged by the kind icon, which is a label over the header's background.
-    let first_video = harness
+    let second_video = harness
         .get_all_by_label("▣")
-        .next()
+        .nth(1)
         .unwrap()
         .rect()
         .center();
-    let to = first_video + vec2(0.0, LANE_HEIGHT * 1.5);
-    drag_to(&mut harness, first_video, to);
+    let to = second_video - vec2(0.0, LANE_HEIGHT * 2.0);
+    drag_to(&mut harness, second_video, to);
     // The drag bubble follows the pointer meanwhile.
     assert!(matches!(
         bubble_phase(&harness.ctx),
@@ -1802,39 +1799,72 @@ fn dragging_a_header_reorders_the_tracks_of_its_kind() {
     ));
     press(&mut harness, to, PointerButton::Primary, false);
     assert_eq!(
-        track_names(&harness.state().project().video_tracks),
-        ["video 2", "video"]
+        track_names(harness.state().project().tracks().collect()),
+        ["video 2", "video", "audio", "audio 2"]
     );
 
-    let second_audio = harness
+    // Audio and video tracks mix freely: the first audio goes to the bottom.
+    harness.run_steps(2);
+    let first_audio = harness
         .get_all_by_label("♪")
-        .nth(1)
+        .next()
         .unwrap()
         .rect()
         .center();
     drag(
         &mut harness,
-        second_audio,
-        second_audio - vec2(0.0, LANE_HEIGHT),
+        first_audio,
+        first_audio + vec2(0.0, LANE_HEIGHT * 2.0),
     );
     assert_eq!(
-        track_names(&harness.state().project().audio_tracks),
-        ["audio 2", "audio"]
+        track_names(harness.state().project().tracks().collect()),
+        ["video 2", "video", "audio 2", "audio"]
     );
-    // A video header dragged into the audio rows stays among the videos.
-    assert_eq!(harness.state().project().video_tracks.len(), 2);
+}
+
+/// The starter project's video and audio tracks under a folder `F` at the top.
+fn folder_app() -> App {
+    app_with_project(|project| {
+        project
+            .tracks
+            .insert(0, rastersong_engine::ProjectTrack::new_folder("F".into()));
+    })
 }
 
 #[test]
-fn video_tracks_are_removed_from_their_header() {
-    let mut harness = loaded_with(four_track_app());
-    // The second video track's × button.
-    harness.get_all_by_label("×").nth(1).unwrap().click();
+fn dragging_a_header_right_puts_the_track_in_the_folder_above() {
+    let mut harness = loaded_with(folder_app());
+    assert_eq!(harness.state().project().parent_of(1), None);
+    let video = harness
+        .get_all_by_label("▣")
+        .next()
+        .unwrap()
+        .rect()
+        .center();
+    drag(&mut harness, video, video + vec2(30.0, 0.0));
+    let project = harness.state().project();
+    assert_eq!(project.tracks[1].name, "video");
+    assert_eq!(project.tracks[1].depth, 1);
+    assert_eq!(project.parent_of(1), Some(0));
+    assert_eq!(project.parent_of(2), None, "the audio stays at the top");
+
+    // Collapsing the folder hides what is in it.
+    harness.get_by_label("⏷").click();
     harness.run_steps(2);
-    assert_eq!(
-        track_names(&harness.state().project().video_tracks),
-        ["video"]
-    );
+    assert!(harness.state().project().tracks[0].collapsed);
+    assert_eq!(harness.query_all_by_label("▣").count(), 0);
+    harness.get_by_label("⏵").click();
+    harness.run_steps(2);
+    assert_eq!(harness.get_all_by_label("▣").count(), 1);
+}
+
+#[test]
+fn tracks_are_removed_from_their_header() {
+    let mut harness = loaded_with(four_track_app());
+    // The third row's × button: video 2.
+    harness.get_all_by_label("×").nth(2).unwrap().click();
+    harness.run_steps(2);
+    assert_eq!(track_names(harness.state().project().videos()), ["video"]);
 
     // And from the header's right-click menu.
     let icon = harness
@@ -1846,7 +1876,7 @@ fn video_tracks_are_removed_from_their_header() {
     right_click(&mut harness, icon);
     harness.get_by_label("Remove track").click();
     harness.run_steps(2);
-    assert!(harness.state().project().video_tracks.is_empty());
+    assert!(harness.state().project().videos().is_empty());
 }
 
 // --- Every interaction a hint promises (CONTRIBUTING rule 14) ---
@@ -1954,8 +1984,8 @@ fn ctrl_clicking_items_adds_them_and_their_menu_acts_on_the_selection() {
     harness.get_by_label_contains("Delete").click();
     harness.run_steps(2);
     let project = harness.state().project();
-    assert!(project.video_tracks[0].items.is_empty());
-    assert!(project.audio_tracks[0].items.is_empty());
+    assert!(project.videos()[0].items.is_empty());
+    assert!(project.audios()[0].items.is_empty());
 }
 
 #[test]
@@ -1964,7 +1994,7 @@ fn alt_dragging_an_items_edge_changes_its_rate() {
     let from = timeline_point(&harness, 2.0, 1);
     let to = timeline_point(&harness, 1.0, 1);
     modifier_drag(&mut harness, Modifiers::ALT, from, to);
-    let item = harness.state().project().audio_tracks[0].items[0];
+    let item = harness.state().project().audios()[0].items[0];
     assert!((item.rate - 2.0).abs() < 0.05, "rate {}", item.rate);
 }
 
@@ -1977,16 +2007,12 @@ fn shift_drags_an_edge_without_snapping() {
     let from = timeline_point(&harness, 2.0, 1);
     let to = timeline_point(&harness, near, 1);
     drag(&mut harness, from, to);
-    let end = harness.state().project().audio_tracks[0].items[0]
-        .end
-        .unwrap();
+    let end = harness.state().project().audios()[0].items[0].end.unwrap();
     assert!((end - 1.0).abs() < 1e-6, "snapped to the playhead: {end}");
 
     shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
     modifier_drag(&mut harness, Modifiers::SHIFT, from, to);
-    let end = harness.state().project().audio_tracks[0].items[0]
-        .end
-        .unwrap();
+    let end = harness.state().project().audios()[0].items[0].end.unwrap();
     assert!((end - near).abs() < 0.01, "free: {end}");
 }
 
@@ -2027,7 +2053,7 @@ fn dragging_a_media_card_onto_the_timeline_makes_a_track() {
     to.y += LANE_HEIGHT * 1.5;
     drag(&mut harness, card, to);
     harness.run_steps(2);
-    assert_eq!(harness.state().project().video_tracks.len(), 2);
+    assert_eq!(harness.state().project().videos().len(), 2);
 }
 
 /// The middle of the first wire of the graph, which hovering inspects.
@@ -2199,15 +2225,22 @@ fn clicking_the_error_bar_shows_the_node_at_fault() {
 }
 
 #[test]
-fn the_add_track_menu_adds_empty_tracks() {
+fn the_add_track_menu_adds_empty_tracks_and_folders() {
     let mut harness = loaded();
+    let before = harness.state().project().tracks.len();
     harness.get_by_label("+ Track").click();
     harness.run_steps(2);
-    harness.get_by_label("Video track").click();
+    harness.get_by_label("Empty track").click();
+    harness.run_steps(2);
+    harness.get_by_label("+ Track").click();
+    harness.run_steps(2);
+    harness.get_by_label("Folder").click();
     harness.run_steps(2);
     let project = harness.state().project();
-    assert_eq!(project.video_tracks.len(), 2);
-    assert_eq!(project.video_tracks[1].resource, None);
+    assert_eq!(project.tracks.len(), before + 2);
+    let empty = &project.tracks[before];
+    assert!(empty.resource.is_none() && !empty.folder);
+    assert!(project.tracks[before + 1].folder);
 }
 
 // --- The drag bubble ---
@@ -2248,7 +2281,7 @@ fn a_dragged_card_shows_the_bubble_which_blooms_where_it_is_dropped() {
         "{:?}",
         bubble_phase(&harness.ctx)
     );
-    assert_eq!(harness.state().project().video_tracks.len(), 2);
+    assert_eq!(harness.state().project().videos().len(), 2);
     // The bloom fades and the bubble goes.
     harness.run_steps(30);
     assert!(bubble_phase(&harness.ctx).is_none());
@@ -2273,7 +2306,7 @@ fn a_card_dropped_where_nothing_takes_it_sends_the_bubble_back() {
         "{:?}",
         bubble_phase(&harness.ctx)
     );
-    assert_eq!(harness.state().project().video_tracks.len(), 1);
+    assert_eq!(harness.state().project().videos().len(), 1);
 }
 
 // --- The drop preview ---
@@ -2296,7 +2329,7 @@ fn painted_text(harness: &Harness<'_, App>, text: &str) -> Vec<Pos2> {
 fn a_dragged_resource_shows_its_ghost_and_lands_where_it_was_drawn() {
     let mut harness = loaded();
     seek_on_ruler(&mut harness, 1.0);
-    let song = harness.state().project().audio_tracks[0].resource.unwrap();
+    let song = harness.state().project().audios()[0].resource.unwrap();
     let name = harness
         .state()
         .project()
@@ -2322,7 +2355,7 @@ fn a_dragged_resource_shows_its_ghost_and_lands_where_it_was_drawn() {
         "the ghost is drawn at the playhead: {ghost:?} vs {playhead_x}"
     );
     press(&mut harness, to, PointerButton::Primary, false);
-    let items = &harness.state().project().audio_tracks[0].items;
+    let items = &harness.state().project().audios()[0].items;
     assert_eq!(items.len(), 2, "it landed on the song's track");
     assert!((items[1].position - 1.0).abs() < 1e-9, "{items:?}");
 }
@@ -2330,7 +2363,7 @@ fn a_dragged_resource_shows_its_ghost_and_lands_where_it_was_drawn() {
 #[test]
 fn a_resource_no_track_takes_shows_a_ghost_row_and_makes_a_track() {
     let mut harness = loaded();
-    let video = harness.state().project().video_tracks[0].resource.unwrap();
+    let video = harness.state().project().videos()[0].resource.unwrap();
     let name = harness
         .state()
         .project()
@@ -2348,15 +2381,16 @@ fn a_resource_no_track_takes_shows_a_ghost_row_and_makes_a_track() {
     let to = timeline_point(&harness, 0.5, 1);
     drag_to(&mut harness, card, to);
     harness.run_steps(1);
-    // The ghost row sits where the new video track will go: after the video, over the audio.
+    // The ghost row sits where the new video track will go: with no folder taking videos,
+    // at the bottom, under the audio.
     let ghost = painted_text(&harness, &name);
-    let boundary = harness.state().timeline_area().top() + 22.0 + LANE_HEIGHT;
+    let boundary = harness.state().timeline_area().top() + 22.0 + 2.0 * LANE_HEIGHT;
     assert!(
         ghost.iter().any(|p| (p.y - boundary).abs() < 20.0),
         "{ghost:?} vs {boundary}"
     );
     press(&mut harness, to, PointerButton::Primary, false);
-    assert_eq!(harness.state().project().video_tracks.len(), 2);
+    assert_eq!(harness.state().project().videos().len(), 2);
 }
 
 #[test]

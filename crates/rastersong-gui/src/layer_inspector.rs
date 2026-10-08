@@ -2,7 +2,7 @@
 //! input ports reads (the layer below, a track, or nothing).
 
 use eframe::egui::{self, Ui};
-use rastersong_engine::{Binding, InputKind, Project, input_ports};
+use rastersong_engine::{Binding, InputKind, Project, TrackKind, input_ports};
 use rastersong_lang::{tr, tr_args};
 
 use crate::theme::Theme;
@@ -30,18 +30,11 @@ fn binding_label(binding: Option<&Binding>, project: &Project, kind: InputKind) 
 
 /// The names of the tracks an input of `kind` can read.
 fn track_names(project: &Project, kind: InputKind) -> Vec<String> {
-    match kind {
-        InputKind::Video => project
-            .video_tracks
-            .iter()
-            .map(|t| t.name.clone())
-            .collect(),
-        InputKind::Audio => project
-            .audio_tracks
-            .iter()
-            .map(|t| t.name.clone())
-            .collect(),
-    }
+    let kind = match kind {
+        InputKind::Video => TrackKind::Video,
+        InputKind::Audio => TrackKind::Audio,
+    };
+    project.tracks_of(kind).map(|t| t.name.clone()).collect()
 }
 
 /// Shows the inspector of item `item` of layer `layer` and returns what the user changed.

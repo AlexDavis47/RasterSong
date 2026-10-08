@@ -129,13 +129,18 @@ rough version of the full-resolution render. Export always renders at full proje
 ## Track mix and output buses
 
 The project's master audio is a set of **output buses** (`Bus`: a name and 1 to 8 channels), Main in stereo by
-default; the first is the master, which the preview plays and the export writes. Each audio track is routed to one
-bus (Main by default), and its volume and mute set its level there.
+default; the first is the master, which the preview plays and the export writes. Each top-level track (folder or
+not) is routed to one bus (Main by default), and a track inside a folder goes where its top-level folder goes. A
+track's level there is its volume times its folders' volumes; it is left out when it or a folder it is in is muted
+or has its master send off. Until the renderer mixes folders itself (stage 2b of the
+[roadmap](roadmap.md#timeline-resources-and-routing)), the project multiplies these levels down the tree into each
+track's own.
 
 The **track mix** is what the timeline plays with no graph in the way: the picture of the top video track with an
 item at each frame (the renderer's `@track_mix` source), and for each bus the sum of the unmuted tracks routed to
 it at their volumes. A mono track plays in every channel of its bus; any other track's channels go to the bus's
-channels in order. While any track is **soloed**, only the soloed tracks of its kind (video or audio) are in the mix;
+channels in order. While any track is **soloed**, only the soloed tracks of its kind (video or audio) are in the mix, and soloing a
+folder solos everything in it;
 a muted item reads as a gap everywhere, graphs included. Bypassing the whole graph shows the track mix's picture
 and plays the master's track mix. Audio levels and routing only shape the track mix, so changing them keeps every
 rendered frame; muting or soloing a video track changes the picture, so it renders again.
