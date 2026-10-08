@@ -31,11 +31,12 @@ Our own editor, drawn on a pannable, zoomable canvas (see [Decisions](decisions.
 - Exposed parameters show as diamond pins under a node's inputs; a wire into one modulates that parameter.
   Each node type exposes its main parameters by default (e.g. Delay's time and feedback); the inspector's
   diamond toggles show or hide the others. Hiding a connected parameter disconnects it.
-- The project's inputs and output are **linked nodes**: opening a video adds its Video node, adding an audio
-  track adds an Audio node named after the track, and removing the track removes it. They're titled after
-  what they read (the video's file name, `♪ track`), can't be deleted, copied or added from the search,
-  and the graph always has its Output. An Audio node whose track doesn't exist (as in the starter graph
-  before any audio is added) is taken over by the first track added.
+- A graph's inputs are **ports**: **Video In** and **Audio In** nodes, each reading the port its *Port* setting
+  names (titled `▣ In: Video`, `♪ In: Audio`, … unless renamed). `Video` and `Audio` are the main ports; any other
+  name is a port of its own, and several nodes can read one port. Whoever uses the graph fills the ports (today a
+  graph item's bindings), so tracks add no nodes and renaming a track leaves the graph alone. Ports are added and
+  deleted like any node. Every graph has one **Output**, which can't be deleted or copied; a graph missing one gets
+  one when opened.
 - Right-click empty space to add a node there: the search box has focus immediately; type, use ↑/↓, and press
   Enter (or click). Right-click a node to copy, duplicate, bypass or delete it; Delete removes the selection,
   Backspace removes it and reconnects the wires around it, Ctrl+D duplicates it.
@@ -130,8 +131,8 @@ the left. The ruler's corner has the **Time** / **Tempo** button (minutes and se
 tempo bar and its **Metronome** toggle) and the Snap button. Until a video is loaded, the timeline says it appears
 once one is, with a button to add an audio track. Each track
 is a lane of **items**, the stretches of its file placed on the timeline. The video header shows the track's name
-(its file's name until renamed; the video input reads it by that name), size and frame rate; each audio header has
-the track's name (which audio inputs select it by; renaming a track updates them), its volume in the track mix, and
+(its file's name until renamed), size and frame rate; each audio header has
+the track's name (renaming a track updates the bindings that read it), its volume in the track mix, and
 its bus when the project has several. Every header has **mute** and **solo** (*S*: while any track of a kind is
 soloed, only soloed tracks of that kind are in the [track mix](engine.md#track-mix-and-output-buses)); every header
 also has a × that removes the track. Tracks left out of the mix are drawn dimmed. Each track's lane has its own outline (the selected track's is the accent color), so neighbouring tracks are easy to tell apart. The project lasts to the end of its last item and
@@ -228,10 +229,10 @@ snapping (to ticks, item edges of tracks and layers, the playhead and the start;
 
 Selecting a graph item shows its **item inspector** in place of the node inspector (picking another node in the
 graph brings the node inspector back). It names the graph and has the **Pre-roll** checkbox (warm the graph up as if
-it had run before the item, so trimming the left edge changes nothing after it) and one row per Video Input or
-Audio Input node of the graph with a combo box: **Layer below**, every track of the input's kind (video tracks for
-video inputs, audio tracks for audio inputs), or **Nothing** (the input reads zeros). A new item binds every input to
-*Layer below*. A row bound to a track that no longer exists says so in a note: that input reads nothing until
+it had run before the item, so trimming the left edge changes nothing after it) and one row per input port of
+the graph with a combo box: **Layer below**, every track of the port's kind (video tracks for
+video ports, audio tracks for audio ports), or **Nothing** (the port reads zeros). A new item binds every port to
+*Layer below*. A row bound to a track that no longer exists says so in a note: that port reads nothing until
 another is chosen. Bindings belong to the item, so one graph can sit twice reading different tracks. Layers and
 items are saved with the project and undo like any edit; how they render is described in
 [Graph layers](engine.md#graph-layers).

@@ -29,7 +29,7 @@ const AUDIO_RATES: [u32; 4] = [44_100, 48_000, 88_200, 96_000];
 /// One track as playback mixes it: its name, items and gain.
 /// A track as playback mixes it: name, items, level, and whether it is routed to the master bus.
 type MixEntry = (String, Vec<Item>, f32, bool);
-use crate::editor::{CanvasContext, GraphEditor, InspectorContext, LinkedRename, without_layout};
+use crate::editor::{CanvasContext, GraphEditor, InspectorContext, without_layout};
 use crate::history::History;
 use crate::layer_inspector::{ItemEdit, graph_item_inspector};
 use crate::preview::{Feed, PreviewView, clamp_split, split_rects, split_sides};
@@ -200,8 +200,8 @@ impl App {
     ) -> Self {
         let engine = Engine::new(backend.clone(), EngineConfig::default());
         let source_engine = Engine::new(backend.clone(), EngineConfig::default());
-        let editor = linked_editor(&project);
-        // The editor fills in positions, full port names and missing linked nodes; that isn't an
+        let editor = graph_editor(&project);
+        // The editor fills in positions, full port names and a missing output; that isn't an
         // unsaved change.
         project.graph = editor.to_desc();
         let mut app = Self {
@@ -362,7 +362,7 @@ impl App {
     }
 
     fn load_project(&mut self, mut project: Project, path: Option<PathBuf>) {
-        self.editor = linked_editor(&project);
+        self.editor = graph_editor(&project);
         if !self.editor.warnings.is_empty() {
             self.error = Some(self.editor.warnings.join("\n"));
         }
@@ -400,7 +400,6 @@ impl App {
         self.project.add_track_for(id, 0.0);
         self.engine.set_timeline(self.timeline_of(&self.project));
         self.clock.seek(0);
-        self.link_project_inputs();
         let known = self.project.audio_tracks.iter().any(|t| {
             self.project
                 .track_resource(t)
@@ -412,7 +411,7 @@ impl App {
     }
 
     /// Adds an audio track for each file's best audio stream, through a resource named after
-    /// the file, each track with its own audio input node.
+    /// the file.
     pub fn add_audio_tracks(&mut self, paths: impl IntoIterator<Item = PathBuf>) {
         for path in paths {
             let name = resource_name_for(&path, ResourceKind::Audio);
@@ -475,20 +474,14 @@ impl App {
         }
     }
 
-    /// Adds a track playing resource `id` from `position` seconds, named after it, with an
-    /// audio input node for an audio track. Returns the track's name.
+    /// Adds a track playing resource `id` from `position` seconds, named after it. Returns the
+    /// track's name.
     pub fn add_resource_track(&mut self, id: ResourceId, position: f64) -> Option<String> {
         let kind = self.project.resource(id)?.kind;
         let name = self.project.add_track_for(id, position)?;
-        match kind {
-            ResourceKind::Audio => {
-                self.selected_track =
-                    Some(self.project.video_tracks.len() + self.project.audio_tracks.len() - 1);
-                self.editor
-                    .set_project_inputs(self.video_name(), self.track_name_list());
-                self.editor.link_track(&name);
-            }
-            ResourceKind::Video => self.link_project_inputs(),
+        if kind == ResourceKind::Audio {
+            self.selected_track =
+                Some(self.project.video_tracks.len() + self.project.audio_tracks.len() - 1);
         }
         Some(name)
     }
@@ -528,21 +521,11 @@ impl App {
     ) -> Option<String> {
         let target = row
             .and_then(|row| self.takes_resource(id, row))
-            .map(|t| (t.name.clone(), t.resource.is_none()));
-        let Some((name, was_empty)) = target else {
+            .map(|t| t.name.clone());
+        let Some(name) = target else {
             return self.add_resource_track(id, position);
         };
         self.project.place_resource(&name, id, position);
-        if was_empty {
-            let audio = self.project.audio_tracks.iter().any(|t| t.name == name);
-            if audio {
-                self.editor
-                    .set_project_inputs(self.video_name(), self.track_name_list());
-                self.editor.link_track(&name);
-            } else {
-                self.link_project_inputs();
-            }
-        }
         Some(name)
     }
 
@@ -561,7 +544,7 @@ impl App {
         if !self.project.open_graph(id) {
             return;
         }
-        self.editor = linked_editor(&self.project);
+        self.editor = graph_editor(&self.project);
         if !self.editor.warnings.is_empty() {
             self.error = Some(self.editor.warnings.join("\n"));
         }
@@ -604,15 +587,13 @@ impl App {
         &self.missing
     }
 
-    /// Removes a resource, the tracks that play it, and their links to input nodes.
+    /// Removes a resource, the tracks that play it, and their links.
     pub fn remove_resource(&mut self, id: ResourceId) {
         let removed = self.project.remove_resource(id);
         for name in &removed {
             self.project.unlink_track(name);
-            self.editor.unlink_track(name);
         }
         self.selected_items.retain(|r| !removed.contains(&r.track));
-        self.link_project_inputs();
         let rows = self.project.video_tracks.len() + self.project.audio_tracks.len();
         self.selected_track = self
             .selected_track
@@ -706,27 +687,6 @@ impl App {
                 None => {}
             }
         }
-    }
-
-    /// The video's name: the user's, or else its file's. The timeline and the linked video node
-    /// show the same name.
-    fn video_name(&self) -> Option<String> {
-        self.project.video_display_name()
-    }
-
-    fn track_name_list(&self) -> Vec<String> {
-        self.project
-            .audio_tracks
-            .iter()
-            .map(|t| t.name.clone())
-            .collect()
-    }
-
-    /// Tells the editor about the project's inputs and adds any linked nodes that are missing.
-    fn link_project_inputs(&mut self) {
-        self.editor
-            .set_project_inputs(self.video_name(), self.track_name_list());
-        self.editor.ensure_linked_nodes();
     }
 
     fn save(&mut self, choose_path: bool) {
@@ -955,12 +915,6 @@ impl App {
                     });
                     return;
                 }
-                let tracks: Vec<String> = self
-                    .project
-                    .audio_tracks
-                    .iter()
-                    .map(|t| t.name.clone())
-                    .collect();
                 let buses: Vec<String> =
                     self.project.buses.iter().map(|b| b.name.clone()).collect();
                 let frame = self.engine.frame(self.clock.frame());
@@ -970,7 +924,6 @@ impl App {
                     self.editor.show_inspector(
                         ui,
                         &InspectorContext {
-                            tracks: &tracks,
                             buses: &buses,
                             params,
                             meters,
@@ -1189,17 +1142,6 @@ impl App {
 
     /// Sends edits to the engine and the audio output.
     fn sync(&mut self) {
-        // Names changed on a node in the graph are the project's names too.
-        for rename in self.editor.take_renames() {
-            match rename {
-                LinkedRename::Video(name) => self.rename_video(&name),
-                LinkedRename::Track { from, to } => {
-                    self.rename_track(&from, &to);
-                }
-            }
-        }
-        self.editor
-            .set_project_inputs(self.video_name(), self.track_name_list());
         let graph = self.editor.to_desc();
         let semantic = without_layout(&graph);
         if semantic != self.sent_graph {
@@ -2241,8 +2183,8 @@ impl App {
                     it.pre_roll = on;
                 }
             }
-            ItemEdit::Bind { node, binding } => {
-                self.project.set_graph_binding(layer, item, &node, binding);
+            ItemEdit::Bind { port, binding } => {
+                self.project.set_graph_binding(layer, item, &port, binding);
             }
         }
     }
@@ -2401,47 +2343,10 @@ impl App {
         }
     }
 
-    /// Renames the track `old` (and the audio inputs reading it). Returns false, changing
-    /// nothing, if there's no such track or the name is empty or another track's.
+    /// Renames the track `old`, and the bindings that read it. Returns false, changing nothing,
+    /// if there's no such track or the name is empty or another track's.
     pub fn rename_track(&mut self, old: &str, new: &str) -> bool {
-        let new = new.trim();
-        let Some(i) = self.project.audio_tracks.iter().position(|t| t.name == old) else {
-            return false;
-        };
-        if new == old {
-            return true;
-        }
-        if new.is_empty() || self.project.has_track(new) {
-            return false;
-        }
-        self.editor.rename_track(old, new);
-        self.project.audio_tracks[i].name = new.to_owned();
-        self.editor
-            .set_project_inputs(self.video_name(), self.track_name_list());
-        true
-    }
-
-    /// Names the video's track, and the video inputs reading it. An empty name, or another
-    /// track's, changes nothing.
-    pub fn rename_video(&mut self, name: &str) {
-        let name = name.trim();
-        let Some(video) = self.project.video() else {
-            return;
-        };
-        if name.is_empty() || name == video.name || self.project.has_track(name) {
-            return;
-        }
-        let video = video.name.clone();
-        if let Some(track) = self
-            .project
-            .video_tracks
-            .iter_mut()
-            .find(|t| t.name == video)
-        {
-            track.name = name.to_owned();
-        }
-        self.editor
-            .set_project_inputs(self.video_name(), self.track_name_list());
+        self.project.rename_track(old, new)
     }
 
     /// The track in timeline row `row`: its kind and index among the tracks of that kind.
@@ -2705,27 +2610,11 @@ impl App {
                     self.selected_track = Some(first + moved);
                 }
             }
-            TrackAction::Rename(row, new) => match self.track_row(row) {
-                Some((TrackKind::Video, i))
-                    if self
-                        .project
-                        .video()
-                        .is_some_and(|v| v.name == self.project.video_tracks[i].name) =>
-                {
-                    self.rename_video(&new)
+            TrackAction::Rename(row, new) => {
+                if let Some(old) = self.track_at(row).map(|t| t.name.clone()) {
+                    self.project.rename_track(&old, &new);
                 }
-                Some((TrackKind::Video, i)) => {
-                    let new = new.trim();
-                    if !new.is_empty() && !self.project.has_track(new) {
-                        self.project.video_tracks[i].name = new.to_owned();
-                    }
-                }
-                Some((TrackKind::Audio, i)) => {
-                    let old = self.project.audio_tracks[i].name.clone();
-                    self.rename_track(&old, &new);
-                }
-                None => {}
-            },
+            }
             TrackAction::Remove(row) => {
                 let Some((kind, i)) = self.track_row(row) else {
                     return;
@@ -2733,16 +2622,12 @@ impl App {
                 if kind == TrackKind::Video {
                     let removed = self.project.video_tracks.remove(i);
                     self.project.unlink_track(&removed.name);
-                    self.link_project_inputs();
                     let rows = self.project.video_tracks.len() + self.project.audio_tracks.len();
                     self.selected_track = self.selected_track.filter(|&s| s < rows);
                     return;
                 }
                 let removed = self.project.audio_tracks.remove(i);
                 self.project.unlink_track(&removed.name);
-                self.editor
-                    .set_project_inputs(self.video_name(), self.track_name_list());
-                self.editor.unlink_track(&removed.name);
                 let rows = self.project.video_tracks.len() + self.project.audio_tracks.len();
                 self.selected_track = match self.selected_track {
                     Some(s) if s >= row && s > 0 => Some(s - 1),
@@ -2902,17 +2787,10 @@ fn busy_badge(ui: &mut Ui, rect: egui::Rect, text: &str, theme: &Theme) {
         });
 }
 
-/// An editor for the project's graph, with the nodes linked to its video and tracks in place.
-fn linked_editor(project: &Project) -> GraphEditor {
+/// An editor for the project's open graph, with its output in place.
+fn graph_editor(project: &Project) -> GraphEditor {
     let mut editor = GraphEditor::new(&project.graph);
-    let video = project.video_display_name();
-    let tracks = project
-        .audio_tracks
-        .iter()
-        .map(|t| t.name.clone())
-        .collect();
-    editor.set_project_inputs(video, tracks);
-    editor.ensure_linked_nodes();
+    editor.ensure_output();
     editor
 }
 

@@ -4,10 +4,10 @@
 mod canvas;
 mod inspect;
 mod inspector;
-mod linked;
 mod modulation;
 pub mod param_field;
 mod performance;
+mod ports;
 mod search;
 mod tooltips;
 
@@ -25,7 +25,6 @@ pub use inspect::{
     InspectContext, InspectMode, ViewChoice, changing_view, listening, scroll_steps,
 };
 pub use inspector::InspectorContext;
-pub use linked::LinkedRename;
 pub use modulation::{PARAM_PORT, as_param, param_port};
 
 /// Identifies a node in the editor, stable across renames.
@@ -117,11 +116,6 @@ pub struct GraphEditor {
     pub max_warmup_frames: u32,
     /// Each node's processing time in microseconds, smoothed over recent frames, by node id.
     costs: HashMap<String, f32>,
-    /// The project's video file name and audio track names, for the nodes linked to them.
-    project_video: Option<String>,
-    project_tracks: Vec<String>,
-    /// Renames the user made on linked nodes, for the app to apply to the project.
-    renames: Vec<LinkedRename>,
     /// Problems found when loading a graph (e.g. connections to ports that don't exist).
     pub warnings: Vec<String>,
     /// What the last compile of the graph found out about each node: its signals' tags and
@@ -165,9 +159,6 @@ impl GraphEditor {
             keep_connections: true,
             max_warmup_frames: rastersong_engine::DEFAULT_MAX_WARMUP_FRAMES,
             costs: HashMap::new(),
-            project_video: None,
-            project_tracks: Vec::new(),
-            renames: Vec::new(),
             warnings: Vec::new(),
             compiled: Vec::new(),
         };
@@ -557,12 +548,12 @@ impl GraphEditor {
         Some(self.wires.remove(index))
     }
 
-    /// Removes nodes and their wires. Nodes linked to the project are kept.
+    /// Removes nodes and their wires. The output is kept.
     pub fn remove_nodes(&mut self, keys: &BTreeSet<NodeKey>) {
         let keys: BTreeSet<NodeKey> = keys
             .iter()
             .copied()
-            .filter(|&k| !self.is_linked(k))
+            .filter(|&k| !self.is_protected(k))
             .collect();
         self.remove_nodes_unchecked(&keys);
     }
@@ -573,7 +564,7 @@ impl GraphEditor {
         let keys: Vec<NodeKey> = keys
             .iter()
             .copied()
-            .filter(|&k| !self.is_linked(k))
+            .filter(|&k| !self.is_protected(k))
             .collect();
         for key in keys {
             let feed = self.wires.iter().find(|w| w.to == (key, 0)).map(|w| w.from);
@@ -617,7 +608,7 @@ impl GraphEditor {
         let mut graph = self.to_desc();
         let ids: BTreeSet<String> = keys
             .iter()
-            .filter(|&&k| !self.is_linked(k))
+            .filter(|&&k| !self.is_protected(k))
             .filter_map(|&k| self.node(k).map(|n| n.id.clone()))
             .collect();
         let node_of = |endpoint: &str| endpoint.split('.').next().unwrap_or("").to_owned();
@@ -645,7 +636,7 @@ impl GraphEditor {
         let positions = auto_layout(fragment);
         let mut keys = HashMap::new();
         for (i, desc) in fragment.nodes.iter().enumerate() {
-            // The project's inputs and output come from the project, not the clipboard.
+            // The output isn't copied: the graph has its own.
             let addable = self
                 .registry
                 .get(&desc.kind)
@@ -763,7 +754,7 @@ impl GraphEditor {
         let keys: Vec<NodeKey> = nodes
             .iter()
             .copied()
-            .filter(|&k| self.node(k).is_some_and(|n| n.kind != linked::OUTPUT))
+            .filter(|&k| self.node(k).is_some_and(|n| n.kind != ports::OUTPUT))
             .collect();
         let all = keys.iter().all(|&k| self.node(k).is_some_and(|n| n.bypass));
         for k in keys {
@@ -776,24 +767,6 @@ impl GraphEditor {
     pub fn duplicate_selection(&mut self, invert: bool) {
         let selected = self.selected.clone();
         self.duplicate(&selected, self.keep_connections != invert);
-    }
-
-    /// Points audio inputs that read track `old` at `new` (after a track is renamed).
-    pub fn rename_track(&mut self, old: &str, new: &str) {
-        for node in self
-            .nodes
-            .iter_mut()
-            .filter(|n| n.kind == linked::AUDIO_INPUT)
-        {
-            let reads_old = match node.params.get("source") {
-                Some(ParamValue::Text(name)) => name == old,
-                _ => old == rastersong_engine::DEFAULT_AUDIO_TRACK,
-            };
-            if reads_old {
-                node.params
-                    .insert("source".into(), ParamValue::Text(new.to_owned()));
-            }
-        }
     }
 
     /// Levels by output, from a rendered frame.
@@ -1190,17 +1163,6 @@ mod tests {
             *editor.draw_order().last().unwrap(),
             0,
             "drawn last, on top"
-        );
-    }
-
-    #[test]
-    fn renaming_a_track_updates_audio_inputs() {
-        let mut editor = GraphEditor::new(&graph());
-        editor.rename_track("audio", "drums");
-        let audio = editor.node(editor.key_of("audio").unwrap()).unwrap();
-        assert_eq!(
-            audio.params.get("source"),
-            Some(&ParamValue::Text("drums".into()))
         );
     }
 

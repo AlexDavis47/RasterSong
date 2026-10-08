@@ -14,8 +14,8 @@ fn options() -> CompileOptions {
         frame_rate: 30.0,
         tempo: Default::default(),
         sources: HashMap::from([
-            ("video".to_owned(), Layout::rgb(W, H)),
-            ("audio".to_owned(), Layout::audio(AUDIO)),
+            ("Video".to_owned(), Layout::rgb(W, H)),
+            ("Audio".to_owned(), Layout::audio(AUDIO)),
         ]),
         output: Layout::rgb(W, H),
         pixel_scale: 1.0,
@@ -36,11 +36,11 @@ fn sources(video: impl Fn(usize) -> f32, audio: impl Fn(usize) -> f32) -> HashMa
     let (v, a) = (Layout::rgb(W, H), Layout::audio(AUDIO));
     HashMap::from([
         (
-            "video".to_owned(),
+            "Video".to_owned(),
             Signal::from_data(v, (0..v.len()).map(video).collect()),
         ),
         (
-            "audio".to_owned(),
+            "Audio".to_owned(),
             Signal::from_data(a, (0..a.len()).map(audio).collect()),
         ),
     ])
@@ -60,7 +60,7 @@ fn passthrough_returns_the_video() {
     let input = sources(|i| i as f32 / 100.0, |_| 0.0);
     let out = graph.process(0, &input).unwrap();
     assert!(out.layout.same_shape(&Layout::rgb(W, H)));
-    assert_eq!(out.data, input["video"].data);
+    assert_eq!(out.data, input["Video"].data);
     assert_eq!(graph.latency_frames(), 0);
 }
 
@@ -77,7 +77,7 @@ fn split_and_combine_round_trip_with_swapped_channels() {
     let mut graph = compile(&json).unwrap();
     let input = sources(|i| i as f32, |_| 0.0);
     let out = graph.process(0, &input).unwrap();
-    for (o, i) in out.data.chunks(3).zip(input["video"].data.chunks(3)) {
+    for (o, i) in out.data.chunks(3).zip(input["Video"].data.chunks(3)) {
         assert_eq!(o, [i[2], i[1], i[0]]);
     }
 }
@@ -91,7 +91,7 @@ fn interleave_and_pack_round_trip() {
     );
     let mut graph = compile(&json).unwrap();
     let input = sources(|i| i as f32, |_| 0.0);
-    assert_eq!(graph.process(0, &input).unwrap().data, input["video"].data);
+    assert_eq!(graph.process(0, &input).unwrap().data, input["Video"].data);
 }
 
 #[test]
@@ -123,7 +123,7 @@ fn modulators_are_resampled_to_the_carrier() {
 fn unused_nodes_are_not_run() {
     // A node reading a source the host doesn't provide is fine as long as it doesn't feed the output.
     let json = graph_json(
-        r#"{ "id": "video", "type": "video_input" }, { "id": "other", "type": "video_input", "params": { "source": "nope" } },
+        r#"{ "id": "video", "type": "video_input" }, { "id": "other", "type": "video_input", "params": { "port": "nope" } },
            { "id": "out", "type": "output" }"#,
         r#"{ "from": "video", "to": "out" }"#,
     );
@@ -424,7 +424,7 @@ fn separate_channels_on_a_node_that_cant_fall_back_to_together_with_a_warning() 
             .any(|d| d.severity == rastersong_graph::Severity::Warning)
     );
     let input = sources(|i| i as f32, |_| 0.0);
-    assert_eq!(graph.process(0, &input).unwrap().data, input["video"].data);
+    assert_eq!(graph.process(0, &input).unwrap().data, input["Video"].data);
 }
 
 #[test]
@@ -527,7 +527,7 @@ fn stereo_options(frames: u32) -> CompileOptions {
     let mut options = options();
     options
         .sources
-        .insert("audio".into(), Layout::audio_channels(frames, 2));
+        .insert("Audio".into(), Layout::audio_channels(frames, 2));
     options
 }
 
@@ -563,7 +563,7 @@ fn stereo_splits_into_left_and_right_and_combines_back() {
         vec![1., -1., 2., -2., 3., -3.],
     );
     let mut input = sources(|_| 0.0, |_| 0.0);
-    input.insert("audio".into(), audio);
+    input.insert("Audio".into(), audio);
     graph.process(0, &input).unwrap();
     // The combined signal's level: right (-1, -2, -3) then left ten times (10, 20, 30).
     let level = graph
@@ -792,7 +792,7 @@ struct Level {
 impl Node for Level {
     fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
         ctx.sources
-            .get("video")
+            .get("Video")
             .map(|&layout| vec![layout])
             .ok_or_else(|| "needs the video's layout".to_owned())
     }
@@ -915,7 +915,7 @@ fn bypassed_nodes_pass_their_main_input_through() {
     let mut bypassed = compile(&json(r#", "bypass": true"#)).unwrap();
     assert_eq!(
         bypassed.process(0, &input).unwrap().data,
-        input["video"].data
+        input["Video"].data
     );
     assert_eq!(bypassed.latency_frames(), 0);
     // Without the flag the same chain is a real node chain, and the flag round-trips.
@@ -1008,7 +1008,7 @@ fn time_units_mean_the_same_together_and_separate() {
         assert_eq!(a, b, "frame {n}");
         if n > 0 {
             // Row 1 of this frame is row 0 of the same frame's input.
-            assert_eq!(a[row..2 * row], input["video"].data[..row]);
+            assert_eq!(a[row..2 * row], input["Video"].data[..row]);
         }
     }
 }
@@ -1080,7 +1080,7 @@ fn audio_outputs_without_input_or_processing_leave_the_source_audio_alone() {
            { "id": "sound", "type": "audio_output" }, { "id": "out", "type": "output" }"#,
         r#"{ "from": "video", "to": "out" }, { "from": "audio", "to": "sound" }"#,
     );
-    assert_eq!(compile(&json).unwrap().audio_passthrough(), Some("audio"));
+    assert_eq!(compile(&json).unwrap().audio_passthrough(), Some("Audio"));
     // Unconnected audio outputs don't change what renders.
     let with = render_form_of(&json, false);
     let extra = json.replace(

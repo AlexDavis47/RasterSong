@@ -587,7 +587,9 @@ memory maps read ordinary files. Saving rewrites the zip, copying unchanged entr
    - [ ] **feature** Graphs as FX chains on tracks, folders and the master: bypass, the "through" tag for a missing
      output, and receives filling extra inputs.
    - [ ] **feature** Item FX with trim, mute and pre-roll, replacing graph layers and `Binding::LayerBelow`.
-   - [ ] **feature** Input and Output port nodes replacing Video Input and Audio Input.
+   - [x] **feature** Input port nodes replacing Video Input and Audio Input *(done: the same nodes read a named
+     port; see [Decisions](decisions.md#input-ports-october-2026)). Output ports only matter to subgraphs, so they
+     move to stage 3.)*
    - [ ] **feature** Item groups (Group / Ungroup, Ctrl+G, multi-stream imports grouped), replacing track links.
    - [ ] **feature** Folder rows in the timeline (collapse triangle, indent, dragging into and out of folders),
      the FX button and chain popup, and the default Video / Audio / Control template.
@@ -597,6 +599,8 @@ memory maps read ordinary files. Saving rewrites the zip, copying unchanged entr
    - [ ] **feature** Inspecting connections in a graph that isn't under the playhead.
 3. **Subgraphs**
    - [ ] **feature** Subgraph nodes with pins, linked references, Make unique, cycle check, flattening at compile.
+   - [ ] **feature** Output port nodes (plain outputs besides Video Output and Audio Output), which become a
+     subgraph's output pins.
 4. **Embedding**
    - [ ] **feature** Zip project file, embed / embed all / unembed (with the relocate-or-save popup), change detection
      and Re-embed, relocating missing files, the user library in AppData.

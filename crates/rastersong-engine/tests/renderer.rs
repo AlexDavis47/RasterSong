@@ -207,7 +207,7 @@ fn stereo_tracks_reach_the_graph_interleaved() {
         &common::backend(),
         None,
         &common::tracks(vec![RenderTrack::audio(
-            "audio",
+            "Audio",
             Arc::new(Modulator::new(&clip)),
             0.0,
         )]),
@@ -295,7 +295,7 @@ fn a_track_wired_straight_to_the_audio_output_is_passed_through() {
         r#"{ "from": "audio", "to": "sound" }"#,
     );
     let mut r = renderer(&graph);
-    assert_eq!(r.audio_sink(), AudioSink::Passthrough("audio".into()));
+    assert_eq!(r.audio_sink(), AudioSink::Passthrough("Audio".into()));
     r.render(0, &|| false).unwrap();
     assert!(r.audio().is_none());
     assert_eq!(renderer(common::FINITE).audio_sink(), AudioSink::TrackMix);
@@ -326,8 +326,8 @@ fn tracks_at_different_rates_meet_in_one_graph() {
     let graph = r#"{ "version": 0,
       "nodes": [
         { "id": "video", "type": "video_input" },
-        { "id": "a", "type": "audio_input", "params": { "source": "low" } },
-        { "id": "b", "type": "audio_input", "params": { "source": "high" } },
+        { "id": "a", "type": "audio_input", "params": { "port": "low" } },
+        { "id": "b", "type": "audio_input", "params": { "port": "high" } },
         { "id": "mix", "type": "combine" }, { "id": "sound", "type": "audio_output" },
         { "id": "out", "type": "output" }
       ],
@@ -429,7 +429,7 @@ fn the_project_timebase_is_the_clock() {
     use rastersong_engine::{Rational, RenderTrack, Timebase};
 
     // Without a timebase of its own the project takes the first video's.
-    let (info, reds) = passthrough_frames(None, RenderTrack::video("video", common::VIDEO));
+    let (info, reds) = passthrough_frames(None, RenderTrack::video("Video", common::VIDEO));
     assert_eq!(
         (info.width, info.height, info.frames),
         (16, 8, common::FRAMES)
@@ -444,7 +444,7 @@ fn the_project_timebase_is_the_clock() {
         frame_rate: Rational::new(15, 1),
     };
     let (info, reds) =
-        passthrough_frames(Some(timebase), RenderTrack::video("video", common::VIDEO));
+        passthrough_frames(Some(timebase), RenderTrack::video("Video", common::VIDEO));
     assert_eq!((info.width, info.height, info.frames), (8, 4, 30));
     assert_eq!(info.timebase, timebase);
     assert_eq!(reds, (0..30).map(|i| 2 * i as u8).collect::<Vec<_>>());
@@ -455,7 +455,7 @@ fn items_place_the_video_and_gaps_read_zeros() {
     use rastersong_engine::{Item, RenderTrack};
 
     // Half a second in, from frame 10 of the video to frame 30, at double speed: 10 frames.
-    let mut video = RenderTrack::video("video", common::VIDEO);
+    let mut video = RenderTrack::video("Video", common::VIDEO);
     video.items = vec![Item {
         position: 0.5,
         start: 10.0 / 30.0,
@@ -556,7 +556,7 @@ fn only_the_rendered_bus_has_its_audio_output_compiled() {
             &common::backend(),
             None,
             &common::tracks(vec![RenderTrack::audio(
-                "audio",
+                "Audio",
                 Arc::new(rastersong_engine::sources::Modulator::new(&common::audio())),
                 0.0,
             )]),

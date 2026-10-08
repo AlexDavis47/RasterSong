@@ -874,9 +874,9 @@ fn a_new_graph_opens_as_a_passthrough_and_the_old_one_is_kept() {
 }
 
 #[test]
-fn adding_tracks_names_them_after_their_files_and_links_a_node_to_each() {
+fn adding_tracks_names_them_after_their_files_and_leaves_the_graph_alone() {
     let mut harness = loaded();
-    let nodes = harness.state().editor().node_count();
+    let graph = harness.state().project().graph.clone();
     harness
         .state_mut()
         .add_audio_tracks([PathBuf::from("song"), PathBuf::from("song")]);
@@ -889,25 +889,8 @@ fn adding_tracks_names_them_after_their_files_and_links_a_node_to_each() {
         .map(|t| t.name.clone())
         .collect();
     assert_eq!(names, ["audio", "song", "song_2"]);
-    assert_eq!(harness.state().editor().node_count(), nodes + 2);
-
-    // The linked nodes can't be deleted from the graph...
-    let graph = harness.state().project().graph.clone();
-    let source = |n: &rastersong_engine::NodeDesc| {
-        n.params
-            .get("source")
-            .map(|v| format!("{v:?}"))
-            .unwrap_or_default()
-    };
-    let song = graph
-        .nodes
-        .iter()
-        .find(|n| source(n).contains("\"song\""))
-        .expect("a node reads track song");
-    select(&mut harness, &song.id.clone());
-    shortcut(&mut harness, Modifiers::NONE, egui::Key::Delete);
-    assert_eq!(harness.state().editor().node_count(), nodes + 2);
-    assert!(harness.state().editor().is_linked(key(&harness, &song.id)));
+    // A graph's inputs are ports, filled where the graph is used, so tracks add no nodes.
+    assert_eq!(harness.state().project().graph, graph);
 }
 
 #[test]
@@ -1131,20 +1114,13 @@ fn ctrl_dragging_along_the_ruler_makes_a_loop_region() {
 }
 
 #[test]
-fn track_and_video_names_are_shared_with_the_graph() {
+fn tracks_are_renamed_without_touching_the_graph() {
     let mut harness = loaded();
-    let audio = key(&harness, "audio");
-    assert!(harness.state().editor().is_linked(audio));
-
+    let graph = harness.state().project().graph.clone();
     assert!(harness.state_mut().rename_track("audio", "drums"));
     harness.run_steps(2);
     assert_eq!(harness.state().project().audio_tracks[0].name, "drums");
-    let node = harness.state().editor().node(audio).unwrap();
-    assert_eq!(
-        node.params.get("source"),
-        Some(&rastersong_engine::ParamValue::Text("drums".into()))
-    );
-    assert!(harness.state().editor().is_linked(audio), "still linked");
+    assert_eq!(harness.state().project().graph, graph);
 
     // A name another track has, or an empty one, is refused.
     harness
@@ -1153,30 +1129,14 @@ fn track_and_video_names_are_shared_with_the_graph() {
     assert!(!harness.state_mut().rename_track("song", "drums"));
     assert!(!harness.state_mut().rename_track("song", "  "));
 
-    // The video's name is its track's, which its video inputs read.
-    harness.state_mut().rename_video("Intro shot");
-    harness.run_steps(2);
+    // The video's track is renamed the same way.
+    let video = harness.state().project().video_display_name().unwrap();
+    assert!(harness.state_mut().rename_track(&video, "Intro shot"));
     assert_eq!(
         harness.state().project().video_display_name().as_deref(),
         Some("Intro shot")
     );
-    let video = harness.state().editor().key_of("video").unwrap();
-    assert_eq!(
-        harness
-            .state()
-            .editor()
-            .node(video)
-            .unwrap()
-            .params
-            .get("source"),
-        Some(&rastersong_engine::ParamValue::Text("Intro shot".into()))
-    );
-    // Not to another track's name.
-    harness.state_mut().rename_video("drums");
-    assert_eq!(
-        harness.state().project().video_display_name().as_deref(),
-        Some("Intro shot")
-    );
+    assert!(!harness.state_mut().rename_track("Intro shot", "drums"));
 }
 
 #[test]
@@ -1511,12 +1471,6 @@ fn resources_become_tracks_and_take_their_tracks_with_them() {
         .find(|t| t.name == "concert Band")
         .unwrap();
     assert_eq!((band.kind, band.stream), (TrackKind::Audio, Some(1)));
-    // The track got an audio input node, as tracks always do.
-    assert!(app.editor().to_desc().nodes.iter().any(|n| {
-        n.params
-            .values()
-            .any(|v| format!("{v:?}").contains("concert Band"))
-    }));
 
     // A cancelled import adds nothing.
     app.import_files([PathBuf::from("concert.mkv")]);
@@ -1683,15 +1637,15 @@ fn the_inspector_binds_a_graph_items_inputs() {
             .get(node)
             .cloned()
     };
-    assert_eq!(binding(&harness, "audio"), Some(Binding::LayerBelow));
-    // The audio input's combo box is the second.
+    assert_eq!(binding(&harness, "Audio"), Some(Binding::LayerBelow));
+    // The audio port's combo box is the second.
     let inspector = harness.state().inspector_rect();
     let combos: Vec<_> = harness
         .get_all_by_role(egui::accesskit::Role::ComboBox)
         .map(|c| c.rect().center())
         .filter(|c| inspector.contains(*c))
         .collect();
-    assert_eq!(combos.len(), 2, "one per input node");
+    assert_eq!(combos.len(), 2, "one per input port");
     click(&mut harness, combos[1], PointerButton::Primary);
     harness.run_steps(2);
     harness
@@ -1699,11 +1653,11 @@ fn the_inspector_binds_a_graph_items_inputs() {
         .click();
     harness.run_steps(2);
     assert_eq!(
-        binding(&harness, "audio"),
+        binding(&harness, "Audio"),
         Some(Binding::Track("audio".into()))
     );
     shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
-    assert_eq!(binding(&harness, "audio"), Some(Binding::LayerBelow));
+    assert_eq!(binding(&harness, "Audio"), Some(Binding::LayerBelow));
 }
 
 #[test]
@@ -1726,7 +1680,7 @@ fn a_binding_to_a_missing_track_shows_a_note() {
         project.place_graph(0, graph, 0.0, 1.0);
         project.layers[0].items[0]
             .bindings
-            .insert("audio".into(), Binding::Track("vanished".into()));
+            .insert("Audio".into(), Binding::Track("vanished".into()));
     }));
     let bar = layer_point(&harness, 0.5, 0, true);
     click(&mut harness, bar, PointerButton::Primary);

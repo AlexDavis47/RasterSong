@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use eframe::egui::{self, RichText, Ui};
-use rastersong_engine::{AUDIO_INPUT, AUDIO_OUTPUT, BUS_PARAM, SOURCE_PARAM};
+use rastersong_engine::{AUDIO_OUTPUT, BUS_PARAM};
 use rastersong_engine::{
     Channels, GeneratorLayout, Grouping, Interpolation, MeterKind, Modulation, NodeMeters,
     NodeStats, NodeType, ParamKind, ParamLevel, ParamSpec, ParamValue, Severity, ShownWhen,
@@ -12,14 +12,11 @@ use rastersong_lang::{tr, tr_args};
 
 use super::param_field::{GUTTER_WIDTH, Modulated, NumberRange, param_field, reset_gesture};
 use super::{GraphEditor, param_port};
-use crate::name_edit::name_edit;
 use crate::theme::Theme;
 
 /// What the inspector needs from outside the editor.
 #[derive(Debug, Default)]
 pub struct InspectorContext<'a> {
-    /// Names of the project's audio tracks, offered by audio inputs.
-    pub tracks: &'a [String],
     /// Names of the project's output buses, offered by audio outputs.
     pub buses: &'a [String],
     /// Modulated parameters' values at the playhead, for their ghost handles.
@@ -41,10 +38,6 @@ impl GraphEditor {
             .node(key)
             .and_then(|n| self.registry.get(&n.kind))
             .cloned();
-        let linked = self.is_linked(key);
-        // The name a linked node shows is the project's, so renaming it renames that.
-        let linked_name = self.node(key).and_then(|n| self.linked_name(n));
-        let mut renamed: Option<String> = None;
         // Per parameter: whether its pin shows, and the colour of the wire modulating it, if any.
         let theme = Theme::of(ui.ctx());
         let pins: Vec<(bool, Option<egui::Color32>)> = {
@@ -72,15 +65,7 @@ impl GraphEditor {
         };
 
         // Name: shown on the node instead of the type.
-        if let Some(current) = &linked_name {
-            let edit = name_edit(ui, egui::Id::new(("linked-name", key)), current, |e| {
-                e.font(egui::TextStyle::Heading)
-                    .desired_width(f32::INFINITY)
-            });
-            edit.response
-                .on_hover_text(tr("editor.inspector.linked_name_help"));
-            renamed = edit.committed;
-        } else {
+        {
             let mut name = node.label.clone().unwrap_or_default();
             let edit = egui::TextEdit::singleline(&mut name)
                 .hint_text(kind.label())
@@ -236,38 +221,11 @@ impl GraphEditor {
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
                 for (index, spec) in kind.spec.params.iter().enumerate() {
-                    // A linked input's source is the project's: shown, not edited.
-                    if linked && spec.name == "source" {
-                        ui.horizontal(|ui| {
-                            ui.add_space(GUTTER_WIDTH + ui.spacing().item_spacing.x);
-                            ui.label(kind.param_label(spec.name))
-                                .on_hover_text(kind.param_help(spec.name));
-                        });
-                        let source = super::linked::track_of(node).to_owned();
-                        let shown = if node.kind == super::linked::VIDEO_INPUT {
-                            tr("editor.inspector.linked_video").to_owned()
-                        } else {
-                            tr_args("editor.inspector.linked_track", &[("track", &source)])
-                        };
-                        ui.horizontal(|ui| {
-                            ui.add_space(GUTTER_WIDTH + ui.spacing().item_spacing.x);
-                            ui.weak(shown)
-                                .on_hover_text(tr("editor.inspector.linked_help"));
-                        });
-                        ui.add_space(PARAM_GAP);
-                        continue;
-                    }
-                    let tracks = if node.kind == AUDIO_INPUT && spec.name == SOURCE_PARAM {
-                        Some(Names {
-                            names: ctx.tracks,
-                            missing: "editor.param.no_such_track",
-                            empty: "editor.param.no_tracks",
-                        })
-                    } else if node.kind == AUDIO_OUTPUT && spec.name == BUS_PARAM {
+                    let tracks = if node.kind == AUDIO_OUTPUT && spec.name == BUS_PARAM {
                         Some(Names {
                             names: ctx.buses,
                             missing: "editor.param.no_such_bus",
-                            empty: "editor.param.no_tracks",
+                            empty: "editor.param.no_buses",
                         })
                     } else {
                         None
@@ -365,11 +323,6 @@ impl GraphEditor {
         if let Some(index) = disconnect {
             self.disconnect_input((key, param_port(index)));
         }
-        if let Some(name) = renamed
-            && let Some(request) = self.node(key).and_then(|n| self.rename_request(n, name))
-        {
-            self.renames.push(request);
-        }
     }
 }
 
@@ -425,7 +378,7 @@ struct ParamRow<'a, 'u> {
     kind: &'a NodeType,
     spec: &'a ParamSpec,
     params: &'a mut BTreeMap<String, ParamValue>,
-    /// For an audio input's track or an audio output's bus: the names to pick from.
+    /// For an audio output's bus: the names to pick from.
     tracks: Option<Names<'a>>,
     track_width: f32,
     /// Whether the number is rounded to whole numbers.

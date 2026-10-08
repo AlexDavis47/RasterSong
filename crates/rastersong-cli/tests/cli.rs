@@ -103,7 +103,7 @@ fn a_project_with_graph_items_renders_them() {
     project.add_layer("Layer");
     let graph = project.graph_id;
     project.place_graph(0, graph, 2.0 / fps, 2.0 / fps).unwrap();
-    project.set_graph_binding(0, 0, "v", None);
+    project.set_graph_binding(0, 0, "Video", None);
     let layered = tmp.join("layered.rastersong");
     project.save(&layered).unwrap();
 

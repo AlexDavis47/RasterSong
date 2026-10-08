@@ -6,16 +6,14 @@
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
-use rastersong_graph::nodes::{
-    AUDIO_INPUT, LAYER_BELOW_SOURCE, NO_SOURCE, SOURCE_PARAM, TRACK_MIX_SOURCE, VIDEO_INPUT,
-};
+use rastersong_graph::nodes::{LAYER_BELOW_SOURCE, NO_SOURCE, PORT_PARAM, TRACK_MIX_SOURCE};
 use rastersong_graph::{
     CompileOptions, Graph, GraphDesc, Layout, NodeStats, OutputLevel, ParamValue, Registry, Signal,
     Sources,
 };
 
 use crate::audio::{AudioBlock, SinkResampler};
-use crate::project::Binding;
+use crate::project::{Binding, InputKind, port_of};
 use crate::renderer::Tracks;
 use crate::timeline::Bus;
 use crate::{EngineError, MediaError};
@@ -38,25 +36,24 @@ pub fn is_special_source(name: &str) -> bool {
     .contains(&name)
 }
 
-/// `desc` with every input node reading what `bindings` say: the bound track, the layer below, or
-/// nothing (zeros).
+/// `desc` with every input node reading what `bindings` say of its port: the bound track, the
+/// layer below, or nothing (zeros).
 pub fn bind_inputs(desc: &GraphDesc, bindings: &BTreeMap<String, Binding>) -> GraphDesc {
     let mut desc = desc.clone();
     for node in &mut desc.nodes {
-        let audio = match node.kind.as_str() {
-            VIDEO_INPUT => false,
-            AUDIO_INPUT => true,
-            _ => continue,
+        let Some((port, kind)) = port_of(&node.kind, &node.params) else {
+            continue;
         };
-        let source = match (bindings.get(&node.id), audio) {
-            (Some(Binding::Track(name)), _) => name.clone(),
+        let audio = kind == InputKind::Audio;
+        let source = match (bindings.get(port).cloned(), audio) {
+            (Some(Binding::Track(name)), _) => name,
             (Some(Binding::LayerBelow), false) => LAYER_BELOW_SOURCE.to_owned(),
             (Some(Binding::LayerBelow), true) => LAYER_BELOW_AUDIO.to_owned(),
             (None, false) => NO_SOURCE.to_owned(),
             (None, true) => NO_AUDIO_SOURCE.to_owned(),
         };
         node.params
-            .insert(SOURCE_PARAM.to_owned(), ParamValue::Text(source));
+            .insert(PORT_PARAM.to_owned(), ParamValue::Text(source));
     }
     desc
 }
@@ -749,29 +746,33 @@ mod tests {
     fn inputs_read_what_the_bindings_say() {
         let desc = GraphDesc::from_json(
             r#"{ "version": 0, "nodes": [
-                { "id": "a", "type": "video_input" }, { "id": "b", "type": "video_input" },
-                { "id": "c", "type": "video_input", "params": { "source": "x" } },
-                { "id": "s", "type": "audio_input" }, { "id": "t", "type": "audio_input" },
+                { "id": "a", "type": "video_input" }, { "id": "a2", "type": "video_input" },
+                { "id": "b", "type": "video_input", "params": { "port": "Kick" } },
+                { "id": "c", "type": "video_input", "params": { "port": "x" } },
+                { "id": "s", "type": "audio_input" },
+                { "id": "t", "type": "audio_input", "params": { "port": "Kick" } },
                 { "id": "o", "type": "output" } ] }"#,
         )
         .unwrap();
         let bindings = BTreeMap::from([
-            ("a".to_owned(), Binding::LayerBelow),
-            ("b".to_owned(), Binding::Track("clip".into())),
-            ("s".to_owned(), Binding::LayerBelow),
+            ("Video".to_owned(), Binding::LayerBelow),
+            ("Audio".to_owned(), Binding::LayerBelow),
+            ("Kick".to_owned(), Binding::Track("kick".into())),
         ]);
         let bound = bind_inputs(&desc, &bindings);
         let source = |id: &str| {
             let node = bound.nodes.iter().find(|n| n.id == id).unwrap();
-            node.params.get(SOURCE_PARAM).cloned()
+            node.params.get(PORT_PARAM).cloned()
         };
         let text = |s: &str| Some(ParamValue::Text(s.to_owned()));
+        // Nodes reading one port read the same thing.
         assert_eq!(source("a"), text(LAYER_BELOW_SOURCE));
-        assert_eq!(source("b"), text("clip"));
-        // Unbound overrides whatever the graph said.
+        assert_eq!(source("a2"), text(LAYER_BELOW_SOURCE));
+        assert_eq!(source("b"), text("kick"));
+        assert_eq!(source("t"), text("kick"));
+        // An unbound port reads nothing.
         assert_eq!(source("c"), text(NO_SOURCE));
         assert_eq!(source("s"), text(LAYER_BELOW_AUDIO));
-        assert_eq!(source("t"), text(NO_AUDIO_SOURCE));
         assert_eq!(source("o"), None);
     }
 

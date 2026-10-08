@@ -87,7 +87,7 @@ pub fn renderer_with(graph: &str, registry: &Registry, size: OutputSize) -> Rend
         &backend(),
         None,
         &tracks(vec![RenderTrack::audio(
-            "audio",
+            "Audio",
             Arc::new(Modulator::new(&audio())),
             0.0,
         )]),
@@ -102,7 +102,7 @@ pub fn renderer_with(graph: &str, registry: &Registry, size: OutputSize) -> Rend
 
 /// The video as the track `video`, followed by `audio`.
 pub fn tracks(audio: Vec<RenderTrack>) -> Vec<RenderTrack> {
-    std::iter::once(RenderTrack::video("video", VIDEO))
+    std::iter::once(RenderTrack::video("Video", VIDEO))
         .chain(audio)
         .collect()
 }

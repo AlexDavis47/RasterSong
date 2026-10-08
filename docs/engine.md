@@ -212,11 +212,11 @@ shows. Offline, the CLI's `rastersong render <project> <out>` passes the project
 spans like every item), and passes the picture of the layer below through where no item plays. The bottom layer's
 *Layer below* is the track mix's picture; the top layer's output is the master. Every item gets its own compiled graph
 and its own state; a graph placed twice is compiled twice. Before compiling, the item's bindings are written into
-its graph: a Video Input or Audio Input reads the bound track, `@layer_below` for *Layer below*, or `@none` (zeros) for
+its graph: each input port reads the bound track, `@layer_below` for *Layer below*, or `@none` (zeros) for
 no binding. The graph the editor has open is only a description until placed.
 
 - **Pictures.** *Layer below* is the picture the layer below output; an input bound to nothing reads a picture of zeros.
-- **Sound.** An Audio Input bound to *Layer below* reads the layer below's rendered sound (the Audio Output of the item
+- **Sound.** An audio port bound to *Layer below* reads the layer below's rendered sound (the Audio Output of the item
   playing there) when its layout is the same as the one the input was compiled for, which is the first Audio Output
   layout among the layer below's items; otherwise zeros. **Known limit:** the audio track mix is not available as a
   layer-below input (the engine never mixes the audio tracks; the app's playback mixer and the CLI sum them after

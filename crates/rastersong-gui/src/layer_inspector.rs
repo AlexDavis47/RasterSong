@@ -1,5 +1,5 @@
 //! The inspector for a selected graph item: its graph, pre-roll, and what each of the graph's
-//! input nodes reads (the layer below, a track, or nothing).
+//! input ports reads (the layer below, a track, or nothing).
 
 use eframe::egui::{self, Ui};
 use rastersong_engine::{Binding, InputKind, Project, input_ports};
@@ -11,9 +11,9 @@ use crate::theme::Theme;
 #[derive(Debug, Clone, PartialEq)]
 pub enum ItemEdit {
     PreRoll(bool),
-    /// Input node `node` now reads `binding` (`None` for nothing).
+    /// Input port `port` now reads `binding` (`None` for nothing).
     Bind {
-        node: String,
+        port: String,
         binding: Option<Binding>,
     },
 }
@@ -89,7 +89,7 @@ pub fn graph_item_inspector(
         ui.weak(tr("layer.item.no_inputs"));
     }
     for port in ports {
-        let current = it.bindings.get(&port.node);
+        let current = it.bindings.get(&port.name);
         let gone = matches!(current, Some(Binding::Track(t))
             if !track_names(project, port.kind).contains(t));
         ui.horizontal(|ui| {
@@ -97,9 +97,9 @@ pub fn graph_item_inspector(
                 InputKind::Video => "▣",
                 InputKind::Audio => "♪",
             });
-            ui.label(&port.node);
+            ui.label(&port.name);
             let mut choice = current.cloned();
-            egui::ComboBox::from_id_salt(("graph-item-binding", layer, item, &port.node))
+            egui::ComboBox::from_id_salt(("graph-item-binding", layer, item, &port.name))
                 .selected_text(binding_label(current, project, port.kind))
                 .show_ui(ui, |ui| {
                     ui.selectable_value(
@@ -120,7 +120,7 @@ pub fn graph_item_inspector(
                 .on_hover_text(tr("layer.item.input.help"));
             if choice.as_ref() != current {
                 edits.push(ItemEdit::Bind {
-                    node: port.node.clone(),
+                    port: port.name.clone(),
                     binding: choice,
                 });
             }

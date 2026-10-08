@@ -142,13 +142,10 @@ impl GraphEditor {
             .map(|i| {
                 let node = &self.nodes[i];
                 let kind = self.registry.get(&node.kind);
-                // A linked node is named by the project, whatever label it may have been given.
-                let title = self
-                    .node_is_linked(node)
-                    .then(|| self.linked_title(node))
-                    .flatten()
-                    .or_else(|| node.label.clone())
-                    .or_else(|| self.linked_title(node))
+                let title = node
+                    .label
+                    .clone()
+                    .or_else(|| self.port_title(node))
                     .unwrap_or_else(|| {
                         kind.map_or_else(
                             || tr_args("editor.node.unknown_kind", &[("kind", &node.kind)]),

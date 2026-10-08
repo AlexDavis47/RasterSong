@@ -56,7 +56,7 @@ fn delay(frames: u32) -> String {
 
 /// The same graph in a layer of the stack: its input reads the layer below.
 fn below() -> BTreeMap<String, Binding> {
-    BTreeMap::from([("v".to_owned(), Binding::LayerBelow)])
+    BTreeMap::from([("Video".to_owned(), Binding::LayerBelow)])
 }
 
 /// Graph `graph` playing from frame `from` to frame `to`.
@@ -218,7 +218,7 @@ fn inputs_read_the_track_they_are_bound_to_or_nothing() {
     let tracks = tracks(vec![other]);
 
     let bound = RenderItem {
-        bindings: BTreeMap::from([("v".to_owned(), Binding::Track("other".into()))]),
+        bindings: BTreeMap::from([("Video".to_owned(), Binding::Track("other".into()))]),
         ..item(1, 4, 8)
     };
     let unbound = RenderItem {
@@ -367,8 +367,8 @@ fn only_the_items_that_play_supply_sound() {
     );
     let playing = RenderItem {
         bindings: BTreeMap::from([
-            ("a".to_owned(), Binding::Track("song".into())),
-            ("v".to_owned(), Binding::LayerBelow),
+            ("Audio".to_owned(), Binding::Track("song".into())),
+            ("Video".to_owned(), Binding::LayerBelow),
         ]),
         ..item(1, 3, 6)
     };
@@ -447,7 +447,7 @@ fn the_service_renders_layers_and_they_are_part_of_the_cache_key() {
     let engine = engine();
     engine.set_timeline(Timeline {
         tracks: vec![TrackSpec::new(
-            "video",
+            "Video",
             TrackKind::Video,
             PathBuf::from(VIDEO),
         )],
@@ -500,7 +500,7 @@ fn the_service_reports_a_graph_item_that_cannot_compile() {
     let engine = engine();
     engine.set_timeline(Timeline {
         tracks: vec![TrackSpec::new(
-            "video",
+            "Video",
             TrackKind::Video,
             PathBuf::from(VIDEO),
         )],

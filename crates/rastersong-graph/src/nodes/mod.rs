@@ -23,14 +23,15 @@ use crate::{InputSpec, Node, OutputSpec, ParamSpec, ParamValue, Params, Range, T
 pub const OUTPUT: &str = "output";
 /// The node type name of the graph's optional audio output.
 pub const AUDIO_OUTPUT: &str = "audio_output";
-/// The node type name of the node that reads the host's video.
+/// The node type name of an input port that reads pictures.
 pub const VIDEO_INPUT: &str = "video_input";
-/// The node type name of the node that reads one of the host's audio tracks.
+/// The node type name of an input port that reads sound.
 pub const AUDIO_INPUT: &str = "audio_input";
-/// The default signal name of a video input node: the project's video.
-pub const DEFAULT_VIDEO: &str = "video";
-/// The default signal name of an audio input node.
-pub const DEFAULT_AUDIO: &str = "audio";
+/// The main video port: what an input port reads unless named otherwise. As an FX, the host
+/// track's picture fills it.
+pub const DEFAULT_VIDEO: &str = "Video";
+/// The main audio port. As an FX, the host track's sound fills it.
+pub const DEFAULT_AUDIO: &str = "Audio";
 /// The host signal holding the track mix's picture: the top video track with an item at each
 /// frame. Bypassing the whole graph shows it.
 pub const TRACK_MIX_SOURCE: &str = "@track_mix";
@@ -43,8 +44,9 @@ pub const NO_SOURCE: &str = "@none";
 pub const BUS_PARAM: &str = "bus";
 /// The bus an audio output writes to unless set otherwise: the project's first, master bus.
 pub const DEFAULT_BUS: &str = "Main";
-/// The parameter of both input nodes that names the host signal they read.
-pub const SOURCE_PARAM: &str = "source";
+/// The parameter of both input nodes that names the port they read: whoever uses the graph
+/// fills each port by its name.
+pub const PORT_PARAM: &str = "port";
 /// The node type names of the channel splitter and combiner, whose port counts follow the signal.
 pub const SPLIT: &str = "split";
 pub const COMBINE: &str = "combine";
@@ -179,10 +181,10 @@ impl Category {
         }
     }
 
-    /// Whether users add nodes of this category themselves. Inputs and the output come from the
-    /// project (one per video, one per audio track, one output).
+    /// Whether users add nodes of this category themselves: everything but the output, which
+    /// every graph has one of. Input ports are added like any node.
     pub const fn user_addable(self) -> bool {
-        !matches!(self, Self::Input | Self::Output)
+        !matches!(self, Self::Output)
     }
 }
 
@@ -713,7 +715,8 @@ mod tests {
             assert_eq!(c.index(), i);
         }
         assert!(Category::Effect.user_addable());
-        assert!(!Category::Input.user_addable());
+        assert!(Category::Input.user_addable());
+        assert!(!Category::Output.user_addable());
     }
 
     #[test]
