@@ -4,8 +4,8 @@ What the built-in nodes have in common, and the conventions their behavior follo
 (ports, parameters with defaults, ranges and units, modulation) is [`nodes.md`](nodes.md). It is generated from the
 node definitions by `cargo xtask docs`, and CI fails if it is out of date.
 
-Roughly: inputs (`video_input`, `audio_input`), the `output`, channel structure (`split`, `combine`, `interleave`,
-`pack`, `stretch`), conversion (`to_audio`, `to_video`, `relabel`), generators (`beat`, `constant`, `noise`,
+Roughly: inputs (`video_input`, `audio_input`), the outputs (`output`, `audio_output`), channel structure (`split`,
+`combine`, `interleave`, `pack`, `flip`, `transpose`, `resample`, `stretch`), conversion (`to_audio`, `to_video`, `relabel`), generators (`beat`, `constant`, `noise`,
 `oscillator`) and many effects (`three_band`, `am`, `delay`, `bitcrush`, `filter`, `compressor`, `gate`,
 `distortion`, and more).
 
@@ -25,6 +25,7 @@ Every node has these shared settings:
   Channels, without the wiring. Modulation inputs are shared by all channels. Units stay the same: a row is a
   row of the picture either way. On a node that can't run per channel it falls back to `together` with a warning;
   on a one-channel signal it simply has no effect (a note).
+- **`bypass`**: passes the main input straight to the first output, skipping the node (Alt+click in the editor).
 
 Hover text for the Channels setting (generalized to any channel count):
 
@@ -35,7 +36,7 @@ Hover text for the Channels setting (generalized to any channel count):
 - **`layout`** (`video` or `audio`, generators only: Beat, Constant, Noise, Oscillator): what the generated signal is
   shaped like. `video` is the video's frame (RGB, rows); `audio` is one block of the audio track named `audio`, or of
   the project's first track, or mono at 48 kHz when the project has no audio. It is a node setting in the file
-  (`"layout": "audio"`, written only when not `video`), not a parameter; graphs from before version 7 are migrated.
+  (`"layout": "audio"`, written only when not `video`), not a parameter.
 
 ## Conditional parameters
 
@@ -61,21 +62,21 @@ seam, and they come back as tears where dark turns bright and the reverse. Clipp
 
 ## Dynamics nodes
 
-The compressor and gate follow their input's level, or the `sidechain` when it's connected. Their times are
+The compressor, gate and Dynamic EQ follow their input's level, or the `sidechain` when it's connected. Their times are
 milliseconds of the signal's own time, so on a video carrier they span the same fraction of a frame at any
 resolution.
 
 ## Ports
 
 `?` marks optional inputs. Audio inputs read the project's audio track named by `source`; a track that doesn't
-exist reads as silence.
+exist reads as silence. In a graph placed on a graph layer, the item's bindings replace each input's `source`
+when it compiles (see [Graph layers](engine.md#graph-layers)).
 
 ## Split and Combine Channels
 
 **Split and Combine Channels** take any number of channels (up to 8). Split has one output per channel of its
 input (`c1`, `c2`, …; the editor names them R, G, B or L, R from the input's tag); Combine makes one channel per
 input up to the last one connected, so two mono audio signals make stereo and three video channels make RGB.
-Graphs written for the RGB-only versions (ports `r`, `g`, `b`) load with their ports renamed.
 
 ## Channels and interleaving
 
@@ -90,6 +91,6 @@ RGB signal, but varies across them on the packed carrier.
 ## Categories
 
 Categories stay as they are (see [Decisions](decisions.md#categories-stay-as-they-are)): *Channels* (`split`,
-`combine`, `interleave`, `pack`, `stretch`) changes a signal's shape and leaves its values alone; *Conversion*
+`combine`, `interleave`, `pack`, `flip`, `transpose`, `resample`, `stretch`) changes a signal's shape and leaves its values alone; *Conversion*
 (`to_audio`, `to_video`) changes the value range, `0..1` to `-1..1` and back, and `relabel` changes only what a
 signal is said to be.

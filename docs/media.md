@@ -9,8 +9,9 @@ synthetic frames. (Licensing of FFmpeg itself is in [Licensing](licensing.md#ffm
   the leading frames of an open GOP at the start of a cut stream, and packets the demuxer flags as corrupt
   (e.g. the cut-off end of a truncated file).
 - **API by frame index:** `frame(i) -> Arc<VideoFrame>` (packed 8-bit RGB). Callers never see GOPs, keyframes
-  or timestamps. Requesting the same frame twice is free. `frame_time(i)` gives each frame's presentation time,
-  which is how variable-frame-rate sources are placed on the timeline.
+  or timestamps. Requesting the same frame twice is free. `frame_time(i)` gives each frame's presentation time;
+  the renderer doesn't use it to place frames (it picks them by nominal frame rate, so variable-frame-rate video is
+  conformed as constant).
 - **Sequential fast path:** the decoder keeps going forward when it is already at or before the keyframe a seek
   would land on. It only seeks on a jump.
 - **Seeking:** each frame records which keyframe decoding must start from. For the leading B-frames of an open GOP
@@ -28,6 +29,8 @@ synthetic frames. (Licensing of FFmpeg itself is in [Licensing](licensing.md#ffm
   and frame rate or sample rate and channels, title and language tags), leaving out cover pictures, subtitles and
   data. `open_video_stream` and `AudioOptions::stream` open a stream by its index; without one, the best stream of
   the kind, as FFmpeg picks it.
+- **Encode:** `LosslessWriter` writes lossless FFV1 video with PCM sound into Matroska; the CLI uses it for `.mkv`
+  output. Other export formats are planned (see [Engine](engine.md#export--offline-rendering)).
 - **Audio cache:** `AudioCache` decodes each audio stream once into an uncompressed `f32` file and reads it back
   through a memory map (`Samples`), so a track costs address space rather than memory, every reader shares one
   copy, and reopening a project decodes nothing. Files are named by the SHA-256 of the source's bytes (remembered

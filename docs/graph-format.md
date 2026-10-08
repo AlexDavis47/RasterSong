@@ -23,7 +23,10 @@ or its main input. Unknown parameters are rejected, which catches typos.
 
 Nodes may also carry `"position": [x, y]` (their place in the editor), `"label"` (a name shown instead of the node
 type's) and `"exposed"` (which parameter pins show, when that differs from the type's defaults). None of these
-affect rendering. A signal connected to a parameter (`{ "from": "audio", "to": "wave.@time" }`) modulates it, with
+affect rendering. These do: `"bypass": true` passes the main input straight to the first output, skipping the
+node; `"integer"` lists number parameters rounded to whole values (the value and every modulated sample); and the
+shared settings `"interpolation"`, `"grouping"`, `"channels"` and `"layout"` (see
+[Node behavior](node-behavior.md#shared-node-settings)), each written only when not at its default. A signal connected to a parameter (`{ "from": "audio", "to": "wave.@time" }`) modulates it, with
 `"modulation": { "time": { "amount": 25, "mode": "unipolar" } }` on the node saying how far. The amount is a
 **percentage of the slider's range** (the node's `"ranges": { "param": [min, max] }` entry when the user set one,
 otherwise the node type's usual range), from −100 to 100. A full-scale signal moves the value that far from where it
@@ -40,8 +43,8 @@ order by `GraphDesc::upgrade`; the rename helpers in `migrate/tooling.rs` are re
 
 ## Projects
 
-Projects are JSON files with the `.rastersong` extension holding the timeline, the graph, the tempo and the loop
-region:
+Projects are JSON files with the `.rastersong` extension holding the timeline, the graphs and graph layers, the
+tempo and the loop region:
 
 - `timebase`: the project's `width`, `height` and `frame_rate` (`"30"` or `"30000/1001"`). Left out, the first
   video track's are used, or 1920×1080 at 30 fps without one. See [Timeline](engine.md#timeline).
@@ -49,15 +52,22 @@ region:
   at), a `name`, a `kind` (`video` or `audio`), the linked file's `path`, and the `stream` it plays, by its index in
   the file (left out: the file's best stream of that kind).
 - `video_tracks` and `audio_tracks`: each a `name` (the name input nodes select it by, unique among all tracks),
-  the `resource` it plays (of its own kind), its `items`, and `volume` and `muted` for playback. Left out, `items`
-  is one item playing the whole resource from the start. A track with no `resource` is empty (and has no items)
-  until a resource is dropped on it.
+  the `resource` it plays (of its own kind), its `items`, `volume`, `muted` and `solo` for the track mix, its
+  `bus`, its `height` on the timeline and its `link` group (tracks with the same number move their items
+  together). Left out, `items` is one item playing the whole resource from the start. A track with no `resource`
+  is empty (and has no items) until a resource is dropped on it.
 - `graph`, `graph_id`, `graph_name` and `graphs`: the project's graphs. `graph` is the open one (the one the editor
   shows and the engine renders), named `graph_name` with id `graph_id`; `graphs` holds the others, each an `id`,
   a `name` and its `graph`, until one is opened and swaps places with the open graph.
 - An item: `position` (seconds into the project), `start` and `end` (its in and out points, in seconds of the
   file; no `end` plays to the end of the file), `rate` (seconds of file per second of timeline, 1 by default) and
   `muted`.
+- `layers`: the graph layers, bottom first, each a `name`, `items`, `muted` and `solo`. A graph item has the
+  `graph` id it plays, `position` and `length` in seconds, `start` (seconds into the graph's own time, 0 by
+  default), `muted`, `pre_roll` (true by default) and `bindings`: by input node id, `"layer_below"` or
+  `{ "track": "name" }`; an input left out reads nothing. See [Graph layers](engine.md#graph-layers).
+- `loop_region` (`start` and `end` in seconds, and whether it is `enabled`), `tempo` (`bpm`, `beats_per_bar`,
+  `offset_secs`), `timeline_mode` (`"time"` or `"tempo"`) and `bypass_graph`.
 
 ```json
 { "version": 0,
@@ -76,7 +86,8 @@ region:
 Resource paths inside the project's folder are saved relative to it, so a project folder can be moved or shared.
 A track pointing at a resource the project doesn't have, or one of the other kind, is an error on open.
 Project files have the same version-0 policy. Graphs can also be imported and exported on their own. The project
-also keeps the Audio Output rate and the *max warmup frames* limit (omitted from the file while at their defaults).
+also keeps `audio_rate` (the Audio Output rate), `max_warmup_frames` and `inspect_rate` (how often connection
+inspection updates while playing, 5 a second by default), each omitted from the file while at its default.
 `buses` lists the output buses, master first (omitted while it is just Main in stereo), and a track's `bus` is the
 one it is routed to (omitted for Main). A track's `volume` and `muted` are its level in the track mix.
 

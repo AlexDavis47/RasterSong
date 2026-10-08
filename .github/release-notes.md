@@ -18,6 +18,6 @@ reports that FUSE is missing, run it with `--appimage-extract-and-run`.
 
 RasterSong is source-available; see `LICENSE.txt` in the package.
 
-This software uses libraries from the FFmpeg project under the LGPLv2.1. Its source code is attached
+This software uses libraries from the FFmpeg project under the LGPL v2.1 or later. Its source code is attached
 to this release (`ffmpeg-*.tar.xz`), and `FFMPEG-BUILD.txt` in each package says how it was built.
 The licenses of the other libraries RasterSong uses are in `THIRD-PARTY-NOTICES.html`.

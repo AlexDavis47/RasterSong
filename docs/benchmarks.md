@@ -12,6 +12,9 @@ cargo bench -p rastersong-media   # decode and audio load (needs `cargo xtask fi
 
 AMD Ryzen 9 3900X (12 cores, one used), 64 GB RAM, Windows 11. No SIMD work or parallelism yet.
 
+These node rows come from the Phase 3 bench, which had modulated and feedback variants. Today's `cargo bench`
+makes one entry per node kind from `NodeKind::BENCH`, and `lowpass` is now `filter` at 6 dB/oct.
+
 ### Nodes: one 1080p channel (2.07 M samples)
 
 | Node | Time per frame | Throughput |

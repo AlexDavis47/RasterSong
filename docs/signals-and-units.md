@@ -32,9 +32,7 @@ All of these can be fractional.
 Every node that takes a time or a frequency has one `unit` parameter built with `Unit::time_param` or
 `Unit::freq_param` (`nodes/support.rs`; the second is labelled "Cycles per"). A node calls `unit.samples(ctx)` to
 multiply or `unit.per_sample(value, ctx)` to divide. The `pixel` unit scales with the preview through
-`CompileOptions::pixel_scale`, which the renderer sets to render width over project width. Option names that
-used to differ between the two lists (`rows`, `Row`, `Hertz`, …) are upgraded by `migrate.rs`, so old graph
-files keep loading.
+`CompileOptions::pixel_scale`, which the renderer sets to render width over project width.
 
 ### Tempo
 
@@ -79,16 +77,15 @@ stays locked to the picture.
 Whether it receives one color channel or a whole interleaved RGB stream, it processes it the same way. Layout
 is only used by:
 
-- **Structural nodes** (Split Channels, Combine Channels, Interleave, Pack, Stretch to Match, Output), which need to know how to take a signal apart and rebuild it
+- **Structural nodes** (Split Channels, Combine Channels, Interleave, Pack, Flip, Transpose, Resample, Stretch to Match, Output), which need to know how to take a signal apart and rebuild it
 - **Unit conversion**, e.g. "1 row" is `width` samples for one channel but `3 × width` for interleaved RGB. Nodes ask the engine (`ctx.samples_per_row()`) rather than reasoning about layout themselves.
 
 Ports are untyped: any output can connect to any input. Conversions are always explicit nodes the user places,
 in the spirit of Substance Designer.
 
-> Do not confuse a signal's `Layout` with the `layout` *parameter* some generator nodes (Beat, Constant, Noise,
+> Do not confuse a signal's `Layout` with the `layout` *node setting* generator nodes (Beat, Constant, Noise,
 > Oscillator) have, which picks the shape of the signal they generate (for example "take the layout from the audio
-> source"). The roadmap proposes moving that to a shared node setting; see
-> [Generator layout](roadmap.md#node-settings-and-parameters).
+> source"); see [Node behavior](node-behavior.md#shared-node-settings).
 
 ### Tags
 
@@ -102,7 +99,7 @@ Separate channels on a node that can't run per channel). Neither ever stops proc
 RGB into a stereo effect just runs as interleaved samples. Each output port has a tag rule (`OutputSpec::tag`):
 most effects pass their main input's tag on, conversions set the kind and range, and nodes that set a range from
 their parameters (generators, Clamp, Remap, Offset) work it out themselves. Level-based nodes (Gate, Compressor,
-Limiter, Distortion) declare the range they're designed for (`NodeSpec::expects`). **Relabel** rewrites a tag on
+Limiter, Distortion, Dynamic EQ, Audio Output) declare the range they're designed for (`NodeSpec::expects`). **Relabel** rewrites a tag on
 purpose, without touching the samples.
 
 ## Rate Matching
@@ -120,7 +117,8 @@ Every node has an **interpolation** setting for this resampling, available on al
 Sample positions are centre-aligned, so a block covers exactly the same span at any length. Unconnected optional
 inputs receive silence (zeros).
 
-**Different-resolution video inputs** are scaled in 2D to the project resolution by the input node.
+**Different-resolution video inputs** are scaled in 2D to the project resolution by the renderer, as the video is
+decoded.
 1-D resampling is never used to reconcile two images, since it would skew rows.
 
 The other shared settings that shape rate matching (`grouping`, `channels`) are in

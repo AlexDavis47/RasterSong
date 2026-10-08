@@ -34,7 +34,7 @@ leans on them.
 
 **Engine and media**
 
-- [Render engine](engine.md): crate layout, the sequential schedule, warmup and seeking, the frame cache, dynamic playback, preview resolution, Audio Output, export, performance.
+- [Render engine](engine.md): crate layout, the sequential schedule, warmup and seeking, the frame cache, dynamic playback, preview resolution, the timeline and track mix, output buses, Audio Output, graph layers, taps and listening, export, performance.
 - [Media layer](media.md): FFmpeg decode and encode behind one trait.
 
 **Nodes and graphs**
@@ -46,7 +46,7 @@ leans on them.
 
 **Application**
 
-- [Desktop app](app.md): preview, node editor, inspector, timeline, keys, projects.
+- [Desktop app](app.md): preview, node editor, inspector, the Resources panel, timeline and graph layers, settings, output buses, keys, projects.
 - [Text and languages](text.md): where every user-facing string lives, the key scheme, adding a language.
 
 **Project**
