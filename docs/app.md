@@ -87,22 +87,33 @@ A connected (modulated) parameter shows, in the wire's colour:
 
 ## Timeline
 
-A ruler, the video track and any number of **audio tracks**, with Reaper-style track headers on the left. The
-video header shows the track's name (its file's name until renamed; the video input reads it by that name), size
-and frame rate; each audio header has the track's name (which audio inputs select it by; renaming a track updates
-them), mute, remove and its **offset**, where its item starts. Dragging an audio track earlier than the start of
-the timeline starts its item partway into the file instead. The project lasts to the end of its last track, audio
-included, and runs at its [timebase](engine.md#timeline). For now each track holds one item; the multi-item
-timeline is the next stage of the [roadmap](roadmap.md#timeline-resources-and-graph-layers). **+ Audio track** (or
-File → Add Audio Tracks…) adds several files at once, each named after its file. Opening a video that has sound
-adds that sound as an audio track too. The video track shows thumbnails of the source video, decoded by a separate
-small decoder so they never slow rendering and survive graph edits, with rendered frames marked in green along its
-bottom. Audio tracks show their waveform.
+A ruler, the video track and any number of **audio tracks**, with Reaper-style track headers on the left. Each track
+is a lane of **items**, the stretches of its file placed on the timeline. The video header shows the track's name
+(its file's name until renamed; the video input reads it by that name), size and frame rate; each audio header has
+the track's name (which audio inputs select it by; renaming a track updates them), its volume in the track mix, and
+its bus when the project has several. Every header has **mute** and **solo** (*S*: while any track of a kind is
+soloed, only soloed tracks of that kind are in the [track mix](engine.md#track-mix-and-output-buses)); audio headers
+also remove the track. Tracks left out of the mix are drawn dimmed. The project lasts to the end of its last item and
+runs at its [timebase](engine.md#timeline). **+ Audio track** (or File → Add Audio Tracks…) adds several files at
+once, each named after its file. Opening a video that has sound adds that sound as an audio track too. For now the
+app opens one video track; more arrive with the Resources panel on the
+[roadmap](roadmap.md#timeline-resources-and-graph-layers).
+
+Every item has a **header bar** along its top with the track's name and a mute button (a muted item reads as a gap,
+for graphs too). Drag the bar to move the item; the area below it shows the item's content, thumbnails of the
+source video (decoded by a separate small decoder so they never slow rendering and survive graph edits) or the
+audio's waveform, and seeks like empty lane space. Items can't start before the timeline does.
+
+Right-click a header to **link** its track with another (or unlink it): dragging an item then moves the items of
+the linked tracks that overlap it, so a video and its sound stay together. Linked headers say so. Drag the bottom
+edge of a header to change the track's **height** (double-click it, or the header's menu, for the default). Drag an
+audio header to reorder the audio tracks. Frames rendered so far are marked in green along the bottom of the ruler.
+Linking, heights, solo and mutes are saved with the project and undo like any edit.
 
 - The scroll wheel zooms time around the pointer, from half the whole video down to a few frames (over the
   headers it scrolls the tracks); middle- or right-drag pans in both directions; F shows the whole video.
 - Tick lines run behind the lanes, labelled on the ruler, down to single frames when zoomed in.
-- Click or drag on the ruler or empty lane space to seek; drag a track's block to move it against the video.
+- Click or drag on the ruler, empty lane space or an item's content to seek.
 - **Loop region** (as in Reaper): drag along the ruler to make one, snapped to whole frames; drag its edges to
   change it. R or the Loop button by the play button turns looping on and off; right-click the ruler to do the
   same or remove the region. Playing into the region repeats it; playing from after it plays on. While looping,
@@ -111,8 +122,8 @@ bottom. Audio tracks show their waveform.
 
 ## Preview audio
 
-Plays the master bus (the first output bus) and follows the playhead: its **track mix**, the unmuted audio tracks
-routed to it at their volumes. When the graph has an **Audio Output** writing to the master bus, playback plays its
+Plays the master bus (the first output bus) and follows the playhead: its **track mix**, the audio tracks
+routed to it at their volumes, leaving out muted ones (and unsoloed ones while any is soloed). When the graph has an **Audio Output** writing to the master bus, playback plays its
 rendered sound instead (track volume and mute don't apply to it); a track wired straight into that Audio Output
 plays as it is. A bus with more than two channels plays its first two. When playback slows because rendering can't
 keep up, the audio is time-stretched (WSOLA: slowed without lowering the pitch) to stay with the picture, and fades

@@ -214,6 +214,7 @@ fn render(args: RenderArgs) -> Result<()> {
             name: spec.name.clone(),
             media,
             items: spec.items.clone(),
+            in_mix: spec.gain > 0.0,
         });
     }
 

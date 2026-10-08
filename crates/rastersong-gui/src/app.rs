@@ -34,9 +34,14 @@ use crate::preview::{Feed, PreviewView, clamp_split, split_rects, split_sides};
 use crate::settings::Settings;
 use crate::theme::{Theme, ThemeChoice, apply_style};
 use crate::timeline::{
-    Thumbnail, TimelineModel, TimelineView, TrackAction, TrackView, timecode, timeline,
+    LANE_HEIGHT, Thumbnail, TimelineModel, TimelineView, TrackAction, TrackView, timecode, timeline,
 };
-use crate::track_ops::{SoloState, move_track, toggle_solo};
+use crate::track_ops::move_track;
+
+/// The timeline row of the first audio track, if there is one.
+fn first_audio_row(project: &Project) -> Option<usize> {
+    (!project.audio_tracks.is_empty()).then_some(project.video_tracks.len())
+}
 
 /// The graph a new project starts with: the basic workflow from docs/concepts.md.
 pub const STARTER_GRAPH: &str = include_str!("../../../examples/graphs/am_bands.json");
@@ -114,9 +119,8 @@ pub struct App {
     settings: Settings,
     /// The theme last handed to egui.
     applied_theme: Option<ThemeChoice>,
+    /// The selected row of the timeline: the video tracks, then the audio tracks.
     selected_track: Option<usize>,
-    /// What an Alt+click solo remembers, to put the mutes back.
-    solo: Option<SoloState>,
     /// When (egui time) the preview started waiting on a frame to render, if it is.
     waiting_since: Option<f64>,
     preview: Option<(egui::TextureHandle, Arc<Frame>)>,
@@ -186,8 +190,7 @@ impl App {
             listening: None,
             inspect_scroll: 0.0,
             waiting_since: None,
-            selected_track: (!project.audio_tracks.is_empty()).then_some(0),
-            solo: None,
+            selected_track: first_audio_row(&project),
             project,
             project_path: None,
             editor,
@@ -293,7 +296,7 @@ impl App {
         project.graph = self.editor.to_desc();
         self.saved = project.clone();
         self.history = History::new(project.clone());
-        self.selected_track = (!project.audio_tracks.is_empty()).then_some(0);
+        self.selected_track = first_audio_row(&project);
         self.project = project;
         self.project_path = path;
         self.clock = PlaybackClock::new(30.0, 0);
@@ -335,7 +338,8 @@ impl App {
             self.project
                 .audio_tracks
                 .push(ProjectTrack::new(name.clone(), path));
-            self.selected_track = Some(self.project.audio_tracks.len() - 1);
+            self.selected_track =
+                Some(self.project.video_tracks.len() + self.project.audio_tracks.len() - 1);
             self.editor
                 .set_project_inputs(self.video_name(), self.track_name_list());
             self.editor.link_track(&name);
@@ -482,10 +486,11 @@ impl App {
     fn restore(&mut self, project: Project) {
         self.engine.set_timeline(project.timeline());
         self.editor.restore(&project.graph);
+        let rows = project.video_tracks.len() + project.audio_tracks.len();
         self.selected_track = self
             .selected_track
-            .filter(|&i| i < project.audio_tracks.len())
-            .or((!project.audio_tracks.is_empty()).then_some(0));
+            .filter(|&i| i < rows)
+            .or(first_audio_row(&project));
         self.project = project;
     }
 
@@ -814,6 +819,7 @@ impl App {
         // or when the graph starts or stops rendering its own sound. The preview plays the master
         // bus: its track mix is the tracks routed to it.
         let master = self.project.master_bus().to_owned();
+        let soloing = self.project.soloing(TrackKind::Audio);
         let mix: Vec<MixEntry> = self
             .project
             .audio_tracks
@@ -822,7 +828,7 @@ impl App {
                 (
                     t.name.clone(),
                     t.items.clone(),
-                    if t.muted { 0.0 } else { t.volume },
+                    t.mix_gain(TrackKind::Audio, soloing),
                     t.bus == master,
                 )
             })
@@ -1542,48 +1548,67 @@ impl App {
         };
         self.tempo_bar(ui);
         let loaded = self.engine.loaded_tracks();
-        let tracks = self
+        self.update_thumbnails(ui.ctx());
+        let video_info = self.thumbnails.info();
+        let view = |t: &ProjectTrack, kind: TrackKind| TrackView {
+            name: t.name.clone(),
+            kind,
+            items: t.items.clone(),
+            muted: t.muted,
+            solo: t.solo,
+            silenced: t.mix_gain(kind, self.project.soloing(kind)) == 0.0,
+            volume: t.volume,
+            height: t.height.unwrap_or(LANE_HEIGHT),
+            linked: self.project.linked_to(&t.name),
+            bus: t.bus.clone(),
+            ..TrackView::new(t.name.clone(), kind)
+        };
+        let mut tracks: Vec<TrackView> = self
             .project
-            .audio_tracks
+            .video_tracks
             .iter()
-            .map(|t| {
-                let loaded = loaded.iter().find(|l| l.name == t.name);
+            .enumerate()
+            .map(|(i, t)| {
+                let shown = (i == 0).then_some(video_info.as_ref()).flatten();
                 TrackView {
-                    name: t.name.clone(),
-                    duration: loaded.map(|l| l.clip.duration_secs()),
-                    offset: t.offset(),
-                    muted: t.muted,
-                    waveform: loaded.map(|l| l.waveform.clone()),
-                    bus: t.bus.clone(),
+                    duration: shown.map(|v| v.frame_count as f64 / v.frame_rate.as_f64()),
+                    details: shown.map(|v| {
+                        format!(
+                            "{}×{} · {:.3} fps",
+                            v.width,
+                            v.height,
+                            v.frame_rate.as_f64()
+                        )
+                        .replace(".000 fps", " fps")
+                    }),
+                    thumbnails: shown.is_some(),
+                    ..view(t, TrackKind::Video)
                 }
             })
             .collect();
-        self.update_thumbnails(ui.ctx());
+        tracks.extend(self.project.audio_tracks.iter().map(|t| {
+            let loaded = loaded.iter().find(|l| l.name == t.name);
+            TrackView {
+                duration: loaded.map(|l| l.clip.duration_secs()),
+                waveform: loaded.map(|l| l.waveform.clone()),
+                ..view(t, TrackKind::Audio)
+            }
+        }));
         let thumbnails: BTreeMap<usize, Thumbnail> = self
             .thumbnail_textures
             .iter()
             .map(|(&frame, (_, thumbnail))| (frame, *thumbnail))
             .collect();
-        let video_details = self.thumbnails.info().map(|v| {
-            format!(
-                "{}×{} · {:.3} fps",
-                v.width,
-                v.height,
-                v.frame_rate.as_f64()
-            )
-            .replace(".000 fps", " fps")
-        });
         let cached = self.engine.cached_ranges();
         let model = TimelineModel {
             frame_count: info.frames,
             frame_rate: info.frame_rate.as_f64(),
             playhead: self.clock.frame(),
             cached: &cached,
-            video_name: self.video_name(),
-            video_details,
             tracks,
             selected_track: self.selected_track,
             thumbnails: &thumbnails,
+            thumbnail_rate: video_info.map_or(0.0, |v| v.frame_rate.as_f64()),
             loop_region: self.project.loop_region,
             tempo: self.project.tempo,
             mode: self.project.timeline_mode,
@@ -1689,51 +1714,140 @@ impl App {
             .set_project_inputs(self.video_name(), self.track_name_list());
     }
 
+    /// The track in timeline row `row`: its kind and index among the tracks of that kind.
+    fn track_row(&self, row: usize) -> Option<(TrackKind, usize)> {
+        let videos = self.project.video_tracks.len();
+        if row < videos {
+            Some((TrackKind::Video, row))
+        } else {
+            (row - videos < self.project.audio_tracks.len())
+                .then(|| (TrackKind::Audio, row - videos))
+        }
+    }
+
+    fn track_at(&mut self, row: usize) -> Option<&mut ProjectTrack> {
+        match self.track_row(row)? {
+            (TrackKind::Video, i) => self.project.video_tracks.get_mut(i),
+            (TrackKind::Audio, i) => self.project.audio_tracks.get_mut(i),
+        }
+    }
+
+    /// The length of a track's file in seconds, once it is known.
+    fn track_duration(&self, track: &ProjectTrack) -> Option<f64> {
+        if self.project.video().is_some_and(|v| v.name == track.name) {
+            return self
+                .thumbnails
+                .info()
+                .map(|v| v.frame_count as f64 / v.frame_rate.as_f64());
+        }
+        self.engine
+            .loaded_tracks()
+            .iter()
+            .find(|l| l.name == track.name)
+            .map(|l| l.clip.duration_secs())
+    }
+
     fn track_action(&mut self, action: TrackAction) {
+        let name = |app: &mut Self, row: usize| app.track_at(row).map(|t| t.name.clone());
         match action {
-            TrackAction::Select(i) => self.selected_track = Some(i),
-            TrackAction::SetOffset(i, offset) => {
-                if let Some(track) = self.project.audio_tracks.get_mut(i) {
-                    track.set_offset(offset);
+            TrackAction::Select(row) => self.selected_track = Some(row),
+            TrackAction::MoveItem { row, item, delta } => {
+                let Some(track) = name(self, row) else { return };
+                let mut durations = Vec::new();
+                for t in self.project.tracks() {
+                    durations.push((t.name.clone(), self.track_duration(t)));
+                }
+                self.project.move_item(&track, item, delta, |t| {
+                    durations
+                        .iter()
+                        .find(|(n, _)| *n == t.name)
+                        .and_then(|(_, d)| *d)
+                });
+            }
+            TrackAction::ToggleItemMute { row, item } => {
+                if let Some(item) = self.track_at(row).and_then(|t| t.items.get_mut(item)) {
+                    item.muted = !item.muted;
                 }
             }
-            TrackAction::SetBus(i, bus) => {
-                if let Some(track) = self.project.audio_tracks.get_mut(i) {
-                    track.bus = bus;
-                }
-            }
-            TrackAction::ToggleMute(i) => {
-                if let Some(track) = self.project.audio_tracks.get_mut(i) {
+            TrackAction::ToggleMute(row) => {
+                if let Some(track) = self.track_at(row) {
                     track.muted = !track.muted;
                 }
             }
-            TrackAction::Solo(i) => {
-                toggle_solo(&mut self.project.audio_tracks, i, &mut self.solo);
-            }
-            TrackAction::Move { from, to } => {
-                self.selected_track = move_track(
-                    &mut self.project.audio_tracks,
-                    from,
-                    to,
-                    self.selected_track,
-                );
-            }
-            TrackAction::Rename(i, name) => {
-                if let Some(old) = self.project.audio_tracks.get(i).map(|t| t.name.clone()) {
-                    self.rename_track(&old, &name);
+            TrackAction::ToggleSolo(row) => {
+                if let Some(track) = self.track_at(row) {
+                    track.solo = !track.solo;
                 }
             }
-            TrackAction::RenameVideo(name) => self.rename_video(&name),
-            TrackAction::Remove(i) => {
+            TrackAction::SetVolume(row, volume) => {
+                if let Some(track) = self.track_at(row) {
+                    track.volume = volume.clamp(0.0, 1.0);
+                }
+            }
+            TrackAction::SetHeight(row, height) => {
+                if let Some(track) = self.track_at(row) {
+                    track.height = (height != LANE_HEIGHT).then_some(height);
+                }
+            }
+            TrackAction::Link(row, other) => {
+                if let (Some(a), Some(b)) = (name(self, row), name(self, other)) {
+                    self.project.link_tracks(&a, &b);
+                }
+            }
+            TrackAction::Unlink(row) => {
+                if let Some(track) = name(self, row) {
+                    self.project.unlink_track(&track);
+                }
+            }
+            TrackAction::SetBus(row, bus) => {
+                if let Some(track) = self.track_at(row) {
+                    track.bus = bus;
+                }
+            }
+            TrackAction::Move { from, to } => {
+                let (Some((TrackKind::Audio, from)), Some((TrackKind::Audio, to))) =
+                    (self.track_row(from), self.track_row(to))
+                else {
+                    return;
+                };
+                let videos = self.project.video_tracks.len();
+                let selected = self.selected_track.and_then(|row| row.checked_sub(videos));
+                // A selected video track stays selected where it is.
+                if let Some(audio) = move_track(&mut self.project.audio_tracks, from, to, selected)
+                {
+                    self.selected_track = Some(videos + audio);
+                }
+            }
+            TrackAction::Rename(row, new) => match self.track_row(row) {
+                Some((TrackKind::Video, 0)) => self.rename_video(&new),
+                Some((TrackKind::Video, i)) => {
+                    let new = new.trim();
+                    if !new.is_empty() && !self.project.has_track(new) {
+                        self.project.video_tracks[i].name = new.to_owned();
+                    }
+                }
+                Some((TrackKind::Audio, i)) => {
+                    let old = self.project.audio_tracks[i].name.clone();
+                    self.rename_track(&old, &new);
+                }
+                None => {}
+            },
+            TrackAction::Remove(row) => {
+                let Some((TrackKind::Audio, i)) = self.track_row(row) else {
+                    return;
+                };
                 let removed = self.project.audio_tracks.remove(i);
+                self.project.unlink_track(&removed.name);
                 self.editor
                     .set_project_inputs(self.video_name(), self.track_name_list());
                 self.editor.unlink_track(&removed.name);
+                let rows = self.project.video_tracks.len() + self.project.audio_tracks.len();
                 self.selected_track = match self.selected_track {
-                    _ if self.project.audio_tracks.is_empty() => None,
-                    Some(s) if s >= i && s > 0 => Some(s - 1),
+                    Some(s) if s >= row && s > 0 => Some(s - 1),
                     other => other,
-                };
+                }
+                .filter(|&s| s < rows)
+                .or(first_audio_row(&self.project));
             }
             TrackAction::Add => self.pick_audio_tracks(),
         }

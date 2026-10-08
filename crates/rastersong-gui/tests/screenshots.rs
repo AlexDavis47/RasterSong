@@ -498,7 +498,7 @@ fn two_track_app(theme: ThemeChoice) -> App {
     app_with_tracks(theme, 2)
 }
 
-/// Dragging a track header to reorder, and Alt+click on mute to solo.
+/// Dragging a track header to reorder, and soloing a track.
 #[test]
 #[ignore = "needs a GPU; run explicitly to look at the UI"]
 fn track_screenshots() {
@@ -540,33 +540,58 @@ fn track_screenshots() {
         .collect();
     assert_eq!(names, ["drums", "audio"]);
 
-    // Alt+click the first track's mute button: solo.
-    let mutes = harness.get_all_by_label("🔊");
-    let first = mutes.into_iter().next().unwrap().rect().center();
-    harness.event(egui::Event::PointerMoved(first));
-    harness.run_steps(1);
-    for pressed in [true, false] {
-        harness.event_modifiers(
-            egui::Event::PointerButton {
-                pos: first,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: egui::Modifiers::ALT,
-            },
-            egui::Modifiers::ALT,
-        );
-        harness.run_steps(1);
-    }
-    harness.run_steps(3);
+    // The first audio track's solo button (the video's is first).
+    harness.get_all_by_label("S").nth(1).unwrap().click();
+    harness.run_steps(4);
     save(&mut harness, "dark-19-solo");
-    let muted: Vec<bool> = harness
+    let solo: Vec<bool> = harness
         .state()
         .project()
         .audio_tracks
         .iter()
-        .map(|t| t.muted)
+        .map(|t| t.solo)
         .collect();
-    assert_eq!(muted, [false, true]);
+    assert_eq!(solo, [true, false]);
+}
+
+/// Tracks of several items, a muted item, linked tracks and a taller track.
+#[test]
+#[ignore = "needs a GPU; run explicitly to look at the UI"]
+fn item_screenshots() {
+    use rastersong_engine::Item;
+    let app = app_edited(ThemeChoice::Dark, 2, TimelineMode::Time, |project| {
+        project.video_tracks[0].items = vec![
+            Item {
+                end: Some(1.5),
+                ..Item::whole(0.0)
+            },
+            Item {
+                start: 2.0,
+                ..Item::whole(2.0)
+            },
+        ];
+        project.audio_tracks[0].items = project.video_tracks[0].items.clone();
+        project.audio_tracks[1].items = vec![
+            Item {
+                end: Some(1.0),
+                ..Item::whole(0.5)
+            },
+            Item {
+                muted: true,
+                start: 1.0,
+                ..Item::whole(2.5)
+            },
+        ];
+        project.audio_tracks[1].height = Some(110.0);
+        let (video, audio) = (
+            project.video_tracks[0].name.clone(),
+            project.audio_tracks[0].name.clone(),
+        );
+        project.link_tracks(&video, &audio);
+    });
+    let mut harness = gpu_harness(app);
+    wait_for_frames(&mut harness, 10);
+    save(&mut harness, "dark-20-items");
 }
 
 #[test]

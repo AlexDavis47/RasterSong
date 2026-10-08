@@ -201,8 +201,8 @@ pub struct TrackSpec {
     pub items: Vec<Item>,
     /// The output bus an audio track is summed into in the track mix.
     pub bus: String,
-    /// The track's level in the track mix: its volume, or 0 when muted. Graphs read the track
-    /// as it is, whatever its level.
+    /// The track's level in the track mix: its volume (1 for video), or 0 when it is muted or
+    /// another track of its kind is soloed. Graphs read the track as it is, whatever its level.
     pub gain: f32,
 }
 
@@ -282,14 +282,15 @@ impl Timeline {
     }
 
     /// Whether the two render the same frames and graph sound: they differ at most in the
-    /// tracks' levels and routing, and in buses other than the master, which only shape the
-    /// track mix.
+    /// audio tracks' levels and routing, and in buses other than the master, which only shape
+    /// the track mix's sound. Muting or soloing a video track changes the track mix's picture.
     pub fn renders_like(&self, other: &Self) -> bool {
         self.timebase == other.timebase
             && self.master() == other.master()
             && self.tracks.len() == other.tracks.len()
             && self.tracks.iter().zip(&other.tracks).all(|(a, b)| {
                 (&a.name, a.kind, &a.path, &a.items) == (&b.name, b.kind, &b.path, &b.items)
+                    && (a.kind == TrackKind::Audio || (a.gain > 0.0) == (b.gain > 0.0))
             })
     }
 

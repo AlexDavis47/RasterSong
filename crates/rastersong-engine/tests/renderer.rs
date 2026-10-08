@@ -487,17 +487,18 @@ fn a_video_input_naming_no_track_reads_zeros() {
 }
 
 #[test]
-fn the_bypassed_graph_shows_the_top_video_track_playing() {
+fn the_bypassed_graph_shows_the_top_video_track_in_the_mix_playing() {
     use rastersong_engine::{GraphDesc, Item, Renderer, render_form};
 
     // Track `top` plays the first half second of the clip from 1 s; `bottom` the whole clip.
-    let top = RenderTrack {
+    let top_track = || RenderTrack {
         items: vec![Item {
             end: Some(0.5),
             ..Item::whole(1.0)
         }],
         ..RenderTrack::video("top", common::VIDEO)
     };
+    let top = top_track();
     let bottom = RenderTrack::video("bottom", common::VIDEO);
     let graph = GraphDesc::from_json(common::FINITE).unwrap();
     let mut r = Renderer::new(
@@ -518,6 +519,27 @@ fn the_bypassed_graph_shows_the_top_video_track_playing() {
         .map(|i| if (30..45).contains(&i) { i - 30 } else { i })
         .collect();
     assert_eq!(reds, expected);
+
+    // Out of the mix (muted, or another soloed), the top track is skipped: the bottom shows.
+    let top = RenderTrack {
+        in_mix: false,
+        ..top_track()
+    };
+    let mut r = Renderer::new(
+        &common::backend(),
+        None,
+        &[top, RenderTrack::video("bottom", common::VIDEO)],
+        &render_form(&graph, &Registry::default(), true),
+        Default::default(),
+        &rastersong_engine::Bus::main(),
+        &Registry::default(),
+        OutputSize::Native,
+    )
+    .unwrap();
+    let reds: Vec<u8> = (0..common::FRAMES)
+        .map(|i| r.render(i, &|| false).unwrap().unwrap()[0])
+        .collect();
+    assert_eq!(reds, (0..common::FRAMES as u8).collect::<Vec<_>>());
 }
 
 #[test]

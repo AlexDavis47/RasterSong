@@ -134,8 +134,10 @@ bus (Main by default), and its volume and mute set its level there.
 The **track mix** is what the timeline plays with no graph in the way: the picture of the top video track with an
 item at each frame (the renderer's `@track_mix` source), and for each bus the sum of the unmuted tracks routed to
 it at their volumes. A mono track plays in every channel of its bus; any other track's channels go to the bus's
-channels in order. Bypassing the whole graph shows the track mix's picture and plays the master's track mix.
-Track levels and routing only shape the track mix, so changing them keeps every rendered frame.
+channels in order. While any track is **soloed**, only the soloed tracks of its kind (video or audio) are in the mix;
+a muted item reads as a gap everywhere, graphs included. Bypassing the whole graph shows the track mix's picture
+and plays the master's track mix. Audio levels and routing only shape the track mix, so changing them keeps every
+rendered frame; muting or soloing a video track changes the picture, so it renders again.
 
 ## Audio Output
 

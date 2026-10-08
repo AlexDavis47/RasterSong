@@ -1113,6 +1113,7 @@ impl Worker {
                 name: spec.name.clone(),
                 media,
                 items: spec.items.clone(),
+                in_mix: spec.gain > 0.0,
             });
         }
         Ok((tracks, loaded))

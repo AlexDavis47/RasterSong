@@ -449,16 +449,92 @@ fn clicking_the_ruler_seeks() {
     assert_eq!(harness.state().clock().frame(), 30);
 }
 
+/// A point on the header bar of the item at `seconds` in timeline row `row`.
+fn item_bar_point(harness: &Harness<'_, App>, seconds: f64, row: usize) -> Pos2 {
+    let mut point = timeline_point(harness, seconds, row);
+    point.y = harness.state().timeline_area().top() + 22.0 + row as f32 * LANE_HEIGHT + 9.0;
+    point
+}
+
 #[test]
-fn dragging_an_audio_block_moves_its_offset() {
+fn dragging_an_item_by_its_header_bar_moves_it() {
     let mut harness = loaded();
-    let from = timeline_point(&harness, 0.5, 1);
-    let to = timeline_point(&harness, 1.0, 1);
+    let from = item_bar_point(&harness, 0.5, 1);
+    let to = item_bar_point(&harness, 1.0, 1);
     drag(&mut harness, from, to);
-    let offset = harness.state().project().audio_tracks[0].offset();
-    assert!((offset - 0.5).abs() < 0.02, "offset {offset}");
+    let position = harness.state().project().audio_tracks[0].items[0].position;
+    assert!((position - 0.5).abs() < 0.02, "position {position}");
+    // The video isn't linked, so it stays.
+    assert_eq!(
+        harness.state().project().video_tracks[0].items[0].position,
+        0.0
+    );
     shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
-    assert_eq!(harness.state().project().audio_tracks[0].offset(), 0.0);
+    assert_eq!(
+        harness.state().project().audio_tracks[0].items[0].position,
+        0.0
+    );
+    // Below the bar the item is content: dragging there scrubs the playhead instead.
+    let body = timeline_point(&harness, 0.5, 1);
+    let to = timeline_point(&harness, 1.0, 1);
+    drag(&mut harness, body, to);
+    assert_eq!(
+        harness.state().project().audio_tracks[0].items[0].position,
+        0.0
+    );
+    assert_eq!(harness.state().clock().frame(), 30);
+}
+
+#[test]
+fn linked_tracks_move_their_overlapping_items_together() {
+    let mut harness = harness(app_with_project(|project| {
+        project.link_tracks("video", "audio");
+    }));
+    step_until(&mut harness, "rendered frames", |app| {
+        app.engine().buffered_from(0) >= 30
+    });
+    step_until(&mut harness, "the video's length", |app| {
+        app.thumbnail_count() > 0
+    });
+    harness.run_steps(2);
+    // Both headers show the link.
+    assert_eq!(harness.get_all_by_label("linked").count(), 2);
+    let from = item_bar_point(&harness, 0.5, 1);
+    let to = item_bar_point(&harness, 1.0, 1);
+    drag(&mut harness, from, to);
+    let project = harness.state().project();
+    let audio = project.audio_tracks[0].items[0].position;
+    assert!((audio - 0.5).abs() < 0.02, "audio at {audio}");
+    assert_eq!(project.video_tracks[0].items[0].position, audio);
+}
+
+#[test]
+fn items_mute_from_their_header_bar_and_tracks_solo_from_theirs() {
+    let mut harness = loaded();
+    // The song is 2 s long: its mute button is at the right end of its bar.
+    let mut mute = item_bar_point(&harness, 2.0, 1);
+    mute.x -= 8.0;
+    click(&mut harness, mute, PointerButton::Primary);
+    assert!(harness.state().project().audio_tracks[0].items[0].muted);
+    // Each header has a solo button, the video's first.
+    harness.get_all_by_label("S").nth(1).unwrap().click();
+    harness.run_steps(2);
+    assert!(harness.state().project().audio_tracks[0].solo);
+    assert!(!harness.state().project().video_tracks[0].solo);
+}
+
+#[test]
+fn dragging_a_headers_bottom_edge_changes_the_track_height() {
+    let mut harness = loaded();
+    let area = harness.state().timeline_area();
+    // The video's header, the first row.
+    let edge = pos2(area.left() + 60.0, area.top() + 22.0 + LANE_HEIGHT);
+    drag(&mut harness, edge, edge + vec2(0.0, 40.0));
+    let height = harness.state().project().video_tracks[0].height.unwrap();
+    assert!(
+        (height - (LANE_HEIGHT + 40.0)).abs() < 2.0,
+        "height {height}"
+    );
 }
 
 #[test]

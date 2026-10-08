@@ -38,6 +38,9 @@ pub struct RenderTrack {
     pub name: String,
     pub media: TrackMedia,
     pub items: Vec<Item>,
+    /// Whether a video track takes part in the track mix's picture: false when it is muted, or
+    /// another track is soloed. Graphs read it either way.
+    pub in_mix: bool,
 }
 
 impl RenderTrack {
@@ -47,6 +50,7 @@ impl RenderTrack {
             name: name.into(),
             media: TrackMedia::Audio(modulator),
             items: vec![Item::whole(position)],
+            in_mix: true,
         }
     }
 
@@ -56,6 +60,7 @@ impl RenderTrack {
             name: name.into(),
             media: TrackMedia::Video(path.into()),
             items: vec![Item::whole(0.0)],
+            in_mix: true,
         }
     }
 }
@@ -112,6 +117,8 @@ pub struct Step {
 /// A video track being read: the video conformed to the project's grid and size.
 struct VideoReader {
     name: String,
+    /// Whether the track mix's picture can show it.
+    in_mix: bool,
     video: Box<dyn VideoSource>,
     items: Vec<Item>,
     /// The video's length in seconds, and its frame rate.
@@ -184,7 +191,7 @@ impl Renderer {
     /// `timebase`, rendering the sound of output bus `bus`. Without a timebase the first video
     /// track sets it, or [`Timebase::DEFAULT`] when there is none. Input nodes that name a track
     /// that isn't there read zeros. Video tracks are listed top first: the track mix's picture
-    /// ([`TRACK_MIX_SOURCE`]) shows the first with an item at each frame.
+    /// ([`TRACK_MIX_SOURCE`]) shows the first in the mix with an item at each frame.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         backend: &dyn MediaBackend,
@@ -206,6 +213,7 @@ impl Renderer {
                     let fps = info.frame_rate.as_f64();
                     videos.push(VideoReader {
                         name: track.name.clone(),
+                        in_mix: track.in_mix,
                         duration: info.frame_count as f64 / fps,
                         fps,
                         video,
@@ -547,6 +555,7 @@ impl Renderer {
                 .iter()
                 .find(|v| {
                     v.name != TRACK_MIX_SOURCE
+                        && v.in_mix
                         && item_at(&v.items, start + 1e-9, v.duration).is_some()
                 })
                 .map(|v| v.name.as_str());

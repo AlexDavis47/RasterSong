@@ -170,6 +170,16 @@ pub struct ProjectTrack {
     /// The output bus an audio track is summed into in the track mix.
     #[serde(default = "main_bus", skip_serializing_if = "is_main_bus")]
     pub bus: String,
+    /// While any track of its kind is soloed, only soloed tracks are in the track mix. Graphs
+    /// still read every track.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub solo: bool,
+    /// The track's height on the timeline, in points. `None` is the app's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<f32>,
+    /// The tracks with the same link group, video or audio, move their items together.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<u32>,
 }
 
 fn full_volume() -> f32 {
@@ -190,6 +200,9 @@ impl ProjectTrack {
             volume: 1.0,
             muted: false,
             bus: main_bus(),
+            solo: false,
+            height: None,
+            link: None,
         }
     }
 
@@ -214,14 +227,26 @@ impl ProjectTrack {
         }
     }
 
-    fn spec(&self, kind: TrackKind) -> TrackSpec {
+    /// The track's level in the track mix, when `soloing` says whether any track of its kind is
+    /// soloed: its volume (1 for video), or 0 when muted or left out by another's solo.
+    pub fn mix_gain(&self, kind: TrackKind, soloing: bool) -> f32 {
+        if self.muted || (soloing && !self.solo) {
+            0.0
+        } else if kind == TrackKind::Video {
+            1.0
+        } else {
+            self.volume
+        }
+    }
+
+    fn spec(&self, kind: TrackKind, soloing: bool) -> TrackSpec {
         TrackSpec {
             name: self.name.clone(),
             kind,
             path: self.path.clone(),
             items: self.items.clone(),
             bus: self.bus.clone(),
-            gain: if self.muted { 0.0 } else { self.volume },
+            gain: self.mix_gain(kind, soloing),
         }
     }
 }
@@ -247,13 +272,19 @@ impl Project {
 
     /// What the engine renders: the timebase and every track.
     pub fn timeline(&self) -> Timeline {
+        let video_solo = self.soloing(TrackKind::Video);
+        let audio_solo = self.soloing(TrackKind::Audio);
         Timeline {
             timebase: self.timebase,
             tracks: self
                 .video_tracks
                 .iter()
-                .map(|t| t.spec(TrackKind::Video))
-                .chain(self.audio_tracks.iter().map(|t| t.spec(TrackKind::Audio)))
+                .map(|t| t.spec(TrackKind::Video, video_solo))
+                .chain(
+                    self.audio_tracks
+                        .iter()
+                        .map(|t| t.spec(TrackKind::Audio, audio_solo)),
+                )
                 .collect(),
             buses: self.buses.clone(),
         }
@@ -335,6 +366,144 @@ impl Project {
             }
         }
         true
+    }
+
+    /// The video or audio tracks.
+    pub fn tracks_of(&self, kind: TrackKind) -> &[ProjectTrack] {
+        match kind {
+            TrackKind::Video => &self.video_tracks,
+            TrackKind::Audio => &self.audio_tracks,
+        }
+    }
+
+    /// Whether any track of `kind` is soloed, leaving the others out of the track mix.
+    pub fn soloing(&self, kind: TrackKind) -> bool {
+        self.tracks_of(kind).iter().any(|t| t.solo)
+    }
+
+    /// The names of the other tracks linked to track `name`.
+    pub fn linked_to(&self, name: &str) -> Vec<String> {
+        let Some(group) = self.track(name).and_then(|t| t.link) else {
+            return Vec::new();
+        };
+        self.tracks()
+            .filter(|t| t.link == Some(group) && t.name != name)
+            .map(|t| t.name.clone())
+            .collect()
+    }
+
+    /// Links tracks `a` and `b`, and with them every track already linked to either.
+    pub fn link_tracks(&mut self, a: &str, b: &str) {
+        if a == b || !self.has_track(a) || !self.has_track(b) {
+            return;
+        }
+        let groups = [a, b].map(|n| self.track(n).and_then(|t| t.link));
+        let group = groups.into_iter().flatten().min().unwrap_or_else(|| {
+            self.tracks()
+                .filter_map(|t| t.link)
+                .max()
+                .map_or(1, |g| g + 1)
+        });
+        for track in self.tracks_mut() {
+            if track.name == a
+                || track.name == b
+                || (track.link.is_some() && groups.contains(&track.link))
+            {
+                track.link = Some(group);
+            }
+        }
+    }
+
+    /// Takes track `name` out of its link; a track left linked to nothing is unlinked too.
+    pub fn unlink_track(&mut self, name: &str) {
+        let Some(group) = self.track(name).and_then(|t| t.link) else {
+            return;
+        };
+        for track in self.tracks_mut() {
+            if track.name == name {
+                track.link = None;
+            }
+        }
+        if self.tracks().filter(|t| t.link == Some(group)).count() == 1 {
+            for track in self.tracks_mut() {
+                if track.link == Some(group) {
+                    track.link = None;
+                }
+            }
+        }
+    }
+
+    /// Moves item `item` of track `name` by `delta` seconds, with the items of linked tracks
+    /// that overlap it, and returns how far they moved: no item moves before the start of the
+    /// timeline, so a move left stops when the first of them reaches it. `duration` gives a
+    /// track's resource length, `None` while unknown (its items then last forever).
+    pub fn move_item(
+        &mut self,
+        name: &str,
+        item: usize,
+        delta: f64,
+        duration: impl Fn(&ProjectTrack) -> Option<f64>,
+    ) -> f64 {
+        let span = |track: &ProjectTrack, item: &Item| {
+            let length = duration(track).unwrap_or(f64::INFINITY);
+            (item.position, item.timeline_end(length))
+        };
+        let Some((start, end)) = self
+            .track(name)
+            .and_then(|t| t.items.get(item).map(|i| span(t, i)))
+        else {
+            return 0.0;
+        };
+        let linked = self.linked_to(name);
+        // Which items move: the one dragged, and those of linked tracks it overlaps.
+        let moving: Vec<(String, Vec<usize>)> = self
+            .tracks()
+            .filter_map(|t| {
+                if t.name == name {
+                    return Some((t.name.clone(), vec![item]));
+                }
+                linked.contains(&t.name).then(|| {
+                    let overlapping = t
+                        .items
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, i)| {
+                            let (s, e) = span(t, i);
+                            s < end && e > start
+                        })
+                        .map(|(k, _)| k)
+                        .collect();
+                    (t.name.clone(), overlapping)
+                })
+            })
+            .collect();
+        let earliest = moving
+            .iter()
+            .flat_map(|(n, items)| {
+                let track = self.track(n);
+                items
+                    .iter()
+                    .filter_map(move |&k| track.and_then(|t| t.items.get(k)))
+                    .map(|i| i.position)
+            })
+            .fold(f64::INFINITY, f64::min);
+        let delta = delta.max(-earliest);
+        if !delta.is_finite() || delta == 0.0 {
+            return 0.0;
+        }
+        for track in self.tracks_mut() {
+            if let Some((_, items)) = moving.iter().find(|(n, _)| *n == track.name) {
+                for &k in items {
+                    track.items[k].position = (track.items[k].position + delta).max(0.0);
+                }
+            }
+        }
+        delta
+    }
+
+    /// The track, of either kind, called `name`.
+    pub fn track(&self, name: &str) -> Option<&ProjectTrack> {
+        self.tracks().find(|t| t.name == name)
     }
 
     /// Every track, video first.
@@ -505,6 +674,86 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("rastersong-{name}-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("media")).unwrap();
         dir
+    }
+
+    fn three_tracks() -> Project {
+        let mut project = Project::new(graph());
+        project
+            .video_tracks
+            .push(ProjectTrack::new("v".into(), "v.mp4".into()));
+        for name in ["a", "b"] {
+            project
+                .audio_tracks
+                .push(ProjectTrack::new(name.into(), format!("{name}.wav").into()));
+        }
+        project
+    }
+
+    #[test]
+    fn soloing_leaves_the_other_tracks_of_its_kind_out_of_the_mix() {
+        let mut project = three_tracks();
+        project.audio_tracks[1].solo = true;
+        let gains: Vec<f32> = project.timeline().tracks.iter().map(|t| t.gain).collect();
+        // The video isn't affected by an audio solo.
+        assert_eq!(gains, [1.0, 0.0, 1.0]);
+        // A muted soloed track is still muted; the video solos among video tracks.
+        project.audio_tracks[1].muted = true;
+        project.video_tracks[0].solo = true;
+        let gains: Vec<f32> = project.timeline().tracks.iter().map(|t| t.gain).collect();
+        assert_eq!(gains, [1.0, 0.0, 0.0]);
+        // Muting a video track changes the picture; an audio level doesn't.
+        let before = project.timeline();
+        project.audio_tracks[0].volume = 0.5;
+        assert!(project.timeline().renders_like(&before));
+        project.video_tracks[0].muted = true;
+        assert!(!project.timeline().renders_like(&before));
+    }
+
+    #[test]
+    fn linking_joins_groups_and_unlinking_the_second_to_last_ends_it() {
+        let mut project = three_tracks();
+        project.link_tracks("v", "a");
+        assert_eq!(project.linked_to("v"), ["a"]);
+        project.link_tracks("b", "a");
+        assert_eq!(project.linked_to("a"), ["v", "b"]);
+        project.unlink_track("v");
+        assert_eq!(project.linked_to("a"), ["b"]);
+        project.unlink_track("b");
+        assert!(project.tracks().all(|t| t.link.is_none()));
+        // Two separate links merge when linked.
+        project.link_tracks("v", "a");
+        project
+            .audio_tracks
+            .push(ProjectTrack::new("c".into(), "c.wav".into()));
+        project.link_tracks("b", "c");
+        project.link_tracks("a", "c");
+        assert_eq!(project.linked_to("v"), ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn moving_an_item_moves_the_overlapping_items_of_linked_tracks() {
+        let mut project = three_tracks();
+        // a: items at 0..2 and 5..7; b: one at 1..3; v: 0..10. Each file is 2 s (v 10 s).
+        project.audio_tracks[0].items = vec![Item::whole(0.0), Item::whole(5.0)];
+        project.audio_tracks[1].items = vec![Item::whole(1.0)];
+        let duration = |t: &ProjectTrack| Some(if t.name == "v" { 10.0 } else { 2.0 });
+        let positions = |p: &Project| -> Vec<Vec<f64>> {
+            p.tracks()
+                .map(|t| t.items.iter().map(|i| i.position).collect())
+                .collect()
+        };
+        // Unlinked, only the item dragged moves.
+        assert_eq!(project.move_item("a", 1, 1.0, duration), 1.0);
+        assert_eq!(positions(&project), [vec![0.0], vec![0.0, 6.0], vec![1.0]]);
+        // Linked, b's item overlaps a's first; a's second item and the video don't (v isn't
+        // linked).
+        project.link_tracks("a", "b");
+        assert_eq!(project.move_item("a", 0, 0.5, duration), 0.5);
+        assert_eq!(positions(&project), [vec![0.0], vec![0.5, 6.0], vec![1.5]]);
+        // Moving left stops when the first of them reaches the start.
+        assert_eq!(project.move_item("b", 0, -3.0, duration), -0.5);
+        assert_eq!(positions(&project), [vec![0.0], vec![0.0, 6.0], vec![1.0]]);
+        assert_eq!(project.move_item("nope", 0, 1.0, duration), 0.0);
     }
 
     #[test]

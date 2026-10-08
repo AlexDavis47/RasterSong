@@ -239,6 +239,23 @@ Built as the third step of the timeline model.
 - **Until graph items exist, bypassing the whole graph is the "no graph" case**: it shows the track mix's picture
   (the top video track with an item) and plays the master's track mix.
 
+### Tracks of items (October 2026)
+
+Built as the timeline's fourth step, before item editing.
+
+- **An item is dragged by its header bar only.** The area below belongs to the item's content (thumbnails and
+  waveforms now, automation points later), so a click or drag there seeks like empty lane space.
+- **Solo is a flag, not a set of mutes.** A soloed track leaves the other tracks *of its kind* out of the track mix
+  until it is un-soloed; mutes are untouched, so un-soloing needs no memory of them. This replaces Alt+click on
+  mute. Video solo and mute pick which track the track mix's picture shows; graphs read every track either way.
+- **Linked tracks move the items that overlap the dragged one.** Items carry no link of their own, so which items
+  belong together is read from time: a cut on one track and the matching cut on a linked track overlap. A move that
+  would push any of them before the start of the timeline stops where the first reaches it. Splitting together
+  comes with item editing.
+- **Track height and links are saved with the project** (`height`, `link` on the track), like mute and solo.
+- The app still opens one video track (File → Open Video replaces it); thumbnails are drawn for it. More video
+  tracks arrive with the Resources panel, which is how tracks get their files.
+
 ## Open
 
 
