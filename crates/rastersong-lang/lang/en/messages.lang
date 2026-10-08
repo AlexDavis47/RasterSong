@@ -73,6 +73,7 @@ error.pack.row = a row of {input} has {samples} samples, which doesn't divide in
 error.resample.too_large = {size} is too large
 error.project.invalid = invalid project file: {error}
 error.project.version = unsupported project version {version} (this build reads version {supported}; there are no migrations before 1.0)
+error.project.timebase = the project is {width}×{height} at {rate} frames a second, which can't be rendered
 error.audio_track = audio track `{name}`: {error}
 error.audio_unavailable = Audio playback is unavailable: {error}
 error.no_output_device = no output device

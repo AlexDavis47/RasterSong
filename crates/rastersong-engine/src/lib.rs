@@ -16,6 +16,7 @@ mod service;
 pub mod sources;
 mod tap;
 mod thumbnails;
+pub mod timeline;
 pub mod waveform;
 
 pub use audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE};
@@ -47,14 +48,14 @@ pub use rastersong_media::{
     LosslessWriter, MediaBackend, MediaError, Rational, Version, VideoFrame, VideoInfo,
 };
 pub use renderer::{
-    AudioTrack, DEFAULT_AUDIO_TRACK, OutputSize, RenderInfo, Renderer, VIDEO_SOURCE,
+    DEFAULT_AUDIO_TRACK, OutputSize, RenderInfo, RenderTrack, Renderer, TrackMedia, VIDEO_SOURCE,
 };
 pub use service::{
-    AudioTrackSpec, Engine, EngineConfig, EngineStatus, Failure, LoadedTrack, PreviewScale,
-    RenderProgress,
+    Engine, EngineConfig, EngineStatus, Failure, LoadedTrack, PreviewScale, RenderProgress,
 };
 pub use tap::{PICTURE_SIDE, Picture, Tap, TapOutcome, TapRequest, picture_size};
 pub use thumbnails::{THUMBNAIL_HEIGHT, Thumbnails};
+pub use timeline::{Item, Timebase, Timeline, TrackKind, TrackSpec};
 pub use waveform::Waveform;
 
 /// Initializes the engine and its media backend, and reports what was loaded.

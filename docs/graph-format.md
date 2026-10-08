@@ -40,10 +40,30 @@ order by `GraphDesc::upgrade`; the rename helpers in `migrate/tooling.rs` are re
 
 ## Projects
 
-Projects are JSON files with the `.rastersong` extension holding the video, the audio tracks (file, name, offset,
-volume, mute), the graph, the tempo and the loop region. Media paths inside the project's folder are saved
-relative to it, so a project folder can be moved or shared. Project files have the same version-0 policy. Graphs can also be imported and exported on their own. The project also keeps the Audio Output rate and the
-*max warmup frames* limit (omitted from the file while at their defaults).
+Projects are JSON files with the `.rastersong` extension holding the timeline, the graph, the tempo and the loop
+region:
+
+- `timebase`: the project's `width`, `height` and `frame_rate` (`"30"` or `"30000/1001"`). Left out, the first
+  video track's are used, or 1920×1080 at 30 fps without one. See [Timeline](engine.md#timeline).
+- `video_tracks` and `audio_tracks`: each a `name` (the name input nodes select it by, unique among all tracks),
+  a media `path`, its `items`, and `volume` and `muted` for playback. Left out, `items` is one item playing the
+  whole file from the start.
+- An item: `position` (seconds into the project), `start` and `end` (its in and out points, in seconds of the
+  file; no `end` plays to the end of the file), `rate` (seconds of file per second of timeline, 1 by default) and
+  `muted`.
+
+```json
+{ "version": 0,
+  "timebase": { "width": 1280, "height": 720, "frame_rate": "30" },
+  "video_tracks": [ { "name": "clip.mp4", "path": "media/clip.mp4" } ],
+  "audio_tracks": [ { "name": "song", "path": "media/song.wav", "volume": 0.8,
+                      "items": [ { "position": 1.5, "start": 12.0, "end": 40.0 } ] } ],
+  "graph": { "version": 0, "nodes": [] } }
+```
+
+Media paths inside the project's folder are saved relative to it, so a project folder can be moved or shared.
+Project files have the same version-0 policy. Graphs can also be imported and exported on their own. The project
+also keeps the Audio Output rate and the *max warmup frames* limit (omitted from the file while at their defaults).
 
 ## Examples
 

@@ -88,8 +88,12 @@ A connected (modulated) parameter shows, in the wire's colour:
 ## Timeline
 
 A ruler, the video track and any number of **audio tracks**, with Reaper-style track headers on the left. The
-video header shows the file, size and frame rate; each audio header has the track's name (which audio inputs
-select it by; renaming a track updates them), mute, remove and its **offset**. **+ Audio track** (or
+video header shows the track's name (its file's name until renamed; the video input reads it by that name), size
+and frame rate; each audio header has the track's name (which audio inputs select it by; renaming a track updates
+them), mute, remove and its **offset**, where its item starts. Dragging an audio track earlier than the start of
+the timeline starts its item partway into the file instead. The project lasts to the end of its last track, audio
+included, and runs at its [timebase](engine.md#timeline). For now each track holds one item; the multi-item
+timeline is the next stage of the [roadmap](roadmap.md#timeline-resources-and-graph-layers). **+ Audio track** (or
 File → Add Audio Tracks…) adds several files at once, each named after its file. Opening a video that has sound
 adds that sound as an audio track too. The video track shows thumbnails of the source video, decoded by a separate
 small decoder so they never slow rendering and survive graph edits, with rendered frames marked in green along its

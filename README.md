@@ -22,9 +22,10 @@ cargo xtask fetch-ffmpeg   # once: downloads the pinned LGPL FFmpeg build
 cargo run --release -p rastersong-gui
 ```
 
-Render without the app:
+Render without the app, a project or a video with a song and a graph:
 
 ```sh
+cargo run --release -p rastersong-cli -- render my-project.rastersong out.mkv
 cargo run --release -p rastersong-cli -- render video.mp4 song.wav examples/graphs/am_bands.json out.mkv
 ```
 

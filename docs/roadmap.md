@@ -441,13 +441,24 @@ memory maps read ordinary files. Saving rewrites the zip, copying unchanged entr
 ### Stages
 
 1. **Timebase and tracks**
-   - [ ] **feature** Project settings (resolution, frame rate, length) replace the video as the clock.
+   - [x] **chore** The model underneath *(done: see [Timeline](engine.md#timeline))*: the project has a timebase
+     (taken from the first video track until set; length to the end of the last item), separate video and audio
+     track lists ([Decisions](decisions.md#video-and-audio-tracks-are-separate-lists-october-2026)), tracks hold
+     items (position, in/out, rate, mute), and every track enters the graph by its name. The app still shows one
+     item per track.
+   - [ ] **feature** Project settings (resolution, frame rate) on the Project page of Settings. Today the timebase
+     can only be set in the project file.
    - [ ] **feature** Tracks of items for video and audio, item header bars with mute, track solo and height, linking.
    - [ ] **feature** Item editing (move, trim, split, delete, rate drag, snapping, multi-select, copy/paste, undo).
    - [ ] **feature** Track mix and output buses, with the warning on removal.
-   - [ ] **feature** Track readers in the engine; audio decoded to cache files and memory-mapped (`Modulator` and the
-     waveform read the mapped samples instead of owning copies).
-   - [ ] **chore** New project file contents (still plain JSON at this stage); CLI `render <project> <out>`.
+   - [x] **feature** Track readers in the engine: video conformed to the project's grid and size, audio placed item
+     by item, gaps read zeros.
+   - [ ] **feature** Audio decoded to cache files and memory-mapped (`Modulator` and the waveform read the mapped
+     samples instead of owning copies).
+   - [ ] **feature** Short fixed fades on audio item edges.
+   - [x] **chore** New project file contents (still plain JSON at this stage); CLI `render <project> <out>` *(the
+     old `render <video> <audio> <graph> <out>` stays; without an Audio Output the CLI writes the mix of the audio
+     tracks)*.
 2. **Resources and graphs**
    - [ ] **feature** Resources panel (linked resources only) and the multi-stream import dialog.
    - [ ] **feature** Graphs as resources; Input and Output port nodes replacing Video Input and Audio Input; the

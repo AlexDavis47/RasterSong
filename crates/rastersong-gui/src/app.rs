@@ -11,9 +11,10 @@ use eframe::egui::{self, Color32, CornerRadius, Margin, RichText, Ui, UiBuilder}
 use rastersong_engine::LoadedTrack;
 use rastersong_engine::playback::{MixTrack, Mixer};
 use rastersong_engine::{
-    AudioSink, AudioTrackSpec, BackendInfo, CompileOptions, Engine, EngineConfig, EngineStatus,
-    Frame, Graph, GraphDesc, MediaBackend, NodeStats, PROJECT_EXTENSION, PlaybackClock,
-    PreviewScale, Project, ProjectTrack, Registry, Thumbnails, TimelineMode,
+    AudioSink, BackendInfo, CompileOptions, Engine, EngineConfig, EngineStatus, Frame, Graph,
+    GraphDesc, Item, MediaBackend, NodeStats, PROJECT_EXTENSION, PlaybackClock, PreviewScale,
+    Project, ProjectTrack, Registry, Thumbnails, Timeline, TimelineMode, TrackKind, TrackSpec,
+    VIDEO_SOURCE,
 };
 use rastersong_lang::{tr, tr_args};
 
@@ -24,8 +25,8 @@ use crate::audio_out::AudioOut;
 /// The sample rates offered for the project's rendered sound.
 const AUDIO_RATES: [u32; 4] = [44_100, 48_000, 88_200, 96_000];
 
-/// One track as playback mixes it: its name, offset in seconds and gain.
-type MixEntry = (String, f64, f32);
+/// One track as playback mixes it: its name, items and gain.
+type MixEntry = (String, Vec<Item>, f32);
 use crate::editor::{CanvasContext, GraphEditor, InspectorContext, LinkedRename, without_layout};
 use crate::history::History;
 use crate::preview::{Feed, PreviewView, clamp_split, split_rects, split_sides};
@@ -122,7 +123,7 @@ pub struct App {
     /// preview shows it, so it costs nothing otherwise.
     source_engine: Engine,
     /// The video the source engine was given.
-    source_video_sent: Option<PathBuf>,
+    source_video_sent: Option<Timeline>,
     source_preview: Option<(egui::TextureHandle, Arc<Frame>)>,
     preview_view: PreviewView,
     /// The feed the preview shows; with the split on, the one on the right.
@@ -268,16 +269,10 @@ impl App {
         self.engine.set_config(self.settings.engine_config());
     }
 
-    /// The track specs the engine should be rendering with.
-    pub fn track_specs(&self) -> Vec<AudioTrackSpec> {
-        self.project.track_specs()
-    }
-
     /// Hands the whole project to the engine.
     fn send_project(&mut self) {
         self.engine.set_preview_scale(self.settings.preview_scale());
-        self.engine.set_video(self.project.video.clone());
-        self.engine.set_audio_tracks(self.project.track_specs());
+        self.engine.set_timeline(self.project.timeline());
         self.sent_graph = without_layout(&self.project.graph);
         self.engine.set_graph(self.sent_graph.clone());
         self.engine.set_tempo(self.project.tempo);
@@ -314,9 +309,13 @@ impl App {
     /// (unless the project already has a track of that file).
     pub fn open_video(&mut self, path: PathBuf) {
         let has_audio = self.backend.has_audio(&path);
-        self.project.video = Some(path.clone());
-        self.project.video_name = None;
-        self.engine.set_video(self.project.video.clone());
+        // The new video replaces the old one, and is named after its file.
+        self.project.video_tracks.clear();
+        let name = self.project.video_track_name_for(&path);
+        self.project
+            .video_tracks
+            .push(ProjectTrack::new(name, path.clone()));
+        self.engine.set_timeline(self.project.timeline());
         self.clock.seek(0);
         self.link_project_inputs();
         let known = self.project.audio_tracks.iter().any(|t| t.path == path);
@@ -477,9 +476,7 @@ impl App {
 
     /// Puts the project back to an earlier (or later) state from the history.
     fn restore(&mut self, project: Project) {
-        if project.video != self.project.video {
-            self.engine.set_video(project.video.clone());
-        }
+        self.engine.set_timeline(project.timeline());
         self.editor.restore(&project.graph);
         self.selected_track = self
             .selected_track
@@ -721,12 +718,23 @@ impl App {
 
     /// Gives the source engine the video while the preview shows it, and takes it away after.
     fn sync_source_engine(&mut self) {
+        // The video alone, as the track the source graph reads.
         let video = self
             .wants_source()
-            .then(|| self.project.video.clone())
-            .flatten();
+            .then(|| self.project.video())
+            .flatten()
+            .map(|video| Timeline {
+                timebase: self.project.timebase,
+                tracks: vec![TrackSpec {
+                    name: VIDEO_SOURCE.to_owned(),
+                    kind: TrackKind::Video,
+                    path: video.path.clone(),
+                    items: video.items.clone(),
+                }],
+            });
         if self.source_video_sent != video {
-            self.source_engine.set_video(video.clone());
+            self.source_engine
+                .set_timeline(video.clone().unwrap_or_default());
             self.source_video_sent = video;
             if self.source_video_sent.is_none() {
                 self.source_preview = None;
@@ -788,7 +796,7 @@ impl App {
             self.sent_graph = semantic;
         }
         self.project.graph = graph;
-        self.engine.set_audio_tracks(self.project.track_specs());
+        self.engine.set_timeline(self.project.timeline());
         self.engine.set_tempo(self.project.tempo);
         self.engine.set_bypass_all(self.project.bypass_graph);
         self.engine.set_audio_rate(self.project.audio_rate);
@@ -798,14 +806,14 @@ impl App {
 
         // Rebuild the playback mix when tracks, offsets or levels change, once decoded, or when
         // the graph starts or stops rendering its own sound.
-        let mix: Vec<(String, f64, f32)> = self
+        let mix: Vec<MixEntry> = self
             .project
             .audio_tracks
             .iter()
             .map(|t| {
                 (
                     t.name.clone(),
-                    t.offset,
+                    t.items.clone(),
                     if t.muted { 0.0 } else { t.volume },
                 )
             })
@@ -838,11 +846,11 @@ impl App {
                 AudioSink::Passthrough(track) => name == track,
                 _ => true,
             })
-            .filter_map(|(name, offset, gain)| {
+            .filter_map(|(name, items, gain)| {
                 let clip = loaded.iter().find(|l| &l.name == name)?.clip.clone();
                 Some(MixTrack {
                     clip,
-                    offset: *offset,
+                    items: items.clone(),
                     gain: *gain,
                 })
             })
@@ -1534,7 +1542,7 @@ impl App {
                 TrackView {
                     name: t.name.clone(),
                     duration: loaded.map(|l| l.clip.duration_secs()),
-                    offset: t.offset,
+                    offset: t.offset(),
                     muted: t.muted,
                     waveform: loaded.map(|l| l.waveform.clone()),
                 }
@@ -1608,9 +1616,10 @@ impl App {
     /// Keeps the thumbnail service on the project's video, and a texture for each thumbnail it
     /// has decoded.
     fn update_thumbnails(&mut self, ctx: &egui::Context) {
-        if self.thumbnail_video != self.project.video {
-            self.thumbnail_video = self.project.video.clone();
-            self.thumbnails.set_video(self.project.video.clone());
+        let video = self.project.video_path().map(Path::to_path_buf);
+        if self.thumbnail_video != video {
+            self.thumbnail_video = video.clone();
+            self.thumbnails.set_video(video);
             self.thumbnail_textures.clear();
             self.timeline_view = TimelineView::default();
         }
@@ -1644,7 +1653,7 @@ impl App {
         if new == old {
             return true;
         }
-        if new.is_empty() || self.project.audio_tracks.iter().any(|t| t.name == new) {
+        if new.is_empty() || self.project.has_track(new) {
             return false;
         }
         self.editor.rename_track(old, new);
@@ -1654,16 +1663,17 @@ impl App {
         true
     }
 
-    /// Names the video. A name equal to the file's is no rename at all.
+    /// Names the video's track, and the video inputs reading it. An empty name, or another
+    /// track's, changes nothing.
     pub fn rename_video(&mut self, name: &str) {
         let name = name.trim();
-        if name.is_empty() {
+        let Some(video) = self.project.video_tracks.first() else {
+            return;
+        };
+        if name.is_empty() || name == video.name || self.project.has_track(name) {
             return;
         }
-        self.project.video_name = Some(name.to_owned());
-        if self.project.video_name == self.project.video_display_name_from_file() {
-            self.project.video_name = None;
-        }
+        self.project.video_tracks[0].name = name.to_owned();
         self.editor
             .set_project_inputs(self.video_name(), self.track_name_list());
     }
@@ -1673,7 +1683,7 @@ impl App {
             TrackAction::Select(i) => self.selected_track = Some(i),
             TrackAction::SetOffset(i, offset) => {
                 if let Some(track) = self.project.audio_tracks.get_mut(i) {
-                    track.offset = offset;
+                    track.set_offset(offset);
                 }
             }
             TrackAction::ToggleMute(i) => {

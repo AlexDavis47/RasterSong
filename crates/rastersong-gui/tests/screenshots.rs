@@ -46,7 +46,9 @@ fn app_in_mode(theme: ThemeChoice, tracks: usize, mode: TimelineMode) -> App {
             },
         );
     let mut project = Project::new(GraphDesc::from_json(STARTER_GRAPH).unwrap());
-    project.video = Some(PathBuf::from("clip"));
+    project
+        .video_tracks
+        .push(ProjectTrack::new("video".into(), PathBuf::from("clip")));
     project.timeline_mode = mode;
     for name in ["audio", "drums", "bass"].into_iter().take(tracks) {
         project

@@ -28,7 +28,7 @@ pub enum LinkedRename {
     Track { from: String, to: String },
 }
 
-/// The track an audio input reads.
+/// The track an input node reads (an audio input's default when it names none).
 pub(super) fn track_of(node: &EditorNode) -> &str {
     match node.params.get("source") {
         Some(ParamValue::Text(name)) => name,
@@ -38,10 +38,25 @@ pub(super) fn track_of(node: &EditorNode) -> &str {
 
 impl GraphEditor {
     /// Tells the editor what the project holds, for naming and protecting the linked nodes.
-    /// Call it whenever the video or the tracks change (it's cheap to call every frame).
+    /// Call it whenever the video or the tracks change (it's cheap to call every frame). Video
+    /// inputs read the video's track, by its name.
     pub fn set_project_inputs(&mut self, video: Option<String>, tracks: Vec<String>) {
         self.project_video = video;
         self.project_tracks = tracks;
+        self.link_video_inputs();
+    }
+
+    /// Points every video input at the video's track, when there is one.
+    fn link_video_inputs(&mut self) {
+        let Some(video) = self.project_video.clone() else {
+            return;
+        };
+        for node in self.nodes.iter_mut().filter(|n| n.kind == VIDEO_INPUT) {
+            if track_of(node) != video {
+                node.params
+                    .insert("source".into(), ParamValue::Text(video.clone()));
+            }
+        }
     }
 
     /// Whether the project manages this node, so the user can't delete or copy it.
@@ -160,6 +175,7 @@ impl GraphEditor {
         if !self.nodes.iter().any(|n| n.kind == VIDEO_INPUT) {
             let pos = self.next_input_position();
             self.add_node(VIDEO_INPUT, pos);
+            self.link_video_inputs();
         }
         for track in self.project_tracks.clone() {
             self.link_track(&track);
@@ -251,6 +267,13 @@ mod tests {
         assert_eq!(audio_inputs(&editor), ["drums", "bass"]);
         let bass = editor.nodes.iter().find(|n| track_of(n) == "bass").unwrap();
         assert!(bass.pos.y > editor.node(audio).unwrap().pos.y);
+    }
+
+    #[test]
+    fn video_inputs_read_the_video_track() {
+        let editor = editor(&[]);
+        let video = editor.node(editor.key_of("video").unwrap()).unwrap();
+        assert_eq!(track_of(video), "clip.mp4");
     }
 
     #[test]

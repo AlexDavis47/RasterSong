@@ -1,13 +1,12 @@
 // Shared by several test binaries, each of which uses only some of these helpers.
 #![allow(dead_code)]
 
-use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rastersong_engine::sources::Modulator;
 use rastersong_engine::{
-    AudioClip, AudioTrack, FakeBackend, FakeVideo, GraphDesc, OutputSize, Rational, Registry,
+    AudioClip, FakeBackend, FakeVideo, GraphDesc, OutputSize, Rational, Registry, RenderTrack,
     Renderer,
 };
 
@@ -15,12 +14,13 @@ pub const FRAMES: usize = 60;
 pub const VIDEO: &str = "clip";
 pub const AUDIO: &str = "song";
 
+/// The song: as long as the video, so the project is the video's length.
 pub fn audio() -> AudioClip {
     let sample_rate = 9000;
     AudioClip {
         sample_rate,
         channels: 1,
-        samples: (0..sample_rate * 3)
+        samples: (0..sample_rate * 2)
             .map(|i| (i as f32 * 0.013).sin() * 0.8)
             .collect(),
     }
@@ -85,18 +85,25 @@ pub fn crush(bits: u32) -> String {
 pub fn renderer_with(graph: &str, registry: &Registry, size: OutputSize) -> Renderer {
     Renderer::new(
         &backend(),
-        Path::new(VIDEO),
-        &[AudioTrack {
-            name: "audio".into(),
-            modulator: Arc::new(Modulator::new(&audio())),
-            offset: 0.0,
-        }],
+        None,
+        &tracks(vec![RenderTrack::audio(
+            "audio",
+            Arc::new(Modulator::new(&audio())),
+            0.0,
+        )]),
         &GraphDesc::from_json(graph).unwrap(),
         Default::default(),
         registry,
         size,
     )
     .unwrap()
+}
+
+/// The video as the track `video`, followed by `audio`.
+pub fn tracks(audio: Vec<RenderTrack>) -> Vec<RenderTrack> {
+    std::iter::once(RenderTrack::video("video", VIDEO))
+        .chain(audio)
+        .collect()
 }
 
 pub fn renderer(graph: &str) -> Renderer {

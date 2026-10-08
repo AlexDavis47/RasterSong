@@ -1,7 +1,7 @@
 # Render engine
 
-The engine turns a compiled graph and a media source into rendered frames, in the background, into a cache. The
-GUI only talks to the engine; it never decodes or schedules anything itself.
+The engine turns a compiled graph and the project's timeline into rendered frames, in the background, into a
+cache. The GUI only talks to the engine; it never decodes or schedules anything itself.
 
 ## Crate Layout
 
@@ -17,6 +17,28 @@ xtask/                Developer tasks (fetch FFmpeg, generate test fixtures, pac
 ```
 
 Dependency direction: `gui → engine → (media, graph)`, and `graph`, `engine` and `gui` use `lang`. `media` and `graph` never depend on each other.
+
+## Timeline
+
+The project is the clock, like a Premiere sequence: a **timebase** (width, height, frame rate) that no media file
+owns. A project without one takes the first video track's, or 1920×1080 at 30 fps when it has no video. One block
+of every graph is one project frame, frame `n` covering `n / fps` to `(n + 1) / fps` seconds, and the project
+lasts to the end of its last item (`timeline.rs`).
+
+Tracks hold **items** of one media file: a position on the timeline, in and out points in the file and a rate,
+all in seconds so they survive a change of frame rate. Each track enters the graph as a source named after the
+track, read by the input nodes that name it, through a track reader in the renderer:
+
+- **Video tracks** are conformed to the grid: project frame `n` shows the file's frame displayed at the item's
+  time for `n` (frames are held or skipped when the rates differ), scaled to the project size the way Video
+  Output stretches.
+- **Audio tracks** fill each frame's block with the audio of exactly that frame's time span, item by item
+  (`Modulator::fill_items`), resampled when an item's rate isn't 1.
+- **Gaps read zeros**, as do muted items and input nodes that name no track. Where items overlap, the later one
+  in the list plays.
+
+Video frames are placed by the file's nominal frame rate, so variable-frame-rate video is conformed as if its rate
+were constant. Audio item edges have no fades yet.
 
 ## Sequential schedule
 

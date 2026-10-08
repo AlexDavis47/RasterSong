@@ -40,7 +40,9 @@ fn app_with(edit: impl FnOnce(&mut GraphDesc)) -> App {
     let mut graph = GraphDesc::from_json(STARTER_GRAPH).unwrap();
     edit(&mut graph);
     let mut project = Project::new(graph);
-    project.video = Some(PathBuf::from("clip"));
+    project
+        .video_tracks
+        .push(ProjectTrack::new("video".into(), PathBuf::from("clip")));
     project
         .audio_tracks
         .push(ProjectTrack::new("audio".into(), PathBuf::from("song")));
@@ -449,10 +451,10 @@ fn dragging_an_audio_block_moves_its_offset() {
     let from = timeline_point(&harness, 0.5, 1);
     let to = timeline_point(&harness, 1.0, 1);
     drag(&mut harness, from, to);
-    let offset = harness.state().project().audio_tracks[0].offset;
+    let offset = harness.state().project().audio_tracks[0].offset();
     assert!((offset - 0.5).abs() < 0.02, "offset {offset}");
     shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
-    assert_eq!(harness.state().project().audio_tracks[0].offset, 0.0);
+    assert_eq!(harness.state().project().audio_tracks[0].offset(), 0.0);
 }
 
 #[test]
@@ -736,22 +738,30 @@ fn track_and_video_names_are_shared_with_the_graph() {
     assert!(!harness.state_mut().rename_track("song", "drums"));
     assert!(!harness.state_mut().rename_track("song", "  "));
 
-    // The video's name is the project's too, and isn't its file's.
-    let file_name = harness.state().project().video_display_name();
+    // The video's name is its track's, which its video inputs read.
     harness.state_mut().rename_video("Intro shot");
+    harness.run_steps(2);
     assert_eq!(
-        harness.state().project().video_name.as_deref(),
+        harness.state().project().video_display_name().as_deref(),
         Some("Intro shot")
     );
-    harness
-        .state_mut()
-        .rename_video(&file_name.clone().unwrap());
+    let video = harness.state().editor().key_of("video").unwrap();
     assert_eq!(
-        harness.state().project().video_name,
-        None,
-        "back to the file's name"
+        harness
+            .state()
+            .editor()
+            .node(video)
+            .unwrap()
+            .params
+            .get("source"),
+        Some(&rastersong_engine::ParamValue::Text("Intro shot".into()))
     );
-    assert_eq!(harness.state().project().video_display_name(), file_name);
+    // Not to another track's name.
+    harness.state_mut().rename_video("drums");
+    assert_eq!(
+        harness.state().project().video_display_name().as_deref(),
+        Some("Intro shot")
+    );
 }
 
 #[test]

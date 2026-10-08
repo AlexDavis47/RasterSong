@@ -191,7 +191,26 @@ plan is in the [roadmap](roadmap.md#timeline-resources-and-graph-layers); the re
 - **Glue makes edit lists**, for media and automation alike: one mechanism, nothing re-encoded, and Make unique
   bakes one when it should stop following its source.
 
+### Video and audio tracks are separate lists (October 2026)
+
+Built as the first stage of the timeline model. The project keeps video tracks and audio tracks in two lists, as
+Premiere does, rather than one mixed stack: the track mix needs an order among video tracks (the top one with an
+item wins) but audio tracks are summed, so an order between a video and an audio track would mean nothing. Images
+and raw files read as video will join the video list.
+
+Also decided with it:
+
+- **A track's name is the source name** input nodes read it by, unique across both lists, until Input port nodes
+  replace them. The video track is named after its file, extension included, so the video's own sound track
+  (named without it) doesn't clash; video inputs follow the video track's name.
+- **Item times are seconds**: position, in and out points in the file, and a rate in file seconds per timeline
+  second. An item without an out point plays to the end of the file.
+- **The project lasts to the end of its last item**, audio included. An audio track longer than the video now
+  lengthens the project; the extra frames show the gap's zeros.
+- **No timebase until one is set**: a project takes its first video track's, or 1920×1080 at 30 fps, so opening a
+  video still sets up the project the way it did.
 ## Open
+
 
 ### Open: "Audio to video" / "Video to audio" names
 

@@ -11,13 +11,14 @@ use rastersong_graph::Tempo;
 use rastersong_media::AudioClip;
 
 use crate::AudioBlock;
+use crate::timeline::Item;
 
 /// One track in the mix.
 #[derive(Debug, Clone)]
 pub struct MixTrack {
     pub clip: Arc<AudioClip>,
-    /// Seconds the track starts after the video.
-    pub offset: f64,
+    /// Where the clip plays on the timeline.
+    pub items: Vec<Item>,
     /// Linear gain; 0 for muted.
     pub gain: f32,
 }
@@ -55,7 +56,8 @@ impl Mixer {
     }
 
     /// Writes `out.len() / 2` interleaved stereo frames at `rate` Hz, starting at `start` seconds
-    /// of video time. Time outside a track is silence; mono tracks play in both channels.
+    /// of timeline time. Time outside a track's items is silence; mono tracks play in both
+    /// channels.
     pub fn render(&self, start: f64, rate: f64, out: &mut [f32]) {
         out.fill(0.0);
         if let Some((source, gain)) = &self.rendered {
@@ -68,9 +70,13 @@ impl Mixer {
             if frames < 2 || channels == 0 {
                 continue;
             }
-            let step = f64::from(clip.sample_rate) / rate;
-            let mut pos = (start - track.offset) * f64::from(clip.sample_rate);
-            for frame in out.as_chunks_mut::<2>().0 {
+            let duration = clip.duration_secs();
+            for (j, frame) in out.as_chunks_mut::<2>().0.iter_mut().enumerate() {
+                let t = start + j as f64 / rate;
+                let Some((_, at)) = crate::timeline::item_at(&track.items, t, duration) else {
+                    continue;
+                };
+                let pos = at * f64::from(clip.sample_rate);
                 if pos >= 0.0 && pos < (frames - 1) as f64 {
                     let i = pos as usize;
                     let frac = (pos - i as f64) as f32;
@@ -80,7 +86,6 @@ impl Mixer {
                         *out += (a + (at(i + 1, c) - a) * frac) * track.gain;
                     }
                 }
-                pos += step;
             }
         }
     }
@@ -344,7 +349,7 @@ mod tests {
     fn mixer(clip: Arc<AudioClip>) -> Mixer {
         Mixer::new(vec![MixTrack {
             clip,
-            offset: 0.0,
+            items: vec![Item::whole(0.0)],
             gain: 1.0,
         }])
     }
@@ -385,12 +390,12 @@ mod tests {
         let mixer = Mixer::new(vec![
             MixTrack {
                 clip: clip.clone(),
-                offset: 1.0,
+                items: vec![Item::whole(1.0)],
                 gain: 0.5,
             },
             MixTrack {
                 clip,
-                offset: 0.0,
+                items: vec![Item::whole(0.0)],
                 gain: 0.0,
             },
         ]);

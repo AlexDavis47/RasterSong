@@ -1,26 +1,23 @@
 //! Offline rendering: every frame in order from the start, as fast as possible. Used by the CLI
 //! now, and by export later.
 
-use std::path::Path;
-use std::sync::Arc;
-
 use rastersong_graph::{GraphDesc, Registry, Tempo};
-use rastersong_media::{AudioClip, MediaBackend};
+use rastersong_media::MediaBackend;
 
-use crate::sources::Modulator;
+use crate::timeline::Timebase;
 use crate::{
-    AudioBlock, AudioSink, AudioTrack, DEFAULT_AUDIO_RATE, DEFAULT_AUDIO_TRACK, EngineError,
-    OutputSize, RenderInfo, Renderer,
+    AudioBlock, AudioSink, DEFAULT_AUDIO_RATE, EngineError, OutputSize, RenderInfo, RenderTrack,
+    Renderer,
 };
 
 #[derive(Debug, Clone, Default)]
 pub struct RenderSettings {
-    /// Processing and output size. `None` uses the video's display size.
+    /// The project's size and frame rate. `None` takes them from the first video track.
+    pub timebase: Option<Timebase>,
+    /// Processing and output size. `None` uses the project's size.
     pub size: Option<(u32, u32)>,
     /// Render only the first `frames` frames.
     pub frames: Option<usize>,
-    /// Seconds the audio starts after the video.
-    pub audio_offset: f64,
     /// The project tempo, for beat and bar units.
     pub tempo: Tempo,
     /// The rate the graph's sound is rendered at; `None` is [`DEFAULT_AUDIO_RATE`].
@@ -46,25 +43,18 @@ pub trait FrameSink {
     fn frame(&mut self, frame: RenderedFrame) -> Result<(), EngineError>;
 }
 
-/// Renders `video` modulated by `audio` through `graph` into `sink`, starting from frame 0 so
-/// the result is exact.
+/// Renders `tracks` through `graph` into `sink`, starting from frame 0 so the result is exact.
 pub fn render(
     backend: &dyn MediaBackend,
-    video_path: &Path,
-    audio: &AudioClip,
+    tracks: &[RenderTrack],
     graph: &GraphDesc,
     settings: &RenderSettings,
     sink: &mut dyn FrameSink,
 ) -> Result<RenderInfo, EngineError> {
-    let track = AudioTrack {
-        name: DEFAULT_AUDIO_TRACK.to_owned(),
-        modulator: Arc::new(Modulator::new(audio)),
-        offset: settings.audio_offset,
-    };
     let mut renderer = Renderer::new(
         backend,
-        video_path,
-        &[track],
+        settings.timebase,
+        tracks,
         graph,
         settings.tempo,
         Registry::shared(),
@@ -90,7 +80,11 @@ pub fn render(
 
 #[cfg(test)]
 mod tests {
-    use rastersong_media::{FakeBackend, FakeVideo, Rational};
+    use std::sync::Arc;
+
+    use rastersong_media::{AudioClip, FakeBackend, FakeVideo, Rational};
+
+    use crate::sources::Modulator;
 
     use super::*;
 
@@ -144,14 +138,11 @@ mod tests {
 
     fn run(settings: &RenderSettings, sink: &mut Recorder) -> Result<RenderInfo, EngineError> {
         let graph = GraphDesc::from_json(PASSTHROUGH).unwrap();
-        render(
-            &backend(),
-            Path::new("clip"),
-            &silence(),
-            &graph,
-            settings,
-            sink,
-        )
+        let tracks = [
+            RenderTrack::video("video", "clip"),
+            RenderTrack::audio("audio", Arc::new(Modulator::new(&silence())), 0.0),
+        ];
+        render(&backend(), &tracks, &graph, settings, sink)
     }
 
     #[test]

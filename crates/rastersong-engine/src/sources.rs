@@ -3,6 +3,8 @@
 use rastersong_graph::{Layout, Signal};
 use rastersong_media::{AudioClip, VideoFrame};
 
+use crate::timeline::Item;
+
 /// Decoded RGB8 → video signal in `0.0..=1.0`.
 pub fn fill_video(frame: &VideoFrame, out: &mut Signal) {
     for (out, &byte) in out.data.iter_mut().zip(&frame.data) {
@@ -84,6 +86,37 @@ impl Modulator {
             .and_then(|i| self.samples.get(i * self.channels + channel))
             .copied()
             .unwrap_or(0.0)
+    }
+
+    /// Fills `out` (interleaved, `channels` per frame) with the timeline between `start` and
+    /// `end` seconds, where `items` place this audio. Each sample comes from the item playing at
+    /// its time (the last listed where items overlap); gaps are silence.
+    pub fn fill_items(&self, items: &[Item], start: f64, end: f64, out: &mut [f32]) {
+        out.fill(0.0);
+        let channels = self.channels;
+        let n = out.len() / channels;
+        if n == 0 || end <= start {
+            return;
+        }
+        let step = (end - start) / n as f64;
+        let duration = self.duration_secs();
+        // The output sample a timeline time falls at, limited to the block.
+        let sample_at = |t: f64| ((t - start) / step).round().clamp(0.0, n as f64) as usize;
+        for item in items.iter().filter(|i| !i.muted) {
+            let (from, to) = (
+                sample_at(item.position),
+                sample_at(item.timeline_end(duration)),
+            );
+            if from >= to {
+                continue;
+            }
+            let (t0, t1) = (start + from as f64 * step, start + to as f64 * step);
+            self.fill_block(
+                item.source_time(t0),
+                item.source_time(t1),
+                &mut out[from * channels..to * channels],
+            );
+        }
     }
 
     /// Fills `out` (interleaved, `channels` per frame) with the audio between `start` and `end`
@@ -197,6 +230,43 @@ mod tests {
         let mut half = [9.0; 4];
         m.fill_block(0.0, 1.0, &mut half);
         assert_eq!(half, [1.5, -0.5, 3.5, -2.5]);
+    }
+
+    #[test]
+    fn items_place_audio_on_the_timeline() {
+        // A 10 Hz ramp, 2 fps: one block is 5 samples, 0.5 s.
+        let m = modulator((0..20).map(|i| i as f32).collect(), 10);
+        let mut block = [9.0; 5];
+        // From 0.2 s in, the file from its sample 3.
+        let item = Item {
+            start: 0.3,
+            ..Item::whole(0.2)
+        };
+        m.fill_items(&[item], 0.0, 0.5, &mut block);
+        assert_eq!(block, [0.0, 0.0, 3.0, 4.0, 5.0]);
+        // Out point at 0.5 s of the file: the item ends after two samples, then silence.
+        let item = Item {
+            end: Some(0.5),
+            ..item
+        };
+        m.fill_items(&[item], 0.0, 0.5, &mut block);
+        assert_eq!(block, [0.0, 0.0, 3.0, 4.0, 0.0]);
+        // At double speed it is resampled: each output sample reads the middle of its span.
+        let item = Item {
+            rate: 2.0,
+            ..Item::whole(0.0)
+        };
+        m.fill_items(&[item], 0.5, 1.0, &mut block);
+        assert_eq!(block, [10.5, 12.5, 14.5, 16.5, 18.5]);
+        // Muted, or no items: silence.
+        let muted = Item {
+            muted: true,
+            ..Item::whole(0.0)
+        };
+        m.fill_items(&[muted], 0.0, 0.5, &mut block);
+        assert_eq!(block, [0.0; 5]);
+        m.fill_items(&[], 0.0, 0.5, &mut block);
+        assert_eq!(block, [0.0; 5]);
     }
 
     #[test]
