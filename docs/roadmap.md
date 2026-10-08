@@ -189,6 +189,18 @@ Renames, merges, splits and removals need **no migration** while the format is v
   with several limits and gets identical frames; only a seek differs. The Project page of Settings says when the
   graph needs more than the limit and which node needs it, and node stats flag it. See
   [Seeking and warmup](engine.md#seeking-and-warmup).
+- [ ] **feature** **Keybinds.** Every keyboard action can be rebound by the user on a *Keys* page of Settings
+  (Application scope: remembered between sessions, never in project files), with a reset per binding and for all.
+  *Design:* one table of actions (`Action::Undo`, `Action::SplitItems`, `Action::Copy`, …), each with an id for
+  the settings file, a label and help from the language files, a scope (*global*, *timeline*, *graph*) and default
+  chords. Code asks the table (`keys.pressed(ui, Action::SplitItems)`) instead of testing keys, and menus and
+  tooltips show the bound chord from it, so a binding changes everywhere at once. Today the keys are tested in
+  `app.rs` (`shortcuts`), `timeline.rs` (`item_keys`), `editor/canvas.rs` and the menus' shortcut texts, which
+  all move over. The page lists actions by scope with a "press a key" capture and warns about a chord bound twice
+  in the same scope (timeline and graph may share one, since the pointer decides which gets it). Copy, cut and
+  paste arrive from the platform as clipboard events rather than keys (only when the clipboard holds text, for
+  paste), so rebinding them means handling those chords as plain keys and reading the system clipboard ourselves.
+  Mouse modifiers (Ctrl to add to a selection, Shift to drag freely, Alt to stretch) stay fixed for 1.0.
 
 ---
 
