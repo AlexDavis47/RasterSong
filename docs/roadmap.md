@@ -487,6 +487,10 @@ memory maps read ordinary files. Saving rewrites the zip, copying unchanged entr
    - [x] **feature** Graphs as resources, with the passthrough template *(done: see [Resources](app.md#resources)
      and [Decisions](decisions.md#empty-tracks-relocate-and-graph-resources-october-2026); one graph is open and
      rendered at a time until graph layers)*.
+   - [x] **bug** Resources pane polish: Relocate always clickable, rename field no longer closes its menu, media
+     and graphs as one shared card in a grid with Media and Graphs tabs, clearer track outlines *(done: see
+     [Resources](app.md#resources))*.
+   - [x] **chore** `CONTRIBUTING.md` development rules, and one shared channel-count label *(done)*.
    - [ ] **feature** Input and Output port nodes replacing Video Input and Audio Input *(deliberately after graph
      layers: a port is filled by a layer item's bindings or a subgraph's pins, so before those it would only be the
      current nodes under another name)*.

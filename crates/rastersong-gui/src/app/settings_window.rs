@@ -13,6 +13,7 @@ use crate::name_edit::name_edit;
 use crate::settings::Settings;
 use crate::theme::{ThemeChoice, WireStyle};
 use crate::value_box::ValueBox;
+use crate::widgets::channels_label;
 
 /// Which of the window's two pages is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -560,16 +561,5 @@ impl App {
         });
         help(ui, tr("settings.audio_rate.help"));
         self.bus_settings(ui);
-    }
-}
-
-/// "Mono", "Stereo", "5.1", … for a bus of `channels`.
-fn channels_label(channels: u32) -> String {
-    match channels {
-        1 => tr("settings.buses.mono").to_owned(),
-        2 => tr("settings.buses.stereo").to_owned(),
-        6 => tr("settings.buses.surround_5_1").to_owned(),
-        8 => tr("settings.buses.surround_7_1").to_owned(),
-        n => tr_args("settings.buses.channels", &[("count", &n.to_string())]),
     }
 }

@@ -110,6 +110,8 @@ pub struct Theme {
     pub preview_bg: Color32,
 
     pub lane_bg: Color32,
+    /// The outline around each timeline lane, so two tracks side by side read as two.
+    pub lane_outline: Color32,
     pub tick: Color32,
     pub tick_label: Color32,
     pub playhead: Color32,
@@ -162,6 +164,7 @@ impl Theme {
         preview_bg: Color32::BLACK,
 
         lane_bg: Color32::from_gray(30),
+        lane_outline: Color32::from_gray(96),
         tick: Color32::from_gray(110),
         tick_label: Color32::from_gray(150),
         playhead: Color32::WHITE,
@@ -213,6 +216,7 @@ impl Theme {
         preview_bg: Color32::from_gray(24),
 
         lane_bg: Color32::from_gray(222),
+        lane_outline: Color32::from_gray(140),
         tick: Color32::from_gray(150),
         tick_label: Color32::from_gray(95),
         playhead: Color32::from_gray(20),
@@ -328,6 +332,14 @@ mod tests {
     fn picks_the_theme_from_the_visuals() {
         assert_eq!(Theme::for_visuals(&egui::Visuals::dark()), &Theme::DARK);
         assert_eq!(Theme::for_visuals(&egui::Visuals::light()), &Theme::LIGHT);
+    }
+
+    #[test]
+    fn lane_outlines_stand_out_from_the_lane_fill() {
+        for theme in [&Theme::DARK, &Theme::LIGHT] {
+            let gap = |a: Color32, b: Color32| a.r().abs_diff(b.r());
+            assert!(gap(theme.lane_outline, theme.lane_bg) >= 40);
+        }
     }
 
     #[test]
