@@ -41,8 +41,8 @@ Our own editor, drawn on a pannable, zoomable canvas (see [Decisions](decisions.
   over a connection and scroll to go through the views, one click of the wheel to a step; the popup fades and
   resizes from one view to the next, and the wheel stops zooming meanwhile. The view is remembered separately for
   audio and for other signals (File → Settings). Hold **Shift** to hear the connection through the speakers,
-  turning the playback down while the pointer stays on it; with playback stopped it plays on from the playhead
-  without moving it. How often the view asks for a new frame while the playhead moves is the project's **update
+  turning the playback down while the pointer stays on it. It plays along with the transport, so it is silent
+  while playback is stopped: sound and picture always match. How often the view asks for a new frame while the playhead moves is the project's **update
   rate** (File → Settings → Inspecting connections). It all reads through the engine's
   [taps](engine.md#taps-and-listening), so it never changes the render. The picture, scope, spectrum and meter are
   shared widgets (`widgets/`) that take plain samples and pixels, so they can be used anywhere.

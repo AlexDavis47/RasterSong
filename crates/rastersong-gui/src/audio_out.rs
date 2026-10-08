@@ -23,12 +23,10 @@ struct Transport {
     at: Instant,
 }
 
-/// A connection being listened to: its sound, mixed over the playback.
+/// A connection being listened to: its sound, mixed over the playback while it plays.
 #[derive(Clone)]
 struct ListenPlay {
     mixer: Arc<Mixer>,
-    /// Video seconds to start from when playback is stopped; the listening then runs on its own.
-    position: f64,
     /// Changes with every listen, so the audio thread notices a new one.
     id: u64,
 }
@@ -110,9 +108,9 @@ impl AudioOut {
     }
 
     /// Mixes `mixer` over the playback, turning the playback down, until [`Self::stop_listening`].
-    /// With playback stopped it runs on its own from video time `position`; with playback
-    /// running it follows the playback's position. Fades in.
-    pub fn listen(&self, mixer: Mixer, position: f64) {
+    /// It follows the playback's position, so it is silent while playback is stopped: what is
+    /// heard always matches the picture. Fades in.
+    pub fn listen(&self, mixer: Mixer) {
         let id = self
             .shared
             .listens
@@ -121,7 +119,6 @@ impl AudioOut {
         if let Ok(mut listen) = self.shared.listen.lock() {
             *listen = Some(ListenPlay {
                 mixer: Arc::new(mixer),
-                position,
                 id,
             });
         }
@@ -209,8 +206,6 @@ struct Listened {
     mixer: Option<Arc<Mixer>>,
     wanted: bool,
     id: u64,
-    /// Video seconds, when playback is stopped.
-    position: f64,
     /// `0..=1`.
     gain: f32,
     hop: Vec<f32>,
@@ -233,7 +228,6 @@ impl Source {
                 mixer: None,
                 wanted: false,
                 id: 0,
-                position: 0.0,
                 gain: 0.0,
                 hop: vec![0.0; stretcher_hop * 2],
             },
@@ -247,7 +241,6 @@ impl Source {
         if let Some(play) = play {
             if play.id != listened.id {
                 listened.id = play.id;
-                listened.position = play.position;
                 listened.stretcher.reset();
             }
             listened.mixer = Some(play.mixer);
@@ -297,11 +290,11 @@ impl Source {
                 self.hop.fill(0.0);
             }
         }
-        self.mix_listened(hop_secs);
+        self.mix_listened();
     }
 
     /// Adds the listened sound to the hop just rendered.
-    fn mix_listened(&mut self, hop_secs: f64) {
+    fn mix_listened(&mut self) {
         let listened = &mut self.listened;
         if listened.gain <= 0.0 && !listened.wanted {
             listened.mixer = None;
@@ -310,17 +303,13 @@ impl Source {
         let Some(mixer) = listened.mixer.clone() else {
             return;
         };
-        let (position, gain) = match self.transport {
-            Some(t) if t.playing && t.speed > 0.0 => (
-                t.position + t.at.elapsed().as_secs_f64() * t.speed,
-                t.volume * speed_gain(t.speed),
-            ),
-            transport => {
-                let position = listened.position;
-                listened.position += hop_secs;
-                (position, transport.map_or(1.0, |t| t.volume))
-            }
+        // Like the playback, the listened sound only plays while the transport does.
+        let Some(t) = self.transport.filter(|t| t.playing && t.speed > 0.0) else {
+            listened.stretcher.reset();
+            return;
         };
+        let position = t.position + t.at.elapsed().as_secs_f64() * t.speed;
+        let gain = t.volume * speed_gain(t.speed);
         listened
             .stretcher
             .next(&mixer, position, gain * listened.gain, &mut listened.hop);
@@ -368,14 +357,26 @@ mod tests {
     }
 
     #[test]
-    fn listened_sound_fades_in_while_stopped_and_out_when_listening_stops() {
+    fn listened_sound_follows_the_transport_and_fades_out_when_listening_stops() {
         let mut source = Source::new(48_000.0);
-        let play = ListenPlay {
-            mixer: Arc::new(Mixer::rendered(Arc::new(Steady), 1.0)),
+        let transport = |playing| Transport {
             position: 0.5,
-            id: 1,
+            speed: 1.0,
+            playing,
+            volume: 1.0,
+            metronome: None,
+            at: Instant::now(),
         };
-        source.listen(Some(play));
+        source.listen(Some(ListenPlay {
+            mixer: Arc::new(Mixer::rendered(Arc::new(Steady), 1.0)),
+            id: 1,
+        }));
+        // Paused: nothing is heard, whether or not a transport has been reported.
+        assert_eq!(pull(&mut source, 0.3), 0.0);
+        source.transport = Some(transport(false));
+        assert_eq!(pull(&mut source, 0.3), 0.0);
+
+        source.transport = Some(transport(true));
         let heard = pull(&mut source, 0.3);
         assert!((heard - 0.5).abs() < 0.05, "{heard}");
 

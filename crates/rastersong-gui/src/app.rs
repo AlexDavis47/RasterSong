@@ -61,13 +61,9 @@ const AUDIO_EXTENSIONS: &[&str] = &[
     "wav", "mp3", "flac", "ogg", "m4a", "aac", "opus", "aiff", "mp4", "mkv", "mov",
 ];
 
-/// The Listen tool playing a connection.
+/// Hearing a connection, which plays along with the transport.
 struct Listening {
     target: rastersong_engine::ListenTarget,
-    /// Where listening started, in video seconds, and when. With playback stopped, listening
-    /// carries on from there in real time.
-    origin: f64,
-    since: std::time::Instant,
 }
 
 /// Something that would throw away unsaved changes, waiting for the user to decide.
@@ -650,15 +646,6 @@ impl App {
         self.bypass_all_button(ui, canvas.rect);
     }
 
-    /// Where listening is, in video seconds: the playhead while playing, else running on from
-    /// where it started.
-    fn listen_time(&self, fps: f64) -> f64 {
-        match &self.listening {
-            Some(l) if !self.clock.is_playing() => l.origin + l.since.elapsed().as_secs_f64(),
-            _ => self.clock.position() / fps,
-        }
-    }
-
     /// Holding Alt over a connection turns the wheel into a way to change the view.
     fn update_inspect_view(&mut self, ui: &Ui) {
         let inspecting = self.editor.hovered_output().is_some() && crate::editor::changing_view(ui);
@@ -694,16 +681,13 @@ impl App {
                 node: node.to_owned(),
                 output,
             });
-        let now = self.listen_time(fps);
+        // The sound follows the playhead; the audio thread is silent while it is stopped.
+        let now = self.clock.position() / fps;
         match (self.listening.as_ref().map(|l| &l.target), wanted) {
             (_, Some(target)) if self.listening.as_ref().is_none_or(|l| l.target != target) => {
                 self.audio
-                    .listen(Mixer::rendered(self.engine.listened_audio(), 1.0), now);
-                self.listening = Some(Listening {
-                    target,
-                    origin: now,
-                    since: std::time::Instant::now(),
-                });
+                    .listen(Mixer::rendered(self.engine.listened_audio(), 1.0));
+                self.listening = Some(Listening { target });
             }
             (Some(_), None) => {
                 self.audio.stop_listening();
@@ -715,7 +699,9 @@ impl App {
         if let Some(l) = &self.listening {
             self.engine
                 .listen(Some(l.target.clone()), (now.max(0.0) * fps) as usize);
-            ui.ctx().request_repaint();
+            if self.clock.is_playing() {
+                ui.ctx().request_repaint();
+            }
         }
     }
 
