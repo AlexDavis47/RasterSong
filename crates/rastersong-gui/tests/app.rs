@@ -115,6 +115,12 @@ fn click(harness: &mut Harness<'_, App>, pos: Pos2, button: PointerButton) {
     harness.run_steps(1);
 }
 
+/// A secondary click, and the steps its menu takes to appear.
+fn right_click(harness: &mut Harness<'_, App>, pos: Pos2) {
+    click(harness, pos, PointerButton::Secondary);
+    harness.run_steps(2);
+}
+
 fn drag(harness: &mut Harness<'_, App>, from: Pos2, to: Pos2) {
     harness.event(Event::PointerMoved(from));
     harness.run_steps(1);
@@ -1778,11 +1784,7 @@ fn a_graph_items_mute_button_mutes_it_and_the_layer_menu_deletes_the_layer() {
         harness.state().timeline_area().left() + HEADER_WIDTH - 12.0,
         harness.state().timeline_area().top() + 22.0 + LAYER_HEIGHT / 2.0,
     );
-    click(&mut harness, header, PointerButton::Secondary);
-    for n in harness.get_all_by_role(egui::accesskit::Role::Button) {
-        eprintln!("{:?}", format!("{n:?}"));
-    }
-    harness.run_steps(2);
+    right_click(&mut harness, header);
     harness.get_by_label("Delete layer").click();
     harness.run_steps(2);
     assert!(harness.state().project().layers.is_empty());
@@ -1884,8 +1886,189 @@ fn video_tracks_are_removed_from_their_header() {
         .unwrap()
         .rect()
         .center();
-    click(&mut harness, icon, PointerButton::Secondary);
+    right_click(&mut harness, icon);
     harness.get_by_label("Remove track").click();
     harness.run_steps(2);
     assert!(harness.state().project().video_tracks.is_empty());
+}
+
+// --- Every interaction a hint promises (CONTRIBUTING rule 14) ---
+
+use rastersong_engine::{LoopRegion, TimelineMode};
+
+/// A point on the ruler at `seconds`.
+fn ruler_point(harness: &Harness<'_, App>, seconds: f64) -> Pos2 {
+    let mut point = timeline_point(harness, seconds, 0);
+    point.y = harness.state().timeline_area().top() + 11.0;
+    point
+}
+
+fn with_loop(project: &mut Project) {
+    project.loop_region = Some(LoopRegion {
+        start: 0.5,
+        end: 1.0,
+        enabled: true,
+    });
+}
+
+#[test]
+fn ctrl_dragging_a_loop_edge_moves_it() {
+    let mut harness = loaded_with(app_with_project(with_loop));
+    let from = ruler_point(&harness, 1.0);
+    let to = ruler_point(&harness, 1.5);
+    ctrl_drag(&mut harness, from, to);
+    let region = harness.state().project().loop_region.unwrap();
+    assert!((region.start - 0.5).abs() < 1e-6, "{region:?}");
+    assert!((region.end - 1.5).abs() < 0.05, "{region:?}");
+}
+
+#[test]
+fn right_clicking_the_ruler_offers_looping_options() {
+    let mut harness = loaded_with(app_with_project(with_loop));
+    let spot = ruler_point(&harness, 1.5);
+    right_click(&mut harness, spot);
+    harness.get_by_label_contains("Loop playback (R)").click();
+    harness.run_steps(2);
+    assert!(!harness.state().project().loop_region.unwrap().enabled);
+    right_click(&mut harness, spot);
+    harness.get_by_label("Remove loop region").click();
+    harness.run_steps(2);
+    assert!(harness.state().project().loop_region.is_none());
+}
+
+#[test]
+fn clicking_the_ruler_mode_switches_between_time_and_tempo() {
+    let mut harness = loaded();
+    assert_eq!(harness.state().project().timeline_mode, TimelineMode::Time);
+    harness.get_by_label("⏱ Time").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().project().timeline_mode, TimelineMode::Tempo);
+    harness.get_by_label("♪ Tempo").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().project().timeline_mode, TimelineMode::Time);
+}
+
+#[test]
+fn the_header_menu_links_and_unlinks_tracks() {
+    let mut harness = loaded();
+    let icon = harness.get_by_label("▣").rect().center();
+    right_click(&mut harness, icon);
+    harness.get_by_label_contains("Link with").click();
+    harness.run_steps(2);
+    harness.get_by_label("audio").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().project().linked_to("video"), ["audio"]);
+
+    right_click(&mut harness, icon);
+    harness.get_by_label("Unlink").click();
+    harness.run_steps(2);
+    assert!(harness.state().project().linked_to("video").is_empty());
+}
+
+/// A primary click with `modifiers` held.
+fn modifier_click(harness: &mut Harness<'_, App>, modifiers: Modifiers, pos: Pos2) {
+    harness.event(Event::ModifiersChanged(modifiers));
+    harness.event(Event::PointerMoved(pos));
+    harness.run_steps(1);
+    for pressed in [true, false] {
+        harness.event(Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers,
+        });
+        harness.run_steps(1);
+    }
+    harness.event(Event::ModifiersChanged(Modifiers::NONE));
+    harness.run_steps(1);
+}
+
+#[test]
+fn ctrl_clicking_items_adds_them_and_their_menu_acts_on_the_selection() {
+    let mut harness = loaded();
+    let video = item_bar_point(&harness, 0.5, 0);
+    let audio = item_bar_point(&harness, 0.5, 1);
+    click(&mut harness, video, PointerButton::Primary);
+    assert_eq!(harness.state().selected_items().len(), 1);
+    modifier_click(&mut harness, Modifiers::COMMAND, audio);
+    assert_eq!(harness.state().selected_items().len(), 2);
+
+    right_click(&mut harness, audio);
+    harness.get_by_label_contains("Delete").click();
+    harness.run_steps(2);
+    let project = harness.state().project();
+    assert!(project.video_tracks[0].items.is_empty());
+    assert!(project.audio_tracks[0].items.is_empty());
+}
+
+#[test]
+fn alt_dragging_an_items_edge_changes_its_rate() {
+    let mut harness = loaded();
+    let from = timeline_point(&harness, 2.0, 1);
+    let to = timeline_point(&harness, 1.0, 1);
+    modifier_drag(&mut harness, Modifiers::ALT, from, to);
+    let item = harness.state().project().audio_tracks[0].items[0];
+    assert!((item.rate - 2.0).abs() < 0.05, "rate {}", item.rate);
+}
+
+#[test]
+fn shift_drags_an_edge_without_snapping() {
+    let mut harness = loaded();
+    seek_on_ruler(&mut harness, 1.0);
+    // A few pixels past the playhead: close enough to snap to it.
+    let near = 1.0 + 4.0 / harness.state().timeline_view().px_per_sec;
+    let from = timeline_point(&harness, 2.0, 1);
+    let to = timeline_point(&harness, near, 1);
+    drag(&mut harness, from, to);
+    let end = harness.state().project().audio_tracks[0].items[0]
+        .end
+        .unwrap();
+    assert!((end - 1.0).abs() < 1e-6, "snapped to the playhead: {end}");
+
+    shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
+    modifier_drag(&mut harness, Modifiers::SHIFT, from, to);
+    let end = harness.state().project().audio_tracks[0].items[0]
+        .end
+        .unwrap();
+    assert!((end - near).abs() < 0.01, "free: {end}");
+}
+
+#[test]
+fn a_graph_items_menu_splits_it_and_shift_trims_it_freely() {
+    let mut harness = loaded_with(layered_app(|project, graph, _| {
+        project.place_graph(0, graph, 0.0, 2.0);
+    }));
+    seek_on_ruler(&mut harness, 1.0);
+    let bar = layer_point(&harness, 0.5, 0, true);
+    right_click(&mut harness, bar);
+    harness.get_by_label_contains("Split at playhead").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().project().layers[0].items.len(), 2);
+
+    // The first item's end edge, dragged to a few pixels short of the playhead with Shift.
+    let near = 1.0 - 4.0 / harness.state().timeline_view().px_per_sec;
+    let mut from = layer_point(&harness, 1.0, 0, false);
+    from.x -= 2.0;
+    let to = layer_point(&harness, near, 0, false);
+    modifier_drag(&mut harness, Modifiers::SHIFT, from, to);
+    let first = &harness.state().project().layers[0].items[0];
+    assert!((first.end() - near).abs() < 0.01, "end {}", first.end());
+}
+
+#[test]
+fn dragging_a_media_card_onto_the_timeline_makes_a_track() {
+    let mut harness = loaded();
+    let name = harness.state().project().resources[0].name.clone();
+    let card = harness
+        .get_all_by_label(&name)
+        .next()
+        .unwrap()
+        .rect()
+        .center();
+    // Below the tracks, off every lane.
+    let mut to = timeline_point(&harness, 0.5, 1);
+    to.y += LANE_HEIGHT * 1.5;
+    drag(&mut harness, card, to);
+    harness.run_steps(2);
+    assert_eq!(harness.state().project().video_tracks.len(), 2);
 }
