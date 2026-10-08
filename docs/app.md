@@ -85,6 +85,24 @@ A connected (modulated) parameter shows, in the wire's colour:
   three views of the one percentage: all run from −100% to 100% and the knob stops at the ends. Typing a
   distance sets the percentage to distance ÷ range. A new connection starts at 25%, one way.
 
+## Resources
+
+The **Resources** panel, left of the timeline, lists the media the project uses. Each resource is one stream of a
+linked file (embedding comes later on the [roadmap](roadmap.md#timeline-resources-and-graph-layers)): a video stream
+or an audio stream with any number of channels. **Import…** (or File → Import Media…, or dropping files onto the
+window) adds files. A file with one video or audio stream becomes a resource at once; a file with more, such as a
+video with its sound, opens **Found multiple tracks in this media** with a checkbox per stream (kind, title,
+language, codec and shape, all ticked), and each chosen stream becomes its own resource. Cover pictures, subtitles
+and data streams aren't listed.
+
+Resources are named after their file (video keeps the extension, audio drops it, and a stream's title is added),
+made unique with `_2`, `_3`, …. Nothing reaches the timeline until it is placed: **drag a resource onto the
+timeline** to add a track playing it from where it is dropped, or double-click it (or right-click → Add to
+Timeline) to add one at the playhead. The track is named after the resource, and an audio track gets its Audio
+Input node as before. Right-click renames a resource (its tracks keep their names, since graphs select tracks by
+name) or removes it; removing a resource that tracks play asks first and removes those tracks with it. A resource
+whose file is missing is drawn in red, with its path in the tooltip.
+
 ## Timeline
 
 A ruler, the video track and any number of **audio tracks**, with Reaper-style track headers on the left. Each track
@@ -95,9 +113,9 @@ its bus when the project has several. Every header has **mute** and **solo** (*S
 soloed, only soloed tracks of that kind are in the [track mix](engine.md#track-mix-and-output-buses)); audio headers
 also remove the track. Tracks left out of the mix are drawn dimmed. The project lasts to the end of its last item and
 runs at its [timebase](engine.md#timeline). **+ Audio track** (or File → Add Audio Tracks…) adds several files at
-once, each named after its file. Opening a video that has sound adds that sound as an audio track too. For now the
-app opens one video track; more arrive with the Resources panel on the
-[roadmap](roadmap.md#timeline-resources-and-graph-layers).
+once, each named after its file. Opening a video (File → Open Video…) replaces the first video track and adds the
+video's sound as an audio track too. Both go through [resources](#resources) for the file's best streams; the
+Resources panel adds more video tracks, and any stream of a file.
 
 Every item has a **header bar** along its top with the track's name and a mute button (a muted item reads as a gap,
 for graphs too). Drag the bar to move the item; the area below it shows the item's content, thumbnails of the

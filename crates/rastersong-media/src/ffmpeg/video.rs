@@ -8,7 +8,7 @@ use ffmpeg_next as ffmpeg;
 
 use super::index::{FrameIndex, PacketMeta};
 use super::scale::Scaler;
-use super::{decode_error, open_input};
+use super::{decode_error, find_stream, open_input};
 use crate::rotate::rotate_rgb24;
 use crate::{MediaError, Rational, Rotation, VideoFrame, VideoInfo, VideoSource};
 
@@ -52,11 +52,9 @@ impl std::fmt::Debug for FfmpegVideoSource {
 }
 
 impl FfmpegVideoSource {
-    pub fn open(path: &Path) -> Result<Self, MediaError> {
+    pub fn open(path: &Path, stream: Option<usize>) -> Result<Self, MediaError> {
         let mut input = open_input(path)?;
-        let stream = input
-            .streams()
-            .best(media::Type::Video)
+        let stream = find_stream(&input, media::Type::Video, stream)
             .ok_or_else(|| MediaError::NoVideoStream(path.to_owned()))?;
         let stream_index = stream.index();
         let time_base = stream.time_base();

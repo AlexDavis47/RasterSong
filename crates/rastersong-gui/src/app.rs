@@ -1,9 +1,9 @@
 //! The application window. All rendering goes through the engine; this only holds UI state.
 //!
-//! Layout: the timeline along the bottom; above it the preview (with its playback controls),
-//! the node graph and the inspector, side by side.
+//! Layout: the Resources panel and the timeline along the bottom; above them the preview (with
+//! its playback controls), the node graph and the inspector, side by side.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -13,8 +13,8 @@ use rastersong_engine::playback::{MixTrack, Mixer};
 use rastersong_engine::{
     AudioSink, BackendInfo, CompileOptions, Engine, EngineConfig, EngineStatus, Frame, Graph,
     GraphDesc, Item, ItemRef, MediaBackend, NodeStats, PROJECT_EXTENSION, PlaybackClock,
-    PreviewScale, Project, ProjectTrack, Registry, Thumbnails, Timeline, TimelineMode, TrackKind,
-    TrackSpec, VIDEO_SOURCE,
+    PreviewScale, Project, ProjectTrack, Registry, ResourceId, ResourceKind, Thumbnails, Timeline,
+    TimelineMode, TrackKind, TrackSpec, VIDEO_SOURCE, resource_name_for,
 };
 use rastersong_lang::{tr, tr_args};
 
@@ -31,6 +31,10 @@ type MixEntry = (String, Vec<Item>, f32, bool);
 use crate::editor::{CanvasContext, GraphEditor, InspectorContext, LinkedRename, without_layout};
 use crate::history::History;
 use crate::preview::{Feed, PreviewView, clamp_split, split_rects, split_sides};
+use crate::resources::{
+    DraggedResource, PendingImport, ResourceAction, import_dialog, remove_dialog, resource_kind,
+    resource_name, resources_panel,
+};
 use crate::settings::Settings;
 use crate::theme::{Theme, ThemeChoice, apply_style};
 use crate::timeline::{
@@ -59,6 +63,10 @@ const VIDEO_EXTENSIONS: &[&str] = &[
 ];
 const AUDIO_EXTENSIONS: &[&str] = &[
     "wav", "mp3", "flac", "ogg", "m4a", "aac", "opus", "aiff", "mp4", "mkv", "mov",
+];
+const MEDIA_EXTENSIONS: &[&str] = &[
+    "mp4", "mov", "mkv", "avi", "webm", "m4v", "ts", "mts", "m2ts", "mpg", "wav", "mp3", "flac",
+    "ogg", "m4a", "aac", "opus", "aiff",
 ];
 
 /// Hearing a connection, which plays along with the transport.
@@ -145,6 +153,10 @@ pub struct App {
     settings_tab: settings_window::SettingsTab,
     /// The output bus waiting on the "remove bus?" warning.
     bus_removal: Option<String>,
+    /// Files with several streams, waiting on the import dialog in turn.
+    pending_imports: VecDeque<PendingImport>,
+    /// The resource waiting on the "remove resource?" warning, because tracks play it.
+    resource_removal: Option<ResourceId>,
     initialized: bool,
     title: String,
 }
@@ -216,6 +228,8 @@ impl App {
             show_settings: false,
             settings_tab: settings_window::SettingsTab::default(),
             bus_removal: None,
+            pending_imports: VecDeque::new(),
+            resource_removal: None,
             initialized: false,
             title: String::new(),
         };
@@ -322,37 +336,183 @@ impl App {
         }
     }
 
-    /// Opens a video. If it has a sound track of its own, that's added as an audio track too
-    /// (unless the project already has a track of that file).
+    /// Opens a video: its best video stream replaces the video track, as a resource named
+    /// after the file. If it has sound of its own, that's added as an audio track too (unless a
+    /// track already plays it).
     pub fn open_video(&mut self, path: PathBuf) {
         let has_audio = self.backend.has_audio(&path);
-        // The new video replaces the old one, and is named after its file.
         self.project.video_tracks.clear();
-        let name = self.project.video_track_name_for(&path);
-        self.project
-            .video_tracks
-            .push(ProjectTrack::new(name, path.clone()));
+        let name = resource_name_for(&path, ResourceKind::Video);
+        let id = self
+            .project
+            .add_resource(ResourceKind::Video, &name, &path, None);
+        self.project.add_track_for(id, 0.0);
         self.engine.set_timeline(self.project.timeline());
         self.clock.seek(0);
         self.link_project_inputs();
-        let known = self.project.audio_tracks.iter().any(|t| t.path == path);
+        let known = self.project.audio_tracks.iter().any(|t| {
+            self.project
+                .track_resource(t)
+                .is_some_and(|r| r.path == path && r.stream.is_none())
+        });
         if has_audio && !known {
             self.add_audio_tracks([path]);
         }
     }
 
-    /// Adds an audio track for each file, named after it, each with its own audio input node.
+    /// Adds an audio track for each file's best audio stream, through a resource named after
+    /// the file, each track with its own audio input node.
     pub fn add_audio_tracks(&mut self, paths: impl IntoIterator<Item = PathBuf>) {
         for path in paths {
-            let name = self.project.track_name_for(&path);
-            self.project
-                .audio_tracks
-                .push(ProjectTrack::new(name.clone(), path));
-            self.selected_track =
-                Some(self.project.video_tracks.len() + self.project.audio_tracks.len() - 1);
-            self.editor
-                .set_project_inputs(self.video_name(), self.track_name_list());
-            self.editor.link_track(&name);
+            let name = resource_name_for(&path, ResourceKind::Audio);
+            let id = self
+                .project
+                .add_resource(ResourceKind::Audio, &name, &path, None);
+            self.add_resource_track(id, 0.0);
+        }
+    }
+
+    /// Imports files into the Resources panel. A file with one video or audio stream becomes a
+    /// resource at once; a file with several waits on the import dialog to choose them.
+    pub fn import_files(&mut self, paths: impl IntoIterator<Item = PathBuf>) {
+        let mut problems = Vec::new();
+        for path in paths {
+            match self.backend.streams(&path) {
+                Ok(streams) if streams.is_empty() => problems.push(tr_args(
+                    "error.import.no_streams",
+                    &[("path", &path.display().to_string())],
+                )),
+                Ok(streams) if streams.len() == 1 => {
+                    self.add_stream_resource(&path, &streams[0]);
+                }
+                Ok(streams) => self
+                    .pending_imports
+                    .push_back(PendingImport::new(path, streams)),
+                Err(e) => problems.push(e.to_string()),
+            }
+        }
+        if !problems.is_empty() {
+            self.error = Some(problems.join("\n"));
+        }
+    }
+
+    fn add_stream_resource(&mut self, path: &Path, stream: &rastersong_engine::StreamInfo) {
+        self.project.add_resource(
+            resource_kind(stream),
+            &resource_name(path, stream),
+            path,
+            Some(stream.index),
+        );
+    }
+
+    /// The file waiting on the import dialog, if any.
+    pub fn pending_import(&self) -> Option<&PendingImport> {
+        self.pending_imports.front()
+    }
+
+    /// Answers the import dialog for the file waiting on it: `chosen` says, stream by stream,
+    /// which become resources. `None` cancels the file's import.
+    pub fn finish_import(&mut self, chosen: Option<&[bool]>) {
+        let Some(pending) = self.pending_imports.pop_front() else {
+            return;
+        };
+        let Some(chosen) = chosen else { return };
+        for ((stream, _), &chosen) in pending.streams.iter().zip(chosen) {
+            if chosen {
+                self.add_stream_resource(&pending.path, stream);
+            }
+        }
+    }
+
+    /// Adds a track playing resource `id` from `position` seconds, named after it, with an
+    /// audio input node for an audio track. Returns the track's name.
+    pub fn add_resource_track(&mut self, id: ResourceId, position: f64) -> Option<String> {
+        let kind = self.project.resource(id)?.kind;
+        let name = self.project.add_track_for(id, position)?;
+        match kind {
+            ResourceKind::Audio => {
+                self.selected_track =
+                    Some(self.project.video_tracks.len() + self.project.audio_tracks.len() - 1);
+                self.editor
+                    .set_project_inputs(self.video_name(), self.track_name_list());
+                self.editor.link_track(&name);
+            }
+            ResourceKind::Video => self.link_project_inputs(),
+        }
+        Some(name)
+    }
+
+    /// Removes a resource, the tracks that play it, and their links to input nodes.
+    pub fn remove_resource(&mut self, id: ResourceId) {
+        let removed = self.project.remove_resource(id);
+        for name in &removed {
+            self.project.unlink_track(name);
+            self.editor.unlink_track(name);
+        }
+        self.selected_items.retain(|r| !removed.contains(&r.track));
+        self.link_project_inputs();
+        let rows = self.project.video_tracks.len() + self.project.audio_tracks.len();
+        self.selected_track = self
+            .selected_track
+            .filter(|&s| s < rows)
+            .or(first_audio_row(&self.project));
+    }
+
+    fn resource_action(&mut self, action: ResourceAction) {
+        match action {
+            ResourceAction::Import => self.pick_media(),
+            ResourceAction::AddToTimeline(id) => {
+                let at = self.clock.frame() as f64 / self.clock_rate();
+                self.add_resource_track(id, at);
+            }
+            ResourceAction::Rename(id, name) => {
+                self.project.rename_resource(id, &name);
+            }
+            ResourceAction::Remove(id) => {
+                if self.project.resource_users(id).is_empty() {
+                    self.remove_resource(id);
+                } else {
+                    self.resource_removal = Some(id);
+                }
+            }
+        }
+    }
+
+    /// Frames per second of the playhead's clock, for turning its frame into seconds.
+    fn clock_rate(&self) -> f64 {
+        self.engine
+            .info()
+            .map_or(30.0, |info| info.frame_rate.as_f64())
+            .max(1e-6)
+    }
+
+    /// The import and "remove resource?" dialogs, while they wait.
+    fn resource_dialogs(&mut self, ui: &Ui) {
+        if let Some(pending) = self.pending_imports.front_mut() {
+            match import_dialog(ui.ctx(), pending) {
+                Some(true) => {
+                    let chosen: Vec<bool> = pending.streams.iter().map(|(_, c)| *c).collect();
+                    self.finish_import(Some(&chosen));
+                }
+                Some(false) => self.finish_import(None),
+                None => {}
+            }
+        }
+        if let Some(id) = self.resource_removal {
+            let Some(resource) = self.project.resource(id) else {
+                self.resource_removal = None;
+                return;
+            };
+            let name = resource.name.clone();
+            let users = self.project.resource_users(id);
+            match remove_dialog(ui.ctx(), &name, &users) {
+                Some(true) => {
+                    self.resource_removal = None;
+                    self.remove_resource(id);
+                }
+                Some(false) => self.resource_removal = None,
+                None => {}
+            }
         }
     }
 
@@ -560,7 +720,22 @@ impl App {
             .default_size(240.0)
             .min_size(130.0)
             .frame(panel(8))
-            .show(ui, |ui| self.timeline(ui));
+            .show(ui, |ui| {
+                egui::Panel::left("resources")
+                    .resizable(true)
+                    .default_size(200.0)
+                    .min_size(140.0)
+                    .frame(egui::Frame::new().inner_margin(Margin {
+                        right: 8,
+                        ..Margin::ZERO
+                    }))
+                    .show(ui, |ui| {
+                        for action in resources_panel(ui, &self.project) {
+                            self.resource_action(action);
+                        }
+                    });
+                self.timeline(ui);
+            });
         egui::Panel::left("preview")
             .resizable(true)
             .default_size(ui.available_width() * 0.33)
@@ -605,7 +780,9 @@ impl App {
         self.sync();
         self.record_history(ui);
         self.tick(ui);
+        self.import_dropped_files(ui);
         self.windows(ui);
+        self.resource_dialogs(ui);
         self.confirm_dialog(ui);
         self.update_title(ui);
     }
@@ -739,7 +916,12 @@ impl App {
                 timebase: self.project.timebase,
                 tracks: vec![TrackSpec {
                     items: video.items.clone(),
-                    ..TrackSpec::new(VIDEO_SOURCE, TrackKind::Video, video.path.clone())
+                    stream: self.project.track_resource(video).and_then(|r| r.stream),
+                    ..TrackSpec::new(
+                        VIDEO_SOURCE,
+                        TrackKind::Video,
+                        self.project.track_path(video).unwrap_or(Path::new("")),
+                    )
                 }],
                 ..Timeline::default()
             });
@@ -1007,6 +1189,10 @@ impl App {
                     self.save(true);
                 }
                 ui.separator();
+                if ui.button(tr("menu.file.import_media")).clicked() {
+                    ui.close();
+                    self.pick_media();
+                }
                 if ui.button(tr("menu.file.open_video")).clicked() {
                     ui.close();
                     self.pick_video();
@@ -1104,6 +1290,30 @@ impl App {
             .pick_file()
         {
             self.open_video(path);
+        }
+    }
+
+    fn pick_media(&mut self) {
+        if let Some(paths) = rfd::FileDialog::new()
+            .add_filter(tr("dialog.filter.media"), MEDIA_EXTENSIONS)
+            .pick_files()
+        {
+            self.import_files(paths);
+        }
+    }
+
+    /// Imports files dropped onto the window.
+    fn import_dropped_files(&mut self, ui: &Ui) {
+        let dropped: Vec<PathBuf> = ui.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .map(|f| f.path().to_path_buf())
+                .filter(|p| !p.as_os_str().is_empty())
+                .collect()
+        });
+        if !dropped.is_empty() {
+            self.import_files(dropped);
         }
     }
 
@@ -1539,10 +1749,15 @@ impl App {
     }
 
     fn timeline(&mut self, ui: &mut Ui) {
+        let area = ui.available_rect_before_wrap();
         let Some(info) = self.engine.info() else {
             ui.weak(tr("timeline.empty"));
             if ui.button(tr("timeline.track.add")).clicked() {
                 self.pick_audio_tracks();
+            }
+            // A resource dropped on the empty timeline starts at the beginning.
+            if let Some(id) = dropped_resource(ui, area) {
+                self.add_resource_track(id, 0.0);
             }
             return;
         };
@@ -1624,6 +1839,13 @@ impl App {
         };
         self.timeline_area = ui.available_rect_before_wrap();
         let response = timeline(ui, &model, &mut self.timeline_view);
+        if let Some(id) = dropped_resource(ui, area) {
+            let x = ui
+                .input(|i| i.pointer.interact_pos())
+                .map_or(response.lanes_left, |p| p.x.max(response.lanes_left));
+            let at = self.timeline_view.seconds(response.lanes_left, x).max(0.0);
+            self.add_resource_track(id, at);
+        }
         self.thumbnails.request(&response.wanted_thumbnails);
         if let Some(region) = response.loop_region {
             self.project.loop_region = region;
@@ -2058,6 +2280,18 @@ impl App {
 const BUSY_DELAY_SECS: f64 = 0.25;
 
 /// A spinner in the middle of the preview, with a line of text under it when there is one.
+/// The resource dragged from the Resources panel and released over `area` this frame, taken.
+fn dropped_resource(ui: &Ui, area: egui::Rect) -> Option<ResourceId> {
+    let released = ui.input(|i| i.pointer.any_released());
+    let over = ui
+        .input(|i| i.pointer.interact_pos())
+        .is_some_and(|p| area.contains(p));
+    if !(released && over) || !egui::DragAndDrop::has_payload_of_type::<DraggedResource>(ui.ctx()) {
+        return None;
+    }
+    egui::DragAndDrop::take_payload::<DraggedResource>(ui.ctx()).map(|p| p.0)
+}
+
 fn busy_centered(ui: &mut Ui, rect: egui::Rect, text: Option<&str>) {
     ui.put(
         egui::Rect::from_center_size(rect.center(), egui::vec2(32.0, 32.0)),

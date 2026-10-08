@@ -10,7 +10,7 @@ use std::thread::JoinHandle;
 
 use rastersong_graph::{CompileOptions, GraphDesc, NodeStats, Registry, Tempo, render_form};
 use rastersong_lang::{tr, tr_args};
-use rastersong_media::{AudioCache, AudioClip, AudioOptions, MediaBackend};
+use rastersong_media::{AudioCache, AudioClip, MediaBackend};
 
 use crate::audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE, SinkResampler};
 use crate::cache::{CacheKey, Frame, FrameCache};
@@ -674,7 +674,8 @@ impl Wanted {
 }
 
 /// Decoded audio by file, so editing the graph or an offset doesn't decode again.
-type DecodedFiles = HashMap<PathBuf, DecodedAudio>;
+/// Decoded audio by file and stream.
+type DecodedFiles = HashMap<(PathBuf, Option<usize>), DecodedAudio>;
 
 #[derive(Clone)]
 struct DecodedAudio {
@@ -1089,16 +1090,19 @@ impl Worker {
         specs: &[TrackSpec],
     ) -> Result<(Vec<RenderTrack>, Vec<LoadedTrack>), Failure> {
         // Forget files no track uses any more.
-        self.audio.retain(|path, _| {
+        self.audio.retain(|(path, stream), _| {
             specs
                 .iter()
-                .any(|s| s.kind == TrackKind::Audio && &s.path == path)
+                .any(|s| s.kind == TrackKind::Audio && &s.path == path && s.stream == *stream)
         });
         let mut tracks = Vec::with_capacity(specs.len());
         let mut loaded = Vec::with_capacity(specs.len());
         for spec in specs {
             let media = match spec.kind {
-                TrackKind::Video => TrackMedia::Video(spec.path.clone()),
+                TrackKind::Video => TrackMedia::Video {
+                    path: spec.path.clone(),
+                    stream: spec.stream,
+                },
                 TrackKind::Audio => {
                     let decoded = self.decode(spec)?;
                     loaded.push(LoadedTrack {
@@ -1121,11 +1125,12 @@ impl Worker {
 
     /// The audio of an audio track, decoded once per file.
     fn decode(&mut self, spec: &TrackSpec) -> Result<DecodedAudio, Failure> {
-        if let Some(cached) = self.audio.get(&spec.path) {
+        let key = (spec.path.clone(), spec.stream);
+        if let Some(cached) = self.audio.get(&key) {
             return Ok(cached.clone());
         }
         let backend = self.shared.backend.as_ref();
-        let options = AudioOptions::default();
+        let options = spec.audio_options();
         let audio_cache = lock(&self.shared.config).audio_cache.clone();
         let clip = match &audio_cache {
             Some(cache) => cache.load(backend, &spec.path, options),
@@ -1142,7 +1147,7 @@ impl Worker {
             waveform: Arc::new(Waveform::new(&clip)),
             clip: Arc::new(clip),
         };
-        self.audio.insert(spec.path.clone(), entry.clone());
+        self.audio.insert(key, entry.clone());
         Ok(entry)
     }
 
@@ -1156,7 +1161,7 @@ impl Worker {
         for track in &timeline.tracks {
             let duration = match track.kind {
                 TrackKind::Video => {
-                    let Ok(video) = backend.open_video(&track.path) else {
+                    let Ok(video) = backend.open_video_stream(&track.path, track.stream) else {
                         continue;
                     };
                     let info = video.info().clone();
@@ -1167,7 +1172,7 @@ impl Worker {
                     });
                     info.frame_count as f64 / info.frame_rate.as_f64()
                 }
-                TrackKind::Audio => match self.audio.get(&track.path) {
+                TrackKind::Audio => match self.audio.get(&(track.path.clone(), track.stream)) {
                     Some(decoded) => decoded.clip.duration_secs(),
                     None => continue,
                 },

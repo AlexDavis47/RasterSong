@@ -276,6 +276,25 @@ Built as the timeline's fifth step.
   within 8 pixels. Shift drags freely; the Snap toggle is an app setting, on by default.
 - **The selection isn't part of the project**: it isn't saved, and undo keeps it where the items still exist.
 
+### Resources panel (October 2026)
+
+Built as the first step of stage 2 of [Timeline, resources and graph layers](roadmap.md#timeline-resources-and-graph-layers).
+
+- **Tracks point at resources, not files.** A resource is one stream of a linked file (`id`, `name`, `kind`,
+  `path`, `stream`), and a track names its resource by id. The engine still receives a path and a stream per
+  track, so renderers and caches only gained the stream index.
+- **Streams are chosen by their index in the file.** The import dialog stores the index it listed; `None` (the
+  file's best stream of the kind) is kept for File → Open Video and Add Audio Tracks, which don't ask. The audio
+  cache key includes a chosen index, so two audio streams of one file get two cache files.
+- **Any file with more than one usable stream asks**, including an ordinary video with its sound: the roadmap's
+  rule, with every stream ticked so importing both is one click.
+- **Importing doesn't touch the timeline.** Placing a resource is a separate step (drag, double-click, or Add to
+  Timeline), so importing a folder of takes doesn't fill the timeline.
+- **Removing a resource removes its tracks**, after a warning naming them, rather than leaving tracks with nothing
+  to play. Renaming a resource leaves its tracks' names alone, since graphs select tracks by name.
+- **Resource ids are unique, not permanent.** A new resource can reuse a removed one's id once nothing points at
+  it; undo restores whole projects, so nothing can hold a stale id.
+
 ## Open
 
 

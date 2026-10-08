@@ -96,6 +96,11 @@ impl AudioCache {
         key.update(content);
         key.update(options.sample_rate.unwrap_or(0).to_le_bytes());
         key.update(options.channels.unwrap_or(0).to_le_bytes());
+        // Left out for the best stream, so its files keep their names.
+        if let Some(stream) = options.stream {
+            key.update(b"stream");
+            key.update((stream as u64).to_le_bytes());
+        }
         Ok(self
             .dir
             .join("audio")

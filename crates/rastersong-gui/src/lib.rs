@@ -8,6 +8,7 @@ pub mod effects;
 pub mod history;
 pub mod name_edit;
 pub mod preview;
+pub mod resources;
 pub mod settings;
 pub mod theme;
 pub mod timeline;

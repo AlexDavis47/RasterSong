@@ -5,7 +5,7 @@
 mod common;
 
 use common::{backend, fixture};
-use rastersong_media::{AudioClip, AudioOptions, MediaBackend, MediaError};
+use rastersong_media::{AudioClip, AudioOptions, MediaBackend, MediaError, StreamKind};
 
 fn load(name: &str, options: AudioOptions) -> AudioClip {
     backend().load_audio(&fixture(name), options).unwrap()
@@ -92,6 +92,7 @@ fn resamples_and_remixes() {
         AudioOptions {
             sample_rate: Some(48_000),
             channels: Some(1),
+            stream: None,
         },
     );
     assert_eq!((clip.sample_rate, clip.channels), (48_000, 1));
@@ -130,4 +131,61 @@ fn video_only_files_have_no_audio() {
         backend().load_audio(&fixture("video_only.mp4"), AudioOptions::default()),
         Err(MediaError::NoAudioStream(_))
     ));
+}
+
+#[test]
+fn streams_are_listed_and_chosen_by_index() {
+    let path = fixture("two_audio.mkv");
+    let streams = backend().streams(&path).unwrap();
+    let summary: Vec<_> = streams
+        .iter()
+        .map(|s| {
+            (
+                s.index,
+                s.kind.is_video(),
+                s.title.as_deref(),
+                s.language.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            (0, true, None, None),
+            (1, false, Some("Music"), Some("eng")),
+            (2, false, Some("Voice"), None),
+        ]
+    );
+    assert!(matches!(
+        streams[0].kind,
+        StreamKind::Video {
+            width: 64,
+            height: 48,
+            ..
+        }
+    ));
+    let load = |stream| {
+        backend().load_audio(
+            &path,
+            AudioOptions {
+                stream,
+                ..AudioOptions::default()
+            },
+        )
+    };
+    assert_eq!(load(Some(1)).unwrap().channels, 1);
+    assert_eq!(load(Some(2)).unwrap().channels, 2);
+    // A video stream is not audio.
+    assert!(matches!(load(Some(0)), Err(MediaError::NoAudioStream(_))));
+    assert!(backend().open_video_stream(&path, Some(0)).is_ok());
+    assert!(backend().open_video_stream(&path, Some(1)).is_err());
+}
+
+#[test]
+fn audio_files_have_one_stream_and_missing_files_none() {
+    let only_audio = backend().streams(&fixture("audio_only.m4a")).unwrap();
+    assert_eq!(only_audio.len(), 1);
+    assert!(!only_audio[0].kind.is_video());
+    let missing = fixture("audio_only.m4a").with_file_name("does_not_exist.mp4");
+    assert!(backend().streams(&missing).is_err());
 }

@@ -7,7 +7,22 @@ use crate::{MediaError, Samples};
 /// A media backend: opens video sources and loads audio. [`crate::FfmpegBackend`] is the real
 /// implementation; [`crate::FakeBackend`] produces synthetic media for tests.
 pub trait MediaBackend: Send + Sync + Debug {
-    fn open_video(&self, path: &Path) -> Result<Box<dyn VideoSource>, MediaError>;
+    /// Opens the file's best video stream.
+    fn open_video(&self, path: &Path) -> Result<Box<dyn VideoSource>, MediaError> {
+        self.open_video_stream(path, None)
+    }
+
+    /// Opens the video stream with index `stream` in the file (as [`StreamInfo::index`] gives
+    /// it), or its best video stream for `None`.
+    fn open_video_stream(
+        &self,
+        path: &Path,
+        stream: Option<usize>,
+    ) -> Result<Box<dyn VideoSource>, MediaError>;
+
+    /// The file's video and audio streams, in file order, from its header alone (no decoding).
+    /// Cover pictures, subtitles and data streams are left out.
+    fn streams(&self, path: &Path) -> Result<Vec<StreamInfo>, MediaError>;
 
     /// Decodes an entire audio stream to interleaved `f32`.
     fn load_audio(&self, path: &Path, options: AudioOptions) -> Result<AudioClip, MediaError>;
@@ -131,6 +146,46 @@ pub struct AudioOptions {
     pub sample_rate: Option<u32>,
     /// Remix to this many channels. `None` keeps the source channel count.
     pub channels: Option<u32>,
+    /// The audio stream to decode, by its index in the file ([`StreamInfo::index`]). `None` is
+    /// the file's best audio stream.
+    pub stream: Option<usize>,
+}
+
+/// One video or audio stream of a media file.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StreamInfo {
+    /// The stream's index in the file, counting every stream.
+    pub index: usize,
+    pub kind: StreamKind,
+    /// The codec's short name, such as `h264` or `aac`.
+    pub codec: String,
+    /// The `title` tag, if the file names the stream.
+    pub title: Option<String>,
+    /// The `language` tag, if the file has one.
+    pub language: Option<String>,
+    /// Whether the file marks the stream as the default of its kind.
+    pub default: bool,
+}
+
+/// What a [`StreamInfo`] carries, with its basic shape.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StreamKind {
+    Video {
+        width: u32,
+        height: u32,
+        /// Frames per second, 0 when the file doesn't say.
+        frame_rate: f64,
+    },
+    Audio {
+        sample_rate: u32,
+        channels: u32,
+    },
+}
+
+impl StreamKind {
+    pub fn is_video(&self) -> bool {
+        matches!(self, Self::Video { .. })
+    }
 }
 
 /// A fully decoded audio stream.

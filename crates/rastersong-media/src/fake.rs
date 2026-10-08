@@ -6,14 +6,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::{
-    AudioClip, AudioOptions, MediaBackend, MediaError, Rational, Rotation, VideoFrame, VideoInfo,
-    VideoSource,
+    AudioClip, AudioOptions, MediaBackend, MediaError, Rational, Rotation, StreamInfo, StreamKind,
+    VideoFrame, VideoInfo, VideoSource,
 };
 
 #[derive(Debug, Default)]
 pub struct FakeBackend {
     videos: HashMap<PathBuf, FakeVideo>,
     audio: HashMap<PathBuf, AudioClip>,
+    streams: HashMap<PathBuf, Vec<StreamInfo>>,
 }
 
 /// A synthetic video. Every pixel of frame `i` at `(x, y)` is [`FakeVideo::pixel`]`(i, x, y)`,
@@ -50,14 +51,33 @@ impl FakeBackend {
         self.audio.insert(path.into(), clip);
         self
     }
+
+    /// Makes [`MediaBackend::streams`] list `streams` for `path`. Without it a registered video
+    /// is stream 0 and registered audio the next. Every video stream opens the registered
+    /// video and every audio stream the registered clip.
+    pub fn with_streams(mut self, path: impl Into<PathBuf>, streams: Vec<StreamInfo>) -> Self {
+        self.streams.insert(path.into(), streams);
+        self
+    }
+
+    fn not_registered(path: &Path) -> MediaError {
+        MediaError::Open {
+            path: path.to_owned(),
+            reason: "not registered with the fake backend".into(),
+        }
+    }
 }
 
 impl MediaBackend for FakeBackend {
-    fn open_video(&self, path: &Path) -> Result<Box<dyn VideoSource>, MediaError> {
-        let video = self.videos.get(path).ok_or_else(|| MediaError::Open {
-            path: path.to_owned(),
-            reason: "not registered with the fake backend".into(),
-        })?;
+    fn open_video_stream(
+        &self,
+        path: &Path,
+        _stream: Option<usize>,
+    ) -> Result<Box<dyn VideoSource>, MediaError> {
+        let video = self
+            .videos
+            .get(path)
+            .ok_or_else(|| Self::not_registered(path))?;
         Ok(Box::new(FakeVideoSource {
             info: VideoInfo {
                 width: video.width,
@@ -70,23 +90,54 @@ impl MediaBackend for FakeBackend {
         }))
     }
 
+    fn streams(&self, path: &Path) -> Result<Vec<StreamInfo>, MediaError> {
+        if let Some(streams) = self.streams.get(path) {
+            return Ok(streams.clone());
+        }
+        let video = self.videos.get(path).map(|v| StreamKind::Video {
+            width: v.width,
+            height: v.height,
+            frame_rate: v.frame_rate.as_f64(),
+        });
+        let audio = self.audio.get(path).map(|a| StreamKind::Audio {
+            sample_rate: a.sample_rate,
+            channels: a.channels,
+        });
+        if video.is_none() && audio.is_none() {
+            return Err(Self::not_registered(path));
+        }
+        Ok(video
+            .into_iter()
+            .chain(audio)
+            .enumerate()
+            .map(|(index, kind)| StreamInfo {
+                index,
+                kind,
+                codec: "fake".into(),
+                title: None,
+                language: None,
+                default: true,
+            })
+            .collect())
+    }
+
     fn has_audio(&self, path: &Path) -> bool {
         self.audio.contains_key(path)
     }
 
     fn load_audio(&self, path: &Path, options: AudioOptions) -> Result<AudioClip, MediaError> {
         assert_eq!(
-            options,
+            AudioOptions {
+                stream: None,
+                ..options
+            },
             AudioOptions::default(),
             "the fake backend does not resample or remix"
         );
         self.audio
             .get(path)
             .cloned()
-            .ok_or_else(|| MediaError::Open {
-                path: path.to_owned(),
-                reason: "not registered with the fake backend".into(),
-            })
+            .ok_or_else(|| Self::not_registered(path))
     }
 }
 

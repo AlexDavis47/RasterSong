@@ -24,6 +24,10 @@ synthetic frames. (Licensing of FFmpeg itself is in [Licensing](licensing.md#ffm
 - **Audio:** decoded in full to interleaved `f32` via swresample, optionally resampled and remixed. Encoder
   priming samples are trimmed using the container's edit list. Decoding hands the samples on in pieces
   (`MediaBackend::decode_audio`), so they can go straight to a file.
+- **Streams:** `MediaBackend::streams` lists a file's video and audio streams from its header (index, codec, size
+  and frame rate or sample rate and channels, title and language tags), leaving out cover pictures, subtitles and
+  data. `open_video_stream` and `AudioOptions::stream` open a stream by its index; without one, the best stream of
+  the kind, as FFmpeg picks it.
 - **Audio cache:** `AudioCache` decodes each audio stream once into an uncompressed `f32` file and reads it back
   through a memory map (`Samples`), so a track costs address space rather than memory, every reader shares one
   copy, and reopening a project decodes nothing. Files are named by the SHA-256 of the source's bytes (remembered

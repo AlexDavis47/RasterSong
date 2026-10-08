@@ -26,8 +26,11 @@ pub const DEFAULT_AUDIO_TRACK: &str = DEFAULT_AUDIO;
 /// What a track plays.
 #[derive(Debug, Clone)]
 pub enum TrackMedia {
-    /// A video file, opened by the renderer.
-    Video(PathBuf),
+    /// A video stream of a file (its best for `None`), opened by the renderer.
+    Video {
+        path: PathBuf,
+        stream: Option<usize>,
+    },
     /// Decoded audio.
     Audio(Arc<Modulator>),
 }
@@ -58,7 +61,10 @@ impl RenderTrack {
     pub fn video(name: impl Into<String>, path: impl Into<PathBuf>) -> Self {
         Self {
             name: name.into(),
-            media: TrackMedia::Video(path.into()),
+            media: TrackMedia::Video {
+                path: path.into(),
+                stream: None,
+            },
             items: vec![Item::whole(0.0)],
             in_mix: true,
         }
@@ -207,8 +213,8 @@ impl Renderer {
         let mut audio = Vec::new();
         for track in tracks {
             match &track.media {
-                TrackMedia::Video(path) => {
-                    let video = backend.open_video(path)?;
+                TrackMedia::Video { path, stream } => {
+                    let video = backend.open_video_stream(path, *stream)?;
                     let info = video.info();
                     let fps = info.frame_rate.as_f64();
                     videos.push(VideoReader {

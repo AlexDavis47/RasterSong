@@ -20,5 +20,6 @@ pub use ffmpeg::{
 };
 pub use samples::Samples;
 pub use types::{
-    AudioClip, AudioOptions, MediaBackend, Rational, Rotation, VideoFrame, VideoInfo, VideoSource,
+    AudioClip, AudioOptions, MediaBackend, Rational, Rotation, StreamInfo, StreamKind, VideoFrame,
+    VideoInfo, VideoSource,
 };

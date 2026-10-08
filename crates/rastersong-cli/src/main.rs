@@ -8,8 +8,8 @@ use clap::{Parser, Subcommand};
 use rastersong_engine::playback::MixTrack;
 use rastersong_engine::sources::Modulator;
 use rastersong_engine::{
-    AudioOptions, Bus, DEFAULT_AUDIO_TRACK, FfmpegBackend, GraphDesc, MediaBackend, Project,
-    RenderSettings, RenderTrack, Timeline, TrackKind, TrackSpec, VIDEO_SOURCE,
+    Bus, DEFAULT_AUDIO_TRACK, FfmpegBackend, GraphDesc, MediaBackend, Project, RenderSettings,
+    RenderTrack, Timeline, TrackKind, TrackSpec, VIDEO_SOURCE,
 };
 use rastersong_lang::tr_args;
 
@@ -190,11 +190,14 @@ fn render(args: RenderArgs) -> Result<()> {
     let mut sources = Vec::new();
     for spec in &job.timeline.tracks {
         let media = match spec.kind {
-            TrackKind::Video => rastersong_engine::TrackMedia::Video(spec.path.clone()),
+            TrackKind::Video => rastersong_engine::TrackMedia::Video {
+                path: spec.path.clone(),
+                stream: spec.stream,
+            },
             TrackKind::Audio => {
                 let clip = match &audio_cache {
-                    Some(cache) => cache.load(&backend, &spec.path, AudioOptions::default()),
-                    None => backend.load_audio(&spec.path, AudioOptions::default()),
+                    Some(cache) => cache.load(&backend, &spec.path, spec.audio_options()),
+                    None => backend.load_audio(&spec.path, spec.audio_options()),
                 }
                 .with_context(|| format!("loading audio from {}", spec.path.display()))?;
                 let modulator = Arc::new(Modulator::new(&clip));

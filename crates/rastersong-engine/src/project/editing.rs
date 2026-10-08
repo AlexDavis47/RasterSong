@@ -368,18 +368,15 @@ fn trim(item: &mut Item, edge: Edge, to: f64, stretch: bool, length: f64) {
 mod tests {
     use super::*;
     use crate::GraphDesc;
+    use crate::timeline::TrackKind;
 
     /// Tracks `v` (video, 10 s) and `a`, `b` (audio, 2 s each), with `items` placed whole.
     fn project(items: &[(&str, f64)]) -> Project {
         let mut project =
             Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
-        project
-            .video_tracks
-            .push(ProjectTrack::new("v".into(), "v.mp4".into()));
+        project.add_track(TrackKind::Video, "v", "v.mp4");
         for name in ["a", "b"] {
-            project
-                .audio_tracks
-                .push(ProjectTrack::new(name.into(), format!("{name}.wav").into()));
+            project.add_track(TrackKind::Audio, name, format!("{name}.wav"));
         }
         for track in project.tracks_mut() {
             track.items.clear();

@@ -6,7 +6,7 @@ use ffmpeg::{decoder, ffi, frame, media};
 use ffmpeg_next as ffmpeg;
 use rastersong_lang::tr_args;
 
-use super::{decode_error, open_input};
+use super::{decode_error, find_stream, open_input};
 use crate::{AudioClip, AudioOptions, MediaError};
 
 /// Decodes the best audio stream of `path` in full, converted to interleaved `f32`.
@@ -23,7 +23,7 @@ pub(crate) fn load_audio(path: &Path, options: AudioOptions) -> Result<AudioClip
     })
 }
 
-/// Decodes the best audio stream of `path` in full, handing the interleaved `f32` samples to
+/// Decodes the chosen (or best) audio stream of `path` in full, handing the interleaved `f32` samples to
 /// `sink` as they come, and returns the sample rate and channel count.
 pub(crate) fn decode_audio(
     path: &Path,
@@ -31,9 +31,7 @@ pub(crate) fn decode_audio(
     sink: &mut dyn FnMut(&[f32]) -> Result<(), MediaError>,
 ) -> Result<(u32, u32), MediaError> {
     let mut input = open_input(path)?;
-    let stream = input
-        .streams()
-        .best(media::Type::Audio)
+    let stream = find_stream(&input, media::Type::Audio, options.stream)
         .ok_or_else(|| MediaError::NoAudioStream(path.to_owned()))?;
     let stream_index = stream.index();
     let mut decoder = ffmpeg::codec::context::Context::from_parameters(stream.parameters())

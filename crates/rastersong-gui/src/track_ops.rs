@@ -31,13 +31,13 @@ pub fn move_track(
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use rastersong_engine::ResourceId;
 
     use super::*;
 
     fn tracks(count: usize) -> Vec<ProjectTrack> {
         (0..count)
-            .map(|i| ProjectTrack::new(format!("t{i}"), PathBuf::from("x.wav")))
+            .map(|i| ProjectTrack::new(format!("t{i}"), ResourceId(1)))
             .collect()
     }
 

@@ -480,7 +480,9 @@ memory maps read ordinary files. Saving rewrites the zip, copying unchanged entr
      old `render <video> <audio> <graph> <out>` stays; without an Audio Output the CLI writes the mix of the audio
      tracks)*.
 2. **Resources and graphs**
-   - [ ] **feature** Resources panel (linked resources only) and the multi-stream import dialog.
+   - [x] **feature** Resources panel (linked resources only) and the multi-stream import dialog *(done: see
+     [Resources](app.md#resources) and [Decisions](decisions.md#resources-panel-october-2026); **+ Track**, dropping
+     onto an existing track, and Relocate for missing files are still to come)*.
    - [ ] **feature** Graphs as resources; Input and Output port nodes replacing Video Input and Audio Input; the
      passthrough template.
    - [ ] **feature** Graph layers: items, bindings in the item inspector, stacking, mute/solo, pre-roll setting.

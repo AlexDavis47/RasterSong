@@ -241,6 +241,8 @@ pub struct TimelineResponse {
     pub toggle_mode: bool,
     /// The snapping button was clicked: turn snapping on or off.
     pub toggle_snap: bool,
+    /// Screen x where the lanes start, for turning a pointer position into time.
+    pub lanes_left: f32,
 }
 
 /// How close (pixels) the pointer must be to a loop edge on the ruler to drag that edge.
@@ -559,6 +561,7 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
     let background = ui.allocate_rect(area, Sense::click_and_drag());
     let areas = Areas::new(area, &model.tracks);
     let lanes_left = areas.lanes.left();
+    response.lanes_left = lanes_left;
     let width = areas.lanes.width().max(1.0);
 
     let duration = (model.frame_count as f64 / model.frame_rate).max(1e-6);

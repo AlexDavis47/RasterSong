@@ -13,7 +13,9 @@ use ffmpeg_next as ffmpeg;
 
 pub use writer::LosslessWriter;
 
-use crate::{AudioClip, AudioOptions, MediaBackend, MediaError, VideoSource};
+use crate::{
+    AudioClip, AudioOptions, MediaBackend, MediaError, StreamInfo, StreamKind, VideoSource,
+};
 
 #[derive(Debug)]
 pub struct FfmpegBackend {
@@ -28,8 +30,17 @@ impl FfmpegBackend {
 }
 
 impl MediaBackend for FfmpegBackend {
-    fn open_video(&self, path: &Path) -> Result<Box<dyn VideoSource>, MediaError> {
-        Ok(Box::new(video::FfmpegVideoSource::open(path)?))
+    fn open_video_stream(
+        &self,
+        path: &Path,
+        stream: Option<usize>,
+    ) -> Result<Box<dyn VideoSource>, MediaError> {
+        Ok(Box::new(video::FfmpegVideoSource::open(path, stream)?))
+    }
+
+    fn streams(&self, path: &Path) -> Result<Vec<StreamInfo>, MediaError> {
+        let input = open_input(path)?;
+        Ok(input.streams().filter_map(|s| stream_info(&s)).collect())
     }
 
     fn load_audio(&self, path: &Path, options: AudioOptions) -> Result<AudioClip, MediaError> {
@@ -74,6 +85,71 @@ fn open_input(path: &Path) -> Result<ffmpeg::format::context::Input, MediaError>
     ffmpeg::format::input(path).map_err(|e| MediaError::Open {
         path: path.to_owned(),
         reason: e.to_string(),
+    })
+}
+
+/// Stream `index` of `input` if it is of `kind`, or the best stream of `kind` for `None`.
+fn find_stream(
+    input: &ffmpeg::format::context::Input,
+    kind: ffmpeg::media::Type,
+    index: Option<usize>,
+) -> Option<ffmpeg::format::stream::Stream<'_>> {
+    match index {
+        None => input.streams().best(kind),
+        Some(index) => input
+            .stream(index)
+            .filter(|s| s.parameters().medium() == kind),
+    }
+}
+
+/// What the import dialog lists about `stream`: `None` for anything but a video or audio
+/// stream, and for cover pictures.
+fn stream_info(stream: &ffmpeg::format::stream::Stream<'_>) -> Option<StreamInfo> {
+    use ffmpeg::format::stream::Disposition;
+    let disposition = stream.disposition();
+    if disposition.contains(Disposition::ATTACHED_PIC) {
+        return None;
+    }
+    let parameters = stream.parameters();
+    let context = ffmpeg::codec::context::Context::from_parameters(parameters.clone()).ok()?;
+    let kind = match parameters.medium() {
+        ffmpeg::media::Type::Video => {
+            let video = context.decoder().video().ok()?;
+            let rate = stream.avg_frame_rate();
+            StreamKind::Video {
+                width: video.width(),
+                height: video.height(),
+                frame_rate: if rate.denominator() == 0 {
+                    0.0
+                } else {
+                    f64::from(rate)
+                },
+            }
+        }
+        ffmpeg::media::Type::Audio => {
+            let audio = context.decoder().audio().ok()?;
+            StreamKind::Audio {
+                sample_rate: audio.rate(),
+                channels: u32::from(audio.channels()),
+            }
+        }
+        _ => return None,
+    };
+    let metadata = stream.metadata();
+    let tag = |key: &str| {
+        metadata
+            .get(key)
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_owned)
+    };
+    Some(StreamInfo {
+        index: stream.index(),
+        kind,
+        codec: parameters.id().name().to_owned(),
+        title: tag("title"),
+        language: tag("language").filter(|l| l != "und"),
+        default: disposition.contains(Disposition::DEFAULT),
     })
 }
 

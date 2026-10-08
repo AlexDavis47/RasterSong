@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 
 use rastersong_graph::nodes::DEFAULT_BUS;
-use rastersong_media::Rational;
+use rastersong_media::{AudioOptions, Rational};
 use serde::{Deserialize, Serialize};
 
 /// Seconds over which audio fades in at the start of each item and out at its end, so cuts
@@ -198,6 +198,9 @@ pub struct TrackSpec {
     pub name: String,
     pub kind: TrackKind,
     pub path: PathBuf,
+    /// The stream of the file the track plays, by its index in the file. `None` is the file's
+    /// best stream of the track's kind.
+    pub stream: Option<usize>,
     pub items: Vec<Item>,
     /// The output bus an audio track is summed into in the track mix.
     pub bus: String,
@@ -213,9 +216,18 @@ impl TrackSpec {
             name: name.into(),
             kind,
             path: path.into(),
+            stream: None,
             items: vec![Item::whole(0.0)],
             bus: DEFAULT_BUS.to_owned(),
             gain: 1.0,
+        }
+    }
+
+    /// How an audio track's file is decoded: its stream, at its own rate and channels.
+    pub fn audio_options(&self) -> AudioOptions {
+        AudioOptions {
+            stream: self.stream,
+            ..AudioOptions::default()
         }
     }
 }

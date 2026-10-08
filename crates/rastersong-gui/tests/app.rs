@@ -1,7 +1,7 @@
 //! Interaction tests on the real UI, driven headlessly with the fake media backend and raw
 //! pointer and keyboard events.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -9,7 +9,8 @@ use eframe::egui::{self, Event, Modifiers, PointerButton, Pos2, pos2, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use rastersong_engine::{
-    AudioClip, FakeBackend, FakeVideo, GraphDesc, Project, ProjectTrack, Rational,
+    AudioClip, FakeBackend, FakeVideo, GraphDesc, Project, Rational, ResourceKind, StreamInfo,
+    StreamKind, TrackKind,
 };
 use rastersong_gui::{App, AudioOut, STARTER_GRAPH};
 
@@ -43,12 +44,8 @@ fn app_with_project(edit: impl FnOnce(&mut Project)) -> App {
             },
         );
     let mut project = Project::new(GraphDesc::from_json(STARTER_GRAPH).unwrap());
-    project
-        .video_tracks
-        .push(ProjectTrack::new("video".into(), PathBuf::from("clip")));
-    project
-        .audio_tracks
-        .push(ProjectTrack::new("audio".into(), PathBuf::from("song")));
+    project.add_track(TrackKind::Video, "video", "clip");
+    project.add_track(TrackKind::Audio, "audio", "song");
     edit(&mut project);
     App::new(Arc::new(backend), project, None, AudioOut::silent(None))
 }
@@ -1072,13 +1069,13 @@ fn opening_a_video_with_sound_adds_its_audio_track() {
         AudioOut::silent(None),
     );
     app.open_video(PathBuf::from("movie.mp4"));
-    let tracks: Vec<(String, PathBuf)> = app
+    let tracks: Vec<(String, Option<&Path>)> = app
         .project()
         .audio_tracks
         .iter()
-        .map(|t| (t.name.clone(), t.path.clone()))
+        .map(|t| (t.name.clone(), app.project().track_path(t)))
         .collect();
-    assert_eq!(tracks, [("movie".to_owned(), PathBuf::from("movie.mp4"))]);
+    assert_eq!(tracks, [("movie".to_owned(), Some(Path::new("movie.mp4")))]);
     // Opening it again doesn't add the track twice.
     app.open_video(PathBuf::from("movie.mp4"));
     assert_eq!(app.project().audio_tracks.len(), 1);
@@ -1247,4 +1244,149 @@ fn an_unused_parameter_with_a_wire_stays_visible_and_says_why() {
     harness.run_steps(3);
     harness.get_by_label("Width");
     harness.get_by_label_contains("Unused: only applies when Shape is pulse");
+}
+
+fn stream(index: usize, kind: StreamKind, title: Option<&str>) -> StreamInfo {
+    StreamInfo {
+        index,
+        kind,
+        codec: "fake".into(),
+        title: title.map(str::to_owned),
+        language: None,
+        default: index == 0,
+    }
+}
+
+/// An app whose backend knows `concert.mkv` (a video and two audio streams) and `kick.wav`.
+fn import_app() -> App {
+    let audio = || AudioClip {
+        sample_rate: 8000,
+        channels: 1,
+        samples: vec![0.0; 8000].into(),
+    };
+    let backend = FakeBackend::new()
+        .with_video(
+            "concert.mkv",
+            FakeVideo {
+                width: 64,
+                height: 36,
+                frame_count: 30,
+                frame_rate: Rational::new(30, 1),
+            },
+        )
+        .with_audio("concert.mkv", audio())
+        .with_streams(
+            "concert.mkv",
+            vec![
+                stream(
+                    0,
+                    StreamKind::Video {
+                        width: 64,
+                        height: 36,
+                        frame_rate: 30.0,
+                    },
+                    None,
+                ),
+                stream(
+                    1,
+                    StreamKind::Audio {
+                        sample_rate: 8000,
+                        channels: 1,
+                    },
+                    Some("Band"),
+                ),
+                stream(
+                    2,
+                    StreamKind::Audio {
+                        sample_rate: 8000,
+                        channels: 1,
+                    },
+                    Some("Crowd"),
+                ),
+            ],
+        )
+        .with_audio("kick.wav", audio());
+    App::new(
+        Arc::new(backend),
+        Project::new(GraphDesc::from_json(STARTER_GRAPH).unwrap()),
+        None,
+        AudioOut::silent(None),
+    )
+}
+
+#[test]
+fn importing_a_file_with_several_streams_asks_which_to_import() {
+    let mut app = import_app();
+    app.import_files([PathBuf::from("kick.wav"), PathBuf::from("concert.mkv")]);
+    // One stream: imported at once.
+    let names = |app: &App| -> Vec<(String, ResourceKind, Option<usize>)> {
+        app.project()
+            .resources
+            .iter()
+            .map(|r| (r.name.clone(), r.kind, r.stream))
+            .collect()
+    };
+    assert_eq!(names(&app), [("kick".into(), ResourceKind::Audio, Some(0))]);
+    assert_eq!(app.pending_import().unwrap().streams.len(), 3);
+
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    harness.get_by_label("Found multiple tracks in this media");
+    // Leave out the crowd.
+    harness
+        .get_by_label("Audio 2: Crowd · fake · 8000 Hz · mono")
+        .click();
+    harness.run_steps(1);
+    harness.get_by_label("Import").click();
+    harness.run_steps(2);
+    let app = harness.state();
+    assert!(app.pending_import().is_none());
+    assert_eq!(
+        names(app),
+        [
+            ("kick".into(), ResourceKind::Audio, Some(0)),
+            ("concert.mkv".into(), ResourceKind::Video, Some(0)),
+            ("concert Band".into(), ResourceKind::Audio, Some(1)),
+        ]
+    );
+    // Nothing is on the timeline until a resource is placed there.
+    assert!(app.project().audio_tracks.is_empty());
+}
+
+#[test]
+fn resources_become_tracks_and_take_their_tracks_with_them() {
+    let mut app = import_app();
+    app.import_files([PathBuf::from("concert.mkv")]);
+    app.finish_import(Some(&[true, true, false]));
+    let ids: Vec<_> = app.project().resources.iter().map(|r| r.id).collect();
+    assert_eq!(
+        app.add_resource_track(ids[1], 1.5).as_deref(),
+        Some("concert Band")
+    );
+    app.add_resource_track(ids[0], 0.0);
+    let project = app.project();
+    assert_eq!(project.audio_tracks[0].items[0].position, 1.5);
+    assert_eq!(project.video_tracks.len(), 1);
+    let band = project.timeline();
+    let band = band
+        .tracks
+        .iter()
+        .find(|t| t.name == "concert Band")
+        .unwrap();
+    assert_eq!((band.kind, band.stream), (TrackKind::Audio, Some(1)));
+    // The track got an audio input node, as tracks always do.
+    assert!(app.editor().to_desc().nodes.iter().any(|n| {
+        n.params
+            .values()
+            .any(|v| format!("{v:?}").contains("concert Band"))
+    }));
+
+    // A cancelled import adds nothing.
+    app.import_files([PathBuf::from("concert.mkv")]);
+    app.finish_import(None);
+    assert_eq!(app.project().resources.len(), 2);
+
+    app.remove_resource(ids[1]);
+    assert!(app.project().audio_tracks.is_empty());
+    assert_eq!(app.project().resources.len(), 1);
 }

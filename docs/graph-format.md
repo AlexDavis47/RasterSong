@@ -45,9 +45,12 @@ region:
 
 - `timebase`: the project's `width`, `height` and `frame_rate` (`"30"` or `"30000/1001"`). Left out, the first
   video track's are used, or 1920×1080 at 30 fps without one. See [Timeline](engine.md#timeline).
+- `resources`: the media the project uses, as the Resources panel lists them. Each has an `id` (what tracks point
+  at), a `name`, a `kind` (`video` or `audio`), the linked file's `path`, and the `stream` it plays, by its index in
+  the file (left out: the file's best stream of that kind).
 - `video_tracks` and `audio_tracks`: each a `name` (the name input nodes select it by, unique among all tracks),
-  a media `path`, its `items`, and `volume` and `muted` for playback. Left out, `items` is one item playing the
-  whole file from the start.
+  the `resource` it plays (of its own kind), its `items`, and `volume` and `muted` for playback. Left out, `items`
+  is one item playing the whole resource from the start.
 - An item: `position` (seconds into the project), `start` and `end` (its in and out points, in seconds of the
   file; no `end` plays to the end of the file), `rate` (seconds of file per second of timeline, 1 by default) and
   `muted`.
@@ -55,15 +58,19 @@ region:
 ```json
 { "version": 0,
   "timebase": { "width": 1280, "height": 720, "frame_rate": "30" },
-  "video_tracks": [ { "name": "clip.mp4", "path": "media/clip.mp4" } ],
-  "audio_tracks": [ { "name": "song", "path": "media/song.wav", "volume": 0.8,
+  "resources": [ { "id": 1, "name": "clip.mp4", "kind": "video", "path": "media/clip.mp4", "stream": 0 },
+                 { "id": 2, "name": "song", "kind": "audio", "path": "media/song.wav" },
+                 { "id": 3, "name": "kick", "kind": "audio", "path": "media/kick.wav" } ],
+  "video_tracks": [ { "name": "clip.mp4", "resource": 1 } ],
+  "audio_tracks": [ { "name": "song", "resource": 2, "volume": 0.8,
                       "items": [ { "position": 1.5, "start": 12.0, "end": 40.0 } ] },
-                    { "name": "kick", "path": "media/kick.wav", "bus": "Stems" } ],
+                    { "name": "kick", "resource": 3, "bus": "Stems" } ],
   "buses": [ { "name": "Main", "channels": 2 }, { "name": "Stems", "channels": 1 } ],
   "graph": { "version": 0, "nodes": [] } }
 ```
 
-Media paths inside the project's folder are saved relative to it, so a project folder can be moved or shared.
+Resource paths inside the project's folder are saved relative to it, so a project folder can be moved or shared.
+A track pointing at a resource the project doesn't have, or one of the other kind, is an error on open.
 Project files have the same version-0 policy. Graphs can also be imported and exported on their own. The project
 also keeps the Audio Output rate and the *max warmup frames* limit (omitted from the file while at their defaults).
 `buses` lists the output buses, master first (omitted while it is just Main in stereo), and a track's `bus` is the

@@ -28,7 +28,8 @@ pub use offline::{FrameSink, RenderSettings, RenderedFrame, render};
 pub use project::{
     DEFAULT_INSPECT_RATE, DEFAULT_MAX_WARMUP_FRAMES, Edge, INSPECT_RATE_RANGE, ItemRef, LoopRegion,
     MAX_WARMUP_FRAMES_LIMIT, MIN_ITEM_LENGTH, PROJECT_EXTENSION, PROJECT_VERSION, Project,
-    ProjectTrack, RATE_RANGE, TimelineMode, snap_offset,
+    ProjectTrack, RATE_RANGE, Resource, ResourceId, ResourceKind, TimelineMode, resource_name_for,
+    snap_offset,
 };
 pub use rastersong_graph::dsp::Fft;
 pub use rastersong_graph::nodes::support::UNBOUNDED_WARMUP;
@@ -46,8 +47,8 @@ pub use rastersong_graph::{
 };
 pub use rastersong_media::{
     AudioCache, AudioClip, AudioOptions, BackendInfo, FakeBackend, FakeVideo, FfmpegBackend,
-    LibraryInfo, LosslessWriter, MediaBackend, MediaError, Rational, Samples, Version, VideoFrame,
-    VideoInfo,
+    LibraryInfo, LosslessWriter, MediaBackend, MediaError, Rational, Samples, StreamInfo,
+    StreamKind, Version, VideoFrame, VideoInfo,
 };
 pub use renderer::{
     DEFAULT_AUDIO_TRACK, OutputSize, RenderInfo, RenderTrack, Renderer, TrackMedia, VIDEO_SOURCE,

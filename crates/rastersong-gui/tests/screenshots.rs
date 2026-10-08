@@ -13,7 +13,7 @@ use eframe::egui;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use rastersong_engine::{
-    AudioClip, FakeBackend, FakeVideo, GraphDesc, Project, ProjectTrack, Rational, TimelineMode,
+    AudioClip, FakeBackend, FakeVideo, GraphDesc, Project, Rational, TimelineMode, TrackKind,
 };
 use rastersong_gui::theme::WireStyle;
 use rastersong_gui::{App, AudioOut, STARTER_GRAPH, ThemeChoice};
@@ -55,14 +55,10 @@ fn app_edited(
             },
         );
     let mut project = Project::new(GraphDesc::from_json(STARTER_GRAPH).unwrap());
-    project
-        .video_tracks
-        .push(ProjectTrack::new("video".into(), PathBuf::from("clip")));
+    project.add_track(TrackKind::Video, "video", "clip");
     project.timeline_mode = mode;
     for name in ["audio", "drums", "bass"].into_iter().take(tracks) {
-        project
-            .audio_tracks
-            .push(ProjectTrack::new(name.into(), PathBuf::from("song")));
+        project.add_track(TrackKind::Audio, name, "song");
     }
     edit(&mut project);
     let mut app = App::new(Arc::new(backend), project, None, AudioOut::silent(None));
@@ -507,8 +503,10 @@ fn track_screenshots() {
     wait_for_frames(&mut harness, 10);
     save(&mut harness, "dark-16-two-tracks");
 
-    // Drag the second header above the first.
-    let from = egui::pos2(205.0, 842.0);
+    // Drag the second header above the first. The headers start where the timeline does, after
+    // the Resources panel.
+    let x = harness.state().timeline_area().left() + 197.0;
+    let from = egui::pos2(x, 842.0);
     harness.event(egui::Event::PointerMoved(from));
     harness.run_steps(1);
     harness.event(egui::Event::PointerButton {
@@ -519,12 +517,12 @@ fn track_screenshots() {
     });
     harness.run_steps(1);
     for y in [830.0, 800.0, 760.0, 742.0] {
-        harness.event(egui::Event::PointerMoved(egui::pos2(205.0, y)));
+        harness.event(egui::Event::PointerMoved(egui::pos2(x, y)));
         harness.run_steps(2);
     }
     save(&mut harness, "dark-17-track-drag");
     harness.event(egui::Event::PointerButton {
-        pos: egui::pos2(205.0, 742.0),
+        pos: egui::pos2(x, 742.0),
         button: egui::PointerButton::Primary,
         pressed: false,
         modifiers: egui::Modifiers::NONE,
