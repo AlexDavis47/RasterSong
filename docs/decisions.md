@@ -154,8 +154,10 @@ setting sets the default; the keybind does the opposite for one action. See the
 
 The one-video timeline, single graph and plain JSON project become a multi-track editor with several graphs. The
 plan is in the [roadmap](roadmap.md#timeline-resources-and-routing); the reasons for its main choices are below.
-The graph-layer choices (*stacked graph layers*, *layer below*, track links) are superseded by
-[Timeline routing: folders and graphs as FX](#timeline-routing-folders-and-graphs-as-fx-october-2026).
+The graph-layer choices (*stacked graph layers*, *layer below*, track links) were superseded by
+[Timeline routing: folders and graphs as FX](#timeline-routing-folders-and-graphs-as-fx-october-2026), which the
+[Premiere-style timeline](#premiere-style-timeline-october-2026) in turn replaced; stacked graphs came back there as
+graph tracks with a source per port.
 
 - **Explicit over hidden.** Every signal enters a graph through a port that something visibly filled; no
   fallbacks, no situational overrides. The old Audio Output rules (replace the source audio, except when nothing is
@@ -195,8 +197,8 @@ The graph-layer choices (*stacked graph layers*, *layer below*, track links) are
 
 ### Video and audio tracks are separate lists (October 2026)
 
-*Superseded by [Timeline routing: folders and graphs as FX](#timeline-routing-folders-and-graphs-as-fx-october-2026),
-which replaces the two lists with one track tree; the code still has two lists until roadmap stage 2b.*
+*Stage 2b replaced the two lists with one track tree; the [Premiere-style timeline](#premiere-style-timeline-october-2026)
+brings them back, now with a third list for graph tracks.*
 
 Built as the first stage of the timeline model. The project keeps video tracks and audio tracks in two lists, as
 Premiere does, rather than one mixed stack: the track mix needs an order among video tracks (the top one with an
@@ -399,6 +401,8 @@ plain data. See [Inspecting connections](roadmap.md#inspecting-connections).
 
 ### Timeline routing: folders and graphs as FX (October 2026)
 
+*Superseded by [Premiere-style timeline](#premiere-style-timeline-october-2026); kept as the record of why.*
+
 Hands-on use of graph layers showed two problems. *Layer below* was hard to reason about, because a stack of graph
 lanes sat apart from the tracks it read. It was also wrong for audio: the engine never mixed the audio tracks (the
 app and the CLI summed them only after rendering), so a bottom layer's audio input read zeros. Two models were
@@ -443,6 +447,9 @@ See [Timeline, resources and routing](roadmap.md#timeline-resources-and-routing)
 
 ### Routing in the renderer (October 2026)
 
+*Superseded by [Premiere-style timeline](#premiere-style-timeline-october-2026). Mixing inside the renderer, the
+real-time mixer path and the single-graph form carry over; FX chains, receives and through nodes are removed.*
+
 How stage 2b built the routing above ([Routing](engine.md#routing)):
 
 - **One routed renderer.** The renderer walks the track tree each frame: a track's items (each through its item
@@ -481,6 +488,8 @@ ports.
 
 ### The track tree (October 2026)
 
+*Superseded by [Premiere-style timeline](#premiere-style-timeline-october-2026): tracks are in sections again.*
+
 The second step of roadmap stage 2b. The separate video and audio lists become one list of tracks, and folders
 group them.
 
@@ -508,6 +517,44 @@ group them.
   valid where it lands (no deeper than inside the folder above, no shallower than leaves the track below
   stranded). Collapsed folders' tracks are hidden rows, so a drop below a collapsed folder lands after everything
   in it.
+
+### Premiere-style timeline (October 2026)
+
+Replaces [Timeline routing: folders and graphs as FX](#timeline-routing-folders-and-graphs-as-fx-october-2026) and
+[The track tree](#the-track-tree-october-2026). Hands-on use of the Reaper-style routing showed it is very flexible
+but far more than most people making a video want to learn: folders, sends, receives and FX chains on four kinds of
+host. RasterSong is a **video editor** whose effects are node graphs, so the timeline works like Premiere or
+Resolve, and only graph inputs are new.
+
+- **Sections, not a tree.** The timeline has a **Graphs** section on top, then **Video**, then **Audio**, divided
+  by a thick line. Tracks stay in their section and reorder within it. An **Automation** section, for automation
+  curves only, joins with them (stage 5). Raw and text files are not a section of their own: they are read as
+  video or audio with layout settings, so they go on video or audio tracks.
+- **Each section mixes the way its users expect.** Video tracks layer: the top track with an item at a frame wins.
+  Audio tracks are summed with volume, mute and solo. Both mixes are made inside the renderer, as the routing
+  rebuild already did.
+- **Every track is also a stem.** A graph can read any track on its own, before its volume and mute, as well as
+  the video mix and the audio mix. Mute, volume and solo shape only the mix, so a kick track that drives an effect
+  can be muted and still drive it.
+- **Graph tracks hold graph items; the topmost active one is the output.** Items on one graph track never overlap.
+  At each frame the master picture and sound are the Video Output and Audio Output of the topmost active graph
+  item, or the plain mixes where no graph item is active. Graph sound is not summed, since every graph passes its
+  sound through and summing would double it. A muted graph track is skipped.
+- **A graph item picks a source for each input port.** The choices are *Below*, the video or audio mix, any track's
+  stem, any output port of a graph on a track **below**, or nothing (zeros, with a note). Sources only point down,
+  so graphs are evaluated bottom to top and can't form a loop.
+- **Below is the default for the main ports, and it is matched by kind.** `In: Video` reads the main Video Output
+  of the next active graph below, or the video mix with none; `In: Audio` the same for sound. Stacking a graph on
+  another chains them unless changed. The graph layers' *Layer below* went wrong because the audio input looked for
+  the track under it, not the sound under it. Other ports start on the track of the same name if one exists.
+- **No passthrough rule.** A new graph is the template (`In: Video` → Video Output, `In: Audio` → Audio Output), so
+  a fresh graph item looks like nothing happened. A graph without an Audio Output is silent there, with a note,
+  rather than passing sound through by an injected node.
+- **Dropping media places its whole source.** Dragging a resource onto the timeline places every resource from the
+  same file (the video on a video track, each audio stream on an audio track) at the same time, grouped. Holding
+  **Alt** places only the one dragged. Alt, because Shift already means "don't snap" during a drop.
+- **Kept from the routing rebuild:** item groups, output buses, mixing inside the renderer, latency alignment and
+  per-item pre-roll. **Removed:** folders, master sends, receives, FX chains and the FX window.
 
 ## Open
 

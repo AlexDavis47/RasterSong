@@ -1,7 +1,8 @@
 # Concepts
 
-RasterSong is a unique video editing tool that allows video and audio to merge, creating interesting or glitchy
-video effects that are directly tied to audio.
+RasterSong is a video editor whose effects are node graphs. The timeline works like Premiere or Resolve: video
+tracks layer, audio tracks mix, and graph tracks above them apply effects in which video and audio merge, creating
+interesting or glitchy video effects that are directly tied to audio.
 
 ## Core Concept
 
@@ -64,18 +65,21 @@ Imagine you're making a music video. You've got your video, and you've got your 
 
 ### Basic Workflow
 
-1. **Import your video file** - It becomes a video track, which reaches the graph through its Video In port as an RGB signal
-2. **Import your music file** - It becomes an audio track, which reaches the graph through an Audio In port as your modulator
-3. **Split the carrier** - A Split node turns the RGB signal into red, green, and blue signals
-4. **Split the modulator** - A three-band splitter outputs:
+1. **Drop your video file on the timeline** - Its picture lands on a video track and its sound on an audio track
+2. **Drop your music file** - It lands on an audio track; a graph can read it as your modulator
+3. **Drop a graph on a graph track** - A new graph shows the timeline unchanged: its In: Video and In: Audio ports
+   read what is below it, wired straight to the outputs. Its item picks what each other input port reads, such as
+   the music track
+4. **Split the carrier** - A Split node turns the RGB signal into red, green, and blue signals
+5. **Split the modulator** - A three-band splitter outputs:
    - Bass track
    - Mids track
    - Treble track
-5. **Apply amplitude modulation** - Create an AM node and connect:
+6. **Apply amplitude modulation** - Create an AM node and connect:
    - Red carrier → carrier input
    - Bass track → modulator input
    - Repeat for green (mids) and blue (treble)
-6. **Combine** - A Combine node rebuilds the RGB signal and feeds the Output node
+7. **Combine** - A Combine node rebuilds the RGB signal and feeds the Video Output node
 
 ### What Happens
 

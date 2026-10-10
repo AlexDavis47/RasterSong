@@ -1,6 +1,7 @@
 # RasterSong
 
-RasterSong is a video/audio editing tool with a focus on complex datamoshing.
+RasterSong is a video editor with a focus on complex datamoshing: a familiar multi-track timeline (video tracks
+layer, audio tracks mix) whose effects are node graphs.
 
 Pull a kick drum out of your track, use it to amplitude-modulate the red channel, and the red channel waves
 around with every hit. You build effects as a node graph (split, combine, amplitude modulation, delay, bit crush,
