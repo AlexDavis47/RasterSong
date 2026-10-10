@@ -12,7 +12,6 @@ use rastersong_engine::{
 /// An audio track the sound of the output can be made of, when the graph renders none.
 #[derive(Debug, Clone)]
 pub struct SourceTrack {
-    pub name: String,
     /// The bus it is summed into in the track mix.
     pub bus: String,
     pub track: MixTrack,
@@ -98,14 +97,9 @@ impl FrameSink for Output {
                         *sample_rate,
                         *channels,
                     )?,
-                    // The tracks as placed on the timeline: the bus's track mix, or the one
-                    // passed through.
-                    AudioSink::TrackMix | AudioSink::Passthrough(_) => {
-                        let only = match sink {
-                            AudioSink::Passthrough(name) => Some(name.as_str()),
-                            _ => None,
-                        };
-                        let mixed = mix(tracks, only, bus, info, *audio_rate);
+                    // The tracks as placed on the timeline: the bus's audio mix.
+                    AudioSink::TrackMix => {
+                        let mixed = mix(tracks, bus, info, *audio_rate);
                         LosslessWriter::create(
                             path,
                             info.width,
@@ -141,25 +135,12 @@ impl FrameSink for Output {
     }
 }
 
-/// The project's length of the `tracks` routed to `bus` (or only the one named `only`, at full
-/// volume, wherever it is routed) mixed to the bus's channels at `rate`.
-fn mix(
-    tracks: &[SourceTrack],
-    only: Option<&str>,
-    bus: &Bus,
-    info: &RenderInfo,
-    rate: u32,
-) -> AudioClip {
+/// The project's length of the `tracks` routed to `bus`, mixed to the bus's channels at `rate`.
+fn mix(tracks: &[SourceTrack], bus: &Bus, info: &RenderInfo, rate: u32) -> AudioClip {
     let tracks = tracks
         .iter()
-        .filter(|t| match only {
-            Some(name) => t.name == name,
-            None => t.bus == bus.name,
-        })
-        .map(|t| MixTrack {
-            gain: if only.is_some() { 1.0 } else { t.track.gain },
-            ..t.track.clone()
-        })
+        .filter(|t| t.bus == bus.name)
+        .map(|t| t.track.clone())
         .collect();
     let seconds = info.frames as f64 / info.frame_rate.as_f64();
     let channels = bus.channels as usize;
@@ -198,7 +179,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_mix_follows_the_timeline_and_its_bus_and_passthrough_picks_one_track() {
+    fn the_mix_follows_the_timeline_and_its_bus() {
         let clip = |value| {
             Arc::new(AudioClip {
                 sample_rate: 4,
@@ -208,7 +189,6 @@ mod tests {
         };
         let tracks = vec![
             SourceTrack {
-                name: "a".into(),
                 bus: "Main".into(),
                 track: MixTrack {
                     clip: clip(0.5),
@@ -217,7 +197,6 @@ mod tests {
                 },
             },
             SourceTrack {
-                name: "b".into(),
                 bus: "Stems".into(),
                 track: MixTrack {
                     clip: clip(0.25),
@@ -241,22 +220,18 @@ mod tests {
         // 2 s at 2 Hz on the stereo Main bus: only track `a` is routed to it. Each item's first
         // sample falls on its edge, where its fade in starts from silence ...
         let main = Bus::main();
-        let mixed = mix(&tracks, None, &main, &info, 2);
+        let mixed = mix(&tracks, &main, &info, 2);
         assert_eq!((mixed.sample_rate, mixed.channels), (2, 2));
         assert_eq!(*mixed.samples, [0.0, 0.0, 0.5, 0.5, 0.0, 0.0, 0.0, 0.0]);
-        // ... `b` plays on its own mono bus at its volume, from 1 s ...
+        // ... and `b` plays on its own mono bus at its volume, from 1 s.
         let stems = Bus {
             name: "Stems".into(),
             channels: 1,
         };
-        let stem = mix(&tracks, None, &stems, &info, 2);
+        let stem = mix(&tracks, &stems, &info, 2);
         assert_eq!(
             (stem.channels, &*stem.samples),
             (1, &[0.0, 0.0, 0.0, 0.125][..])
         );
-        // ... and at full volume, on any bus, when passed through on its own.
-        let alone = mix(&tracks, Some("b"), &main, &info, 2);
-        assert_eq!(alone.samples[..6], [0.0; 6]);
-        assert_eq!(alone.samples[6..], [0.25; 2]);
     }
 }

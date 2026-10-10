@@ -23,11 +23,7 @@ impl GraphEditor {
     /// The title an input port shows unless the user named it: the port it reads.
     pub(super) fn port_title(&self, node: &EditorNode) -> Option<String> {
         let (port, kind) = port_of(&node.kind, &node.params)?;
-        let key = match kind {
-            InputKind::Video => "editor.port.video_title",
-            InputKind::Audio => "editor.port.audio_title",
-        };
-        Some(tr_args(key, &[("port", port)]))
+        Some(port_label(port, kind))
     }
 
     /// Adds an output when the graph has none.
@@ -49,6 +45,16 @@ impl GraphEditor {
     pub(super) fn user_addable(kind: &NodeType) -> bool {
         kind.spec.addable
     }
+}
+
+/// How input port `port`, read as `kind`, is named wherever it is shown: "In: Video" with the
+/// kind's glyph.
+pub fn port_label(port: &str, kind: InputKind) -> String {
+    let key = match kind {
+        InputKind::Video => "editor.port.video_title",
+        InputKind::Audio => "editor.port.audio_title",
+    };
+    tr_args(key, &[("port", port)])
 }
 
 #[cfg(test)]

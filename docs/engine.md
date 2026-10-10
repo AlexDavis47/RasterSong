@@ -27,7 +27,7 @@ of every graph is one project frame, frame `n` covering `n / fps` to `(n + 1) / 
 lasts to the end of its last item (`timeline.rs`).
 
 Tracks hold **items** of one media file: a position on the timeline, in and out points in the file and a rate,
-all in seconds so they survive a change of frame rate. Each track is read for the [routing](#routing) through a
+all in seconds so they survive a change of frame rate. Each track is read for the [composition](#composition) through a
 track reader in the renderer:
 
 - **Video tracks** are conformed to the grid: project frame `n` shows the file's frame displayed at the item's
@@ -129,28 +129,26 @@ rough version of the full-resolution render. Export always renders at full proje
 ## Track mix and output buses
 
 The project's master audio is a set of **output buses** (`Bus`: a name and 1 to 8 channels), Main in stereo by
-default; the first is the master, which the preview plays and the export writes. Each top-level track (folder or
-not) is routed to one bus (Main by default), and a track inside a folder goes where its top-level folder goes. A
-track's level there is its volume times its folders' volumes; it is left out when it or a folder it is in is muted
-or has its master send off. The renderer mixes the tree itself ([Routing](#routing)); for the app's real-time
-mixer, which plays the track mix while no FX renders sound, the project multiplies these levels down the tree into
-each track's own (`Project::timeline`).
+default; the first is the master, which the preview plays and the export writes. Each audio track is routed to one
+bus (Main by default) at its volume, and left out when it is muted. The renderer mixes the tracks itself
+([Composition](#composition)); the app's real-time mixer, which plays the mix while the graphs leave the sound
+alone, gets each track's level from the project (`Project::timeline`).
 
-The **track mix** is what the timeline plays with no FX in the way: the picture of the top video track with an
-item at each frame, and for each bus the sum of the unmuted tracks routed to it at their volumes. A mono track plays in every channel of its bus; any other track's channels go to the bus's
-channels in order. While any track is **soloed**, only the soloed tracks of its kind (video or audio) are in the mix, and soloing a
-folder solos everything in it;
-a muted item reads as a gap everywhere, graphs included. Bypassing every FX shows the track mix's picture and plays
-the master's track mix.
+The **track mix** is what the timeline plays with no graph item in the way: the picture of the top video track with
+an item at each frame, and for each bus the sum of the unmuted tracks routed to it at their volumes. A mono track
+plays in every channel of its bus; any other track's channels go to the bus's channels in order. While any track is
+**soloed**, only the soloed tracks of its kind (video or audio) are in the mix. Mute and solo only shape the mix:
+graphs can still read every track on its own. A muted item reads as a gap everywhere, graphs included. Bypassing
+every graph shows the track mix's picture and plays the master's track mix.
 
 ## Audio Output
 
 A graph can have one **Audio Output** node per bus (optional; add it from the node menu), naming its bus in its
-`bus` setting (Main by default). As an FX, its sound replaces the sound of what the FX is on; a graph without one
-passes that sound through ([Routing](#routing)). With no FX rendering sound, or every FX bypassed, the bus plays
-its track mix; a track received straight into the master's only sounding FX is also used as it is, not
-re-rendered. The renderer renders one bus, the master by default (the CLI's
-`--bus` picks another): only the Audio Output writing to it is compiled.
+`bus` setting (Main by default). On a graph track, its sound is the master's where the item is the topmost one
+playing; a graph without one is silent there ([Composition](#composition)). Where the sound is still the plain mix
+(the template's `In: Audio` wired straight to its Audio Output, reading what is below), the bus plays its track mix
+rather than rendering it again. The renderer renders one bus, the master by default (the CLI's `--bus` picks
+another): only the Audio Output writing to it is compiled.
 
 - **Any signal goes in.** One sample per pixel is mono and goes to every channel of the bus; anything else is
   written as interleaved samples across the bus's channels (a stereo signal to a stereo bus as it is; a picture,
@@ -195,76 +193,83 @@ renders a connection's sound ahead of a position, for the listen key. Both are r
   connection first; while the playhead moves, a new frame is asked for at most as often as the project's
   `inspect_rate`, 5 a second by default).
 
-## Routing
+## Composition
 
-A project hands the engine its **routing** (`Project::routing`, `Engine::set_routing`): the track tree, top first,
-each track or folder with its FX chain, volume, mute, master send, bus and whether a solo leaves it out; the
-master's FX chain; and the stored graphs. The open graph's description comes separately through
+A project hands the engine its **composition** (`Project::composition`, `Engine::set_composition`): the video and
+audio tracks, video first, each with its volume, bus and whether it is in the mix (not muted, not left out by a
+solo); the graph tracks, top first, with the items that play (muted tracks and items are left out, and bypassing
+graphs leaves out all of them); and the stored graphs. The open graph's description comes separately through
 `Engine::set_graph` because it changes as it is edited. Graphs are normalised with `render_form`, so labels and
-positions are not edits; any other change cancels and re-renders. Items carry their own FX chains and pre-roll
-with the timeline. Offline, the CLI's `rastersong render <project> <out>` passes the routing in
-`RenderSettings::routing`.
+positions are not edits; any other change cancels and re-renders. Offline, the CLI's `rastersong render <project>
+<out>` passes the composition in `RenderSettings::composition`.
 
-**FX.** An FX is a graph in a chain (`Fx`: a graph id, bypass, receives). Chains sit on items, tracks, folders and
-the master, and run in order: an item's FX where the item plays, then its track's, then each folder's up the tree,
-then the master's. Each FX is compiled with its own state, so a graph used twice is compiled twice. Bypassed FX and
-FX of graphs the project doesn't have are left out.
+**Graph items.** A `GraphItem` places a graph on a graph track: position, length, `start` (seconds into the graph's
+own time at the left edge), mute, pre-roll and a `Source` for each input port. Items on one track never overlap
+(`Project::place_graph` trims what an item lands on, and loading a file repairs overlaps). Each item is compiled
+with its own state, so a graph used twice is compiled twice. Items of graphs the project doesn't have are left out.
 
-**Ports.** An input node reads the port its `port` setting names (Video Input `Video`, Audio Input `Audio` by
-default). The **main ports**, `Video` read as a picture and `Audio` read as sound, read what the chain is given: the
-item, the track (after its items' FX), the folder's or the master's mix, after the FX before in the chain. Every
-other port is filled by a **receive** naming a track: that track's picture and sound after its own FX, before its
-volume. A port nothing fills reads zeros. A port read both as a picture and as sound gets the track's picture and
-its sound; inside the graph the sound is compiled under its own name (`<port>\0sound`), since one name carries one
-layout. With no routing (`None`), the engine renders the open graph as the master's FX with each port named after a
-track receiving from it (`single_routing`), which the CLI's `render <video> <audio> <graph>` and the tests rely on.
+**Ports and sources.** An input node reads the port its `port` setting names (Video Input `Video`, Audio Input
+`Audio` by default). Each port of an item reads its source, matched by kind (a port read as a picture gets the
+source's picture, one read as sound its sound):
 
-**Through.** A graph with no Output passes the picture it is given through, and one with no Audio Output on the
-rendered bus passes the sound through: the renderer wires the main port straight to an output it adds
-(`@through_video_in` → `@through_video_out`, and likewise for audio), so what passes through is delayed by the
-graph's latency like everything else.
+- `Below`: what is below the item's graph track, which is the next graph track's output, or the mix under the
+  lowest. The default for the main ports, `Video` read as a picture and `Audio` read as sound.
+- `Mix`: the video mix or the audio mix.
+- `Track(name)`: one video or audio track on its own (its stem), before its volume and whether it is in the mix,
+  so a muted track can still drive a graph.
+- `Graph { track, port }`: the output of a graph track below the item's (`Video` and `Audio` are its main outputs).
+  A graph track at or above the item's reads zeros, so sources only point down and there are no loops.
+- `Nothing`, and the default for every other port: zeros.
 
-**Mixing.** The renderer walks the tree once per source frame, children before their parents (receives too):
+A port read both as a picture and as sound gets its source's picture and sound; inside the graph the sound is
+compiled under its own name (`<port>\0sound`), since one name carries one layout. With no composition (`None`), the
+engine renders the open graph over the whole timeline with each port named after a track reading that track
+(`single_composition`), which the CLI's `render <video> <audio> <graph>` and the tests rely on.
 
-- A **track** reads its media, runs its items' FX where they play and then its chain. A track with no FX keeps its
-  file's own sound layout.
-- A **folder** (and the master) shows the picture of its first track that has one at that frame, and sums its
-  tracks' sound at their volumes (a video track's own volume is ignored) into the mix layout:
-  `round(48000 / fps)` samples a frame across the bus's channels. Each block is fitted linearly to the mix
-  layout, and a mono track goes to every channel. At the top only the tracks routed to the rendered bus are summed.
-  Muted tracks, tracks with their master send off and tracks a solo leaves out are not mixed.
-- **Pruning.** A track is rendered only when its parent is and it sends, or when a rendered FX receives from it.
-- **Loops.** Receives that make a loop (a track whose FX hears itself, directly or round a chain of tracks) fail
-  the build with `EngineError::Routing`, naming the tracks.
+**No passthrough.** Every graph needs its Output (compiling one without fails). A graph with no Audio Output on the
+rendered bus is silent where it plays; nothing is wired through for it. Only the one-graph form keeps the old rule
+that a graph without an Audio Output leaves the sound to the mix.
 
-**Latency.** Each FX lines its inputs up at the latest of the chain before it and its receives' latencies, holding
-the others back in small rings, and adds its own; a node's latency is that of its chain's end, a folder's starts at
-its slowest track. Each output is kept as long as its slowest reader needs it. The master's latency is the
-render's: output frame *n* is ready at source step `n + latency`, as with one graph.
+**Mixing.** The renderer runs the nodes once per source frame in order: each track's stem, the mix, then the graph
+tracks from the bottom up.
 
-**Items.** An item's FX graph counts frames from the item's in point: graph frame = source frame +
-`round(start / rate × fps) − first`, where `first` is the item's first frame. An item with **pre-roll** runs, its
-output discarded, for its FX's warmup frames before its left edge (limited by **Max warmup frames**); without it the
-FX start cold at the edge. Where several items with FX have different latencies, the quicker ones (and the track
-where no item with FX plays) are held back to the slowest, so the track stays frame aligned. Items whose FX change
-the sound's layout are fitted to the first one's.
+- A **track** reads its media: its picture conformed to the project's grid and size, or its sound in its file's
+  own layout. Tracks nothing reads (out of the mix and no item's source) aren't read at all.
+- The **mix** shows the picture of the top video track in the mix that has one at that frame, and sums the audio
+  tracks in the mix that are routed to the rendered bus at their volumes into the mix layout: `round(48000 / fps)`
+  samples a frame across the bus's channels. Each block is fitted linearly to the mix layout, and a mono track goes
+  to every channel.
+- A **graph track** shows the output of the item playing at that frame, or what is below it where none plays. Its
+  sound is fitted to the mix layout. The top graph track's output is the master, or the mix with no graph tracks.
 
-**Seeking.** A render that is not a continuation of the last resets every FX and warms up for the longest run of
-FX warmups from a track to the master (limited by the same setting, and at least one frame when sound is rendered),
-so a seek gives what playing through gives for nodes with finite memory, as long as the memory fits.
+**Latency.** Each item lines its inputs up at the latest of what is below and its other sources' latencies, holding
+the others back in small rings, and adds its own; a graph track's latency is its slowest item's, or what is below's
+if that is later, and quicker items (and what is below, where no item plays) are held back to it, so the stack stays
+frame aligned. Each output is kept as long as its slowest reader needs it. The master's latency is the render's:
+output frame *n* is ready at source step `n + latency`, as with one graph.
 
-**Sound out.** When any rendered FX has an Audio Output on the rendered bus, the render's sound is the master's
-(`AudioSink::Rendered`), through the same sink as one graph's (resample, sanitize, clip). When the only one is a
-master FX whose Audio Output is wired straight from a received port, that track is played as it is
-(`AudioSink::Passthrough`). Otherwise the app's mixer plays the track mix (`AudioSink::TrackMix`).
+**Items in time.** An item's graph counts frames from its own start: graph frame = source frame +
+`round(start × fps) − first`, where `first` is the item's first frame. An item with **pre-roll** runs, its output
+discarded, for its graph's warmup frames before its left edge (limited by **Max warmup frames**); without it the
+graph starts cold at the edge.
 
-**Taps, levels and statistics.** `tap` looks in the FX that ran in the last source step, those of the open graph
-first, the master's before the tracks'. `levels`, `costs`, `meters` and `param_levels` come from the first FX that
+**Seeking.** A render that is not a continuation of the last resets every graph and warms up for the graph tracks'
+warmups added up from the bottom (each track's slowest item; limited by the same setting, and at least one frame
+when sound is rendered), so a seek gives what playing through gives for nodes with finite memory, as long as the
+memory fits.
+
+**Sound out.** When the master's sound is the plain audio mix (no graph item plays, or each item's Audio Output is
+wired straight from a port reading the mix, at its own volume, directly or through what is below), the app's mixer
+plays the mix (`AudioSink::TrackMix`), which keeps playback real-time. Otherwise the render's sound is the master's
+(`AudioSink::Rendered`), through the same sink as one graph's (resample, sanitize, clip).
+
+**Taps, levels and statistics.** `tap` looks in the graphs that ran in the last source step, those of the open graph
+first, the top graph track's first. `levels`, `costs`, `meters` and `param_levels` come from the first graph that
 ran playing the open graph, else the first that ran; `node_stats` and `compile_options` describe the open graph's
-first FX, else the first. The tap renderer is built the same way as the render-ahead renderer.
+first item, else the first. The tap renderer is built the same way as the render-ahead renderer.
 
-**Errors.** An FX graph that cannot compile fails the build (`EngineError::Fx`), and the failure names the graph's
-id and the node at fault.
+**Errors.** A graph that cannot compile fails the build (`EngineError::Fx`), and the failure names the graph's id
+and the node at fault.
 
 ## Export / Offline Rendering
 
@@ -284,7 +289,7 @@ yet.
 - CPU only. Many of the most interesting effects (IIR filters, feedback, delays) are inherently sequential across the entire carrier stream, so they can't be spread across GPU threads anyway.
 - No allocation during `process`.
 - Reduced-resolution preview is the main lever for heavy graphs.
-- FX chains run in order on the render thread; running them as a pipeline across frames, as graph layers did, is
+- Graph tracks run in order on the render thread; running them as a pipeline across frames, as graph layers did, is
   not rebuilt yet.
 - **Per-node cost** is measured around each node's `process` (`Graph::costs`, smoothed, never part of the cache key)
   and shown in the editor as a badge and a tint (View → Show performance). Measured numbers for the nodes live in

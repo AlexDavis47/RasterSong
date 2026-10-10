@@ -6,14 +6,14 @@
 pub mod audio;
 mod cache;
 mod clock;
+mod compose;
+mod composition;
 mod error;
 mod listen;
 mod offline;
 pub mod playback;
 mod project;
 mod renderer;
-mod route;
-mod routing;
 mod service;
 pub mod sources;
 mod tap;
@@ -24,15 +24,18 @@ pub mod waveform;
 pub use audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE};
 pub use cache::{CacheKey, Frame, FrameCache};
 pub use clock::PlaybackClock;
+pub use composition::{
+    ComposedGraphTrack, Composition, InputKind, InputPort, MediaTrack, extra_ports, input_ports,
+    is_main_port, port_of,
+};
 pub use error::EngineError;
 pub use listen::ListenTarget;
 pub use offline::{FrameSink, RenderSettings, RenderedFrame, render};
 pub use project::{
-    DEFAULT_INSPECT_RATE, DEFAULT_MAX_WARMUP_FRAMES, Edge, FxTarget, GraphEntry,
+    DEFAULT_INSPECT_RATE, DEFAULT_MAX_WARMUP_FRAMES, Edge, GraphEntry, GraphTrack,
     INSPECT_RATE_RANGE, ItemRef, LoopRegion, MAX_WARMUP_FRAMES_LIMIT, MIN_ITEM_LENGTH,
     PASSTHROUGH_GRAPH, PROJECT_EXTENSION, PROJECT_VERSION, Project, ProjectTrack, RATE_RANGE,
-    Resource, ResourceId, ResourceKind, StoredGraph, TimelineMode, drop_depths, resource_name_for,
-    snap_offset,
+    Resource, ResourceId, ResourceKind, StoredGraph, TimelineMode, resource_name_for, snap_offset,
 };
 pub use rastersong_graph::dsp::Fft;
 pub use rastersong_graph::nodes::support::UNBOUNDED_WARMUP;
@@ -55,17 +58,16 @@ pub use rastersong_media::{
 };
 pub use renderer::{
     DEFAULT_AUDIO_TRACK, OutputSize, RenderInfo, RenderTrack, Renderer, TrackMedia, VIDEO_SOURCE,
-    single_routing,
-};
-pub use routing::{
-    InputKind, InputPort, RouteTrack, Routing, input_ports, is_main_port, port_of, receive_ports,
+    single_composition,
 };
 pub use service::{
     Engine, EngineConfig, EngineStatus, Failure, LoadedTrack, PreviewScale, RenderProgress,
 };
 pub use tap::{PICTURE_SIDE, Picture, Tap, TapOutcome, TapRequest, picture_size};
 pub use thumbnails::{THUMBNAIL_HEIGHT, Thumbnails, VideoKey};
-pub use timeline::{Bus, Fx, Item, MAX_BUS_CHANNELS, Timebase, Timeline, TrackKind, TrackSpec};
+pub use timeline::{
+    Bus, GraphItem, Item, MAX_BUS_CHANNELS, Source, Timebase, Timeline, TrackKind, TrackSpec,
+};
 pub use waveform::Waveform;
 
 /// Initializes the engine and its media backend, and reports what was loaded.

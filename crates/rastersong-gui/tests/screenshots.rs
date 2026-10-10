@@ -561,33 +561,12 @@ fn track_screenshots() {
     assert_eq!(solo, [true, false]);
 }
 
-/// The track tree: a folder holding the audio tracks, one level in, then collapsed.
+/// The sections: two graph tracks over the video and audio, a graph item selected with its
+/// inspector open.
 #[test]
 #[ignore = "needs a GPU; run explicitly to look at the UI"]
-fn folder_screenshots() {
+fn graph_track_screenshots() {
     let app = app_edited(ThemeChoice::Dark, 2, TimelineMode::Time, |project| {
-        let mut folder = rastersong_engine::ProjectTrack::new_folder("Music".into());
-        folder.volume = 0.8;
-        project.tracks.insert(1, folder);
-        for track in &mut project.tracks[2..] {
-            track.depth = 1;
-        }
-    });
-    let mut harness = gpu_harness(app);
-    wait_for_frames(&mut harness, 10);
-    save(&mut harness, "dark-28-folder");
-    harness.get_by_label("⏷").click();
-    harness.run_steps(4);
-    save(&mut harness, "dark-29-folder-collapsed");
-    assert!(harness.state().project().tracks[1].collapsed);
-}
-
-/// FX chains: on the video track, an item and the master, with the master's chain open.
-#[test]
-#[ignore = "needs a GPU; run explicitly to look at the UI"]
-fn fx_screenshots() {
-    use rastersong_engine::{Fx, Item};
-    let app = app_edited(ThemeChoice::Dark, 1, TimelineMode::Time, |project| {
         let side = project.add_graph(
             "Sidechain",
             Some(
@@ -602,33 +581,37 @@ fn fx_screenshots() {
             ),
         );
         let open = project.graph_id;
-        project.tracks[0].fx = vec![Fx::new(open)];
-        project.tracks[1].items = vec![
-            Item {
-                end: Some(1.5),
-                fx: vec![Fx::new(open)],
-                ..Item::whole(0.0)
-            },
-            Item {
-                start: 2.0,
-                ..Item::whole(2.0)
-            },
-        ];
-        let mut fx = Fx::new(side);
-        fx.receives.insert("Kick".into(), "audio".into());
-        project.master_fx = vec![
-            fx,
-            Fx {
-                bypass: true,
-                ..Fx::new(open)
-            },
-        ];
+        let bottom = project.add_graph_track("Graphs");
+        project.place_graph(&bottom, open, 0.0, 2.0);
+        let top = project.add_graph_track("Graphs");
+        project.place_graph(&top, side, 0.5, 1.0);
+        project.set_graph_source(
+            &top,
+            0,
+            "Kick",
+            rastersong_engine::Source::Track("audio".into()),
+        );
     });
     let mut harness = gpu_harness(app);
     wait_for_frames(&mut harness, 10);
-    harness.get_by_label("Master FX").click();
+    save(&mut harness, "dark-28-graph-tracks");
+    let bar = harness.state().timeline_layout().graph_lanes[0];
+    let x = harness.state().timeline_view().x(bar.left(), 1.0);
+    let at = egui::pos2(x, bar.top() + 7.0);
+    harness.event(egui::Event::PointerMoved(at));
+    harness.run_steps(1);
+    for pressed in [true, false] {
+        harness.event(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(1);
+    }
     harness.run_steps(4);
-    save(&mut harness, "dark-31-fx");
+    save(&mut harness, "dark-29-graph-item-inspector");
+    assert!(harness.state().selected_graph_item().is_some());
 }
 
 /// Tracks of several items, a muted item, grouped items and a taller track.

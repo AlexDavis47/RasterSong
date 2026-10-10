@@ -10,11 +10,11 @@ use rastersong_media::{MediaBackend, MediaError, Rational, VideoSource};
 
 use crate::EngineError;
 use crate::audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE, SinkResampler};
+use crate::compose::{Compose, ComposePlan, MediaInfo, MediaReader, Stream, mix_layout};
+use crate::composition::{ComposedGraphTrack, Composition, MediaTrack, input_ports};
 use crate::project::{DEFAULT_MAX_WARMUP_FRAMES, MAX_WARMUP_FRAMES_LIMIT};
-use crate::route::{MediaInfo, MediaReader, Route, RoutePlan, Stream, mix_layout};
-use crate::routing::{RouteTrack, Routing, input_ports};
 use crate::sources::{Modulator, fill_video, to_rgb8};
-use crate::timeline::{Bus, Fx, Item, Timebase, TrackKind, item_at, items_end};
+use crate::timeline::{Bus, GraphItem, Item, Source, Timebase, TrackKind, item_at, items_end};
 
 /// The source a video input reads by default.
 pub const VIDEO_SOURCE: &str = DEFAULT_VIDEO;
@@ -149,7 +149,7 @@ enum Reader {
     Audio(AudioReader),
 }
 
-/// The project's tracks as signals, read for the route.
+/// The project's tracks as signals, read for the composition.
 pub(crate) struct Tracks {
     readers: Vec<Reader>,
     fps: f64,
@@ -208,8 +208,8 @@ impl MediaReader for Tracks {
     }
 }
 
-/// Renders output frames of the project's tracks through the routing: each track's items and
-/// FX, the folders' mixes and FX, and the master's (see [Routing](../../../docs/engine.md#routing)).
+/// Renders output frames of the project's composition: the tracks' mix, then the graph tracks
+/// above it (see [Composition](../../../docs/engine.md#composition)).
 ///
 /// The graphs are stateful, so frames are produced by processing source frames in order. Asking
 /// for the next frame is the fast path. Asking for any other frame resets the graphs and first
@@ -218,7 +218,7 @@ impl MediaReader for Tracks {
 /// infinite-memory ones (feedback, IIR filters). Rendering from frame 0 is always exact.
 pub struct Renderer {
     tracks: Tracks,
-    route: Route,
+    compose: Compose,
     /// What graphs are compiled against when nothing places the open graph: the main ports and
     /// each track by name.
     options: CompileOptions,
@@ -235,9 +235,9 @@ pub struct Renderer {
     /// the bus's channels.
     bus: Bus,
     audio_rate: u32,
-    /// What turns the master's sound into audio at the project's rate, when FX render sound.
+    /// What turns the master's sound into audio at the project's rate, when graphs render sound.
     resampler: Option<SinkResampler>,
-    /// The audio of the last rendered frame, when FX render sound.
+    /// The audio of the last rendered frame, when graphs render sound.
     audio: Option<AudioBlock>,
 }
 
@@ -252,31 +252,34 @@ impl std::fmt::Debug for Renderer {
     }
 }
 
-/// The routing of a render of one graph: every track at the top, and `graph` (id 0) as the
-/// master's FX, its ports named after tracks filled by receives from them.
-pub fn single_routing(tracks: &[RenderTrack], graph: &GraphDesc) -> Routing {
-    let receives = input_ports(graph)
+/// The composition of a render of one graph: every track, and `graph` (id 0) on one graph track
+/// for the whole timeline, its ports named after tracks reading those tracks (the main ones
+/// too, so a track called `Audio` is read as it is) and the other main ports reading the mix.
+pub fn single_composition(tracks: &[RenderTrack], graph: &GraphDesc) -> Composition {
+    let mut item = GraphItem::new(0, 0.0, f64::INFINITY);
+    item.sources = input_ports(graph)
         .into_iter()
-        .filter(|p| tracks.iter().any(|t| t.name == p.name))
-        .map(|p| (p.name.clone(), p.name))
+        .map(|port| port.name)
+        .filter(|port| tracks.iter().any(|t| t.name == *port))
+        .map(|port| (port.clone(), Source::Track(port)))
         .collect();
-    Routing {
+    Composition {
         tracks: tracks
             .iter()
-            .map(|t| RouteTrack {
-                muted: !t.in_mix,
-                ..RouteTrack::new(
+            .map(|t| MediaTrack {
+                in_mix: t.in_mix,
+                ..MediaTrack::new(
                     t.name.clone(),
-                    Some(match t.media {
+                    match t.media {
                         TrackMedia::Video { .. } => TrackKind::Video,
                         TrackMedia::Audio(_) => TrackKind::Audio,
-                    }),
+                    },
                 )
             })
             .collect(),
-        master_fx: vec![Fx {
-            receives,
-            ..Fx::new(0)
+        graph_tracks: vec![ComposedGraphTrack {
+            name: String::new(),
+            items: vec![item],
         }],
         graphs: Vec::new(),
         open: 0,
@@ -285,10 +288,10 @@ pub fn single_routing(tracks: &[RenderTrack], graph: &GraphDesc) -> Routing {
 
 impl Renderer {
     /// Opens the video tracks at `size` and renders `graph` over the project's `tracks` on its
-    /// `timebase`, with the sound of output bus `bus`: the graph is the master's FX, and its
-    /// ports named after tracks read those tracks (see [`single_routing`]). Without a timebase
-    /// the first video track sets it, or [`Timebase::DEFAULT`] when there is none. Ports that
-    /// name no track read zeros.
+    /// `timebase`, with the sound of output bus `bus`: the graph plays over the whole timeline,
+    /// its main ports reading the mix and its ports named after tracks reading those tracks (see
+    /// [`single_composition`]). Without a timebase the first video track sets it, or
+    /// [`Timebase::DEFAULT`] when there is none. Ports that name no track read zeros.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         backend: &dyn MediaBackend,
@@ -300,21 +303,30 @@ impl Renderer {
         registry: &Registry,
         size: OutputSize,
     ) -> Result<Self, EngineError> {
-        let routing = single_routing(tracks, graph);
+        let composition = single_composition(tracks, graph);
         Self::build(
-            backend, timebase, tracks, &routing, graph, true, tempo, bus, registry, size,
+            backend,
+            timebase,
+            tracks,
+            &composition,
+            graph,
+            true,
+            tempo,
+            bus,
+            registry,
+            size,
         )
     }
 
-    /// [`Self::new`] for a project's routing: `tracks` are the tracks that play media, by the
-    /// names `routing` gives them, and `open` is the open graph's description, which the
-    /// routing leaves out.
+    /// [`Self::new`] for a project's composition: `tracks` are the tracks that play media, by
+    /// the names `composition` gives them, and `open` is the open graph's description, which the
+    /// composition leaves out.
     #[allow(clippy::too_many_arguments)]
-    pub fn with_routing(
+    pub fn with_composition(
         backend: &dyn MediaBackend,
         timebase: Option<Timebase>,
         tracks: &[RenderTrack],
-        routing: &Routing,
+        composition: &Composition,
         open: &GraphDesc,
         tempo: Tempo,
         bus: &Bus,
@@ -322,7 +334,16 @@ impl Renderer {
         size: OutputSize,
     ) -> Result<Self, EngineError> {
         Self::build(
-            backend, timebase, tracks, routing, open, false, tempo, bus, registry, size,
+            backend,
+            timebase,
+            tracks,
+            composition,
+            open,
+            false,
+            tempo,
+            bus,
+            registry,
+            size,
         )
     }
 
@@ -331,7 +352,7 @@ impl Renderer {
         backend: &dyn MediaBackend,
         timebase: Option<Timebase>,
         tracks: &[RenderTrack],
-        routing: &Routing,
+        composition: &Composition,
         open: &GraphDesc,
         single: bool,
         tempo: Tempo,
@@ -419,7 +440,7 @@ impl Renderer {
             pixel_scale: f64::from(width) / f64::from(timebase.width),
             audio_bus: bus.name.clone(),
         };
-        let media = routing
+        let media = composition
             .tracks
             .iter()
             .map(|t| {
@@ -430,26 +451,13 @@ impl Renderer {
                         Reader::Audio(a) => Some(a.layout),
                         Reader::Video(_) => None,
                     },
-                    duration: durations[i],
                 })
             })
             .collect();
-        let items = routing
-            .tracks
-            .iter()
-            .map(|t| {
-                tracks
-                    .iter()
-                    .find(|r| r.name == t.name)
-                    .map(|r| r.items.clone())
-                    .unwrap_or_default()
-            })
-            .collect();
-        let route = Route::build(RoutePlan {
-            routing,
+        let compose = Compose::build(ComposePlan {
+            composition,
             open,
             media,
-            items,
             registry,
             options: &options,
             bus: &bus,
@@ -473,10 +481,10 @@ impl Renderer {
             },
             fps,
             options,
-            latency: route.latency(),
+            latency: compose.latency(),
             warmup: 0,
             max_warmup,
-            route,
+            compose,
             next_source: None,
             rgb: Vec::with_capacity(video_layout.len()),
             bus,
@@ -488,14 +496,14 @@ impl Renderer {
         Ok(renderer)
     }
 
-    /// Whether the render's sound is rendered here: some FX renders sound, and it isn't just a
-    /// track passed through.
+    /// Whether the render's sound is rendered here: graphs make it something other than the
+    /// plain audio mix.
     fn renders_audio(&self) -> bool {
-        self.route.renders_audio() && self.route.passthrough().is_none()
+        self.compose.renders_audio()
     }
 
     fn update_warmup(&mut self) {
-        let warm = self.route.warmup(self.max_warmup);
+        let warm = self.compose.warmup(self.max_warmup);
         self.warmup = if self.renders_audio() {
             warm.max(1)
         } else {
@@ -514,7 +522,7 @@ impl Renderer {
     /// Renders the sound at `rate` samples a second (48 kHz unless set).
     pub fn set_audio_rate(&mut self, rate: u32) {
         self.audio_rate = rate.max(1);
-        let layout = self.route.audio_layout();
+        let layout = self.compose.audio_layout();
         self.resampler = self.renders_audio().then(|| {
             SinkResampler::new(
                 layout.len(),
@@ -534,16 +542,15 @@ impl Renderer {
         &self.bus
     }
 
-    /// What the render's audio is: the bus's track mix, a track passed through, or rendered
-    /// sound.
+    /// What the render's audio is: the bus's audio mix, or rendered sound.
     pub fn audio_sink(&self) -> AudioSink {
-        match self.route.passthrough() {
-            Some(track) if self.route.renders_audio() => AudioSink::Passthrough(track.to_owned()),
-            _ if self.renders_audio() => AudioSink::Rendered {
+        if self.renders_audio() {
+            AudioSink::Rendered {
                 sample_rate: self.audio_rate,
                 channels: self.bus.channels,
-            },
-            _ => AudioSink::TrackMix,
+            }
+        } else {
+            AudioSink::TrackMix
         }
     }
 
@@ -572,29 +579,29 @@ impl Renderer {
     /// This reads the FX that ran in the last processed source frame, those playing the open
     /// graph first, the master's before the tracks'.
     pub fn tap(&self, node: &str, output: usize) -> Option<&Signal> {
-        self.route.tap(node, output)
+        self.compose.tap(node, output)
     }
 
     /// The level of every node output in the last rendered frame: of the first FX that ran
     /// playing the open graph, else the first FX that ran; likewise for the costs, meters and
     /// parameter levels below.
     pub fn levels(&self) -> Vec<OutputLevel> {
-        self.route.levels()
+        self.compose.levels()
     }
 
     /// How long every node took to process the last rendered frame.
     pub fn costs(&self) -> Vec<rastersong_graph::NodeCost> {
-        self.route.costs()
+        self.compose.costs()
     }
 
     /// The meter values of the nodes that publish them, from the last rendered frame.
     pub fn meters(&self) -> Vec<rastersong_graph::NodeMeters> {
-        self.route.meters()
+        self.compose.meters()
     }
 
     /// The value of every modulated parameter in the last rendered frame.
     pub fn param_levels(&self) -> Vec<rastersong_graph::ParamLevel> {
-        self.route.param_levels()
+        self.compose.param_levels()
     }
 
     pub fn info(&self) -> &RenderInfo {
@@ -604,12 +611,12 @@ impl Renderer {
     /// The sources, frame rate, tempo and output size the open graph was compiled against: as
     /// its first FX, else as the master's.
     pub fn compile_options(&self) -> &CompileOptions {
-        self.route.compile_options().unwrap_or(&self.options)
+        self.compose.compile_options().unwrap_or(&self.options)
     }
 
     /// Each node's own latency and warmup: the open graph's first FX's, else the first FX's.
     pub fn node_stats(&self) -> &[rastersong_graph::NodeStats] {
-        self.route.node_stats()
+        self.compose.node_stats()
     }
 
     /// Frames between a source frame going in and its result coming out: the longest path of
@@ -654,7 +661,7 @@ impl Renderer {
         let continue_forward =
             next_output.is_some_and(|next| next <= index && index - next <= self.warmup);
         if !continue_forward {
-            self.route.reset();
+            self.compose.reset();
             if let Some(resampler) = &mut self.resampler {
                 resampler.reset();
             }
@@ -679,13 +686,13 @@ impl Renderer {
         Ok(Some(&self.rgb))
     }
 
-    /// Feeds source frame `m` (and its audio) through the routing and keeps the output.
+    /// Feeds source frame `m` (and its audio) through the composition and keeps the output.
     fn process(&mut self, m: usize) -> Result<(), EngineError> {
-        if let Err(e) = self.route.step(m, &mut self.tracks, self.max_warmup) {
+        if let Err(e) = self.compose.step(m, &mut self.tracks, self.max_warmup) {
             self.next_source = None;
             return Err(e);
         }
-        let out = self.route.output();
+        let out = self.compose.output();
         if out.video.is_empty() {
             self.rgb.clear();
             self.rgb.resize(self.tracks.video_layout.len(), 0);
@@ -695,7 +702,7 @@ impl Renderer {
         // Like the picture, the sound comes out `latency` frames after its source.
         if let Some(resampler) = &mut self.resampler {
             let frame = m as i64 - self.latency as i64;
-            let layout = self.route.audio_layout();
+            let layout = self.compose.audio_layout();
             let block = if out.audio.len() == layout.len() {
                 resampler.push(frame, &out.audio)
             } else {

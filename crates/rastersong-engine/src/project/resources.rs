@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::{Project, ProjectTrack};
+use super::{ItemRef, Project, ProjectTrack};
 use crate::timeline::{Item, TrackKind};
 
 /// Identifies a resource within its project: what tracks point at. Unique among the project's
@@ -135,15 +135,15 @@ impl Project {
     }
 
     /// Adds a track playing the whole resource from `position` seconds, named after it (made
-    /// unique among tracks), where new tracks of its kind go ([`Self::new_track_slot`]), and
-    /// returns its name. `None` if there is no such resource.
+    /// unique among tracks), at the bottom of its section, and returns its name. `None` if there
+    /// is no such resource.
     pub fn add_track_for(&mut self, id: ResourceId, position: f64) -> Option<String> {
         let resource = self.resource(id)?;
         let kind = resource.kind.track_kind();
         let name = self.unique_name(&resource.name);
-        let mut track = ProjectTrack::new(name.clone(), id);
+        let mut track = ProjectTrack::new(name.clone(), kind, id);
         track.items[0].position = position.max(0.0);
-        self.insert_new_track(Some(kind), track);
+        self.insert_new_track(track);
         Some(name)
     }
 
@@ -162,26 +162,29 @@ impl Project {
         moved
     }
 
-    /// Adds an empty track, named `Track`, `Track_2`, … (unique among tracks), at the bottom,
-    /// and returns its name. It takes the first resource of any kind dropped on it.
-    pub fn add_empty_track(&mut self) -> String {
-        let name = self.unique_name("Track");
-        self.insert_new_track(None, ProjectTrack::empty(name.clone()));
+    /// Adds an empty track of `kind`, named `name`, `name_2`, … (unique among tracks), at the
+    /// bottom of its section, and returns its name. It takes the first resource of its kind
+    /// dropped on it.
+    pub fn add_empty_track(&mut self, kind: TrackKind, name: &str) -> String {
+        let name = self.unique_name(name);
+        self.insert_new_track(ProjectTrack::empty(name.clone(), kind));
         name
     }
 
-    /// Whether [`Self::place_resource`] would put resource `id` on track `track`: an empty track,
-    /// or a track already playing it. Never a folder.
+    /// Whether [`Self::place_resource`] would put resource `id` on track `track`: an empty track
+    /// of its kind, or a track already playing it.
     pub fn can_place_resource(&self, track: &str, id: ResourceId) -> bool {
-        self.resource(id).is_some()
-            && self
-                .track(track)
-                .is_some_and(|t| !t.folder && t.resource.is_none_or(|r| r == id))
+        let Some(resource) = self.resource(id) else {
+            return false;
+        };
+        self.track(track).is_some_and(|t| {
+            t.kind == resource.kind.track_kind() && t.resource.is_none_or(|r| r == id)
+        })
     }
 
     /// Puts the whole resource `id` on track `track` from `position` seconds. An empty track
     /// takes the resource; a track holds items of one resource only, so any other resource is
-    /// refused (false), and so is a folder.
+    /// refused (false), and so is a resource of the other kind.
     pub fn place_resource(&mut self, track: &str, id: ResourceId, position: f64) -> bool {
         if !self.can_place_resource(track, id) {
             return false;
@@ -196,8 +199,84 @@ impl Project {
         true
     }
 
-    /// Adds a track called `name` at the bottom, playing the whole file at `path` (its best
-    /// stream of `kind`) through a resource for that stream, and returns it.
+    /// Resource `id` and the other resources from the same file (its other streams), `id`
+    /// first, then in the Resources panel's order.
+    pub fn siblings(&self, id: ResourceId) -> Vec<ResourceId> {
+        let Some(path) = self.resource(id).map(|r| &r.path) else {
+            return Vec::new();
+        };
+        std::iter::once(id)
+            .chain(
+                self.resources
+                    .iter()
+                    .filter(|r| r.id != id && r.path == *path)
+                    .map(|r| r.id),
+            )
+            .collect()
+    }
+
+    /// Where [`Self::place_linked`] puts each resource: the track it lands on, or `None` for a
+    /// new track at the bottom of its section. Each resource goes on track `hovered` when that
+    /// is in its section and can take it (the first resource of that kind only), else on the
+    /// first track of its section that can and that no other resource here takes.
+    pub fn plan_linked(
+        &self,
+        id: ResourceId,
+        hovered: Option<&str>,
+        linked: bool,
+    ) -> Vec<(ResourceId, Option<String>)> {
+        let resources = if linked {
+            self.siblings(id)
+        } else {
+            self.resource(id).map(|r| r.id).into_iter().collect()
+        };
+        let mut taken: Vec<String> = Vec::new();
+        let mut plan = Vec::new();
+        for res in resources {
+            let fits =
+                |name: &str| !taken.iter().any(|t| t == name) && self.can_place_resource(name, res);
+            let target = hovered.filter(|&h| fits(h)).map(str::to_owned).or_else(|| {
+                self.tracks
+                    .iter()
+                    .find(|t| fits(&t.name))
+                    .map(|t| t.name.clone())
+            });
+            if let Some(name) = &target {
+                taken.push(name.clone());
+            }
+            plan.push((res, target));
+        }
+        plan
+    }
+
+    /// Places resource `id` from `position` seconds as [`Self::plan_linked`] says, with every
+    /// other resource of its file when `linked` (so dropping a video places its sound too), and
+    /// groups what it placed. Returns the items placed, `id`'s first.
+    pub fn place_linked(
+        &mut self,
+        id: ResourceId,
+        hovered: Option<&str>,
+        position: f64,
+        linked: bool,
+    ) -> Vec<ItemRef> {
+        let mut placed = Vec::new();
+        for (res, target) in self.plan_linked(id, hovered, linked) {
+            let name = match target {
+                Some(name) if self.place_resource(&name, res, position) => name,
+                _ => match self.add_track_for(res, position) {
+                    Some(name) => name,
+                    None => continue,
+                },
+            };
+            let item = self.track(&name).map_or(0, |t| t.items.len() - 1);
+            placed.push(ItemRef::new(name, item));
+        }
+        self.group_items(&placed);
+        placed
+    }
+
+    /// Adds a track called `name` at the bottom of its section, playing the whole file at `path`
+    /// (its best stream of `kind`) through a resource for that stream, and returns it.
     pub fn add_track(
         &mut self,
         kind: TrackKind,
@@ -211,8 +290,8 @@ impl Project {
         };
         let resource_name = resource_name_for(&path, resource_kind);
         let id = self.add_resource(resource_kind, &resource_name, path, None);
-        self.tracks.push(ProjectTrack::new(name.into(), id));
-        self.tracks.last_mut().unwrap()
+        let at = self.insert_new_track(ProjectTrack::new(name.into(), kind, id));
+        &mut self.tracks[at]
     }
 
     /// Removes a resource and every track that plays it, returning the removed tracks' names.

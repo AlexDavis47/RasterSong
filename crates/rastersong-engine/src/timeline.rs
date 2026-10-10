@@ -84,42 +84,102 @@ pub struct Item {
     /// A muted item reads as a gap.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub muted: bool,
-    /// The item's FX chain: graphs that process the item where it plays, before the track's
-    /// own FX.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub fx: Vec<Fx>,
-    /// Whether the item's FX warm up as if they had been running before the item, so trimming
-    /// its left edge never changes what follows. Off, they start cold at the edge.
-    #[serde(default = "yes", skip_serializing_if = "is_yes")]
-    pub pre_roll: bool,
     /// Items with the same group move, trim, split and delete together.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<u32>,
 }
 
-/// A graph in an FX chain: on a track, a folder, the master or an item. Its `Video` and
-/// `Audio` input ports read what it is on; each other port reads the track its receive names
-/// (post-FX, before the track's volume), or zeros without one.
+/// What fills one input port of a graph item. Sources are matched by kind: a port read as a
+/// picture gets the source's picture, one read as sound its sound.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Fx {
-    /// The graph, by its id among the project's graphs.
-    pub graph: u32,
-    /// A bypassed FX is left out, as if it weren't in the chain.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub bypass: bool,
-    /// Which track fills each other input port, by port name.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub receives: BTreeMap<String, String>,
+#[serde(rename_all = "snake_case")]
+pub enum Source {
+    /// The main output of the next active graph below, or the timeline's mix with none. What
+    /// the main ports read unless set otherwise.
+    Below,
+    /// The video mix (the top video track with an item) or the audio mix.
+    Mix,
+    /// One track on its own (its stem), before its volume and mute.
+    Track(String),
+    /// An output of the graph track `track`, which must be below the item's: where nothing
+    /// plays on it, what is below it. `port` is `Video` or `Audio` for the main outputs.
+    Graph { track: String, port: String },
+    /// Zeros.
+    Nothing,
 }
 
-impl Fx {
-    /// Graph `graph`, on, with no receives.
-    pub fn new(graph: u32) -> Self {
+/// A graph placed on a graph track. Graph items have no resource and no rate: the graph runs
+/// in its own time from `start` at the item's left edge.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GraphItem {
+    /// The graph, by its id among the project's graphs.
+    pub graph: u32,
+    /// Seconds into the project where the item starts.
+    pub position: f64,
+    /// How long it lasts, in seconds.
+    pub length: f64,
+    /// Seconds into the graph's own time at the left edge: trimming the edge moves it, so what
+    /// follows doesn't change.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub start: f64,
+    /// A muted item plays nothing, as if it weren't there.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub muted: bool,
+    /// Whether the graph warms up as if it had been running before the item, so trimming its
+    /// left edge never changes what follows. Off, it starts cold at the edge.
+    #[serde(default = "yes", skip_serializing_if = "is_yes")]
+    pub pre_roll: bool,
+    /// What fills each input port, by port name. A port left out reads [`Source::Below`] if it
+    /// is a main port (`Video` read as a picture, `Audio` as sound), else nothing.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sources: BTreeMap<String, Source>,
+}
+
+impl GraphItem {
+    /// Graph `graph` from `position` for `length` seconds, its ports on their defaults.
+    pub fn new(graph: u32, position: f64, length: f64) -> Self {
         Self {
             graph,
-            bypass: false,
-            receives: BTreeMap::new(),
+            position,
+            length,
+            start: 0.0,
+            muted: false,
+            pre_roll: true,
+            sources: BTreeMap::new(),
+        }
+    }
+
+    /// Where the item ends on the timeline, in seconds.
+    pub fn end(&self) -> f64 {
+        self.position + self.length
+    }
+
+    /// Whether the item plays at timeline time `t`.
+    pub fn plays_at(&self, t: f64) -> bool {
+        !self.muted && t >= self.position && t < self.end()
+    }
+
+    /// What fills port `port`, read as a picture when `video`: its source, or the default.
+    pub fn source(&self, port: &str, video: bool) -> Source {
+        self.sources.get(port).cloned().unwrap_or_else(|| {
+            let main = if video {
+                port == rastersong_graph::nodes::DEFAULT_VIDEO
+            } else {
+                port == rastersong_graph::nodes::DEFAULT_AUDIO
+            };
+            if main { Source::Below } else { Source::Nothing }
+        })
+    }
+
+    /// The item with nonsense (non-finite or negative times) replaced.
+    pub fn sanitized(self) -> Self {
+        let finite = |v: f64| if v.is_finite() { v.max(0.0) } else { 0.0 };
+        Self {
+            position: finite(self.position),
+            length: finite(self.length),
+            start: finite(self.start),
+            ..self
         }
     }
 }
@@ -153,8 +213,6 @@ impl Item {
             end: None,
             rate: 1.0,
             muted: false,
-            fx: Vec::new(),
-            pre_roll: true,
             group: None,
         }
     }
@@ -172,8 +230,6 @@ impl Item {
                 .filter(|r| r.is_finite() && *r > 0.0)
                 .unwrap_or(1.0),
             muted: self.muted,
-            fx: self.fx,
-            pre_roll: self.pre_roll,
             group: self.group,
         }
     }

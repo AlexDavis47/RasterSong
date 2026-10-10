@@ -7,19 +7,18 @@ use rastersong_graph::{GraphDesc, ParamValue, Tempo, audio_output_bus};
 use rastersong_lang::tr_args;
 use serde::{Deserialize, Serialize};
 
-use crate::timeline::{Bus, Fx, Item, Timebase, TrackKind};
+use crate::timeline::{Bus, Item, Timebase, TrackKind};
 
 mod editing;
-mod fx;
+mod graph_tracks;
 mod graphs;
 mod resources;
-mod tree;
+mod sections;
 
 pub use editing::{Edge, ItemRef, MIN_ITEM_LENGTH, RATE_RANGE, snap_offset};
-pub use fx::FxTarget;
+pub use graph_tracks::GraphTrack;
 pub use graphs::{GraphEntry, PASSTHROUGH_GRAPH, StoredGraph};
 pub use resources::{Resource, ResourceId, ResourceKind, resource_name_for};
-pub use tree::drop_depths;
 
 /// The project file format version. Like the graph format it stays 0 until 1.0: files change
 /// freely, with no migrations, and projects saved by another version are rejected.
@@ -39,16 +38,17 @@ pub struct Project {
     /// The media the project uses, in the order the Resources panel lists them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resources: Vec<Resource>,
-    /// The track tree, top first, as the timeline lists it: each folder is followed by the
-    /// tracks inside it, one level deeper (see [`ProjectTrack::depth`]). Tracks of any kind go
-    /// anywhere.
+    /// The Video and Audio sections: the video tracks top first, then the audio tracks.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tracks: Vec<ProjectTrack>,
-    /// The output buses, master first: top-level tracks are summed into them in the track mix,
-    /// and each Audio Output writes to one. Never empty; Main, stereo, by default.
+    /// The Graphs section, top first: the topmost active graph item's outputs are the master.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub graph_tracks: Vec<GraphTrack>,
+    /// The output buses, master first: audio tracks are summed into them in the mix, and each
+    /// Audio Output writes to one. Never empty; Main, stereo, by default.
     #[serde(default = "default_buses", skip_serializing_if = "is_default_buses")]
     pub buses: Vec<Bus>,
-    /// The open graph: what the editor shows and the engine renders.
+    /// The open graph: what the editor shows.
     pub graph: GraphDesc,
     /// The open graph's id and name among the project's graphs.
     #[serde(default = "graphs::first_graph_id")]
@@ -58,10 +58,6 @@ pub struct Project {
     /// The project's other graphs, kept until one is opened.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub graphs: Vec<StoredGraph>,
-    /// The master's FX chain, run on everything the top-level tracks send. See
-    /// [`Self::routing`].
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub master_fx: Vec<Fx>,
     /// The loop region on the timeline, if one has been made.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loop_region: Option<LoopRegion>,
@@ -71,7 +67,7 @@ pub struct Project {
     /// Whether the timeline ruler shows time or bars and beats (tempo).
     #[serde(default)]
     pub timeline_mode: TimelineMode,
-    /// Skips the whole graph in the preview: it shows and plays the track mix.
+    /// Skips every graph track in the preview: it shows and plays the mix.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub bypass_graph: bool,
     /// Sample rate of the sound a graph with an Audio Output renders, in the preview and export.
@@ -177,54 +173,32 @@ impl LoopRegion {
     }
 }
 
-/// A track on the timeline: items of one resource, or a folder of other tracks.
+/// A video or audio track: items of one resource.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectTrack {
-    /// What the timeline and receives call the track. Unique among all tracks.
+    /// What the timeline and graph sources call the track. Unique among all tracks.
     pub name: String,
-    /// How deep in the tree the track sits: 0 at the top, one more inside each folder. A track
-    /// is inside the nearest folder above it that is one level shallower.
-    #[serde(default, skip_serializing_if = "is_zero_depth")]
-    pub depth: u32,
-    /// A folder holds the tracks below it that are deeper, and mixes them like a bus. It has no
-    /// resource and no items of its own.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub folder: bool,
-    /// A collapsed folder hides its tracks on the timeline.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub collapsed: bool,
-    /// A folder where new tracks of this kind go (the template's Video and Audio folders).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub new_tracks: Option<TrackKind>,
-    /// What the track plays: `None` for an empty track, which takes the first resource dropped
-    /// on it, or a folder.
+    /// Its section: what it plays.
+    pub kind: TrackKind,
+    /// What the track plays: `None` for an empty track, which takes the first resource of its
+    /// kind dropped on it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource: Option<ResourceId>,
     /// Where the resource plays on the timeline.
     #[serde(default = "whole")]
     pub items: Vec<Item>,
-    /// The track's FX chain, run on its items' picture and sound (a folder's, on its mix).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub fx: Vec<Fx>,
-    /// Level in the track mix, 0 to 1; a folder's scales everything in it. Graphs read the
-    /// track as it is.
+    /// Level in the audio mix, 0 to 1. Graphs read the track as it is.
     #[serde(default = "full_volume")]
     pub volume: f32,
-    /// Left out of the track mix, and for a folder everything in it. Graphs still read the
-    /// track.
+    /// Left out of the mix. Graphs still read the track.
     #[serde(default)]
     pub muted: bool,
-    /// Whether the track is mixed into its folder, or at the top into its bus. Off, it reaches
-    /// no output and is only there for graphs to read.
-    #[serde(default = "sends_default", skip_serializing_if = "is_true")]
-    pub master_send: bool,
-    /// The output bus a top-level track (and everything in it) is summed into in the track mix.
-    /// Tracks inside a folder go where their folder goes.
+    /// The output bus an audio track is summed into in the mix.
     #[serde(default = "main_bus", skip_serializing_if = "is_main_bus")]
     pub bus: String,
-    /// While any track of a kind is soloed, only soloed tracks of that kind are in the track
-    /// mix; soloing a folder solos everything in it. Graphs still read every track.
+    /// While any track of a kind is soloed, only soloed tracks of that kind are in the mix.
+    /// Graphs still read every track.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub solo: bool,
     /// The track's height on the timeline, in points. `None` is the app's default.
@@ -236,57 +210,32 @@ fn full_volume() -> f32 {
     1.0
 }
 
-fn sends_default() -> bool {
-    true
-}
-
-fn is_true(v: &bool) -> bool {
-    *v
-}
-
-fn is_zero_depth(depth: &u32) -> bool {
-    *depth == 0
-}
-
 fn whole() -> Vec<Item> {
     vec![Item::whole(0.0)]
 }
 
 impl ProjectTrack {
-    /// A track playing the whole resource from the start of the timeline.
-    pub fn new(name: String, resource: ResourceId) -> Self {
+    /// A track of `kind` playing the whole resource from the start of the timeline.
+    pub fn new(name: String, kind: TrackKind, resource: ResourceId) -> Self {
         Self {
             name,
-            depth: 0,
-            folder: false,
-            collapsed: false,
-            new_tracks: None,
+            kind,
             resource: Some(resource),
             items: whole(),
-            fx: Vec::new(),
             volume: 1.0,
             muted: false,
-            master_send: true,
             bus: main_bus(),
             solo: false,
             height: None,
         }
     }
 
-    /// A track with no resource and no items yet.
-    pub fn empty(name: String) -> Self {
+    /// A track of `kind` with no resource and no items yet.
+    pub fn empty(name: String, kind: TrackKind) -> Self {
         Self {
             resource: None,
             items: Vec::new(),
-            ..Self::new(name, ResourceId(0))
-        }
-    }
-
-    /// An empty folder.
-    pub fn new_folder(name: String) -> Self {
-        Self {
-            folder: true,
-            ..Self::empty(name)
+            ..Self::new(name, kind, ResourceId(0))
         }
     }
 
@@ -319,12 +268,12 @@ impl Project {
             timebase: None,
             resources: Vec::new(),
             tracks: Vec::new(),
+            graph_tracks: Vec::new(),
             buses: default_buses(),
             graph,
             graph_id: graphs::first_graph_id(),
             graph_name: graphs::default_graph_name(),
             graphs: Vec::new(),
-            master_fx: Vec::new(),
             loop_region: None,
             tempo: Tempo::default(),
             timeline_mode: TimelineMode::default(),
@@ -352,13 +301,13 @@ impl Project {
             .unwrap()
     }
 
-    /// What removing bus `name` affects: the top-level tracks routed to it, and the ids of the
+    /// What removing bus `name` affects: the audio tracks routed to it, and the ids of the
     /// graph's Audio Outputs that write to it.
     pub fn bus_users(&self, name: &str) -> (Vec<String>, Vec<String>) {
         let tracks = self
             .tracks
             .iter()
-            .filter(|t| t.depth == 0 && t.bus == name)
+            .filter(|t| t.kind == TrackKind::Audio && t.bus == name)
             .map(|t| t.name.clone())
             .collect();
         let outputs = self
@@ -413,7 +362,8 @@ impl Project {
         true
     }
 
-    /// Renames track `old` to `new`, and what refers to it by name (FX receives). Refused
+    /// Renames track `old` (a video, audio or graph track) to `new`, and the graph sources that
+    /// read it. Refused
     /// (false, nothing changed) when there is no such track, or `new` is empty or another
     /// track's. Renaming a track to its own name succeeds.
     pub fn rename_track(&mut self, old: &str, new: &str) -> bool {
@@ -430,16 +380,19 @@ impl Project {
         for track in self.tracks_mut().filter(|t| t.name == old) {
             track.name = new.to_owned();
         }
-        self.rename_receives(old, new);
+        for track in self.graph_tracks.iter_mut().filter(|t| t.name == old) {
+            track.name = new.to_owned();
+        }
+        self.rename_sources(old, new);
         true
     }
 
-    /// The track (or folder) called `name`.
+    /// The video or audio track called `name`.
     pub fn track(&self, name: &str) -> Option<&ProjectTrack> {
         self.tracks().find(|t| t.name == name)
     }
 
-    /// Every track and folder, top first.
+    /// Every video and audio track, top first.
     pub fn tracks(&self) -> impl Iterator<Item = &ProjectTrack> {
         self.tracks.iter()
     }
@@ -448,9 +401,14 @@ impl Project {
         self.tracks.iter_mut()
     }
 
-    /// Whether a track or folder is called `name`.
-    pub fn has_track(&self, name: &str) -> bool {
+    /// Whether a video or audio track is called `name`.
+    pub fn has_media_track(&self, name: &str) -> bool {
         self.tracks().any(|t| t.name == name)
+    }
+
+    /// Whether any track (video, audio or graph) is called `name`.
+    pub fn has_track(&self, name: &str) -> bool {
+        self.has_media_track(name) || self.graph_tracks.iter().any(|t| t.name == name)
     }
 
     /// The first `name`, `name_2`, `name_3`, … that no track has.
@@ -467,9 +425,10 @@ impl Project {
             .unwrap()
     }
 
-    /// The video: the first video track, top down.
+    /// The video: the first video track that plays something, top down.
     pub fn video(&self) -> Option<&ProjectTrack> {
-        self.tracks_of(TrackKind::Video).next()
+        self.tracks_of(TrackKind::Video)
+            .find(|t| t.resource.is_some())
     }
 
     /// The video's file.
@@ -526,9 +485,13 @@ impl Project {
             }
         }
         let resources = &project.resources;
+        // A track must play a resource the project has, of its own kind.
         let unknown = project.tracks.iter().find(|t| {
-            t.resource
-                .is_some_and(|id| !resources.iter().any(|r| r.id == id))
+            t.resource.is_some_and(|id| {
+                !resources
+                    .iter()
+                    .any(|r| r.id == id && r.kind.track_kind() == t.kind)
+            })
         });
         if let Some(track) = unknown {
             return Err(error(&tr_args(
@@ -536,7 +499,8 @@ impl Project {
                 &[("track", &track.name)],
             )));
         }
-        project.sanitize_tree();
+        project.sanitize_sections();
+        graph_tracks::sanitize(&mut project.graph_tracks);
         project.tidy_groups();
         for track in project.tracks_mut() {
             for item in &mut track.items {
@@ -732,11 +696,12 @@ mod tests {
     }
 
     #[test]
-    fn renaming_a_track_follows_through_to_receives() {
+    fn renaming_a_track_follows_through_to_sources() {
         let mut project = three_tracks();
         let graph = project.graph_id;
-        project.add_fx(&FxTarget::Master, graph).unwrap();
-        project.set_fx_receive(&FxTarget::Master, 0, "Kick", Some("a"));
+        project.add_graph_track("Graphs");
+        project.place_graph("Graphs", graph, 0.0, 1.0).unwrap();
+        project.set_graph_source("Graphs", 0, "Kick", crate::Source::Track("a".into()));
         // Taken, empty and unknown names are refused; its own name is fine.
         assert!(!project.rename_track("a", "b"));
         assert!(!project.rename_track("a", "  "));
@@ -744,7 +709,12 @@ mod tests {
         assert!(project.rename_track("a", "a"));
         assert!(project.rename_track("a", " kick "));
         assert!(project.has_track("kick") && !project.has_track("a"));
-        assert_eq!(project.master_fx[0].receives["Kick"], "kick");
+        assert_eq!(
+            project.graph_tracks[0].items[0].sources["Kick"],
+            crate::Source::Track("kick".into())
+        );
+        // Graph tracks share the names.
+        assert!(!project.rename_track("kick", "Graphs"));
         // Video tracks are renamed the same way.
         assert!(project.rename_track("v", "clip"));
         assert_eq!(project.tracks[0].name, "clip");
@@ -752,7 +722,7 @@ mod tests {
 
     #[test]
     fn offsets_move_the_first_item_and_never_before_the_start() {
-        let mut track = ProjectTrack::new("a".into(), ResourceId(1));
+        let mut track = ProjectTrack::new("a".into(), TrackKind::Audio, ResourceId(1));
         assert_eq!(track.offset(), 0.0);
         track.set_offset(1.5);
         assert_eq!((track.items[0].position, track.items[0].start), (1.5, 0.0));
@@ -764,7 +734,7 @@ mod tests {
     }
 
     #[test]
-    fn the_timeline_lists_tracks_in_their_order() {
+    fn the_timeline_lists_video_tracks_before_audio_tracks() {
         let mut project = Project::new(graph());
         project.add_track(TrackKind::Audio, "song", "song.wav");
         project.add_track(TrackKind::Video, "clip.mp4", "clip.mp4");
@@ -775,10 +745,10 @@ mod tests {
             .iter()
             .map(|t| (t.name.as_str(), t.kind))
             .collect();
-        // One tree: an audio track can sit above a video track.
+        // Sections: the video track goes above the audio track added before it.
         assert_eq!(
             kinds,
-            [("song", TrackKind::Audio), ("clip.mp4", TrackKind::Video)]
+            [("clip.mp4", TrackKind::Video), ("song", TrackKind::Audio)]
         );
         assert_eq!(
             timeline.first_video().map(|t| t.path.clone()),
@@ -852,7 +822,7 @@ mod tests {
             ],
             volume: 0.5,
             muted: true,
-            ..ProjectTrack::new("audio".into(), elsewhere)
+            ..ProjectTrack::new("audio".into(), TrackKind::Audio, elsewhere)
         });
         project.add_track(TrackKind::Audio, "drums", dir.join("media/drums.wav"));
         // A chosen stream is kept.
@@ -1038,35 +1008,70 @@ mod inspect_rate_tests {
     }
 
     #[test]
-    fn an_empty_track_takes_the_first_resource_dropped_on_it() {
+    fn an_empty_track_takes_the_first_resource_of_its_kind_dropped_on_it() {
         let mut project =
             Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
         let clip = project.add_resource(ResourceKind::Video, "clip", "clip.mp4", None);
         let other = project.add_resource(ResourceKind::Video, "other", "other.mp4", None);
         let song = project.add_resource(ResourceKind::Audio, "song", "song.wav", None);
-        let name = project.add_empty_track();
-        let second = project.add_empty_track();
-        assert_eq!(second, "Track_2");
+        let name = project.add_empty_track(TrackKind::Video, "Video");
+        let second = project.add_empty_track(TrackKind::Audio, "Audio");
+        assert_eq!(
+            project.add_empty_track(TrackKind::Audio, "Audio"),
+            "Audio_2"
+        );
         // Empty tracks play nothing: the engine isn't told about them.
         assert!(project.timeline().tracks.is_empty());
         assert!(project.video().is_none());
 
-        // Either kind fills an empty track.
+        // Only its own kind fills an empty track.
+        assert!(!project.place_resource(&name, song, 0.0));
         assert!(project.place_resource(&name, clip, 1.0));
         assert_eq!(project.tracks[0].items[0].position, 1.0);
         assert_eq!(project.video().unwrap().name, name);
         assert!(project.place_resource(&second, song, 0.0));
-        assert_eq!(
-            project.track_kind(&project.tracks[1]),
-            Some(TrackKind::Audio)
-        );
-        // The same resource adds an item; another resource is refused, and so is a folder.
+        // The same resource adds an item; another resource is refused.
         assert!(project.place_resource(&name, clip, 5.0));
         assert_eq!(project.tracks[0].items.len(), 2);
         assert!(!project.place_resource(&name, other, 0.0));
-        let folder = project.add_folder("Folder");
-        assert!(!project.place_resource(&folder, other, 0.0));
         assert_eq!(project.timeline().tracks.len(), 2);
+    }
+
+    #[test]
+    fn dropping_a_resource_places_its_whole_file_grouped_unless_asked_for_one() {
+        let mut project =
+            Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
+        let picture = project.add_resource(ResourceKind::Video, "take.mp4", "take.mp4", None);
+        let sound = project.add_resource(ResourceKind::Audio, "take", "take.mp4", Some(1));
+        let commentary = project.add_resource(ResourceKind::Audio, "voice", "take.mp4", Some(2));
+        let song = project.add_resource(ResourceKind::Audio, "song", "song.wav", None);
+        assert_eq!(project.siblings(sound), [sound, picture, commentary]);
+        assert_eq!(project.siblings(song), [song]);
+        let empty = project.add_empty_track(TrackKind::Audio, "Audio");
+
+        // Over the empty audio track: the first sound goes there, the rest on new tracks.
+        let placed = project.place_linked(picture, Some(&empty), 2.0, true);
+        let tracks: Vec<&str> = placed.iter().map(|at| at.track.as_str()).collect();
+        assert_eq!(tracks, ["take.mp4", "Audio", "voice"]);
+        let names: Vec<&str> = project.tracks.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, ["take.mp4", "Audio", "voice"]);
+        assert_eq!(project.with_grouped(&placed[..1]).len(), 3);
+        assert!(
+            placed
+                .iter()
+                .all(|at| { project.track(&at.track).unwrap().items[at.item].position == 2.0 })
+        );
+
+        // Again: each goes on the track already playing it, as a new group.
+        let again = project.place_linked(sound, None, 10.0, true);
+        assert_eq!(again.len(), 3);
+        assert_eq!(project.tracks.len(), 3);
+        assert_eq!(project.with_grouped(&again[..1]).len(), 3);
+
+        // Only the one dragged.
+        let one = project.place_linked(sound, None, 20.0, false);
+        assert_eq!(one, [ItemRef::new("Audio", 2)]);
+        assert_eq!(project.with_grouped(&one).len(), 1);
     }
 
     #[test]

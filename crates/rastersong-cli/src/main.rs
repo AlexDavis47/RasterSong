@@ -8,8 +8,8 @@ use clap::{Parser, Subcommand};
 use rastersong_engine::playback::MixTrack;
 use rastersong_engine::sources::Modulator;
 use rastersong_engine::{
-    Bus, DEFAULT_AUDIO_TRACK, FfmpegBackend, GraphDesc, MediaBackend, Project, Registry,
-    RenderSettings, RenderTrack, Routing, Timeline, TrackKind, TrackSpec, VIDEO_SOURCE,
+    Bus, Composition, DEFAULT_AUDIO_TRACK, FfmpegBackend, GraphDesc, MediaBackend, Project,
+    Registry, RenderSettings, RenderTrack, Timeline, TrackKind, TrackSpec, VIDEO_SOURCE,
     render_form,
 };
 use rastersong_lang::tr_args;
@@ -120,11 +120,11 @@ fn info() -> Result<()> {
 /// What to render: the project, as the render needs it.
 struct Job {
     timeline: Timeline,
-    /// The graph rendered as the master's FX, or, with `routing`, the description of the open
-    /// graph among the project's FX. A project without FX renders its track mix.
+    /// The graph rendered over the whole timeline, or, with `composition`, the description of
+    /// the open graph among the project's graphs. A project without graph items renders its mix.
     graph: GraphDesc,
-    /// The project's routing; `None` for files.
-    routing: Option<Routing>,
+    /// The project's composition; `None` for files.
+    composition: Option<Composition>,
     tempo: rastersong_engine::Tempo,
     audio_rate: u32,
 }
@@ -137,14 +137,14 @@ fn project_job(path: &Path, args: &RenderArgs) -> Result<Job> {
         );
     }
     let project = Project::load(path).map_err(anyhow::Error::msg)?;
-    // The open graph is applied only where an FX uses it; without FX the track mix is
+    // The open graph is applied only where a graph item uses it; without one the mix is
     // rendered.
     let graph = render_form(&project.graph, Registry::shared());
     Ok(Job {
         timeline: project.timeline(),
         audio_rate: args.audio_rate.unwrap_or(project.audio_rate),
         tempo: project.tempo,
-        routing: Some(project.routing()),
+        composition: Some(project.composition()),
         graph,
     })
 }
@@ -167,7 +167,7 @@ fn files_job(video: &Path, audio: &Path, graph: &Path, args: &RenderArgs) -> Res
             ..Timeline::default()
         },
         graph,
-        routing: None,
+        composition: None,
         tempo: Default::default(),
         audio_rate: args
             .audio_rate
@@ -212,7 +212,6 @@ fn render(args: RenderArgs) -> Result<()> {
                 .with_context(|| format!("loading audio from {}", spec.path.display()))?;
                 let modulator = Arc::new(Modulator::new(&clip));
                 sources.push(SourceTrack {
-                    name: spec.name.clone(),
                     bus: spec.bus.clone(),
                     track: MixTrack {
                         clip: Arc::new(clip),
@@ -239,7 +238,7 @@ fn render(args: RenderArgs) -> Result<()> {
         tempo: job.tempo,
         audio_rate: Some(job.audio_rate),
         bus,
-        routing: job.routing.clone(),
+        composition: job.composition.clone(),
     };
     let started = std::time::Instant::now();
     let info = rastersong_engine::render(&backend, &tracks, &job.graph, &settings, &mut sink)?;

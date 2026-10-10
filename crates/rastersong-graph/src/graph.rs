@@ -442,9 +442,17 @@ impl Graph {
         }
         order.extend(&sinks);
 
-        // A track wired straight into the audio output is used as it is, not rendered.
+        // A track wired straight into the audio output, at its own level, is used as it is, not
+        // rendered.
+        let unity = |p: &Pending| {
+            p.param_wires.iter().all(Option::is_none)
+                && p.params
+                    .get("volume")
+                    .is_none_or(|v| matches!(v, ParamValue::Number(n) if *n == 0.0))
+        };
         let audio_passthrough = sinks
             .get(1)
+            .filter(|&&audio| unity(&pending[audio]))
             .and_then(|&audio| pending[audio].wires[0])
             .filter(|&(src, _)| pending[src].kind == AUDIO_INPUT)
             .and_then(|(src, _)| pending[src].node.source().map(str::to_owned));

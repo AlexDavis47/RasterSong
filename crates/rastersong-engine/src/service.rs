@@ -14,17 +14,17 @@ use rastersong_media::{AudioCache, AudioClip, MediaBackend};
 
 use crate::audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE, SinkResampler};
 use crate::cache::{CacheKey, Frame, FrameCache};
+use crate::composition::Composition;
 use crate::listen::{self, ListenTarget, Listened};
 use crate::playback::RenderedSource;
 use crate::project::{DEFAULT_MAX_WARMUP_FRAMES, MAX_WARMUP_FRAMES_LIMIT};
 use crate::renderer;
-use crate::routing::Routing;
 use crate::sources::Modulator;
 use crate::tap::{self, TapOutcome, TapRequest};
 use crate::timeline::{Timebase, Timeline, TrackKind, TrackSpec, items_end};
 use crate::waveform::Waveform;
 use crate::{
-    EngineError, OutputSize, RenderInfo, RenderTrack, Renderer, TrackMedia, single_routing,
+    EngineError, OutputSize, RenderInfo, RenderTrack, Renderer, TrackMedia, single_composition,
 };
 
 /// Preview resolution. Processing cost scales with pixel count, so a quarter-scale preview is
@@ -233,10 +233,10 @@ struct TapDone {
 struct State {
     timeline: Timeline,
     graph: Option<GraphDesc>,
-    /// The project's routing; `None` renders `graph` as the master's FX, its ports named after
-    /// tracks reading them.
-    routing: Option<Routing>,
-    /// Skips the whole graph: the video goes straight to the output.
+    /// The project's composition; `None` renders `graph` over the whole timeline, its ports
+    /// named after tracks reading them.
+    composition: Option<Composition>,
+    /// Skips every graph: the output is the mix.
     bypass_all: bool,
     tempo: Tempo,
     key: CacheKey,
@@ -270,9 +270,9 @@ struct Snapshot {
     timeline: Timeline,
     /// The open graph.
     graph: GraphDesc,
-    /// The project's routing, if it has one.
-    routing: Option<Routing>,
-    /// Skips every FX.
+    /// The project's composition, if it has one.
+    composition: Option<Composition>,
+    /// Skips every graph.
     bypass_all: bool,
     tempo: Tempo,
     audio_rate: u32,
@@ -298,7 +298,7 @@ impl Engine {
             state: Mutex::new(State {
                 timeline: Timeline::default(),
                 graph: None,
-                routing: None,
+                composition: None,
                 bypass_all: false,
                 tempo: Tempo::default(),
                 key,
@@ -364,7 +364,7 @@ impl Engine {
             if state.timeline == timeline {
                 return;
             }
-            // Track levels and routing only shape the track mix, which isn't rendered here:
+            // Audio track levels and buses only shape the audio mix, which isn't rendered here:
             // changing them keeps every rendered frame.
             if state.timeline.renders_like(&timeline) {
                 state.timeline = timeline;
@@ -390,26 +390,26 @@ impl Engine {
         self.edit(|state| state.graph = Some(graph));
     }
 
-    /// Sets the project's routing: its track tree, every FX and the graphs they use; see
-    /// [Routing](../../../docs/engine.md#routing). `None` renders the open graph (see
-    /// [`Self::set_graph`]) as the master's FX, its ports named after tracks reading them. Like
+    /// Sets the project's composition: its tracks, graph tracks and the graphs they use; see
+    /// [Composition](../../../docs/engine.md#composition). `None` renders the open graph (see
+    /// [`Self::set_graph`]) over the whole timeline, its ports named after tracks reading them. Like
     /// [`Self::set_graph`], changes that don't alter what the graphs render (labels, positions,
     /// nodes that feed nothing) are not edits.
-    pub fn set_routing(&self, routing: Option<Routing>) {
-        let routing = routing.map(|mut routing| {
+    pub fn set_composition(&self, composition: Option<Composition>) {
+        let composition = composition.map(|mut composition| {
             let registry = Registry::shared();
-            for (_, graph) in &mut routing.graphs {
+            for (_, graph) in &mut composition.graphs {
                 *graph = render_form(graph, registry);
             }
-            routing
+            composition
         });
-        if lock(&self.shared.state).routing == routing {
+        if lock(&self.shared.state).composition == composition {
             return;
         }
-        self.edit(|state| state.routing = routing);
+        self.edit(|state| state.composition = composition);
     }
 
-    /// Skips every FX: the output shows and plays the track mix.
+    /// Skips every graph: the output shows and plays the mix.
     pub fn set_bypass_all(&self, bypass: bool) {
         if lock(&self.shared.state).bypass_all == bypass {
             return;
@@ -877,7 +877,7 @@ impl Worker {
         Snapshot {
             timeline: state.timeline.clone(),
             graph: render_form(graph, Registry::shared()),
-            routing: state.routing.clone(),
+            composition: state.composition.clone(),
             bypass_all: state.bypass_all,
             tempo: state.tempo,
             audio_rate: state.audio_rate,
@@ -956,7 +956,7 @@ impl Worker {
         let (timebase, bus) = (project.timeline.timebase, project.timeline.master());
         let size = key.scale.output_size();
         let registry = Registry::shared();
-        match (&project.routing, project.bypass_all) {
+        match (&project.composition, project.bypass_all) {
             (None, false) => Renderer::new(
                 backend,
                 timebase,
@@ -967,20 +967,20 @@ impl Worker {
                 registry,
                 size,
             ),
-            (routing, bypass) => {
-                let routing = routing
+            (composition, bypass) => {
+                let composition = composition
                     .clone()
-                    .unwrap_or_else(|| single_routing(tracks, &project.graph));
-                let routing = if bypass {
-                    routing.without_fx()
+                    .unwrap_or_else(|| single_composition(tracks, &project.graph));
+                let composition = if bypass {
+                    composition.without_graphs()
                 } else {
-                    routing
+                    composition
                 };
-                Renderer::with_routing(
+                Renderer::with_composition(
                     backend,
                     timebase,
                     tracks,
-                    &routing,
+                    &composition,
                     &project.graph,
                     project.tempo,
                     &bus,

@@ -12,12 +12,10 @@ pub const DEFAULT_AUDIO_RATE: u32 = 48_000;
 /// What the audio of a render is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AudioSink {
-    /// The graph has no audio output for the bus: the bus plays its track mix, the audio tracks
-    /// routed to it at their levels.
+    /// The master's sound is the bus's audio mix, the audio tracks routed to it at their levels:
+    /// no graph plays, or each passes the mix straight through.
     TrackMix,
-    /// An audio track is wired straight to the audio output: that track, as it is.
-    Passthrough(String),
-    /// The graph's audio output, rendered.
+    /// The graphs' audio output, rendered.
     Rendered { sample_rate: u32, channels: u32 },
 }
 

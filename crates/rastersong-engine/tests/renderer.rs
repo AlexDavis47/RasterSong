@@ -287,7 +287,7 @@ fn an_audio_output_renders_sound_with_each_frame() {
 }
 
 #[test]
-fn a_track_wired_straight_to_the_audio_output_is_passed_through() {
+fn a_track_wired_straight_to_the_audio_output_is_rendered_as_it_is() {
     use rastersong_engine::AudioSink;
 
     let graph = SOUND.replace(
@@ -295,9 +295,16 @@ fn a_track_wired_straight_to_the_audio_output_is_passed_through() {
         r#"{ "from": "audio", "to": "sound" }"#,
     );
     let mut r = renderer(&graph);
-    assert_eq!(r.audio_sink(), AudioSink::Passthrough("Audio".into()));
-    r.render(0, &|| false).unwrap();
-    assert!(r.audio().is_none());
+    // The port reads the track called `Audio` on its own, which isn't the mix: rendered.
+    assert!(matches!(r.audio_sink(), AudioSink::Rendered { .. }));
+    r.render(3, &|| false).unwrap();
+    let peak = r
+        .audio()
+        .unwrap()
+        .samples
+        .iter()
+        .fold(0.0f32, |m, x| m.max(x.abs()));
+    assert!((0.7..=0.81).contains(&peak), "{peak}");
     assert_eq!(renderer(common::FINITE).audio_sink(), AudioSink::TrackMix);
 }
 
@@ -513,8 +520,8 @@ fn the_main_port_reads_the_mix_and_a_port_naming_no_track_reads_zeros() {
 }
 
 #[test]
-fn without_fx_the_top_video_track_playing_shows() {
-    use rastersong_engine::{GraphDesc, Item, Renderer, single_routing};
+fn without_graphs_the_top_video_track_playing_shows() {
+    use rastersong_engine::{GraphDesc, Item, Renderer, single_composition};
 
     // Track `top` plays the first half second of the clip from 1 s; `bottom` the whole clip.
     let top_track = || RenderTrack {
@@ -528,11 +535,11 @@ fn without_fx_the_top_video_track_playing_shows() {
     let bottom = RenderTrack::video("bottom", common::VIDEO);
     let graph = GraphDesc::from_json(common::FINITE).unwrap();
     let tracks = [top, bottom];
-    let mut r = Renderer::with_routing(
+    let mut r = Renderer::with_composition(
         &common::backend(),
         None,
         &tracks,
-        &single_routing(&tracks, &graph).without_fx(),
+        &single_composition(&tracks, &graph).without_graphs(),
         &graph,
         Default::default(),
         &rastersong_engine::Bus::main(),
@@ -554,11 +561,11 @@ fn without_fx_the_top_video_track_playing_shows() {
         ..top_track()
     };
     let tracks = [top, RenderTrack::video("bottom", common::VIDEO)];
-    let mut r = Renderer::with_routing(
+    let mut r = Renderer::with_composition(
         &common::backend(),
         None,
         &tracks,
-        &single_routing(&tracks, &graph).without_fx(),
+        &single_composition(&tracks, &graph).without_graphs(),
         &graph,
         Default::default(),
         &rastersong_engine::Bus::main(),

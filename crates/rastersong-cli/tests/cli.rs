@@ -70,8 +70,8 @@ fn a_graph_with_an_audio_output_exports_its_sound() {
 }
 
 #[test]
-fn a_project_with_fx_renders_them() {
-    use rastersong_engine::{FfmpegBackend, Fx, GraphDesc, Item, MediaBackend, Project, TrackKind};
+fn a_project_with_graph_items_renders_them() {
+    use rastersong_engine::{FfmpegBackend, GraphDesc, MediaBackend, Project, TrackKind};
 
     let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let video = workspace.join("fixtures").join("rgb_pattern.mkv");
@@ -105,17 +105,10 @@ fn a_project_with_fx_renders_them() {
         "port".into(),
         rastersong_engine::ParamValue::Text("Nope".into()),
     );
-    let cut = |from: f64, to: Option<f64>, fx: Vec<Fx>| Item {
-        start: from / fps,
-        end: to.map(|t| t / fps),
-        fx,
-        ..Item::whole(from / fps)
-    };
-    project.tracks[0].items = vec![
-        cut(0.0, Some(2.0), Vec::new()),
-        cut(2.0, Some(4.0), vec![Fx::new(graph)]),
-        cut(4.0, None, Vec::new()),
-    ];
+    project.add_graph_track("Graphs");
+    project
+        .place_graph("Graphs", graph, 2.0 / fps, 2.0 / fps)
+        .unwrap();
     let layered = tmp.join("layered.rastersong");
     project.save(&layered).unwrap();
 
@@ -146,7 +139,7 @@ fn a_project_with_fx_renders_them() {
 }
 
 #[test]
-fn a_project_without_fx_renders_its_track_mix() {
+fn a_project_without_graph_items_renders_its_mix() {
     use rastersong_engine::{FfmpegBackend, GraphDesc, MediaBackend, Project, TrackKind};
 
     let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");

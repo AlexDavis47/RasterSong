@@ -26,6 +26,7 @@ pub use inspect::{
 };
 pub use inspector::InspectorContext;
 pub use modulation::{PARAM_PORT, as_param, param_port};
+pub use ports::port_label;
 
 /// Identifies a node in the editor, stable across renames.
 pub type NodeKey = u64;

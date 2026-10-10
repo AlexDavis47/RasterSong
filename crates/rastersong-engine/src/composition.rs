@@ -1,12 +1,12 @@
-//! What the renderer routes: the track tree with each track's FX, the master's FX, and the graphs
-//! they use. See [Routing](../../../docs/engine.md#routing).
+//! What the renderer composes: the video and audio tracks, the graph tracks above them, and the
+//! graphs their items use. See [Composition](../../../docs/engine.md#composition).
 
 use std::collections::BTreeMap;
 
 use rastersong_graph::nodes::{AUDIO_INPUT, DEFAULT_AUDIO, DEFAULT_VIDEO, PORT_PARAM, VIDEO_INPUT};
 use rastersong_graph::{GraphDesc, ParamValue};
 
-use crate::timeline::{Fx, TrackKind};
+use crate::timeline::{GraphItem, TrackKind};
 
 /// Whether an input port reads pictures or sound.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,7 +15,7 @@ pub enum InputKind {
     Audio,
 }
 
-/// An input port of a graph: what the host or a receive fills, by name. Several input nodes can
+/// An input port of a graph: what a graph item's sources fill, by name. Several input nodes can
 /// read one port.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InputPort {
@@ -25,13 +25,14 @@ pub struct InputPort {
 }
 
 impl InputPort {
-    /// Whether the host fills the port: `Video` read as a picture, or `Audio` read as sound.
+    /// Whether it is a main port: `Video` read as a picture, or `Audio` read as sound.
     pub fn is_main(&self) -> bool {
         is_main_port(&self.name, self.kind)
     }
 }
 
-/// Whether port `name` read as `kind` is a main port, filled by what the FX is on.
+/// Whether port `name` read as `kind` is a main port, which reads what is below unless set
+/// otherwise.
 pub fn is_main_port(name: &str, kind: InputKind) -> bool {
     match kind {
         InputKind::Video => name == DEFAULT_VIDEO,
@@ -76,9 +77,9 @@ pub fn input_ports(desc: &GraphDesc) -> Vec<InputPort> {
     ports
 }
 
-/// The ports of `desc` a receive can fill, by name: every input port but the main ones. A
-/// receive fills a name read as a picture and as sound with the track's picture and sound.
-pub fn receive_ports(desc: &GraphDesc) -> Vec<String> {
+/// The names of `desc`'s input ports other than the main ones, each once. A name read as a
+/// picture and as sound gets the picture and the sound of its source.
+pub fn extra_ports(desc: &GraphDesc) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
     for port in input_ports(desc).into_iter().filter(|p| !p.is_main()) {
         if !names.contains(&port.name) {
@@ -88,79 +89,65 @@ pub fn receive_ports(desc: &GraphDesc) -> Vec<String> {
     names
 }
 
-/// One track of the tree as the renderer routes it.
+/// A video or audio track as the renderer composes it.
 #[derive(Debug, Clone, PartialEq)]
-pub struct RouteTrack {
+pub struct MediaTrack {
     pub name: String,
-    /// How many folders it is in; a folder holds the deeper tracks right after it.
-    pub depth: u32,
-    pub folder: bool,
-    /// What it plays; `None` for a folder or an empty track.
-    pub kind: Option<TrackKind>,
-    /// Its FX chain, in order.
-    pub fx: Vec<Fx>,
-    /// Its level in its folder's (or the master's) sound.
+    pub kind: TrackKind,
+    /// Its level in the audio mix (a video track's is ignored).
     pub volume: f32,
-    pub muted: bool,
-    /// Whether it is mixed into its folder (or the master) at all.
-    pub master_send: bool,
-    /// Left out of the mix by a solo on another track of its kind.
-    pub solo_out: bool,
-    /// The bus a top-level track's sound is summed into.
+    /// Whether it is in the mix: not muted, and not left out by a solo. Graphs read its stem
+    /// either way.
+    pub in_mix: bool,
+    /// The bus an audio track is summed into.
     pub bus: String,
 }
 
-impl RouteTrack {
-    /// A top-level track of `kind`, at full level on the master, with no FX.
-    pub fn new(name: impl Into<String>, kind: Option<TrackKind>) -> Self {
+impl MediaTrack {
+    /// A track of `kind` in the mix at full level, on the master bus.
+    pub fn new(name: impl Into<String>, kind: TrackKind) -> Self {
         Self {
             name: name.into(),
-            depth: 0,
-            folder: false,
             kind,
-            fx: Vec::new(),
             volume: 1.0,
-            muted: false,
-            master_send: true,
-            solo_out: false,
+            in_mix: true,
             bus: rastersong_graph::nodes::DEFAULT_BUS.to_owned(),
         }
     }
-
-    /// Whether it reaches its folder (or the master): not muted, sending, and not left out by a
-    /// solo.
-    pub fn sends(&self) -> bool {
-        !self.muted && self.master_send && !self.solo_out
-    }
 }
 
-/// What the renderer routes: the track tree, top first, the master's FX chain, and the graphs
-/// the FX use.
+/// A graph track as the renderer composes it: the items that play (muted ones and muted tracks
+/// are left out).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ComposedGraphTrack {
+    pub name: String,
+    pub items: Vec<GraphItem>,
+}
+
+/// What the renderer composes.
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct Routing {
-    pub tracks: Vec<RouteTrack>,
-    pub master_fx: Vec<Fx>,
-    /// Every graph an FX may use, by id, but the open one, which comes separately because it
+pub struct Composition {
+    /// Video tracks top first, then audio tracks.
+    pub tracks: Vec<MediaTrack>,
+    /// Graph tracks, top first: the topmost active item's outputs are the master.
+    pub graph_tracks: Vec<ComposedGraphTrack>,
+    /// Every graph an item may use, by id, but the open one, which comes separately because it
     /// changes as it is edited.
     pub graphs: Vec<(u32, GraphDesc)>,
     /// The id of the open graph.
     pub open: u32,
 }
 
-impl Routing {
-    /// The routing with every FX left out: what plays with all of them bypassed.
-    pub fn without_fx(mut self) -> Self {
-        for track in &mut self.tracks {
-            track.fx.clear();
-        }
-        self.master_fx.clear();
+impl Composition {
+    /// The composition with every graph track left out: the plain mix.
+    pub fn without_graphs(mut self) -> Self {
+        self.graph_tracks.clear();
         self
     }
 
-    /// Whether any FX is on (items' FX are with the tracks' items).
-    pub fn has_fx(&self) -> bool {
-        self.master_fx.iter().any(|f| !f.bypass)
-            || self.tracks.iter().flat_map(|t| &t.fx).any(|f| !f.bypass)
+    /// Whether any graph item plays.
+    pub fn has_graphs(&self) -> bool {
+        self.graph_tracks.iter().any(|t| !t.items.is_empty())
     }
 }
 
@@ -180,7 +167,7 @@ mod tests {
                 { "id": "o", "type": "output" } ] }"#,
         )
         .unwrap();
-        assert_eq!(receive_ports(&desc), ["Kick", "Audio"]);
+        assert_eq!(extra_ports(&desc), ["Kick", "Audio"]);
         assert_eq!(input_ports(&desc).len(), 5);
     }
 }

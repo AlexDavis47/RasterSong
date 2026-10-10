@@ -6,8 +6,8 @@ use rastersong_media::MediaBackend;
 
 use crate::timeline::{Bus, Timebase};
 use crate::{
-    AudioBlock, AudioSink, DEFAULT_AUDIO_RATE, EngineError, OutputSize, RenderInfo, RenderTrack,
-    Renderer, Routing,
+    AudioBlock, AudioSink, Composition, DEFAULT_AUDIO_RATE, EngineError, OutputSize, RenderInfo,
+    RenderTrack, Renderer,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -24,10 +24,10 @@ pub struct RenderSettings {
     pub audio_rate: Option<u32>,
     /// The output bus whose sound is rendered.
     pub bus: Bus,
-    /// The project's routing ([`crate::Project::routing`]), with `graph` the open graph's
-    /// description. `None` renders `graph` as the master's FX, its ports named after tracks
-    /// reading them.
-    pub routing: Option<Routing>,
+    /// The project's composition ([`crate::Project::composition`]), with `graph` the open
+    /// graph's description. `None` renders `graph` over the whole timeline, its ports named
+    /// after tracks reading them.
+    pub composition: Option<Composition>,
 }
 
 /// One rendered frame, as packed RGB8.
@@ -42,14 +42,14 @@ pub struct RenderedFrame<'a> {
 /// Where rendered frames go.
 pub trait FrameSink {
     /// Called once before the first frame, e.g. to create the output file. `audio` says whether
-    /// the sound is the source audio, a track passed through, or rendered with each frame.
+    /// the sound is the audio mix or rendered with each frame.
     fn start(&mut self, info: &RenderInfo, audio: &AudioSink) -> Result<(), EngineError>;
 
     /// Called for each frame, in order.
     fn frame(&mut self, frame: RenderedFrame) -> Result<(), EngineError>;
 }
 
-/// Renders `tracks` through `graph` (or `settings.routing`) into `sink`, starting from frame 0 so
+/// Renders `tracks` through `graph` (or `settings.composition`) into `sink`, starting from frame 0 so
 /// the result is exact.
 pub fn render(
     backend: &dyn MediaBackend,
@@ -61,12 +61,12 @@ pub fn render(
     let size = settings
         .size
         .map_or(OutputSize::Native, |(w, h)| OutputSize::Exact(w, h));
-    let mut renderer = match &settings.routing {
-        Some(routing) => Renderer::with_routing(
+    let mut renderer = match &settings.composition {
+        Some(composition) => Renderer::with_composition(
             backend,
             settings.timebase,
             tracks,
-            routing,
+            composition,
             graph,
             settings.tempo,
             &settings.bus,

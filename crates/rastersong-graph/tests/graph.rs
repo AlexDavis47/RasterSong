@@ -1054,6 +1054,13 @@ fn audio_outputs_without_input_or_processing_leave_the_source_audio_alone() {
         r#"{ "from": "video", "to": "out" }, { "from": "audio", "to": "sound" }"#,
     );
     assert_eq!(compile(&json).unwrap().audio_passthrough(), Some("Audio"));
+    // At another volume the sound is rendered, not passed through.
+    let louder = json.replace(
+        r#""type": "audio_output" }"#,
+        r#""type": "audio_output", "params": { "volume": -6 } }"#,
+    );
+    assert_ne!(louder, json);
+    assert_eq!(compile(&louder).unwrap().audio_passthrough(), None);
     // Unconnected audio outputs don't change what renders.
     let with = render_form_of(&json);
     let extra = json.replace(
