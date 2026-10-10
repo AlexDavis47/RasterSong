@@ -603,6 +603,27 @@ raw.
    - [ ] **feature** Graph Progress node.
    - [ ] **chore** Run graph tracks as a pipeline across frames again, as graph layers did.
    - [ ] **feature** Inspecting connections in a graph that isn't under the playhead.
+
+   **2c feedback (October 2026, from the first hands-on pass).**
+   - [ ] **bug** The timeline shows on launch, with default empty tracks, so the space is never blank.
+   - [ ] **chore** Remove the + Video track / + Audio track / + Graph track rows (visual noise) and with them the
+     ability to make an empty track. A track is only created by placing a resource.
+   - [ ] **feature** New tracks come from the track context menu (New track above / New track below, which need an
+     item to place) and from dragging a resource between tracks onto a ghost insertion line (above and below both
+     work). The ghost line was lost and must come back.
+   - [ ] **bug** Clicking empty space in the graph editor deselects timeline items; the two selections share the
+     inspector, so a selected graph item hides the node properties even after clicking a node.
+   - [ ] **bug** Items must be copy-pastable again (Ctrl+C / Ctrl+V on timeline items); the feature existed and was
+     lost.
+   - [ ] **feature** Ctrl+A selects every item in the timeline, across all sections.
+   - [ ] **feature** Graph inputs and outputs redesigned: a graph has any number of input and output nodes, and one
+     output can be marked as the main video and one as the main audio output, which is what passes up to the master.
+     Other outputs expose control video or audio signals to graphs above (supersedes the single Video Output / Audio
+     Output design; folds in the output port nodes item above).
+   - [ ] **feature** Passes (later): any node can add passes. A pass is a stacked duplicate directly under the node,
+     visibly connected to it and owned by it, with every parameter mirrored 1:1 from the original and its own input
+     and output taps. One node then processes video and audio identically, or stacks the same effect several times,
+     without editing copies or chaining outputs to inputs.
 3. **Subgraphs**
    - [ ] **feature** Subgraph nodes with pins, linked references, Make unique, cycle check, flattening at compile.
      Output port nodes (from 2c) become a subgraph's output pins.
