@@ -138,12 +138,23 @@ impl Project {
     /// unique among tracks), at the bottom of its section, and returns its name. `None` if there
     /// is no such resource.
     pub fn add_track_for(&mut self, id: ResourceId, position: f64) -> Option<String> {
+        self.add_track_for_at(id, position, None)
+    }
+
+    /// As [`Self::add_track_for`], but before the track now at index `slot` when that is in the
+    /// new track's section (or just past its last).
+    pub fn add_track_for_at(
+        &mut self,
+        id: ResourceId,
+        position: f64,
+        slot: Option<usize>,
+    ) -> Option<String> {
         let resource = self.resource(id)?;
         let kind = resource.kind.track_kind();
         let name = self.unique_name(&resource.name);
         let mut track = ProjectTrack::new(name.clone(), kind, id);
         track.items[0].position = position.max(0.0);
-        self.insert_new_track(track);
+        self.insert_new_track_at(track, slot);
         Some(name)
     }
 
@@ -270,6 +281,38 @@ impl Project {
             };
             let item = self.track(&name).map_or(0, |t| t.items.len() - 1);
             placed.push(ItemRef::new(name, item));
+        }
+        self.group_items(&placed);
+        placed
+    }
+
+    /// Places resource `id` from `position` seconds on new tracks inserted before the track now
+    /// at index `slot`, with every other resource of its file when `linked`, and groups what it
+    /// placed. A resource whose section doesn't hold `slot` gets its new track at the bottom of
+    /// its own section. Returns the items placed, `id`'s first.
+    pub fn place_linked_at(
+        &mut self,
+        id: ResourceId,
+        slot: usize,
+        position: f64,
+        linked: bool,
+    ) -> Vec<ItemRef> {
+        let resources = if linked {
+            self.siblings(id)
+        } else {
+            self.resource(id).map(|r| r.id).into_iter().collect()
+        };
+        let mut slot = slot;
+        let mut placed = Vec::new();
+        for res in resources {
+            let Some(name) = self.add_track_for_at(res, position, Some(slot)) else {
+                continue;
+            };
+            // Everything from the new track on shifts down one.
+            if self.track_index(&name).is_some_and(|at| at <= slot) {
+                slot += 1;
+            }
+            placed.push(ItemRef::new(name, 0));
         }
         self.group_items(&placed);
         placed

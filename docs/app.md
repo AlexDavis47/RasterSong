@@ -136,8 +136,8 @@ its name, its volume (which scales everything in it), mute, solo and ×; its lan
 holds no items of its own. Each folder level indents the header, with a guide line down the left. A folder's mute
 or solo, or its master send turned off, applies to everything in it, and removing a folder moves what was in it up
 a level. The ruler's corner has the **Time** / **Tempo** button (minutes and seconds, or bars and beats with the
-tempo bar and its **Metronome** toggle) and the Snap button. Until a video is loaded, the timeline says it appears
-once one is, with a button to add an audio track. Each track
+tempo bar and its **Metronome** toggle) and the Snap button. The timeline shows from launch, over a
+default ten seconds, with each empty section naming what to drop in it. Each track
 is a lane of **items**, the stretches of its file placed on the timeline. The video header shows the track's name
 (its file's name until renamed), size and frame rate; each audio header has
 the track's name (renaming a track updates the bindings that read it), its volume in the track mix, and, at the
@@ -145,10 +145,14 @@ top of the tree, its bus when the project has several (a track in a folder goes 
 header has **mute** and **solo** (*S*: while any track of a kind is soloed, only soloed tracks of that kind are in
 the [track mix](engine.md#track-mix-and-output-buses); soloing a folder solos what is in it); every header also has
 a × that removes the track. Tracks left out of the mix are drawn dimmed. Each track's lane has its own outline (the selected track's is the accent color), so neighbouring tracks are easy to tell apart. The project lasts to the end of its last item and
-runs at its [timebase](engine.md#timeline). **+ Track** adds an empty track to drag a resource onto, a folder,
-or (Audio file…, also File → Add Audio Tracks…) several audio files at once, each named after its file.
-Dropping a resource on a track puts it there from the drop point: an empty track takes it, a track of the same
-resource gets another item, and any other track (a track holds one resource only) makes a new track instead.
+runs at its [timebase](engine.md#timeline). There is no way to make an empty track: a track appears when
+a resource is placed (File → Add Audio Tracks… places several audio files at once, each named after its file).
+Dropping a resource on a track puts it there from the drop point: a track of the same resource gets another item,
+and any other track (a track holds one resource only) makes a new track instead. Dropped **on the line between two
+tracks**, or above the first or below the last track of a section, the resource gets a new track there, whatever
+it is dropped on: a thick **ghost line** shows the place. A track's right-click menu has **New track above** and
+**New track below**, which list the resources of its kind and put the one chosen on a new track there, at the
+playhead.
 While a card is dragged a **drag bubble** (a pill with the card's icon and name) follows the pointer; it pops in,
 blooms where it is dropped, and shrinks back to the card when nothing takes it. Over the lanes a **ghost** shows
 where the drop will land: an outlined item on the track that takes it, or a ghost row where the new track will
@@ -178,9 +182,11 @@ audio's waveform, and behaves like empty lane space. Items can't start before th
   slower and lower, like tape (from 0.05× to 20×).
 - **S** splits at the playhead: the selected items, or with none selected every item under it. Both halves stay
   selected.
+- **Ctrl+A** selects every item in every section, graph items too, while the pointer is over the timeline.
+  Clicking in the graph editor deselects the timeline's items, so the inspector shows the clicked node again.
 - **Delete** (or Backspace) removes the selected items. **Ctrl+C**, **Ctrl+X** and **Ctrl+V** copy, cut and paste
-  them; pasted items go back to the tracks they came from, the earliest at the playhead, and become the
-  selection. These keys act on the timeline while the pointer is over it, and on the graph otherwise. Copying puts
+  them; pasted items (graph items too) go back to the tracks they came from, the earliest at the playhead, and
+  become the selection. These keys act on the timeline while the pointer is over it, and on the graph otherwise. Copying puts
   a marker on the system clipboard (the platform only sends Ctrl+V when it holds text); copying anything else
   since then means Ctrl+V over the timeline pastes nothing. The bar's right-click menu has the same commands.
 - **Ctrl+G** (or **Group** in the bar's menu) groups the selected items, and **Ctrl+Shift+G** (**Ungroup**) ungroups

@@ -86,7 +86,20 @@ impl Project {
 
     /// Puts `track` at the bottom of its section and returns its index.
     pub(super) fn insert_new_track(&mut self, track: ProjectTrack) -> usize {
-        let at = self.section(track.kind).end;
+        self.insert_new_track_at(track, None)
+    }
+
+    /// Puts `track` before the track now at index `slot` when that is in its section (or just
+    /// past its last), else at the bottom of its section. Returns its index.
+    pub(super) fn insert_new_track_at(
+        &mut self,
+        track: ProjectTrack,
+        slot: Option<usize>,
+    ) -> usize {
+        let section = self.section(track.kind);
+        let at = slot
+            .filter(|s| (section.start..=section.end).contains(s))
+            .unwrap_or(section.end);
         self.tracks.insert(at, track);
         at
     }

@@ -6,8 +6,6 @@ window.title = {name} — RasterSong
 window.title_dirty = {name} • — RasterSong
 project.untitled = Untitled
 project.bus.new_name = Bus {n}
-project.track.video = Video
-project.track.audio = Audio
 project.track.graphs = Graphs
 
 # --- Menus ---
@@ -108,7 +106,6 @@ tempo.metronome.help = Click on every beat while playing, higher on the first be
   to check the tempo and first beat by ear
 
 # --- Timeline ---
-timeline.empty = The timeline appears once a video is loaded.
 timeline.mode.time = Time
 timeline.mode.time.help = The ruler shows minutes and seconds. Click to show bars and beats and edit the tempo.
 timeline.mode.tempo = Tempo
@@ -118,16 +115,7 @@ timeline.ruler.help = Click or drag to move the playhead. Ctrl+drag makes a loop
 timeline.loop.hint = Ctrl+drag along the ruler to make a loop region
 timeline.loop.enable = Loop playback (R)
 timeline.loop.remove = Remove loop region
-timeline.track.add_video = + Video track
-timeline.track.add_video.help = Add an empty video track to drag a video onto
-timeline.track.add_audio = + Audio track
-timeline.track.add_audio.help = Add an empty audio track, or audio files as new tracks
-timeline.track.add_empty = Empty track
-timeline.track.add_empty.help = A track that plays nothing until a resource of its kind is dragged onto it
-timeline.track.add_file = Audio file...
-timeline.track.add_file.help = Add an audio file as a new track
 timeline.track.missing = Missing file: relocate it in the Resources panel
-timeline.track.add_audio_file = + Audio track
 timeline.track.reorder = Drag up or down to move the track within its section. Right-click for the track menu.
 timeline.track.header.help = Right-click for the track menu: reset the height, remove.
 timeline.track.resize = Drag to change the track's height. Double-click for the default.
@@ -142,8 +130,13 @@ timeline.track.volume.suffix = %
 timeline.track.volume.help = The track's level in the mix. Graphs read the track as it is.
 timeline.track.bus.help = The output bus this track is summed into in the mix, at its volume. Graphs read the track whatever its bus.
 timeline.track.reset_height = Default height
-timeline.graph_track.add = + Graph track
-timeline.graph_track.add.help = Add an empty graph track on top. Drag a graph from the Resources panel onto it.
+timeline.track.new_above = New track above
+timeline.track.new_below = New track below
+timeline.track.new.help = Put one of the resources on a new track here
+timeline.track.new.none = Import a resource of this kind in the Resources panel first
+timeline.section.graphs.empty = Drag a graph here to make a graph track
+timeline.section.video.empty = Drag a video here to make a video track
+timeline.section.audio.empty = Drag audio here to make an audio track
 timeline.graph_track.header.help = Drag up or down to reorder the graph tracks: the top one playing is what you see and hear. Right-click to remove the track.
 timeline.graph_track.name.help = Graph track name: graph items above pick its output by this name
 timeline.graph_track.mute = Mute: skip this graph track, so what is below it shows through

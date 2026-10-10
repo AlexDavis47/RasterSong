@@ -13,7 +13,7 @@ use rastersong_engine::LoadedTrack;
 use rastersong_engine::playback::{MixTrack, Mixer};
 use rastersong_engine::{
     AudioSink, BackendInfo, CompileOptions, Engine, EngineConfig, EngineStatus, Frame, Graph,
-    GraphDesc, Item, ItemRef, MediaBackend, NodeStats, PROJECT_EXTENSION, PlaybackClock,
+    GraphDesc, GraphItem, Item, ItemRef, MediaBackend, NodeStats, PROJECT_EXTENSION, PlaybackClock,
     PreviewScale, Project, ProjectTrack, Registry, ResourceId, ResourceKind, Thumbnails, Timeline,
     TimelineMode, TrackKind, TrackSpec, VIDEO_SOURCE, VideoInfo, VideoKey, resource_name_for,
 };
@@ -56,6 +56,9 @@ const SOURCE_GRAPH: &str = r#"{ "version": 0,
 /// The shortest a graph dropped on the timeline lasts, in seconds, when the project is shorter.
 const MIN_GRAPH_ITEM_SECONDS: f64 = 5.0;
 
+/// The length of the timeline before anything is loaded, in frames of [`EMPTY_TIMELINE_RATE`].
+const EMPTY_TIMELINE_FRAMES: usize = 300;
+const EMPTY_TIMELINE_RATE: f64 = 30.0;
 /// What copying timeline items puts on the system clipboard. The items themselves stay in the app.
 pub const ITEM_CLIPBOARD_MARKER: &str = "RasterSong timeline items";
 
@@ -143,12 +146,16 @@ pub struct App {
     selected_items: Vec<ItemRef>,
     /// The selected graph item: its graph track's name and its place on it. Its inspector
     /// replaces the node inspector while it is selected.
-    selected_graph_item: Option<(String, usize)>,
+    selected_graph_items: Vec<(String, usize)>,
     /// The row of the video and audio tracks the pointer was over when the timeline was last
     /// drawn, which the drop preview plans with.
     hovered_row: Option<usize>,
+    /// The line between tracks a resource is being dragged onto.
+    hovered_slot: Option<usize>,
     /// Timeline items copied, with the names of their tracks.
     item_clipboard: Vec<(String, Item)>,
+    /// The copied graph item and the graph track it came from.
+    graph_item_clipboard: Vec<(String, GraphItem)>,
     /// When (egui time) the preview started waiting on a frame to render, if it is.
     waiting_since: Option<f64>,
     preview: Option<(egui::TextureHandle, Arc<Frame>)>,
@@ -227,9 +234,11 @@ impl App {
             waiting_since: None,
             selected_track: None,
             selected_items: Vec::new(),
-            selected_graph_item: None,
+            selected_graph_items: Vec::new(),
             hovered_row: None,
+            hovered_slot: None,
             item_clipboard: Vec::new(),
+            graph_item_clipboard: Vec::new(),
             project,
             project_path: None,
             editor,
@@ -378,7 +387,7 @@ impl App {
         self.saved = project.clone();
         self.history = History::new(project.clone());
         self.selected_track = None;
-        self.selected_graph_item = None;
+        self.selected_graph_items.clear();
         self.project = project;
         self.project_path = path;
         self.clock = PlaybackClock::new(30.0, 0);
@@ -498,17 +507,6 @@ impl App {
         Some(name)
     }
 
-    /// Adds an empty track of `kind` to drag a resource onto, and selects it. Returns its name.
-    pub fn add_empty_track(&mut self, kind: TrackKind) -> String {
-        let name = match kind {
-            TrackKind::Video => tr("project.track.video"),
-            TrackKind::Audio => tr("project.track.audio"),
-        };
-        let name = self.project.add_empty_track(kind, name);
-        self.selected_track = Some(name.clone());
-        name
-    }
-
     /// Adds an empty graph track on top of the Graphs section. Returns its name.
     pub fn add_graph_track(&mut self) -> String {
         self.project.add_graph_track(tr("project.track.graphs"))
@@ -532,6 +530,22 @@ impl App {
         let placed = self
             .project
             .place_linked(id, hovered.as_deref(), position, linked);
+        if let Some(first) = placed.first() {
+            self.selected_track = Some(first.track.clone());
+        }
+        placed
+    }
+
+    /// Drops resource `id` on new tracks before the track now at index `slot` (see
+    /// [`Project::place_linked_at`]). Returns the items placed, `id`'s first.
+    pub fn drop_resource_at(
+        &mut self,
+        id: ResourceId,
+        slot: usize,
+        position: f64,
+        linked: bool,
+    ) -> Vec<ItemRef> {
+        let placed = self.project.place_linked_at(id, slot, position, linked);
         if let Some(first) = placed.first() {
             self.selected_track = Some(first.track.clone());
         }
@@ -906,7 +920,7 @@ impl App {
             .frame(panel(10))
             .show(ui, |ui| {
                 // A selected graph item shows its own inspector instead of the node's.
-                if let Some((track, item)) = &self.selected_graph_item
+                if let [(track, item)] = &self.selected_graph_items[..]
                     && self.project.graph_item(track, *item).is_some()
                 {
                     egui::ScrollArea::vertical().show(ui, |ui| {
@@ -989,6 +1003,18 @@ impl App {
                 }),
             },
         );
+        // A click in the graph editor leaves the timeline's items: they share the inspector, so
+        // a selected item would otherwise hide the properties of the nodes clicked.
+        let clicked_here = ui.input(|i| {
+            i.pointer.primary_pressed()
+                && i.pointer
+                    .interact_pos()
+                    .is_some_and(|p| canvas.rect.contains(p))
+        });
+        if clicked_here {
+            self.selected_items.clear();
+            self.selected_graph_items.clear();
+        }
         self.update_listening(ui);
         self.bypass_all_button(ui, canvas.rect);
     }
@@ -1900,19 +1926,13 @@ impl App {
 
     fn timeline(&mut self, ui: &mut Ui) {
         let area = ui.available_rect_before_wrap();
-        let Some(info) = self.engine.info() else {
-            self.timeline_area = area;
-            ui.weak(tr("timeline.empty"));
-            if ui.button(tr("timeline.track.add_audio_file")).clicked() {
-                self.pick_audio_tracks();
-            }
-            // A resource dropped on the empty timeline starts at the beginning.
-            if let Some(id) = dropped_resource(ui, area) {
-                let linked = !ui.input(|i| i.modifiers.alt);
-                self.drop_resource(id, None, 0.0, linked);
-            }
-            return;
-        };
+        // Before anything is loaded the timeline still shows, over a default length, with
+        // its sections naming what to drop in them.
+        let info = self.engine.info();
+        let (frame_count, frame_rate) = info
+            .map_or((EMPTY_TIMELINE_FRAMES, EMPTY_TIMELINE_RATE), |info| {
+                (info.frames, info.frame_rate.as_f64())
+            });
         self.tempo_bar(ui);
         self.tidy_item_selection();
         let loaded = self.engine.loaded_tracks();
@@ -1926,8 +1946,8 @@ impl App {
             .and_then(|name| self.project.track_index(name));
         let cached = self.engine.cached_ranges();
         let model = TimelineModel {
-            frame_count: info.frames,
-            frame_rate: info.frame_rate.as_f64(),
+            frame_count,
+            frame_rate,
             playhead: self.clock.frame(),
             cached: &cached,
             graph_tracks: self.graph_track_views(),
@@ -1938,18 +1958,32 @@ impl App {
             mode: self.project.timeline_mode,
             buses: self.project.buses.iter().map(|b| b.name.clone()).collect(),
             snap: self.settings.snap,
+            resources: self
+                .project
+                .resources
+                .iter()
+                .map(|r| (r.id, r.name.clone(), r.kind.track_kind()))
+                .collect(),
             drop_ghost: self.drop_ghost(ui),
         };
         self.timeline_area = ui.available_rect_before_wrap();
         let response = timeline(ui, &model, &mut self.timeline_view);
         self.hovered_row = response.row_under_pointer;
+        self.hovered_slot = response.drop_slot;
         self.timeline_layout = response.layout.clone();
         // A drop lands where its ghost was drawn: at the snapped time, or (released over the
         // headers) at the start.
         let at = response.drop_at.unwrap_or(0.0);
         if let Some(id) = dropped_resource(ui, area) {
             let linked = !ui.input(|i| i.modifiers.alt);
-            self.drop_resource(id, response.row_under_pointer, at, linked);
+            match response.drop_slot {
+                Some(slot) => {
+                    self.drop_resource_at(id, slot, at, linked);
+                }
+                None => {
+                    self.drop_resource(id, response.row_under_pointer, at, linked);
+                }
+            }
         }
         if let Some(graph) = dropped_graph(ui, area)
             && let Some(target) = response.graph_drop
@@ -1981,6 +2015,10 @@ impl App {
         }
         if let Some(frame) = response.seek {
             self.clock.seek(frame);
+        }
+        if info.is_none() {
+            // The default length isn't the video's: fit again once there is one.
+            self.timeline_view = TimelineView::default();
         }
         for action in response.actions {
             self.track_action(ui.ctx(), action);
@@ -2081,11 +2119,12 @@ impl App {
                         muted: i.muted,
                     })
                     .collect(),
-                selected_item: self
-                    .selected_graph_item
-                    .as_ref()
+                selected_items: self
+                    .selected_graph_items
+                    .iter()
                     .filter(|(track, _)| *track == t.name)
-                    .map(|&(_, item)| item),
+                    .map(|&(_, item)| item)
+                    .collect(),
             })
             .collect()
     }
@@ -2101,9 +2140,14 @@ impl App {
                 .hovered_row
                 .and_then(|r| self.project.tracks.get(r))
                 .map(|t| t.name.clone());
-            let items = self
+            // On a line between tracks, every resource gets a new track.
+            let mut plan = self
                 .project
-                .plan_linked(dragged.0, hovered.as_deref(), linked)
+                .plan_linked(dragged.0, hovered.as_deref(), linked);
+            if self.hovered_slot.is_some() {
+                plan.iter_mut().for_each(|(_, target)| *target = None);
+            }
+            let items = plan
                 .into_iter()
                 .filter_map(|(id, target)| {
                     let resource = self.project.resource(id)?;
@@ -2172,21 +2216,26 @@ impl App {
 
     /// The selected graph item: its graph track's name and its place on it.
     pub fn selected_graph_item(&self) -> Option<&(String, usize)> {
-        self.selected_graph_item.as_ref()
+        match &self.selected_graph_items[..] {
+            [only] => Some(only),
+            _ => None,
+        }
+    }
+
+    /// Every selected graph item: its graph track's name and its place on it.
+    pub fn selected_graph_items(&self) -> &[(String, usize)] {
+        &self.selected_graph_items
     }
 
     fn select_graph_item(&mut self, track: String, item: usize) {
         self.selected_items.clear();
-        self.selected_graph_item = Some((track, item));
+        self.selected_graph_items = vec![(track, item)];
     }
 
     fn graph_action(&mut self, action: GraphAction) {
         let name =
             |app: &Self, row: usize| app.project.graph_tracks.get(row).map(|t| t.name.clone());
         match action {
-            GraphAction::Add => {
-                self.add_graph_track();
-            }
             GraphAction::SelectItem { track, item } => {
                 if let Some(track) = name(self, track) {
                     self.select_graph_item(track, item);
@@ -2226,7 +2275,7 @@ impl App {
                 if let Some(track) = name(self, track)
                     && self.project.delete_graph_item(&track, item)
                 {
-                    self.selected_graph_item = None;
+                    self.selected_graph_items.clear();
                 }
             }
             GraphAction::OpenItem { track, item } => {
@@ -2245,20 +2294,18 @@ impl App {
             GraphAction::Rename(row, new) => {
                 if let Some(old) = name(self, row)
                     && self.project.rename_track(&old, &new)
-                    && let Some((track, _)) = &mut self.selected_graph_item
-                    && *track == old
                 {
-                    *track = new.trim().to_owned();
+                    for (track, _) in &mut self.selected_graph_items {
+                        if *track == old {
+                            *track = new.trim().to_owned();
+                        }
+                    }
                 }
             }
             GraphAction::Remove(row) => {
-                if let Some(removed) = self.project.remove_graph_track(row)
-                    && self
-                        .selected_graph_item
-                        .as_ref()
-                        .is_some_and(|(t, _)| *t == removed.name)
-                {
-                    self.selected_graph_item = None;
+                if let Some(removed) = self.project.remove_graph_track(row) {
+                    self.selected_graph_items
+                        .retain(|(t, _)| *t != removed.name);
                 }
             }
             GraphAction::Move { from, slot } => {
@@ -2269,7 +2316,7 @@ impl App {
 
     /// Applies a change from the graph item inspector to the selected graph item.
     fn graph_item_edit(&mut self, edit: ItemEdit) {
-        let Some((track, item)) = self.selected_graph_item.clone() else {
+        let Some((track, item)) = self.selected_graph_item().cloned() else {
             return;
         };
         match edit {
@@ -2410,10 +2457,8 @@ impl App {
                 .track(&r.track)
                 .is_some_and(|t| r.item < t.items.len())
         });
-        self.selected_graph_item = self
-            .selected_graph_item
-            .take()
-            .filter(|(track, item)| project.graph_item(track, *item).is_some());
+        self.selected_graph_items
+            .retain(|(track, item)| project.graph_item(track, *item).is_some());
     }
 
     fn track_action(&mut self, ctx: &egui::Context, action: TrackAction) {
@@ -2423,7 +2468,7 @@ impl App {
             TrackAction::SelectItem { row, item, toggle } => {
                 let Some(track) = name(self, row) else { return };
                 self.selected_track = Some(track.clone());
-                self.selected_graph_item = None;
+                self.selected_graph_items.clear();
                 let at = ItemRef::new(track, item);
                 if !toggle {
                     self.selected_items = vec![at];
@@ -2435,13 +2480,26 @@ impl App {
             }
             TrackAction::ClearItems => {
                 self.selected_items.clear();
-                self.selected_graph_item = None;
+                self.selected_graph_items.clear();
+            }
+            TrackAction::SelectAll => {
+                self.selected_items = self
+                    .project
+                    .tracks()
+                    .flat_map(|t| (0..t.items.len()).map(|k| ItemRef::new(t.name.clone(), k)))
+                    .collect();
+                self.selected_graph_items = self
+                    .project
+                    .graph_tracks
+                    .iter()
+                    .flat_map(|t| (0..t.items.len()).map(|k| (t.name.clone(), k)))
+                    .collect();
             }
             TrackAction::SelectItems { items, additive } => {
                 if !additive {
                     self.selected_items.clear();
                 }
-                self.selected_graph_item = None;
+                self.selected_graph_items.clear();
                 for (row, item) in items {
                     let Some(track) = name(self, row) else {
                         continue;
@@ -2475,8 +2533,11 @@ impl App {
             }
             TrackAction::SplitItems { at } => {
                 let lengths = self.item_lengths();
-                if let Some((track, item)) = self.selected_graph_item.clone() {
-                    self.project.split_graph_item(&track, item, at);
+                if !self.selected_graph_items.is_empty() {
+                    for (track, item) in self.selected_graph_items.clone() {
+                        self.project.split_graph_item(&track, item, at);
+                    }
+                    self.selected_graph_items.clear();
                 } else if self.selected_items.is_empty() {
                     // With nothing selected, every item under the playhead, graph items too.
                     let under: Vec<ItemRef> = self
@@ -2514,7 +2575,10 @@ impl App {
                 }
             }
             TrackAction::DeleteItems => {
-                if let Some((track, item)) = self.selected_graph_item.take() {
+                // Highest index first, so deleting one doesn't shift the next.
+                let mut graphs = std::mem::take(&mut self.selected_graph_items);
+                graphs.sort_by_key(|g| std::cmp::Reverse(g.1));
+                for (track, item) in graphs {
                     self.project.delete_graph_item(&track, item);
                 }
                 self.project.delete_items(&self.selected_items);
@@ -2527,22 +2591,64 @@ impl App {
                 self.project.ungroup_items(&self.selected_items);
             }
             TrackAction::CopyItems | TrackAction::CutItems => {
-                if self.selected_items.is_empty() {
+                let cut = action == TrackAction::CutItems;
+                if self.selected_items.is_empty() && self.selected_graph_items.is_empty() {
                     return;
                 }
                 self.item_clipboard = self.project.copy_items(&self.selected_items);
+                self.graph_item_clipboard = self
+                    .selected_graph_items
+                    .iter()
+                    .filter_map(|(track, item)| {
+                        let copied = self.project.graph_item(track, *item)?.clone();
+                        Some((track.clone(), copied))
+                    })
+                    .collect();
                 // The platform only sends Ctrl+V on when the system clipboard holds text, so the
                 // copy puts a marker there; a paste pastes the items only while it is still there.
                 ctx.copy_text(ITEM_CLIPBOARD_MARKER.to_owned());
-                if action == TrackAction::CutItems {
+                if cut {
                     self.project.delete_items(&self.selected_items);
                     self.selected_items.clear();
+                    let mut graphs = std::mem::take(&mut self.selected_graph_items);
+                    graphs.sort_by_key(|g| std::cmp::Reverse(g.1));
+                    for (track, item) in graphs {
+                        self.project.delete_graph_item(&track, item);
+                    }
                 }
             }
             TrackAction::PasteItems { at, text } => {
                 let ours = text.is_none_or(|t| t == ITEM_CLIPBOARD_MARKER);
-                if ours && !self.item_clipboard.is_empty() {
+                if !ours {
+                    return;
+                }
+                if !self.item_clipboard.is_empty() {
                     self.selected_items = self.project.paste_items(&self.item_clipboard, at);
+                }
+                // Graph items go back on their own track (the top one when it is gone), keeping
+                // their spacing from the earliest copied.
+                let first = self
+                    .graph_item_clipboard
+                    .iter()
+                    .map(|(_, i)| i.position)
+                    .fold(f64::INFINITY, f64::min);
+                let mut pasted = Vec::new();
+                for (track, item) in self.graph_item_clipboard.clone() {
+                    let track = if self.project.graph_track(&track).is_some() {
+                        Some(track)
+                    } else {
+                        self.project.graph_tracks.first().map(|t| t.name.clone())
+                    };
+                    if let Some(track) = track
+                        && let Some(k) =
+                            self.project
+                                .paste_graph_item(&track, &item, at + item.position - first)
+                    {
+                        pasted.push((track, k));
+                    }
+                }
+                if !pasted.is_empty() {
+                    self.selected_graph_items = pasted;
                 }
             }
             TrackAction::ToggleItemMute { row, item } => {
@@ -2591,9 +2697,9 @@ impl App {
                     self.tidy_track_selection();
                 }
             }
-            TrackAction::Add => self.pick_audio_tracks(),
-            TrackAction::AddEmpty(kind) => {
-                self.add_empty_track(kind);
+            TrackAction::NewTrack { slot, resource } => {
+                let at = self.clock.frame() as f64 / self.clock_rate();
+                self.drop_resource_at(resource, slot, at, false);
             }
         }
     }

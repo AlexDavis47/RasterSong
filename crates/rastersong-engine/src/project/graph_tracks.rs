@@ -205,6 +205,16 @@ impl Project {
         Some(item + 1)
     }
 
+    /// Pastes a copy of `item` on graph track `track` from `at` seconds, trimming whatever it
+    /// lands on, and returns its index. The copy keeps the item's graph, trim and sources.
+    pub fn paste_graph_item(&mut self, track: &str, item: &GraphItem, at: f64) -> Option<usize> {
+        let item = GraphItem {
+            position: at.max(0.0),
+            ..item.clone()
+        };
+        Some(insert_over(&mut self.graph_track_mut(track)?.items, item))
+    }
+
     /// Removes item `item` of graph track `track`.
     pub fn delete_graph_item(&mut self, track: &str, item: usize) -> bool {
         match self.graph_track_mut(track) {
@@ -393,6 +403,26 @@ mod tests {
             .iter()
             .map(|i| (i.position, i.end()))
             .collect()
+    }
+
+    #[test]
+    fn a_pasted_graph_item_keeps_its_trim_and_sources_and_trims_what_it_lands_on() {
+        let mut project = project();
+        let id = project.graph_id;
+        project.place_graph("Graphs", id, 0.0, 4.0).unwrap();
+        let mut copied = project.graph_tracks[0].items[0].clone();
+        copied.start = 0.5;
+        copied.length = 1.0;
+        copied.sources.insert("Kick".into(), Source::Mix);
+        let at = project.paste_graph_item("Graphs", &copied, 2.0).unwrap();
+        let pasted = &project.graph_tracks[0].items[at];
+        assert_eq!(
+            (pasted.position, pasted.start, pasted.length),
+            (2.0, 0.5, 1.0)
+        );
+        assert_eq!(pasted.sources["Kick"], Source::Mix);
+        assert_eq!(spans(&project), [(0.0, 2.0), (2.0, 3.0), (3.0, 4.0)]);
+        assert!(project.paste_graph_item("Nope", &copied, 0.0).is_none());
     }
 
     #[test]

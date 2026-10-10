@@ -1038,6 +1038,43 @@ mod inspect_rate_tests {
     }
 
     #[test]
+    fn dropping_on_a_line_between_tracks_makes_new_tracks_there() {
+        let mut project =
+            Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
+        let picture = project.add_resource(ResourceKind::Video, "take.mp4", "take.mp4", None);
+        let sound = project.add_resource(ResourceKind::Audio, "take", "take.mp4", Some(1));
+        let song = project.add_resource(ResourceKind::Audio, "song", "song.wav", None);
+        let names =
+            |p: &Project| -> Vec<String> { p.tracks.iter().map(|t| t.name.clone()).collect() };
+        project.place_linked(picture, None, 0.0, true);
+        project.place_linked(song, None, 0.0, false);
+        assert_eq!(names(&project), ["take.mp4", "take", "song"]);
+
+        // Above the first track, even though the resource already has a track.
+        project.place_linked_at(picture, 0, 1.0, false);
+        assert_eq!(names(&project), ["take.mp4_2", "take.mp4", "take", "song"]);
+        // Linked at the line under the videos: the picture goes there, the sound to the top of
+        // the audio tracks (the same index), grouped.
+        let placed = project.place_linked_at(picture, 2, 2.0, true);
+        assert_eq!(
+            names(&project),
+            [
+                "take.mp4_2",
+                "take.mp4",
+                "take.mp4_3",
+                "take_2",
+                "take",
+                "song"
+            ]
+        );
+        assert_eq!(project.with_grouped(&placed[..1]).len(), 2);
+        // A line outside the resource's section: its own section's bottom.
+        project.place_linked_at(song, 0, 0.0, false);
+        assert_eq!(project.tracks.last().unwrap().name, "song_2");
+        let _ = sound;
+    }
+
+    #[test]
     fn dropping_a_resource_places_its_whole_file_grouped_unless_asked_for_one() {
         let mut project =
             Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
