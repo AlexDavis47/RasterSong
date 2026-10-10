@@ -297,25 +297,47 @@ impl Project {
         position: f64,
         linked: bool,
     ) -> Vec<ItemRef> {
-        let resources = if linked {
-            self.siblings(id)
-        } else {
-            self.resource(id).map(|r| r.id).into_iter().collect()
-        };
+        self.place_many_at(&[id], slot, position, linked)
+    }
+
+    /// As [`Self::place_linked_at`] for several resources dragged together (stems, say): each
+    /// goes on its own new track, one after the other from `slot`, and each resource's file is
+    /// grouped by itself. A resource already placed as another's sibling is placed once.
+    pub fn place_many_at(
+        &mut self,
+        ids: &[ResourceId],
+        slot: usize,
+        position: f64,
+        linked: bool,
+    ) -> Vec<ItemRef> {
         let mut slot = slot;
-        let mut placed = Vec::new();
-        for res in resources {
-            let Some(name) = self.add_track_for_at(res, position, Some(slot)) else {
-                continue;
+        let mut done: Vec<ResourceId> = Vec::new();
+        let mut all = Vec::new();
+        for &id in ids {
+            let resources = if linked {
+                self.siblings(id)
+            } else {
+                self.resource(id).map(|r| r.id).into_iter().collect()
             };
-            // Everything from the new track on shifts down one.
-            if self.track_index(&name).is_some_and(|at| at <= slot) {
-                slot += 1;
+            let mut placed = Vec::new();
+            for res in resources {
+                if done.contains(&res) {
+                    continue;
+                }
+                done.push(res);
+                let Some(name) = self.add_track_for_at(res, position, Some(slot)) else {
+                    continue;
+                };
+                // Everything from the new track on shifts down one.
+                if self.track_index(&name).is_some_and(|at| at <= slot) {
+                    slot += 1;
+                }
+                placed.push(ItemRef::new(name, 0));
             }
-            placed.push(ItemRef::new(name, 0));
+            self.group_items(&placed);
+            all.extend(placed);
         }
-        self.group_items(&placed);
-        placed
+        all
     }
 
     /// Adds a track called `name` at the bottom of its section, playing the whole file at `path`

@@ -2103,6 +2103,160 @@ fn dragging_a_media_card_onto_the_timeline_makes_a_track() {
     assert_eq!(harness.state().project().videos().len(), 2);
 }
 
+/// The starter project with resources `stem1` to `stem3` (files the backend doesn't have, so
+/// they read as missing, which placing them doesn't mind).
+fn stems_app() -> App {
+    app_with_project(|project| {
+        for n in 1..=3 {
+            project.add_resource(
+                ResourceKind::Audio,
+                &format!("stem{n}"),
+                format!("stem{n}.wav"),
+                None,
+            );
+        }
+    })
+}
+
+fn card_center(harness: &Harness<'_, App>, name: &str) -> Pos2 {
+    harness
+        .get_all_by_label(name)
+        .next()
+        .unwrap()
+        .rect()
+        .center()
+}
+
+/// A click with Ctrl held.
+fn ctrl_click(harness: &mut Harness<'_, App>, pos: Pos2) {
+    harness.event(Event::PointerMoved(pos));
+    harness.run_steps(1);
+    harness.event(Event::ModifiersChanged(Modifiers::COMMAND));
+    for pressed in [true, false] {
+        harness.event(Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::COMMAND,
+        });
+        harness.run_steps(1);
+    }
+    harness.event(Event::ModifiersChanged(Modifiers::NONE));
+    harness.run_steps(1);
+}
+
+#[test]
+fn the_resource_cards_wrap_within_the_panel() {
+    let harness = loaded_with(stems_app());
+    let panel_right = harness.state().timeline_area().left();
+    let cards: Vec<egui::Rect> = (1..=3)
+        .map(|n| {
+            harness
+                .get_all_by_label(&format!("stem{n}"))
+                .next()
+                .unwrap()
+                .rect()
+        })
+        .collect();
+    let mut rows: Vec<i32> = cards.iter().map(|r| r.top().round() as i32).collect();
+    rows.dedup();
+    assert!(
+        rows.len() >= 2,
+        "the cards fill more than one row: {cards:?}"
+    );
+    assert!(
+        cards.iter().all(|r| r.right() <= panel_right),
+        "no card runs past the panel: {cards:?} vs {panel_right}"
+    );
+}
+
+#[test]
+fn selected_cards_are_dragged_into_the_timeline_together() {
+    let mut harness = loaded_with(stems_app());
+    let audios = harness.state().project().audios().len();
+    // Select stem1 and stem2; dragging either takes both.
+    let second = card_center(&harness, "stem1");
+    click(&mut harness, second, PointerButton::Primary);
+    let fourth = card_center(&harness, "stem2");
+    ctrl_click(&mut harness, fourth);
+    // The ghost of the drag shows a row for each.
+    let mut to = timeline_point(&harness, 0.5, 1);
+    to.y += LANE_HEIGHT * 1.5;
+    drag(&mut harness, fourth, to);
+    harness.run_steps(2);
+    let project = harness.state().project();
+    assert_eq!(project.audios().len(), audios + 2);
+    let names: Vec<&str> = project.tracks().map(|t| t.name.as_str()).collect();
+    assert!(
+        names.contains(&"stem1") && names.contains(&"stem2"),
+        "{names:?}"
+    );
+    assert!(!names.contains(&"stem3"));
+}
+
+#[test]
+fn an_unselected_card_drags_alone() {
+    let mut harness = loaded_with(stems_app());
+    let first = card_center(&harness, "stem1");
+    click(&mut harness, first, PointerButton::Primary);
+    let fifth = card_center(&harness, "stem2");
+    let mut to = timeline_point(&harness, 0.5, 1);
+    to.y += LANE_HEIGHT * 1.5;
+    drag(&mut harness, fifth, to);
+    harness.run_steps(2);
+    let names: Vec<String> = harness
+        .state()
+        .project()
+        .tracks()
+        .map(|t| t.name.clone())
+        .collect();
+    assert!(names.contains(&"stem2".to_owned()));
+    assert!(!names.contains(&"stem1".to_owned()), "{names:?}");
+}
+
+#[test]
+fn a_graph_dropped_on_a_line_between_graph_tracks_or_below_the_last_gets_a_track_there() {
+    let mut harness = loaded_with(graph_app(|project, _, _| {
+        project.add_graph_track("Lower");
+        project.add_graph_track("Upper");
+    }));
+    let names = |harness: &Harness<'_, App>| -> Vec<String> {
+        harness
+            .state()
+            .project()
+            .graph_tracks
+            .iter()
+            .map(|t| t.name.clone())
+            .collect()
+    };
+    assert_eq!(names(&harness), ["Upper", "Lower"]);
+    // Below the last graph track: a new track at the bottom, not on top.
+    let card = graph_card(&mut harness, "Second graph");
+    let mut to = graph_lane(&harness, 1).center();
+    to.y = graph_lane(&harness, 1).bottom() + 8.0;
+    to.x = time_x(&harness, 0.5);
+    drag(&mut harness, card, to);
+    harness.run_steps(2);
+    let tracks = harness.state().project().graph_tracks.clone();
+    assert_eq!(tracks.len(), 3);
+    assert_eq!(tracks[2].items.len(), 1, "the graph is on the bottom track");
+    assert!(tracks[0].items.is_empty() && tracks[1].items.is_empty());
+
+    // On the line between the first two: a track between them.
+    let card = graph_card(&mut harness, "Second graph");
+    let mut to = pos2(
+        time_x(&harness, 0.5),
+        graph_lane(&harness, 0).bottom() + 2.0,
+    );
+    to.x = time_x(&harness, 2.0);
+    drag(&mut harness, card, to);
+    harness.run_steps(2);
+    let tracks = harness.state().project().graph_tracks.clone();
+    assert_eq!(tracks.len(), 4);
+    assert_eq!(tracks[1].items.len(), 1, "between Upper and Lower");
+    assert_eq!(tracks[0].name, "Upper");
+}
+
 /// The middle of the first wire of the graph, which hovering inspects.
 fn wire_middle(harness: &Harness<'_, App>) -> Pos2 {
     let editor = harness.state().editor();

@@ -75,8 +75,15 @@ impl Project {
     /// Adds an empty graph track at the top of the Graphs section, named `name`, `name_2`, …
     /// (unique among all tracks), and returns its name.
     pub fn add_graph_track(&mut self, name: &str) -> String {
+        self.add_graph_track_at(name, 0)
+    }
+
+    /// Adds an empty graph track named `name`, `name_2`, … before the graph track now at index
+    /// `at` (`graph_tracks.len()` for the bottom), and returns its name.
+    pub fn add_graph_track_at(&mut self, name: &str, at: usize) -> String {
         let name = self.unique_name(name);
-        self.graph_tracks.insert(0, GraphTrack::new(name.clone()));
+        let at = at.min(self.graph_tracks.len());
+        self.graph_tracks.insert(at, GraphTrack::new(name.clone()));
         name
     }
 
@@ -403,6 +410,20 @@ mod tests {
             .iter()
             .map(|i| (i.position, i.end()))
             .collect()
+    }
+
+    #[test]
+    fn graph_tracks_are_added_at_any_place() {
+        let mut project = project();
+        assert_eq!(project.add_graph_track_at("Graphs", 99), "Graphs_2");
+        project.add_graph_track_at("Mid", 1);
+        project.add_graph_track("Top");
+        let names: Vec<&str> = project
+            .graph_tracks
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect();
+        assert_eq!(names, ["Top", "Graphs", "Mid", "Graphs_2"]);
     }
 
     #[test]

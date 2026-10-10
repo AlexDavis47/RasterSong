@@ -616,6 +616,11 @@ raw.
    - [x] **bug** Items must be copy-pastable again (graph items had no copy; now they do, cut and paste included) (Ctrl+C / Ctrl+V on timeline items); the feature existed and was
      lost.
    - [x] **feature** Ctrl+A selects every item in the timeline, across all sections.
+   - [x] **bug** The Resources panel's cards wrap to the panel's width instead of running off in one row.
+   - [x] **feature** Several resources dragged into the timeline at once (select cards with Ctrl or Shift click),
+     each on its own track.
+   - [x] **bug** A graph can be dropped on the line between graph tracks and below the last one; before, anything
+     off a graph track made a new track on top.
    - [ ] **feature** Graph inputs and outputs redesigned: a graph has any number of input and output nodes, and one
      output can be marked as the main video and one as the main audio output, which is what passes up to the master.
      Other outputs expose control video or audio signals to graphs above (supersedes the single Video Output / Audio

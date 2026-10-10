@@ -32,9 +32,10 @@ pub enum ResourceAction {
     RemoveGraph(u32),
 }
 
-/// What a media card hands over while it is dragged: drop it on the timeline to make a track.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DraggedResource(pub ResourceId);
+/// What a media card hands over while it is dragged: drop it on the timeline to make a track. When
+/// the dragged card is one of several selected, they all come along, in the panel's order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DraggedResource(pub Vec<ResourceId>);
 
 /// A file whose streams wait on the import dialog, each with whether it is chosen.
 #[derive(Debug, Clone, PartialEq)]
@@ -135,6 +136,10 @@ pub struct Card<'a> {
     pub missing: bool,
     /// The graph is the one open in the editor.
     pub highlighted: bool,
+    /// The card is part of the selection a drag takes along.
+    pub selected: bool,
+    /// How many cards a drag of this one carries (the selection, when it is in it).
+    pub drag_count: usize,
     /// Shown as a button under the card when it is set (Relocate for a missing file): label, help.
     pub fix_button: Option<(&'a str, &'a str)>,
 }
@@ -143,6 +148,8 @@ pub struct Card<'a> {
 #[derive(Debug, Default)]
 pub struct CardResponse {
     pub double_clicked: bool,
+    /// Clicked (a double-click counts as two).
+    pub clicked: bool,
     pub renamed: Option<String>,
     /// The card's fix button was clicked.
     pub fixed: bool,
@@ -187,21 +194,37 @@ pub fn resource_card<P: std::any::Any + Send + Sync>(
 ) -> CardResponse {
     let mut out = CardResponse::default();
     let mut stroke = ui.visuals().widgets.noninteractive.bg_stroke;
-    if card.highlighted {
+    if card.highlighted || card.selected {
         stroke = egui::Stroke::new(1.5, ui.visuals().selection.stroke.color);
     }
     if card.missing {
         stroke = egui::Stroke::new(1.0, ui.visuals().error_fg_color);
     }
+    let fill = if card.selected {
+        ui.visuals().selection.bg_fill.gamma_multiply(0.5)
+    } else {
+        ui.visuals().faint_bg_color
+    };
     let frame = egui::Frame::new()
         .stroke(stroke)
-        .fill(ui.visuals().faint_bg_color)
+        .fill(fill)
         .corner_radius(4)
         .inner_margin(4);
     frame.show(ui, |ui| {
         ui.set_width(CARD_WIDTH - 10.0);
         ui.set_min_height(CARD_HEIGHT - 10.0);
-        let body = drag_source(ui, card.id, payload, (card.glyph, card.name), |ui| {
+        let label = if card.drag_count > 1 {
+            tr_args(
+                "resources.drag.more",
+                &[
+                    ("name", card.name),
+                    ("count", &(card.drag_count - 1).to_string()),
+                ],
+            )
+        } else {
+            card.name.to_owned()
+        };
+        let body = drag_source(ui, card.id, payload, (card.glyph, &label), |ui| {
             ui.vertical_centered(|ui| {
                 ui.label(RichText::new(card.glyph).size(18.0))
                     .on_hover_text(card.glyph_help);
@@ -227,6 +250,7 @@ pub fn resource_card<P: std::any::Any + Send + Sync>(
                 menu(ui);
             });
         out.double_clicked = body.double_clicked();
+        out.clicked = body.clicked();
         if let Some((label, help)) = card.fix_button {
             out.fixed = ui.small_button(label).on_hover_text(help).clicked();
         }
@@ -279,6 +303,21 @@ pub fn resources_panel(
     actions
 }
 
+/// Lays `items` out in rows of as many cards as fit the width. A wrapping layout doesn't wrap
+/// framed cards, so the rows are made here.
+fn card_grid<T>(ui: &mut Ui, items: &[T], mut show: impl FnMut(&mut Ui, &T)) {
+    let spacing = ui.spacing().item_spacing.x;
+    let columns =
+        (((ui.available_width() + spacing) / (CARD_WIDTH + spacing)).floor() as usize).max(1);
+    for row in items.chunks(columns) {
+        ui.horizontal_top(|ui| {
+            for item in row {
+                show(ui, item);
+            }
+        });
+    }
+}
+
 fn media_cards(
     ui: &mut Ui,
     project: &Project,
@@ -288,68 +327,99 @@ fn media_cards(
     if project.resources.is_empty() {
         ui.weak(tr("resources.empty"));
     }
-    ui.horizontal_wrapped(|ui| {
-        for resource in &project.resources {
-            let missing = missing.contains(&resource.id);
-            let users = project.resource_users(resource.id).len();
-            let (glyph, kind) = match resource.kind {
-                ResourceKind::Video => ("🎞", tr("resources.kind.video")),
-                ResourceKind::Audio => ("🔊", tr("resources.kind.audio")),
-            };
-            let file = resource
-                .path
-                .file_name()
-                .map_or_else(String::new, |f| f.to_string_lossy().into_owned());
-            let mut hover = resource.path.display().to_string();
-            if missing {
-                hover = tr_args("resources.missing", &[("path", &hover)]);
-            }
-            if users > 0 {
-                hover.push('\n');
-                hover.push_str(&tr_args(
-                    "resources.used_by",
-                    &[("count", &users.to_string())],
-                ));
-            }
+    // The selected cards, which a drag of any of them takes along.
+    let selection_id = Id::new("resource-selection");
+    let mut selection: Vec<ResourceId> = ui.data(|d| d.get_temp(selection_id)).unwrap_or_default();
+    selection.retain(|&id| project.resource(id).is_some());
+    let mut clicked = None;
+    card_grid(ui, &project.resources, |ui, resource| {
+        let dragged: Vec<ResourceId> = if selection.contains(&resource.id) {
+            project
+                .resources
+                .iter()
+                .map(|r| r.id)
+                .filter(|id| selection.contains(id))
+                .collect()
+        } else {
+            vec![resource.id]
+        };
+        let missing = missing.contains(&resource.id);
+        let users = project.resource_users(resource.id).len();
+        let (glyph, kind) = match resource.kind {
+            ResourceKind::Video => ("🎞", tr("resources.kind.video")),
+            ResourceKind::Audio => ("🔊", tr("resources.kind.audio")),
+        };
+        let file = resource
+            .path
+            .file_name()
+            .map_or_else(String::new, |f| f.to_string_lossy().into_owned());
+        let mut hover = resource.path.display().to_string();
+        if missing {
+            hover = tr_args("resources.missing", &[("path", &hover)]);
+        }
+        if users > 0 {
             hover.push('\n');
-            hover.push_str(tr("resources.drag.help"));
-            let card = Card {
-                id: Id::new(("resource", resource.id)),
-                glyph,
-                glyph_help: kind,
-                name: &resource.name,
-                hover,
-                missing,
-                highlighted: false,
-                fix_button: missing
-                    .then(|| (tr("resources.relocate"), tr("resources.relocate.help"))),
-            };
-            let out = resource_card(ui, &card, DraggedResource(resource.id), |ui| {
-                ui.label(RichText::new(file).weak());
-                if ui.button(tr("resources.add_to_timeline")).clicked() {
-                    actions.push(ResourceAction::AddToTimeline(resource.id));
-                    ui.close();
-                }
-                if ui.button(tr("resources.relocate")).clicked() {
-                    actions.push(ResourceAction::Relocate(resource.id));
-                    ui.close();
-                }
-                if ui.button(tr("resources.remove")).clicked() {
-                    actions.push(ResourceAction::Remove(resource.id));
-                    ui.close();
-                }
-            });
-            if let Some(name) = out.renamed {
-                actions.push(ResourceAction::Rename(resource.id, name));
-            }
-            if out.fixed {
-                actions.push(ResourceAction::Relocate(resource.id));
-            }
-            if out.double_clicked {
+            hover.push_str(&tr_args(
+                "resources.used_by",
+                &[("count", &users.to_string())],
+            ));
+        }
+        hover.push('\n');
+        hover.push_str(tr("resources.drag.help"));
+        let card = Card {
+            id: Id::new(("resource", resource.id)),
+            glyph,
+            glyph_help: kind,
+            name: &resource.name,
+            hover,
+            missing,
+            highlighted: false,
+            selected: selection.contains(&resource.id),
+            drag_count: dragged.len(),
+            fix_button: missing.then(|| (tr("resources.relocate"), tr("resources.relocate.help"))),
+        };
+        let out = resource_card(ui, &card, DraggedResource(dragged), |ui| {
+            ui.label(RichText::new(file).weak());
+            if ui.button(tr("resources.add_to_timeline")).clicked() {
                 actions.push(ResourceAction::AddToTimeline(resource.id));
+                ui.close();
             }
+            if ui.button(tr("resources.relocate")).clicked() {
+                actions.push(ResourceAction::Relocate(resource.id));
+                ui.close();
+            }
+            if ui.button(tr("resources.remove")).clicked() {
+                actions.push(ResourceAction::Remove(resource.id));
+                ui.close();
+            }
+        });
+        if let Some(name) = out.renamed {
+            actions.push(ResourceAction::Rename(resource.id, name));
+        }
+        if out.fixed {
+            actions.push(ResourceAction::Relocate(resource.id));
+        }
+        if out.double_clicked {
+            actions.push(ResourceAction::AddToTimeline(resource.id));
+        }
+        if out.clicked {
+            clicked = Some(resource.id);
         }
     });
+    // Click selects the card, Ctrl or Shift adds it to the selection or takes it out.
+    if let Some(id) = clicked {
+        if ui.input(|i| i.modifiers.command || i.modifiers.shift) {
+            match selection.iter().position(|&s| s == id) {
+                Some(at) => {
+                    selection.remove(at);
+                }
+                None => selection.push(id),
+            }
+        } else {
+            selection = vec![id];
+        }
+    }
+    ui.data_mut(|d| d.insert_temp(selection_id, selection));
 }
 
 /// What a graph card hands over while it is dragged. The timeline takes it: dropped on a graph
@@ -359,43 +429,43 @@ pub struct DraggedGraph(pub u32);
 
 /// The graphs, the open one marked. Double-click opens a graph in the editor.
 fn graph_cards(ui: &mut Ui, project: &Project, actions: &mut Vec<ResourceAction>) {
-    ui.horizontal_wrapped(|ui| {
-        for entry in project.graph_entries() {
-            let card = Card {
-                id: Id::new(("graph", entry.id)),
-                glyph: "🕸",
-                glyph_help: tr("resources.graph.kind"),
-                name: &entry.name,
-                hover: if entry.open {
-                    tr("resources.graph.open_now")
-                } else {
-                    tr("resources.graph.help")
-                }
-                .to_owned(),
-                missing: false,
-                highlighted: entry.open,
-                fix_button: None,
-            };
-            let out = resource_card(ui, &card, DraggedGraph(entry.id), |ui| {
-                if !entry.open && ui.button(tr("resources.graph.open")).clicked() {
-                    actions.push(ResourceAction::OpenGraph(entry.id));
-                    ui.close();
-                }
-                if ui.button(tr("resources.graph.duplicate")).clicked() {
-                    actions.push(ResourceAction::DuplicateGraph(entry.id));
-                    ui.close();
-                }
-                if !entry.open && ui.button(tr("resources.remove")).clicked() {
-                    actions.push(ResourceAction::RemoveGraph(entry.id));
-                    ui.close();
-                }
-            });
-            if let Some(name) = out.renamed {
-                actions.push(ResourceAction::RenameGraph(entry.id, name));
+    card_grid(ui, &project.graph_entries(), |ui, entry| {
+        let card = Card {
+            id: Id::new(("graph", entry.id)),
+            glyph: "🕸",
+            glyph_help: tr("resources.graph.kind"),
+            name: &entry.name,
+            hover: if entry.open {
+                tr("resources.graph.open_now")
+            } else {
+                tr("resources.graph.help")
             }
-            if out.double_clicked && !entry.open {
+            .to_owned(),
+            missing: false,
+            highlighted: entry.open,
+            selected: false,
+            drag_count: 1,
+            fix_button: None,
+        };
+        let out = resource_card(ui, &card, DraggedGraph(entry.id), |ui| {
+            if !entry.open && ui.button(tr("resources.graph.open")).clicked() {
                 actions.push(ResourceAction::OpenGraph(entry.id));
+                ui.close();
             }
+            if ui.button(tr("resources.graph.duplicate")).clicked() {
+                actions.push(ResourceAction::DuplicateGraph(entry.id));
+                ui.close();
+            }
+            if !entry.open && ui.button(tr("resources.remove")).clicked() {
+                actions.push(ResourceAction::RemoveGraph(entry.id));
+                ui.close();
+            }
+        });
+        if let Some(name) = out.renamed {
+            actions.push(ResourceAction::RenameGraph(entry.id, name));
+        }
+        if out.double_clicked && !entry.open {
+            actions.push(ResourceAction::OpenGraph(entry.id));
         }
     });
 }

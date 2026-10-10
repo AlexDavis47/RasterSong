@@ -247,6 +247,9 @@ pub enum GraphDrop {
     Track(usize),
     /// A new graph track on top.
     NewTrack,
+    /// A new graph track before the one now at this index (the number of graph tracks for the
+    /// bottom): the pointer is on the line between two graph tracks, or below the last.
+    NewTrackAt(usize),
 }
 
 /// Something the user did to a video or audio track. Tracks are named by their row in
@@ -844,6 +847,26 @@ impl Areas {
         })
     }
 
+    /// The body offset of the line a new graph track at index `slot` would sit on.
+    fn graph_slot_offset(&self, slot: usize) -> f32 {
+        match self.graph_rows.get(slot) {
+            Some(row) => row.0,
+            None => self.graph_rows.last().map_or(0.0, |row| row.1),
+        }
+    }
+
+    /// The graph slot a dragged graph at screen y is on: the line between two graph tracks, or
+    /// anywhere below the last one (down to the next section).
+    fn graph_slot_at(&self, scroll: f32, y: f32) -> Option<usize> {
+        let last = self.graph_rows.last()?.1;
+        let y = self.offset(scroll, y);
+        if y > last && y <= self.dividers[0] {
+            return Some(self.graph_rows.len());
+        }
+        (0..=self.graph_rows.len())
+            .find(|&slot| (self.graph_slot_offset(slot) - y).abs() <= SLOT_GRAB)
+    }
+
     /// The slot whose line is within [`SLOT_GRAB`] of screen y, if any.
     fn slot_at(&self, scroll: f32, y: f32) -> Option<usize> {
         let y = self.offset(scroll, y);
@@ -1003,9 +1026,12 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         .and_then(|p| areas.row_at(view.scroll_y, p.y));
     let graph_dragged = egui::DragAndDrop::has_payload_of_type::<DraggedGraph>(ui.ctx());
     if graph_dragged && let Some(p) = pointer.filter(|p| areas.body.contains(*p)) {
-        response.graph_drop = Some(match areas.graph_row_at(view.scroll_y, p.y) {
-            Some(row) => GraphDrop::Track(row),
-            None => GraphDrop::NewTrack,
+        response.graph_drop = Some(match areas.graph_slot_at(view.scroll_y, p.y) {
+            Some(slot) => GraphDrop::NewTrackAt(slot),
+            None => match areas.graph_row_at(view.scroll_y, p.y) {
+                Some(row) => GraphDrop::Track(row),
+                None => GraphDrop::NewTrack,
+            },
         });
     }
     let pressed_in_lanes = ui
@@ -1150,9 +1176,16 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         };
         let at = snap_time(ui, model, view, want, length, &all_snap_targets(model));
         response.drop_at = Some(at);
+        let graph_line = match (ghost, response.graph_drop) {
+            (DropGhost::Graph { .. }, Some(GraphDrop::NewTrackAt(slot))) => {
+                Some(areas.graph_slot_offset(slot))
+            }
+            _ => None,
+        };
         if let Some(line) = response
             .drop_slot
             .and_then(|slot| areas.slot_offset(slot))
+            .or(graph_line)
             .map(|offset| areas.y(offset, view.scroll_y))
         {
             ui.painter_at(areas.body).line_segment(
@@ -2147,6 +2180,16 @@ fn ghost_bands<'a>(
         DropGhost::Graph { name, length } => {
             let (band, new_row) = match response.graph_drop {
                 Some(GraphDrop::Track(row)) => (areas.graph_lane(row, view.scroll_y), false),
+                Some(GraphDrop::NewTrackAt(slot)) => {
+                    let top = areas.y(areas.graph_slot_offset(slot), view.scroll_y);
+                    (
+                        Rect::from_min_max(
+                            pos2(areas.lanes.left(), top + 2.0),
+                            pos2(areas.lanes.right(), top + GHOST_ROW_HEIGHT - 2.0),
+                        ),
+                        true,
+                    )
+                }
                 _ => (ghost_row(Section::Graphs, 0), true),
             };
             vec![(band, new_row, name.as_str(), Some(*length))]

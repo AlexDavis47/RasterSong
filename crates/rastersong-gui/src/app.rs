@@ -536,6 +536,57 @@ impl App {
         placed
     }
 
+    /// The resources of a drag that each start a drop: with `linked` a resource covered by the
+    /// file of an earlier one (its sound, dragged with its picture) isn't asked for twice.
+    fn drop_leaders(&self, ids: &[ResourceId], linked: bool) -> Vec<ResourceId> {
+        let mut covered: Vec<ResourceId> = Vec::new();
+        let mut leaders = Vec::new();
+        for &id in ids {
+            if covered.contains(&id) {
+                continue;
+            }
+            leaders.push(id);
+            if linked {
+                covered.extend(self.project.siblings(id));
+            } else {
+                covered.push(id);
+            }
+        }
+        leaders
+    }
+
+    /// Drops several resources dragged together (stems, say), see [`Self::drop_resource`]: the
+    /// first onto the track under the pointer, each of them on a track of its own.
+    pub fn drop_resources(
+        &mut self,
+        ids: &[ResourceId],
+        row: Option<usize>,
+        position: f64,
+        linked: bool,
+    ) -> Vec<ItemRef> {
+        let mut placed = Vec::new();
+        for (n, id) in self.drop_leaders(ids, linked).into_iter().enumerate() {
+            placed.extend(self.drop_resource(id, row.filter(|_| n == 0), position, linked));
+        }
+        placed
+    }
+
+    /// Drops several resources dragged together on new tracks before the track now at index
+    /// `slot` (see [`Project::place_many_at`]).
+    pub fn drop_resources_at(
+        &mut self,
+        ids: &[ResourceId],
+        slot: usize,
+        position: f64,
+        linked: bool,
+    ) -> Vec<ItemRef> {
+        let placed = self.project.place_many_at(ids, slot, position, linked);
+        if let Some(first) = placed.first() {
+            self.selected_track = Some(first.track.clone());
+        }
+        placed
+    }
+
     /// Drops resource `id` on new tracks before the track now at index `slot` (see
     /// [`Project::place_linked_at`]). Returns the items placed, `id`'s first.
     pub fn drop_resource_at(
@@ -1974,14 +2025,14 @@ impl App {
         // A drop lands where its ghost was drawn: at the snapped time, or (released over the
         // headers) at the start.
         let at = response.drop_at.unwrap_or(0.0);
-        if let Some(id) = dropped_resource(ui, area) {
+        if let Some(ids) = dropped_resources(ui, area) {
             let linked = !ui.input(|i| i.modifiers.alt);
             match response.drop_slot {
                 Some(slot) => {
-                    self.drop_resource_at(id, slot, at, linked);
+                    self.drop_resources_at(&ids, slot, at, linked);
                 }
                 None => {
-                    self.drop_resource(id, response.row_under_pointer, at, linked);
+                    self.drop_resources(&ids, response.row_under_pointer, at, linked);
                 }
             }
         }
@@ -2141,9 +2192,15 @@ impl App {
                 .and_then(|r| self.project.tracks.get(r))
                 .map(|t| t.name.clone());
             // On a line between tracks, every resource gets a new track.
-            let mut plan = self
-                .project
-                .plan_linked(dragged.0, hovered.as_deref(), linked);
+            let mut plan = Vec::new();
+            for (n, id) in self
+                .drop_leaders(&dragged.0, linked)
+                .into_iter()
+                .enumerate()
+            {
+                let hovered = hovered.as_deref().filter(|_| n == 0);
+                plan.extend(self.project.plan_linked(id, hovered, linked));
+            }
             if self.hovered_slot.is_some() {
                 plan.iter_mut().for_each(|(_, target)| *target = None);
             }
@@ -2207,6 +2264,9 @@ impl App {
         let track = match target {
             GraphDrop::Track(row) => self.project.graph_tracks.get(row)?.name.clone(),
             GraphDrop::NewTrack => self.add_graph_track(),
+            GraphDrop::NewTrackAt(slot) => self
+                .project
+                .add_graph_track_at(tr("project.track.graphs"), slot),
         };
         let length = self.graph_item_length();
         let item = self.project.place_graph(&track, graph, at, length)?;
@@ -2791,8 +2851,8 @@ const BUSY_DELAY_SECS: f64 = 0.25;
 
 /// A spinner in the middle of the preview, with a line of text under it when there is one.
 /// The resource dragged from the Resources panel and released over `area` this frame, taken.
-fn dropped_resource(ui: &Ui, area: egui::Rect) -> Option<ResourceId> {
-    dropped_payload::<DraggedResource>(ui, area).map(|p| p.0)
+fn dropped_resources(ui: &Ui, area: egui::Rect) -> Option<Vec<ResourceId>> {
+    dropped_payload::<DraggedResource>(ui, area).map(|p| p.0.clone())
 }
 
 /// The graph dragged from the Resources panel and released over `area` this frame, taken.

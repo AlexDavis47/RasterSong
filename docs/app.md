@@ -98,7 +98,7 @@ A connected (modulated) parameter shows, in the wire's colour:
 
 ## Resources
 
-The **Resources** panel, left of the timeline, holds everything the project uses, in two tabs: **Media** and **Graphs**. Both show their resources as a grid of cards, drawn by one shared component (`resource_card`) so media and graphs look, drag and open menus the same way. The Media tab lists the media the project uses. Each resource is one stream of a
+The **Resources** panel, left of the timeline, holds everything the project uses, in two tabs: **Media** and **Graphs**. Both show their resources as a grid of cards that wraps to the panel's width (one row at a time, as many cards as fit), drawn by one shared component (`resource_card`) so media and graphs look, drag and open menus the same way. The Media tab lists the media the project uses. Each resource is one stream of a
 linked file (embedding comes later on the [roadmap](roadmap.md#timeline-resources-and-routing)): a video stream
 or an audio stream with any number of channels. **Import…** (or File → Import Media…, or dropping files onto the
 window) adds files. A file with one video or audio stream becomes a resource at once; a file with more, such as a
@@ -153,6 +153,7 @@ tracks**, or above the first or below the last track of a section, the resource 
 it is dropped on: a thick **ghost line** shows the place. A track's right-click menu has **New track above** and
 **New track below**, which list the resources of its kind and put the one chosen on a new track there, at the
 playhead.
+Click a media card to select it, Ctrl+click (or Shift+click) to add cards to the selection or take them out: dragging any selected card takes them all (stems, say), each onto a track of its own in the panel's order, and the bubble reads "name and N more". A card outside the selection drags alone. Dragging a graph onto the Graphs section works the same as media: dropped on a graph track it goes on that track, on the line between two graph tracks (or below the last one) it gets a new graph track there, anywhere else a new track on top.
 While a card is dragged a **drag bubble** (a pill with the card's icon and name) follows the pointer; it pops in,
 blooms where it is dropped, and shrinks back to the card when nothing takes it. Over the lanes a **ghost** shows
 where the drop will land: an outlined item on the track that takes it, or a ghost row where the new track will

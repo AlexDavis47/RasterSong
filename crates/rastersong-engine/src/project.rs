@@ -1038,6 +1038,32 @@ mod inspect_rate_tests {
     }
 
     #[test]
+    fn several_resources_dropped_together_each_get_a_track_in_order() {
+        let mut project =
+            Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
+        let stems: Vec<_> = ["drums", "bass", "keys"]
+            .iter()
+            .map(|n| project.add_resource(ResourceKind::Audio, n, format!("{n}.wav"), None))
+            .collect();
+        let existing = project.add_resource(ResourceKind::Audio, "old", "old.wav", None);
+        project.place_linked(existing, None, 0.0, false);
+        let placed = project.place_many_at(&stems, 0, 1.5, true);
+        let names: Vec<&str> = project.tracks.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, ["drums", "bass", "keys", "old"]);
+        assert_eq!(placed.len(), 3);
+        assert!(
+            project.tracks[..3]
+                .iter()
+                .all(|t| t.items[0].position == 1.5)
+        );
+        // Each is on its own: they are not grouped with one another.
+        assert_eq!(project.with_grouped(&placed[..1]).len(), 1);
+        // Asked for twice, a resource is placed once.
+        let again = project.place_many_at(&[stems[0], stems[0]], 4, 0.0, true);
+        assert_eq!(again.len(), 1);
+    }
+
+    #[test]
     fn dropping_on_a_line_between_tracks_makes_new_tracks_there() {
         let mut project =
             Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
