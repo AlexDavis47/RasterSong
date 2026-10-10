@@ -161,8 +161,6 @@ The graph-layer choices (*stacked graph layers*, *layer below*, track links) are
   fallbacks, no situational overrides. The old Audio Output rules (replace the source audio, except when nothing is
   connected, bypassed or a track is wired straight in) were hard to predict, and hidden fallbacks make failures hard
   to diagnose. Implicit behaviour needs a clear reason (Video Output's stretch) and is documented where it happens.
-  The code still has one interim exception: with no graph items, the open graph renders over the whole timeline
-  (see [Graph layers](#graph-layers-october-2026)); it is removed in roadmap stage 2a.
 - **The project has its own timebase**, like a Premiere sequence. With several videos, images and raw files, no
   source can be the clock.
 - **One resource per track.** A graph is compiled for a fixed layout per source; one resource per track keeps a
@@ -269,7 +267,7 @@ Built as the timeline's fourth step, before item editing.
 
 Built as the timeline's fifth step.
 
-- **Linked tracks act together on every edit** *(to become item groups, see
+- **Linked tracks act together on every edit** *(replaced by item groups in stage 2b, see
   [Timeline routing](#timeline-routing-folders-and-graphs-as-fx-october-2026))*. Move, split, delete, copy and paste take the items of linked tracks
   that overlap the ones edited, read from time as for moves. A trim takes only the linked edges at the same time
   (within a millisecond), so trimming a cut that lines up on both tracks keeps it lined up, and an item that only
@@ -331,9 +329,9 @@ Built as the second step of stage 2.
 
 ### Graph layers (October 2026)
 
-Built as the third step of stage 2 ([Graph layers](engine.md#graph-layers)). *Superseded by
-[Timeline routing: folders and graphs as FX](#timeline-routing-folders-and-graphs-as-fx-october-2026); this is how
-the code works until roadmap stage 2b replaces it.*
+Built as the third step of stage 2. *Superseded by
+[Timeline routing: folders and graphs as FX](#timeline-routing-folders-and-graphs-as-fx-october-2026) and removed in
+stage 2b ([Routing in the renderer](#routing-in-the-renderer-october-2026)); kept as the record of why.*
 
 - **Items on a layer never overlap, and the model enforces it.** Placing or moving an item trims, cuts or removes
   what it lands on (`Project::place_graph`), and loading a file repairs overlaps the same way, so the renderer can
@@ -433,13 +431,36 @@ weighed:
 - **Nothing placed means nothing applied.** With no FX anywhere, the output is the plain mix. The interim rule that
   rendered the open graph over the whole timeline is dropped.
 - **Items are grouped, not tracks linked.** Select items, then right-click → *Group* (Ctrl+G). Grouped items move,
-  trim, split and delete together. A multi-stream import groups its items. Tracks can't be linked.
+  trim, split and delete together. A multi-stream import groups its items. Tracks can't be linked. *(Done in
+  stage 2b: groups are a number on each item, so membership no longer depends on overlap in time. Splitting a
+  group leaves one on each side of the cut, and pasted copies make a new group.)*
 - **Automation lanes.** An automation node in a graph shows as an envelope lane under the track hosting that graph,
   edited as the automation-curve design already describes; automation clips stay available as items.
 - **Order:** the bugs that don't depend on the model (track height reset, drag feedback, drop preview, the implicit
   graph, video track reorder) are fixed first, then the model is rebuilt. No migration is needed (version 0).
 
 See [Timeline, resources and routing](roadmap.md#timeline-resources-and-routing).
+
+### Routing in the renderer (October 2026)
+
+How stage 2b built the routing above ([Routing](engine.md#routing)):
+
+- **One routed renderer.** The renderer walks the track tree each frame: a track's items (each through its item
+  FX), then the track's FX chain, then into its folder's mix, up to the master and its FX. A folder or the master
+  shows the first child with a picture and sums audio at each child's volume. Graph layers and their stack are
+  removed, and with them the `@track_mix` and `@layer_below` sources.
+- **Through nodes, not special cases.** An FX graph with no Video Output, or no Audio Output for the bus, gets a
+  through node injected where the output would be, so "audio: through" is ordinary graph code with no extra path in
+  the renderer. The FX window shows the tag.
+- **Receives read post-FX, pre-volume**, ordered by a topological sort of the tracks; a loop is refused with an
+  error naming the tracks rather than broken silently.
+- **The single-graph form is a routing too.** `Renderer::new` (CLI `--graph`, the tap renderer, tests) builds a
+  routing with the graph as master FX and its ports named after tracks receiving from them, so there is one
+  renderer, not two.
+- **Bypass FX** renders the routing with every FX left out (`Routing::without_fx`), which is the plain mix the
+  output gives with no FX at all.
+- **The app's mixer stays the real-time path** for preview audio while no FX renders sound; the renderer's audio is
+  used as soon as one does. Moving all preview audio into the renderer waits until it can keep up in real time.
 
 ### Input ports (October 2026)
 
@@ -457,6 +478,36 @@ ports.
   names. Ports are added, renamed and deleted like any node; only the Output is kept, because every graph has
   exactly one.
 - **Renaming a track renames what reads it**, which is now bindings (receives, once they exist), not graph nodes.
+
+### The track tree (October 2026)
+
+The second step of roadmap stage 2b. The separate video and audio lists become one list of tracks, and folders
+group them.
+
+- **Stored flat, with a depth.** The project keeps tracks top first, as the timeline lists them, each with how many
+  folders it is in; a folder holds the deeper run of tracks after it. The file reads like the timeline, moving a
+  track is moving a slice of a list, and a tree read from a file is repaired rather than refused: the first track
+  goes to the top and none sits deeper than the folder above it allows. Nested children lists were the
+  alternative; they make every row lookup and drag a walk of the tree.
+- **A track's kind comes from its resource.** A track has no kind of its own: video and audio tracks, empty tracks
+  and folders go anywhere, and an empty track takes any resource dropped on it.
+- **Folders hold no items** and play nothing themselves. Removing a folder keeps what was in it, one level up,
+  because deleting a whole subtree from one × is too easy to do by accident.
+- **The bus comes from the top-level ancestor.** Only top-level tracks and folders pick a bus, as in Reaper,
+  where a child's output goes to its parent. A bus picker on a nested track would be a setting with no effect.
+- **Solo stays per kind and is inherited.** Soloing a folder solos everything in it; a soloed video track still
+  leaves the audio alone. Mute, volume and the master send multiply down the tree the same way. Until the renderer
+  mixes folders (the next step), the project multiplies these levels into each track's own, so the playback mix
+  and the CLI keep summing tracks as before.
+- **New projects start from a template**: *Video*, *Audio* and *Control* folders. The first two take new tracks of
+  their kind (`new_tracks`), so a new video lands at the bottom of Video; Control has its master send off. Opening
+  an existing project or a test fixture uses no template, and a project without such folders puts new tracks at
+  the bottom of the list.
+- **The timeline selects tracks by name**, since rows shift when a folder collapses or a track moves.
+- **Dragging sets the depth from the pointer's x**, one indent per level, clamped to the depths that keep the tree
+  valid where it lands (no deeper than inside the folder above, no shallower than leaves the track below
+  stranded). Collapsed folders' tracks are hidden rows, so a drop below a collapsed folder lands after everything
+  in it.
 
 ## Open
 

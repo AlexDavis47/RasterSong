@@ -1,6 +1,6 @@
 //! Graph resources: a project can hold any number of graphs. One is open, in `Project::graph`
-//! (what the editor shows and the engine renders until graph layers can place several); the
-//! others are kept here, and opening one swaps it with the open graph.
+//! (what the editor shows); the others are kept here, and opening one swaps it with the open
+//! graph. FX place graphs on tracks, folders, the master and items.
 
 use rastersong_graph::GraphDesc;
 use serde::{Deserialize, Serialize};
@@ -164,7 +164,7 @@ impl Project {
     pub fn remove_graph(&mut self, id: u32) -> bool {
         let before = self.graphs.len();
         self.graphs.retain(|g| g.id != id);
-        self.remove_graph_items(id);
+        self.remove_graph_fx(id);
         self.graphs.len() != before
     }
 }

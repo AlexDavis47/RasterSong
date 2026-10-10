@@ -16,13 +16,16 @@ use crate::audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE, SinkResampler};
 use crate::cache::{CacheKey, Frame, FrameCache};
 use crate::listen::{self, ListenTarget, Listened};
 use crate::playback::RenderedSource;
-use crate::project::{DEFAULT_MAX_WARMUP_FRAMES, LayerSet, MAX_WARMUP_FRAMES_LIMIT};
+use crate::project::{DEFAULT_MAX_WARMUP_FRAMES, MAX_WARMUP_FRAMES_LIMIT};
 use crate::renderer;
+use crate::routing::Routing;
 use crate::sources::Modulator;
 use crate::tap::{self, TapOutcome, TapRequest};
 use crate::timeline::{Timebase, Timeline, TrackKind, TrackSpec, items_end};
 use crate::waveform::Waveform;
-use crate::{EngineError, OutputSize, RenderInfo, RenderTrack, Renderer, TrackMedia};
+use crate::{
+    EngineError, OutputSize, RenderInfo, RenderTrack, Renderer, TrackMedia, single_routing,
+};
 
 /// Preview resolution. Processing cost scales with pixel count, so a quarter-scale preview is
 /// about 16× cheaper. Because parameters are in normalized units, it looks like a scaled-down
@@ -138,17 +141,17 @@ impl Failure {
         Self {
             message: error.to_string(),
             detail: match error {
-                EngineError::Graph(e) | EngineError::Layer { error: e, .. } => e.detail(),
+                EngineError::Graph(e) | EngineError::Fx { error: e, .. } => e.detail(),
                 other => other.to_string(),
             },
             node: match error {
-                EngineError::Graph(e) | EngineError::Layer { error: e, .. } => {
+                EngineError::Graph(e) | EngineError::Fx { error: e, .. } => {
                     e.node().map(str::to_owned)
                 }
                 _ => None,
             },
             graph: match error {
-                EngineError::Layer { graph, .. } => Some(*graph),
+                EngineError::Fx { graph, .. } => Some(*graph),
                 _ => None,
             },
         }
@@ -230,8 +233,9 @@ struct TapDone {
 struct State {
     timeline: Timeline,
     graph: Option<GraphDesc>,
-    /// The graph items on the project's layers; `None` renders `graph` over the whole timeline.
-    layers: Option<LayerSet>,
+    /// The project's routing; `None` renders `graph` as the master's FX, its ports named after
+    /// tracks reading them.
+    routing: Option<Routing>,
     /// Skips the whole graph: the video goes straight to the output.
     bypass_all: bool,
     tempo: Tempo,
@@ -266,8 +270,10 @@ struct Snapshot {
     timeline: Timeline,
     /// The open graph.
     graph: GraphDesc,
-    /// The graph items on the layers, unless the whole graph is bypassed.
-    layers: Option<LayerSet>,
+    /// The project's routing, if it has one.
+    routing: Option<Routing>,
+    /// Skips every FX.
+    bypass_all: bool,
     tempo: Tempo,
     audio_rate: u32,
     max_warmup_frames: u32,
@@ -292,7 +298,7 @@ impl Engine {
             state: Mutex::new(State {
                 timeline: Timeline::default(),
                 graph: None,
-                layers: None,
+                routing: None,
                 bypass_all: false,
                 tempo: Tempo::default(),
                 key,
@@ -376,9 +382,7 @@ impl Engine {
             let state = lock(&self.shared.state);
             if let Some(old) = &state.graph {
                 let registry = Registry::shared();
-                if render_form(old, registry, state.bypass_all)
-                    == render_form(&graph, registry, state.bypass_all)
-                {
+                if render_form(old, registry) == render_form(&graph, registry) {
                     return;
                 }
             }
@@ -386,27 +390,26 @@ impl Engine {
         self.edit(|state| state.graph = Some(graph));
     }
 
-    /// Sets the graph items on the project's layers, or `None` for none: the open graph
-    /// (see [`Self::set_graph`]) then renders over the whole timeline. With items, each renders
-    /// its own graph where it plays and the layers compose over the track mix; see
-    /// [Graph layers](../../../docs/engine.md#graph-layers). Like [`Self::set_graph`], changes
-    /// that don't alter what the graphs render (labels, positions, nodes that feed nothing) are
-    /// not edits.
-    pub fn set_layers(&self, layers: Option<LayerSet>) {
-        let layers = layers.map(|mut set| {
+    /// Sets the project's routing: its track tree, every FX and the graphs they use; see
+    /// [Routing](../../../docs/engine.md#routing). `None` renders the open graph (see
+    /// [`Self::set_graph`]) as the master's FX, its ports named after tracks reading them. Like
+    /// [`Self::set_graph`], changes that don't alter what the graphs render (labels, positions,
+    /// nodes that feed nothing) are not edits.
+    pub fn set_routing(&self, routing: Option<Routing>) {
+        let routing = routing.map(|mut routing| {
             let registry = Registry::shared();
-            for (_, graph) in &mut set.graphs {
-                *graph = render_form(graph, registry, false);
+            for (_, graph) in &mut routing.graphs {
+                *graph = render_form(graph, registry);
             }
-            set
+            routing
         });
-        if lock(&self.shared.state).layers == layers {
+        if lock(&self.shared.state).routing == routing {
             return;
         }
-        self.edit(|state| state.layers = layers);
+        self.edit(|state| state.routing = routing);
     }
 
-    /// Skips the whole graph: the output shows and plays the track mix.
+    /// Skips every FX: the output shows and plays the track mix.
     pub fn set_bypass_all(&self, bypass: bool) {
         if lock(&self.shared.state).bypass_all == bypass {
             return;
@@ -873,8 +876,9 @@ impl Worker {
     fn snapshot(state: &State, graph: &GraphDesc) -> Snapshot {
         Snapshot {
             timeline: state.timeline.clone(),
-            graph: render_form(graph, Registry::shared(), state.bypass_all),
-            layers: state.layers.clone().filter(|_| !state.bypass_all),
+            graph: render_form(graph, Registry::shared()),
+            routing: state.routing.clone(),
+            bypass_all: state.bypass_all,
             tempo: state.tempo,
             audio_rate: state.audio_rate,
             max_warmup_frames: state.max_warmup_frames,
@@ -948,17 +952,43 @@ impl Worker {
         key: CacheKey,
         project: &Snapshot,
     ) -> Result<Renderer, Failure> {
-        Renderer::with_layers(
-            self.shared.backend.as_ref(),
-            project.timeline.timebase,
-            tracks,
-            &project.graph,
-            project.layers.as_ref(),
-            project.tempo,
-            &project.timeline.master(),
-            Registry::shared(),
-            key.scale.output_size(),
-        )
+        let backend = self.shared.backend.as_ref();
+        let (timebase, bus) = (project.timeline.timebase, project.timeline.master());
+        let size = key.scale.output_size();
+        let registry = Registry::shared();
+        match (&project.routing, project.bypass_all) {
+            (None, false) => Renderer::new(
+                backend,
+                timebase,
+                tracks,
+                &project.graph,
+                project.tempo,
+                &bus,
+                registry,
+                size,
+            ),
+            (routing, bypass) => {
+                let routing = routing
+                    .clone()
+                    .unwrap_or_else(|| single_routing(tracks, &project.graph));
+                let routing = if bypass {
+                    routing.without_fx()
+                } else {
+                    routing
+                };
+                Renderer::with_routing(
+                    backend,
+                    timebase,
+                    tracks,
+                    &routing,
+                    &project.graph,
+                    project.tempo,
+                    &bus,
+                    registry,
+                    size,
+                )
+            }
+        }
         .map(|mut renderer| {
             renderer.set_audio_rate(project.audio_rate);
             renderer.set_max_warmup_frames(project.max_warmup_frames);

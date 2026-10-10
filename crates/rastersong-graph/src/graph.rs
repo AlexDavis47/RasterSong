@@ -9,8 +9,7 @@ use crate::desc::{
 };
 use crate::dsp::{DelayLine, resample};
 use crate::nodes::{
-    AUDIO_INPUT, AUDIO_OUTPUT, BUS_PARAM, DEFAULT_BUS, MAX_METERS, Meter, OUTPUT, PORT_PARAM,
-    Registry, TRACK_MIX_SOURCE, VIDEO_INPUT,
+    AUDIO_INPUT, AUDIO_OUTPUT, BUS_PARAM, DEFAULT_BUS, MAX_METERS, Meter, OUTPUT, Registry,
 };
 
 use crate::{
@@ -1408,17 +1407,9 @@ fn connect(desc: &GraphDesc, pending: &mut [Pending]) -> Result<(), GraphError> 
 /// feed the output dropped, and everything that only matters to the editor (labels, positions,
 /// exposed pins, modulation settings of unconnected parameters) cleared. Two graphs with equal
 /// render forms render identically, so the host re-renders only when it changes.
-///
-/// With `bypass_all` the graph is skipped: the output shows the track mix
-/// ([`TRACK_MIX_SOURCE`]) and every bus plays its track mix.
-pub fn render_form(desc: &GraphDesc, registry: &Registry, bypass_all: bool) -> GraphDesc {
-    let mut form = if bypass_all {
-        passthrough(desc)
-    } else {
-        let bypassed = apply_bypass(desc, registry);
-        let desc = bypassed.as_ref().unwrap_or(desc);
-        contributing(desc)
-    };
+pub fn render_form(desc: &GraphDesc, registry: &Registry) -> GraphDesc {
+    let bypassed = apply_bypass(desc, registry);
+    let mut form = contributing(bypassed.as_ref().unwrap_or(desc));
     let connected: HashSet<(String, String)> = form
         .connections
         .iter()
@@ -1437,29 +1428,6 @@ pub fn render_form(desc: &GraphDesc, registry: &Registry, bypass_all: bool) -> G
             .retain(|param, _| connected.contains(&(node.id.clone(), param.clone())));
     }
     form
-}
-
-/// Just a video input reading the track mix, wired to the output.
-fn passthrough(desc: &GraphDesc) -> GraphDesc {
-    let output = desc.nodes.iter().find(|n| n.kind == OUTPUT);
-    let mut video = NodeDesc::new(TRACK_MIX_SOURCE.to_owned(), VIDEO_INPUT);
-    video.params.insert(
-        PORT_PARAM.to_owned(),
-        ParamValue::Text(TRACK_MIX_SOURCE.to_owned()),
-    );
-    let connections = match output {
-        Some(o) => vec![Connection {
-            from: video.id.clone(),
-            to: o.id.clone(),
-        }],
-        None => Vec::new(),
-    };
-    let nodes: Vec<NodeDesc> = std::iter::once(video).chain(output.cloned()).collect();
-    GraphDesc {
-        version: desc.version,
-        nodes,
-        connections,
-    }
 }
 
 /// Whether anything is connected to node `id`'s inputs or parameters.

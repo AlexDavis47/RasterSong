@@ -148,12 +148,8 @@ fn unconnected_inputs_read_zeros() {
     assert!(out.data.iter().all(|x| x.is_finite()));
 }
 
-fn render_form_of(json: &str, bypass_all: bool) -> GraphDesc {
-    rastersong_graph::render_form(
-        &GraphDesc::from_json(json).unwrap(),
-        &Registry::default(),
-        bypass_all,
-    )
+fn render_form_of(json: &str) -> GraphDesc {
+    rastersong_graph::render_form(&GraphDesc::from_json(json).unwrap(), &Registry::default())
 }
 
 const CHAIN: &str = r#"{ "version": 0,
@@ -166,7 +162,7 @@ const CHAIN: &str = r#"{ "version": 0,
 
 #[test]
 fn render_form_ignores_nodes_that_do_not_feed_the_output() {
-    let base = render_form_of(CHAIN, false);
+    let base = render_form_of(CHAIN);
     // An orphan node, an orphan wired from the chain, and editor-only details change nothing.
     let with_orphans = CHAIN
         .replace(
@@ -179,44 +175,21 @@ fn render_form_ignores_nodes_that_do_not_feed_the_output() {
             r#"{ "from": "d", "to": "out" }"#,
             r#"{ "from": "d", "to": "out" }, { "from": "d", "to": "x" }, { "from": "n", "to": "x.@bits" }"#,
         );
-    assert_eq!(render_form_of(&with_orphans, false), base);
+    assert_eq!(render_form_of(&with_orphans), base);
     // Changing a node that does feed the output is a change.
     let louder = CHAIN.replace(r#""time": 1"#, r#""time": 2"#);
-    assert_ne!(render_form_of(&louder, false), base);
+    assert_ne!(render_form_of(&louder), base);
     // So is bypassing it, but bypassing an orphan is not.
     let bypassed = CHAIN.replace(
         r#""id": "d", "type": "delay""#,
         r#""id": "d", "type": "delay", "bypass": true"#,
     );
-    assert_ne!(render_form_of(&bypassed, false), base);
+    assert_ne!(render_form_of(&bypassed), base);
     let orphan_bypassed = with_orphans.replace(
         r#""id": "x", "type": "bitcrush""#,
         r#""id": "x", "type": "bitcrush", "bypass": true"#,
     );
-    assert_eq!(render_form_of(&orphan_bypassed, false), base);
-}
-
-#[test]
-fn render_form_with_global_bypass_wires_the_track_mix_to_the_output() {
-    let form = render_form_of(CHAIN, true);
-    let ids: Vec<&str> = form.nodes.iter().map(|n| n.id.as_str()).collect();
-    assert_eq!(ids, ["@track_mix", "out"]);
-    // The host supplies the track mix's picture like any other video source.
-    let mut options = options();
-    options
-        .sources
-        .insert("@track_mix".into(), Layout::rgb(W, H));
-    let mut graph = Graph::compile(&form, &Registry::default(), &options).unwrap();
-    let mut input = sources(|_| 0.0, |_| 0.0);
-    input.insert(
-        "@track_mix".into(),
-        Signal {
-            layout: Layout::rgb(W, H),
-            data: (0..(W * H * 3) as usize).map(|i| i as f32 / 10.0).collect(),
-        },
-    );
-    let out = graph.process(0, &input).unwrap();
-    assert_eq!(out.data[3], 0.3);
+    assert_eq!(render_form_of(&orphan_bypassed), base);
 }
 
 #[test]
@@ -1082,12 +1055,12 @@ fn audio_outputs_without_input_or_processing_leave_the_source_audio_alone() {
     );
     assert_eq!(compile(&json).unwrap().audio_passthrough(), Some("Audio"));
     // Unconnected audio outputs don't change what renders.
-    let with = render_form_of(&json, false);
+    let with = render_form_of(&json);
     let extra = json.replace(
         r#"{ "id": "out", "type": "output" }"#,
         r#"{ "id": "out", "type": "output" }, { "id": "idle", "type": "audio_output" }"#,
     );
-    assert_eq!(render_form_of(&extra, false), with);
+    assert_eq!(render_form_of(&extra), with);
 }
 
 #[test]

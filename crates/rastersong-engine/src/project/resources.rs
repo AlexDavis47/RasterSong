@@ -135,18 +135,15 @@ impl Project {
     }
 
     /// Adds a track playing the whole resource from `position` seconds, named after it (made
-    /// unique among tracks), below the other tracks of its kind, and returns its name. `None`
-    /// if there is no such resource.
+    /// unique among tracks), where new tracks of its kind go ([`Self::new_track_slot`]), and
+    /// returns its name. `None` if there is no such resource.
     pub fn add_track_for(&mut self, id: ResourceId, position: f64) -> Option<String> {
         let resource = self.resource(id)?;
         let kind = resource.kind.track_kind();
         let name = self.unique_name(&resource.name);
         let mut track = ProjectTrack::new(name.clone(), id);
         track.items[0].position = position.max(0.0);
-        match kind {
-            TrackKind::Video => self.video_tracks.push(track),
-            TrackKind::Audio => self.audio_tracks.push(track),
-        }
+        self.insert_new_track(Some(kind), track);
         Some(name)
     }
 
@@ -165,48 +162,31 @@ impl Project {
         moved
     }
 
-    /// Adds an empty track of `kind`, named `Track`, `Track_2`, … (unique among tracks), below
-    /// the other tracks of its kind, and returns its name.
-    pub fn add_empty_track(&mut self, kind: TrackKind) -> String {
+    /// Adds an empty track, named `Track`, `Track_2`, … (unique among tracks), at the bottom,
+    /// and returns its name. It takes the first resource of any kind dropped on it.
+    pub fn add_empty_track(&mut self) -> String {
         let name = self.unique_name("Track");
-        let track = ProjectTrack::empty(name.clone());
-        match kind {
-            TrackKind::Video => self.video_tracks.push(track),
-            TrackKind::Audio => self.audio_tracks.push(track),
-        }
+        self.insert_new_track(None, ProjectTrack::empty(name.clone()));
         name
     }
 
-    /// Whether [`Self::place_resource`] would put resource `id` on track `track`: an empty track
-    /// of its kind, or a track already playing it.
+    /// Whether [`Self::place_resource`] would put resource `id` on track `track`: an empty track,
+    /// or a track already playing it. Never a folder.
     pub fn can_place_resource(&self, track: &str, id: ResourceId) -> bool {
-        let Some(kind) = self.resource(id).map(|r| r.kind.track_kind()) else {
-            return false;
-        };
-        let list = match kind {
-            TrackKind::Video => &self.video_tracks,
-            TrackKind::Audio => &self.audio_tracks,
-        };
-        list.iter()
-            .find(|t| t.name == track)
-            .is_some_and(|t| t.resource.is_none_or(|r| r == id))
+        self.resource(id).is_some()
+            && self
+                .track(track)
+                .is_some_and(|t| !t.folder && t.resource.is_none_or(|r| r == id))
     }
 
     /// Puts the whole resource `id` on track `track` from `position` seconds. An empty track
-    /// takes the resource; a track holds items of one resource only, so any other resource, or
-    /// one of the wrong kind, is refused (false).
+    /// takes the resource; a track holds items of one resource only, so any other resource is
+    /// refused (false), and so is a folder.
     pub fn place_resource(&mut self, track: &str, id: ResourceId, position: f64) -> bool {
         if !self.can_place_resource(track, id) {
             return false;
         }
-        let Some(kind) = self.resource(id).map(|r| r.kind.track_kind()) else {
-            return false;
-        };
-        let list = match kind {
-            TrackKind::Video => &mut self.video_tracks,
-            TrackKind::Audio => &mut self.audio_tracks,
-        };
-        let Some(track) = list.iter_mut().find(|t| t.name == track) else {
+        let Some(track) = self.tracks.iter_mut().find(|t| t.name == track) else {
             return false;
         };
         track.resource = Some(id);
@@ -216,8 +196,8 @@ impl Project {
         true
     }
 
-    /// Adds a track called `name` playing the whole file at `path` (its best stream of `kind`),
-    /// through a resource for that stream, and returns it.
+    /// Adds a track called `name` at the bottom, playing the whole file at `path` (its best
+    /// stream of `kind`) through a resource for that stream, and returns it.
     pub fn add_track(
         &mut self,
         kind: TrackKind,
@@ -231,26 +211,22 @@ impl Project {
         };
         let resource_name = resource_name_for(&path, resource_kind);
         let id = self.add_resource(resource_kind, &resource_name, path, None);
-        let tracks = match kind {
-            TrackKind::Video => &mut self.video_tracks,
-            TrackKind::Audio => &mut self.audio_tracks,
-        };
-        tracks.push(ProjectTrack::new(name.into(), id));
-        tracks.last_mut().unwrap()
+        self.tracks.push(ProjectTrack::new(name.into(), id));
+        self.tracks.last_mut().unwrap()
     }
 
     /// Removes a resource and every track that plays it, returning the removed tracks' names.
     pub fn remove_resource(&mut self, id: ResourceId) -> Vec<String> {
         let users = self.resource_users(id);
-        self.video_tracks.retain(|t| t.resource != Some(id));
-        self.audio_tracks.retain(|t| t.resource != Some(id));
+        while let Some(i) = self.tracks.iter().position(|t| t.resource == Some(id)) {
+            self.remove_track(i);
+        }
         self.resources.retain(|r| r.id != id);
         users
     }
 
     /// Renames a resource, keeping the name unique among resources. Its tracks keep their
-    /// names, since graphs select tracks by name. False if there is no such resource or the
-    /// name is blank.
+    /// names. False if there is no such resource or the name is blank.
     pub fn rename_resource(&mut self, id: ResourceId, name: &str) -> bool {
         let name = name.trim();
         if name.is_empty() || self.resource(id).is_none() {

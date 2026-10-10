@@ -1,11 +1,12 @@
 //! Editing the items of a project's tracks: moving, trimming, stretching, splitting, deleting,
-//! copying and pasting them.
+//! copying and pasting them, and grouping them.
 //!
-//! Every edit takes the items it acts on and adds the items of linked tracks that belong with
-//! them (see [`Project::with_linked`]), so linked tracks move, split and delete together. Each
-//! takes `duration`, which gives a track's resource length in seconds, `None` while unknown (its
-//! items then last forever).
+//! Every edit takes the items it acts on and adds the other items of their groups (see
+//! [`Project::with_grouped`]), so grouped items move, trim, split and delete together. Edits that
+//! need item lengths take `duration`, which gives a track's resource length in seconds, `None`
+//! while unknown (its items then last forever).
 
+use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
 
 use super::{Project, ProjectTrack};
@@ -18,7 +19,7 @@ pub const MIN_ITEM_LENGTH: f64 = 0.01;
 /// timeline second.
 pub const RATE_RANGE: RangeInclusive<f64> = 0.05..=20.0;
 
-/// How close (seconds) an edge on a linked track must be to the edge being trimmed to be trimmed
+/// How close (seconds) the edge of a grouped item must be to the edge being trimmed to be trimmed
 /// with it.
 const EDGE_MATCH: f64 = 1e-3;
 
@@ -89,30 +90,25 @@ impl Project {
         self.tracks_mut().find(|t| t.name == name)
     }
 
-    /// `items`, with the items of linked tracks that overlap any of them, sorted and without
-    /// repeats. References to items that don't exist are dropped.
-    pub fn with_linked(
-        &self,
-        items: &[ItemRef],
-        duration: impl Fn(&ProjectTrack) -> Option<f64>,
-    ) -> Vec<ItemRef> {
-        let mut all = Vec::new();
+    fn item_mut(&mut self, at: &ItemRef) -> Option<&mut Item> {
+        self.track_mut(&at.track)?.items.get_mut(at.item)
+    }
+
+    /// `items`, with the other items of their groups, sorted and without repeats. References to
+    /// items that don't exist are dropped.
+    pub fn with_grouped(&self, items: &[ItemRef]) -> Vec<ItemRef> {
+        let mut all: Vec<ItemRef> = Vec::new();
+        let mut groups = Vec::new();
         for at in items {
-            let Some((track, item)) = self.item_ref(at) else {
-                continue;
-            };
-            all.push(at.clone());
-            let (start, end) = span(item, duration(track));
-            for name in self.linked_to(&at.track) {
-                let Some(other) = self.track(&name) else {
-                    continue;
-                };
-                let length = duration(other);
-                for (k, i) in other.items.iter().enumerate() {
-                    let (s, e) = span(i, length);
-                    if s < end && e > start {
-                        all.push(ItemRef::new(name.clone(), k));
-                    }
+            if let Some((_, item)) = self.item_ref(at) {
+                all.push(at.clone());
+                groups.extend(item.group);
+            }
+        }
+        for track in self.tracks() {
+            for (k, item) in track.items.iter().enumerate() {
+                if item.group.is_some_and(|g| groups.contains(&g)) {
+                    all.push(ItemRef::new(track.name.clone(), k));
                 }
             }
         }
@@ -121,27 +117,65 @@ impl Project {
         all
     }
 
-    /// Moves item `item` of track `name` by `delta` seconds; see [`Self::move_items`].
-    pub fn move_item(
-        &mut self,
-        name: &str,
-        item: usize,
-        delta: f64,
-        duration: impl Fn(&ProjectTrack) -> Option<f64>,
-    ) -> f64 {
-        self.move_items(&[ItemRef::new(name, item)], delta, duration)
+    /// A group number no item has.
+    fn new_group(&self) -> u32 {
+        self.tracks()
+            .flat_map(|t| &t.items)
+            .filter_map(|i| i.group)
+            .max()
+            .map_or(1, |g| g + 1)
     }
 
-    /// Moves `items` by `delta` seconds, with the items of linked tracks that overlap them, and
-    /// returns how far they moved: no item moves before the start of the timeline, so a move
-    /// left stops when the first of them reaches it.
-    pub fn move_items(
-        &mut self,
-        items: &[ItemRef],
-        delta: f64,
-        duration: impl Fn(&ProjectTrack) -> Option<f64>,
-    ) -> f64 {
-        let moving = self.with_linked(items, duration);
+    /// Groups `items`, with the other items of the groups they are already in, into one group.
+    /// Returns it, or `None` when it would hold fewer than two items.
+    pub fn group_items(&mut self, items: &[ItemRef]) -> Option<u32> {
+        let members = self.with_grouped(items);
+        if members.len() < 2 {
+            return None;
+        }
+        let group = self.new_group();
+        for at in &members {
+            if let Some(item) = self.item_mut(at) {
+                item.group = Some(group);
+            }
+        }
+        Some(group)
+    }
+
+    /// Ungroups the groups `items` are in. Returns whether any was.
+    pub fn ungroup_items(&mut self, items: &[ItemRef]) -> bool {
+        let mut any = false;
+        for at in self.with_grouped(items) {
+            if let Some(item) = self.item_mut(&at) {
+                any |= item.group.take().is_some();
+            }
+        }
+        any
+    }
+
+    /// Ends the groups left with one item.
+    pub(super) fn tidy_groups(&mut self) {
+        let mut sizes: BTreeMap<u32, usize> = BTreeMap::new();
+        for group in self.tracks().flat_map(|t| &t.items).filter_map(|i| i.group) {
+            *sizes.entry(group).or_default() += 1;
+        }
+        for item in self.tracks_mut().flat_map(|t| &mut t.items) {
+            if item.group.is_some_and(|g| sizes[&g] < 2) {
+                item.group = None;
+            }
+        }
+    }
+
+    /// Moves item `item` of track `name` by `delta` seconds; see [`Self::move_items`].
+    pub fn move_item(&mut self, name: &str, item: usize, delta: f64) -> f64 {
+        self.move_items(&[ItemRef::new(name, item)], delta)
+    }
+
+    /// Moves `items` by `delta` seconds, with the other items of their groups, and returns how
+    /// far they moved: no item moves before the start of the timeline, so a move left stops when
+    /// the first of them reaches it.
+    pub fn move_items(&mut self, items: &[ItemRef], delta: f64) -> f64 {
+        let moving = self.with_grouped(items);
         if moving.is_empty() {
             return 0.0;
         }
@@ -155,18 +189,15 @@ impl Project {
             return 0.0;
         }
         for at in &moving {
-            if let Some(item) = self
-                .track_mut(&at.track)
-                .and_then(|t| t.items.get_mut(at.item))
-            {
+            if let Some(item) = self.item_mut(at) {
                 item.position = (item.position + delta).max(0.0);
             }
         }
         delta
     }
 
-    /// Drags edge `edge` of item `at` to timeline time `to`, with the same edge of the items of
-    /// linked tracks that lies at the same time. A trim moves the edge over the resource,
+    /// Drags edge `edge` of item `at` to timeline time `to`, with the same edge of the other
+    /// items of its group that lies at the same time. A trim moves the edge over the resource,
     /// keeping its speed, and stops at the resource's ends; a `stretch` (Alt+drag) keeps the
     /// item's in and out points and changes its rate instead, like tape, within
     /// [`RATE_RANGE`]. The far edge stays where it is either way, and no item gets shorter than
@@ -179,51 +210,49 @@ impl Project {
         stretch: bool,
         duration: impl Fn(&ProjectTrack) -> Option<f64>,
     ) {
-        let Some((track, item)) = self.item_ref(at) else {
+        let edge_of = |project: &Self, at: &ItemRef| {
+            let (track, item) = project.item_ref(at)?;
+            let (start, end) = span(item, duration(track));
+            Some((
+                match edge {
+                    Edge::Start => start,
+                    Edge::End => end,
+                },
+                duration(track),
+            ))
+        };
+        let Some((from, _)) = edge_of(self, at) else {
             return;
         };
-        let (start, end) = span(item, duration(track));
-        let from = match edge {
-            Edge::Start => start,
-            Edge::End => end,
-        };
-        let mut targets = vec![(at.clone(), duration(track))];
-        for name in self.linked_to(&at.track) {
-            let Some(other) = self.track(&name) else {
-                continue;
-            };
-            let length = duration(other);
-            for (k, i) in other.items.iter().enumerate() {
-                let (s, e) = span(i, length);
-                let this = match edge {
-                    Edge::Start => s,
-                    Edge::End => e,
-                };
-                if (this - from).abs() <= EDGE_MATCH {
-                    targets.push((ItemRef::new(name.clone(), k), length));
-                }
-            }
-        }
+        let targets: Vec<(ItemRef, Option<f64>)> = self
+            .with_grouped(std::slice::from_ref(at))
+            .into_iter()
+            .filter_map(|other| {
+                let (this, length) = edge_of(self, &other)?;
+                ((this - from).abs() <= EDGE_MATCH).then_some((other, length))
+            })
+            .collect();
         for (at, length) in targets {
-            if let Some(item) = self
-                .track_mut(&at.track)
-                .and_then(|t| t.items.get_mut(at.item))
-            {
+            if let Some(item) = self.item_mut(&at) {
                 trim(item, edge, to, stretch, length.unwrap_or(f64::INFINITY));
             }
         }
     }
 
-    /// Splits `items`, and the items of linked tracks that overlap them, at timeline time `at`.
-    /// Items that `at` doesn't fall inside are left alone. Returns where `items` are afterwards:
-    /// both halves of each split one, so the selection stays on the same stretch of timeline.
+    /// Splits `items`, and the other items of their groups, at timeline time `at`. Items that `at`
+    /// doesn't fall inside are left alone. The halves after the split make groups of their own,
+    /// so a grouped picture and its sound stay together on both sides. Returns where `items` are
+    /// afterwards: both halves of each split one, so the selection stays on the same stretch of
+    /// timeline.
     pub fn split_items(
         &mut self,
         items: &[ItemRef],
         at: f64,
         duration: impl Fn(&ProjectTrack) -> Option<f64>,
     ) -> Vec<ItemRef> {
-        let targets = self.with_linked(items, &duration);
+        let targets = self.with_grouped(items);
+        let mut next = self.new_group();
+        let mut after: BTreeMap<u32, u32> = BTreeMap::new();
         let mut result = Vec::new();
         let lengths: Vec<(String, Option<f64>)> = self
             .tracks()
@@ -250,70 +279,84 @@ impl Project {
                 let cut = item.source_time(at);
                 kept.push(Item {
                     end: Some(cut),
-                    ..item
+                    ..item.clone()
                 });
                 if wanted {
                     result.push(ItemRef::new(name.clone(), kept.len()));
                 }
+                let group = item.group.map(|g| {
+                    *after.entry(g).or_insert_with(|| {
+                        next += 1;
+                        next - 1
+                    })
+                });
                 kept.push(Item {
                     position: at,
                     start: cut,
+                    group,
                     ..item
                 });
             }
             track.items = kept;
         }
+        self.tidy_groups();
         result
     }
 
-    /// Removes `items` and the items of linked tracks that overlap them.
-    pub fn delete_items(
-        &mut self,
-        items: &[ItemRef],
-        duration: impl Fn(&ProjectTrack) -> Option<f64>,
-    ) {
+    /// Removes `items` and the other items of their groups.
+    pub fn delete_items(&mut self, items: &[ItemRef]) {
         // Sorted, so removing from the back keeps the earlier indices valid.
-        for at in self.with_linked(items, duration).iter().rev() {
+        for at in self.with_grouped(items).iter().rev() {
             if let Some(track) = self.track_mut(&at.track)
                 && at.item < track.items.len()
             {
                 track.items.remove(at.item);
             }
         }
+        self.tidy_groups();
     }
 
-    /// Copies of `items` and the items of linked tracks that overlap them, each with the name of
-    /// its track, for [`Self::paste_items`].
-    pub fn copy_items(
-        &self,
-        items: &[ItemRef],
-        duration: impl Fn(&ProjectTrack) -> Option<f64>,
-    ) -> Vec<(String, Item)> {
-        self.with_linked(items, duration)
+    /// Copies of `items` and the other items of their groups, each with the name of its track,
+    /// for [`Self::paste_items`].
+    pub fn copy_items(&self, items: &[ItemRef]) -> Vec<(String, Item)> {
+        self.with_grouped(items)
             .iter()
-            .filter_map(|at| self.item_ref(at).map(|(_, i)| (at.track.clone(), *i)))
+            .filter_map(|at| {
+                self.item_ref(at)
+                    .map(|(_, i)| (at.track.clone(), i.clone()))
+            })
             .collect()
     }
 
     /// Adds copied items back to the tracks they came from, moved together so the earliest
-    /// starts at `at`, on top of what is there. Items of tracks that no longer exist are
-    /// dropped. Returns where the new items are.
+    /// starts at `at`, on top of what is there. Copied groups become new groups. Items of tracks
+    /// that no longer exist are dropped. Returns where the new items are.
     pub fn paste_items(&mut self, copied: &[(String, Item)], at: f64) -> Vec<ItemRef> {
         let earliest = copied
             .iter()
             .map(|(_, i)| i.position)
             .fold(f64::INFINITY, f64::min);
+        let mut next = self.new_group();
+        let mut groups: BTreeMap<u32, u32> = BTreeMap::new();
         let mut pasted = Vec::new();
         for (name, item) in copied {
             let Some(track) = self.track_mut(name) else {
                 continue;
             };
+            let group = item.group.map(|g| {
+                *groups.entry(g).or_insert_with(|| {
+                    next += 1;
+                    next - 1
+                })
+            });
             track.items.push(Item {
                 position: (item.position - earliest + at).max(0.0),
-                ..*item
+                group,
+                ..item.clone()
             });
             pasted.push(ItemRef::new(name.clone(), track.items.len() - 1));
         }
+        self.tidy_groups();
         pasted
     }
 }
@@ -414,8 +457,8 @@ mod tests {
     fn moving_several_items_stops_when_the_first_reaches_the_start() {
         let mut p = project(&[("a", 1.0), ("a", 5.0), ("b", 3.0)]);
         let selection = [ItemRef::new("a", 1), ItemRef::new("b", 0)];
-        assert_eq!(p.move_items(&selection, 1.0, duration), 1.0);
-        assert_eq!(p.move_items(&selection, -10.0, duration), -4.0);
+        assert_eq!(p.move_items(&selection, 1.0), 1.0);
+        assert_eq!(p.move_items(&selection, -10.0), -4.0);
         assert_eq!(items(&p, "a")[1].0, 2.0);
         assert_eq!(items(&p, "b")[0].0, 0.0);
         // The unselected item stayed.
@@ -457,10 +500,39 @@ mod tests {
     }
 
     #[test]
-    fn trimming_takes_the_matching_edges_of_linked_tracks() {
+    fn grouped_items_move_together_until_ungrouped() {
+        let mut p = project(&[("v", 0.0), ("a", 0.0), ("a", 5.0), ("b", 1.0)]);
+        let pair = [ItemRef::new("v", 0), ItemRef::new("a", 0)];
+        assert_eq!(p.group_items(&pair[..1]), None);
+        let group = p.group_items(&pair).unwrap();
+        assert_eq!(
+            p.with_grouped(&pair[1..]),
+            [ItemRef::new("a", 0), ItemRef::new("v", 0)]
+        );
+        assert_eq!(p.move_item("a", 0, 1.0), 1.0);
+        assert_eq!(items(&p, "v")[0].0, 1.0);
+        assert_eq!(items(&p, "a")[1].0, 5.0);
+        assert_eq!(items(&p, "b")[0].0, 1.0);
+        // Grouping an item of a group with another takes in the whole group.
+        let bigger = p
+            .group_items(&[ItemRef::new("a", 0), ItemRef::new("b", 0)])
+            .unwrap();
+        assert_ne!(bigger, group);
+        assert_eq!(p.with_grouped(&[ItemRef::new("b", 0)]).len(), 3);
+        assert!(p.ungroup_items(&[ItemRef::new("v", 0)]));
+        assert!(!p.ungroup_items(&[ItemRef::new("v", 0)]));
+        assert_eq!(p.move_item("a", 0, 1.0), 1.0);
+        assert_eq!(items(&p, "v")[0].0, 1.0);
+    }
+
+    #[test]
+    fn trimming_takes_the_matching_edges_of_grouped_items() {
         let mut p = project(&[("v", 0.0), ("a", 0.0), ("b", 0.5)]);
-        p.link_tracks("v", "a");
-        p.link_tracks("a", "b");
+        p.group_items(&[
+            ItemRef::new("v", 0),
+            ItemRef::new("a", 0),
+            ItemRef::new("b", 0),
+        ]);
         p.trim_item(&ItemRef::new("a", 0), Edge::Start, 0.25, false, duration);
         assert_eq!(items(&p, "v")[0].0, 0.25);
         assert_eq!(items(&p, "a")[0].0, 0.25);
@@ -469,9 +541,9 @@ mod tests {
     }
 
     #[test]
-    fn splitting_cuts_linked_items_and_keeps_both_halves_selected() {
+    fn splitting_cuts_grouped_items_and_keeps_both_halves_selected() {
         let mut p = project(&[("v", 0.0), ("a", 0.0), ("a", 4.0)]);
-        p.link_tracks("v", "a");
+        p.group_items(&[ItemRef::new("v", 0), ItemRef::new("a", 0)]);
         let selection = p.split_items(&[ItemRef::new("a", 0), ItemRef::new("a", 1)], 1.5, duration);
         assert_eq!(
             items(&p, "a"),
@@ -489,10 +561,18 @@ mod tests {
                 ItemRef::new("a", 2)
             ]
         );
-        // The linked video was cut with it.
+        // The grouped video was cut with it, and each side is a group of its own.
         assert_eq!(
             items(&p, "v"),
             [(0.0, 0.0, Some(1.5), 1.0), (1.5, 1.5, None, 1.0)]
+        );
+        assert_eq!(
+            p.with_grouped(&[ItemRef::new("a", 1)]),
+            [ItemRef::new("a", 1), ItemRef::new("v", 1)]
+        );
+        assert_eq!(
+            p.with_grouped(&[ItemRef::new("v", 0)]),
+            [ItemRef::new("a", 0), ItemRef::new("v", 0)]
         );
         // A split at an edge, or outside, does nothing.
         p.split_items(&[ItemRef::new("a", 1)], 1.5, duration);
@@ -511,18 +591,25 @@ mod tests {
     }
 
     #[test]
-    fn deleting_takes_linked_items_and_copies_paste_at_a_time() {
+    fn deleting_takes_grouped_items_and_copies_paste_at_a_time() {
         let mut p = project(&[("v", 0.0), ("a", 0.0), ("a", 4.0), ("b", 1.0)]);
-        p.link_tracks("v", "a");
-        let copied = p.copy_items(&[ItemRef::new("a", 1)], duration);
-        // The video overlaps a's second item too.
+        p.group_items(&[ItemRef::new("v", 0), ItemRef::new("a", 1)]);
+        let copied = p.copy_items(&[ItemRef::new("a", 1)]);
+        // The video is in a's second item's group.
         assert_eq!(copied.len(), 2);
         let pasted = p.paste_items(&copied, 20.0);
         assert_eq!(pasted, [ItemRef::new("a", 2), ItemRef::new("v", 1)]);
         // The earliest copied item (the video at 0) lands at 20; a's keeps its offset.
         assert_eq!(items(&p, "v")[1].0, 20.0);
         assert_eq!(items(&p, "a")[2].0, 24.0);
-        p.delete_items(&[ItemRef::new("a", 0)], duration);
+        // The pasted pair is a group of its own.
+        assert_eq!(p.with_grouped(&[ItemRef::new("v", 1)]).len(), 2);
+        assert_eq!(p.with_grouped(&[ItemRef::new("a", 1)]).len(), 2);
+        assert_ne!(
+            p.track("v").unwrap().items[0].group,
+            p.track("v").unwrap().items[1].group
+        );
+        p.delete_items(&[ItemRef::new("a", 1)]);
         assert_eq!(items(&p, "a").len(), 2);
         assert_eq!(items(&p, "v"), [(20.0, 0.0, None, 1.0)]);
         assert_eq!(items(&p, "b").len(), 1);

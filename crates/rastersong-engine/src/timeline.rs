@@ -6,6 +6,7 @@
 //! and out points, at a position on the timeline, played at a rate. Positions and in/out points
 //! are times in seconds, so they survive a change of frame rate. Gaps between items read zeros.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use rastersong_graph::nodes::DEFAULT_BUS;
@@ -63,7 +64,7 @@ pub enum TrackKind {
 }
 
 /// A stretch of a track's resource placed on the timeline.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Item {
     /// Seconds into the project where the item starts.
@@ -83,6 +84,52 @@ pub struct Item {
     /// A muted item reads as a gap.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub muted: bool,
+    /// The item's FX chain: graphs that process the item where it plays, before the track's
+    /// own FX.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fx: Vec<Fx>,
+    /// Whether the item's FX warm up as if they had been running before the item, so trimming
+    /// its left edge never changes what follows. Off, they start cold at the edge.
+    #[serde(default = "yes", skip_serializing_if = "is_yes")]
+    pub pre_roll: bool,
+    /// Items with the same group move, trim, split and delete together.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<u32>,
+}
+
+/// A graph in an FX chain: on a track, a folder, the master or an item. Its `Video` and
+/// `Audio` input ports read what it is on; each other port reads the track its receive names
+/// (post-FX, before the track's volume), or zeros without one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Fx {
+    /// The graph, by its id among the project's graphs.
+    pub graph: u32,
+    /// A bypassed FX is left out, as if it weren't in the chain.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bypass: bool,
+    /// Which track fills each other input port, by port name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub receives: BTreeMap<String, String>,
+}
+
+impl Fx {
+    /// Graph `graph`, on, with no receives.
+    pub fn new(graph: u32) -> Self {
+        Self {
+            graph,
+            bypass: false,
+            receives: BTreeMap::new(),
+        }
+    }
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn is_yes(v: &bool) -> bool {
+    *v
 }
 
 fn is_zero(v: &f64) -> bool {
@@ -106,6 +153,9 @@ impl Item {
             end: None,
             rate: 1.0,
             muted: false,
+            fx: Vec::new(),
+            pre_roll: true,
+            group: None,
         }
     }
 
@@ -122,6 +172,9 @@ impl Item {
                 .filter(|r| r.is_finite() && *r > 0.0)
                 .unwrap_or(1.0),
             muted: self.muted,
+            fx: self.fx,
+            pre_roll: self.pre_roll,
+            group: self.group,
         }
     }
 
@@ -351,6 +404,7 @@ mod tests {
             end: Some(5.0),
             rate: 2.0,
             muted: false,
+            ..Item::whole(0.0)
         };
         // 4 s of resource at double speed lasts 2 s.
         assert_eq!(item.length(10.0), 2.0);
@@ -409,6 +463,7 @@ mod tests {
             end: Some(-3.0),
             rate: 0.0,
             muted: false,
+            ..Item::whole(0.0)
         }
         .sanitized();
         assert_eq!(
@@ -419,6 +474,7 @@ mod tests {
                 end: Some(0.0),
                 rate: 1.0,
                 muted: false,
+                ..Item::whole(0.0)
             }
         );
     }

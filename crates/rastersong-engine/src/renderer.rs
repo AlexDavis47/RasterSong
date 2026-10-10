@@ -4,23 +4,17 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use rastersong_graph::nodes::{
-    AUDIO_INPUT, DEFAULT_AUDIO, DEFAULT_VIDEO, LAYER_BELOW_SOURCE, NO_SOURCE, PORT_PARAM,
-    TRACK_MIX_SOURCE, VIDEO_INPUT,
-};
-use rastersong_graph::{
-    CompileOptions, GraphDesc, Layout, OutputLevel, ParamValue, Registry, Signal, Tempo,
-};
+use rastersong_graph::nodes::{DEFAULT_AUDIO, DEFAULT_VIDEO};
+use rastersong_graph::{CompileOptions, GraphDesc, Layout, OutputLevel, Registry, Signal, Tempo};
 use rastersong_media::{MediaBackend, MediaError, Rational, VideoSource};
 
 use crate::EngineError;
-use crate::audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE, frame_start};
-use crate::project::{DEFAULT_MAX_WARMUP_FRAMES, LayerSet, MAX_WARMUP_FRAMES_LIMIT};
+use crate::audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE, SinkResampler};
+use crate::project::{DEFAULT_MAX_WARMUP_FRAMES, MAX_WARMUP_FRAMES_LIMIT};
+use crate::route::{MediaInfo, MediaReader, Route, RoutePlan, Stream, mix_layout};
+use crate::routing::{RouteTrack, Routing, input_ports};
 use crate::sources::{Modulator, fill_video, to_rgb8};
-use crate::stack::{
-    ItemPlan, LAYER_BELOW_AUDIO, NO_AUDIO_SOURCE, Stack, StackPlan, bind_inputs, is_special_source,
-};
-use crate::timeline::{Bus, Item, Timebase, item_at, items_end};
+use crate::timeline::{Bus, Fx, Item, Timebase, TrackKind, item_at, items_end};
 
 /// The source a video input reads by default.
 pub const VIDEO_SOURCE: &str = DEFAULT_VIDEO;
@@ -126,9 +120,6 @@ pub struct Step {
 
 /// A video track being read: the video conformed to the project's grid and size.
 struct VideoReader {
-    name: String,
-    /// Whether the track mix's picture can show it.
-    in_mix: bool,
     video: Box<dyn VideoSource>,
     items: Vec<Item>,
     /// The video's length in seconds, and its frame rate.
@@ -148,90 +139,77 @@ impl VideoReader {
 
 /// An audio track being read.
 struct AudioReader {
-    name: String,
     modulator: Arc<Modulator>,
     items: Vec<Item>,
+    layout: Layout,
 }
 
-/// The project's tracks as signals: one set of readers (and decoders) shared by every layer.
+enum Reader {
+    Video(VideoReader),
+    Audio(AudioReader),
+}
+
+/// The project's tracks as signals, read for the route.
 pub(crate) struct Tracks {
-    videos: Vec<VideoReader>,
-    audio: Vec<AudioReader>,
+    readers: Vec<Reader>,
     fps: f64,
+    video_layout: Layout,
 }
 
-impl Tracks {
-    /// Fills `out` with every track's signal for source frame `s` and the track mix's picture
-    /// (when `out` has one). Before the start everything is zeros.
-    pub(crate) fn fill(
-        &mut self,
-        s: i64,
-        out: &mut HashMap<String, Signal>,
-    ) -> Result<(), MediaError> {
+impl MediaReader for Tracks {
+    fn read(&mut self, track: usize, s: i64, out: &mut Stream) -> Result<(), MediaError> {
+        out.picture = false;
         if s < 0 {
-            out.values_mut().for_each(|signal| signal.data.fill(0.0));
+            out.clear();
             return Ok(());
         }
-        let s = s as usize;
         let (start, end) = (s as f64 / self.fps, (s + 1) as f64 / self.fps);
-        for reader in &mut self.videos {
-            let signal = out.get_mut(&reader.name).unwrap();
-            // A hair past the frame's start, so an item starting on it is found despite rounding.
-            let Some((_, at)) = item_at(&reader.items, start + 1e-9, reader.duration) else {
-                signal.data.fill(0.0);
-                continue;
-            };
-            let index = reader.frame_at(at);
-            match reader.video.frame(index) {
-                Ok(frame) => {
-                    fill_video(&frame, signal);
-                    reader.have_frame = true;
-                }
-                // A damaged frame repeats the previous one rather than failing the render.
-                Err(MediaError::FrameUnavailable(i)) if reader.have_frame => {
-                    tracing::warn!(
-                        frame = i,
-                        "frame could not be decoded; repeating the previous frame"
-                    );
-                }
-                Err(e) => return Err(e),
-            }
-        }
-        // The track mix's picture: the top video track with an item now, or zeros.
-        if out.contains_key(TRACK_MIX_SOURCE) {
-            let top = self
-                .videos
-                .iter()
-                .find(|v| {
-                    v.name != TRACK_MIX_SOURCE
-                        && v.in_mix
-                        && item_at(&v.items, start + 1e-9, v.duration).is_some()
-                })
-                .map(|v| v.name.as_str());
-            match top {
-                Some(top) => {
-                    if let [Some(mix), Some(video)] = out.get_disjoint_mut([TRACK_MIX_SOURCE, top])
-                    {
-                        mix.data.copy_from_slice(&video.data);
+        match &mut self.readers[track] {
+            Reader::Video(reader) => {
+                out.audio.clear();
+                // A hair past the frame's start, so an item starting on it is found despite
+                // rounding.
+                let Some((_, at)) = item_at(&reader.items, start + 1e-9, reader.duration) else {
+                    out.video.clear();
+                    return Ok(());
+                };
+                let index = reader.frame_at(at);
+                match reader.video.frame(index) {
+                    Ok(frame) => {
+                        let mut signal = Signal {
+                            data: std::mem::take(&mut out.video),
+                            layout: self.video_layout,
+                        };
+                        signal.data.resize(self.video_layout.len(), 0.0);
+                        fill_video(&frame, &mut signal);
+                        out.video = signal.data;
+                        reader.have_frame = true;
                     }
-                }
-                None => {
-                    if let Some(mix) = out.get_mut(TRACK_MIX_SOURCE) {
-                        mix.data.fill(0.0);
+                    // A damaged frame repeats the previous one rather than failing the render.
+                    Err(MediaError::FrameUnavailable(i)) if reader.have_frame => {
+                        tracing::warn!(
+                            frame = i,
+                            "frame could not be decoded; repeating the previous frame"
+                        );
                     }
+                    Err(e) => return Err(e),
                 }
+                out.picture = !out.video.is_empty();
             }
-        }
-        for track in &self.audio {
-            let block = &mut out.get_mut(&track.name).unwrap().data;
-            track.modulator.fill_items(&track.items, start, end, block);
+            Reader::Audio(reader) => {
+                out.video.clear();
+                out.audio.resize(reader.layout.len(), 0.0);
+                reader
+                    .modulator
+                    .fill_items(&reader.items, start, end, &mut out.audio);
+            }
         }
         Ok(())
     }
 }
 
-/// Renders output frames of the project's tracks through one compiled graph, or through the graph
-/// items on the project's layers (see [Graph layers](../../../docs/engine.md#graph-layers)).
+/// Renders output frames of the project's tracks through the routing: each track's items and
+/// FX, the folders' mixes and FX, and the master's (see [Routing](../../../docs/engine.md#routing)).
 ///
 /// The graphs are stateful, so frames are produced by processing source frames in order. Asking
 /// for the next frame is the fast path. Asking for any other frame resets the graphs and first
@@ -240,8 +218,9 @@ impl Tracks {
 /// infinite-memory ones (feedback, IIR filters). Rendering from frame 0 is always exact.
 pub struct Renderer {
     tracks: Tracks,
-    stack: Stack,
-    /// What the graphs were compiled against, so editors can inspect other graphs the same way.
+    route: Route,
+    /// What graphs are compiled against when nothing places the open graph: the main ports and
+    /// each track by name.
     options: CompileOptions,
     info: RenderInfo,
     fps: f64,
@@ -252,10 +231,13 @@ pub struct Renderer {
     /// The next source frame to process, if the graph's state is positioned somewhere.
     next_source: Option<usize>,
     rgb: Vec<u8>,
-    /// The bus rendered: only the Audio Output writing to it is compiled, and its sound has
+    /// The bus rendered: only the Audio Outputs writing to it are compiled, and its sound has
     /// the bus's channels.
     bus: Bus,
-    /// The audio of the last rendered frame, when the graph renders sound.
+    audio_rate: u32,
+    /// What turns the master's sound into audio at the project's rate, when FX render sound.
+    resampler: Option<SinkResampler>,
+    /// The audio of the last rendered frame, when FX render sound.
     audio: Option<AudioBlock>,
 }
 
@@ -270,15 +252,43 @@ impl std::fmt::Debug for Renderer {
     }
 }
 
-/// The span of a graph item that plays everywhere: the single graph over the whole timeline.
-const EVERYWHERE: (i64, i64) = (i64::MIN / 2, i64::MAX / 2);
+/// The routing of a render of one graph: every track at the top, and `graph` (id 0) as the
+/// master's FX, its ports named after tracks filled by receives from them.
+pub fn single_routing(tracks: &[RenderTrack], graph: &GraphDesc) -> Routing {
+    let receives = input_ports(graph)
+        .into_iter()
+        .filter(|p| tracks.iter().any(|t| t.name == p.name))
+        .map(|p| (p.name.clone(), p.name))
+        .collect();
+    Routing {
+        tracks: tracks
+            .iter()
+            .map(|t| RouteTrack {
+                muted: !t.in_mix,
+                ..RouteTrack::new(
+                    t.name.clone(),
+                    Some(match t.media {
+                        TrackMedia::Video { .. } => TrackKind::Video,
+                        TrackMedia::Audio(_) => TrackKind::Audio,
+                    }),
+                )
+            })
+            .collect(),
+        master_fx: vec![Fx {
+            receives,
+            ..Fx::new(0)
+        }],
+        graphs: Vec::new(),
+        open: 0,
+    }
+}
 
 impl Renderer {
-    /// Opens the video tracks at `size` and compiles `graph` for the project's `tracks` on its
-    /// `timebase`, rendering the sound of output bus `bus`. Without a timebase the first video
-    /// track sets it, or [`Timebase::DEFAULT`] when there is none. Input nodes that name a track
-    /// that isn't there read zeros. Video tracks are listed top first: the track mix's picture
-    /// ([`TRACK_MIX_SOURCE`]) shows the first in the mix with an item at each frame.
+    /// Opens the video tracks at `size` and renders `graph` over the project's `tracks` on its
+    /// `timebase`, with the sound of output bus `bus`: the graph is the master's FX, and its
+    /// ports named after tracks read those tracks (see [`single_routing`]). Without a timebase
+    /// the first video track sets it, or [`Timebase::DEFAULT`] when there is none. Ports that
+    /// name no track read zeros.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         backend: &dyn MediaBackend,
@@ -290,181 +300,170 @@ impl Renderer {
         registry: &Registry,
         size: OutputSize,
     ) -> Result<Self, EngineError> {
-        Self::with_layers(
-            backend, timebase, tracks, graph, None, tempo, bus, registry, size,
+        let routing = single_routing(tracks, graph);
+        Self::build(
+            backend, timebase, tracks, &routing, graph, true, tempo, bus, registry, size,
         )
     }
 
-    /// [`Self::new`] for a project with graph items: with `layers`, each item is compiled to its
-    /// own graph and the layers compose in order over the track mix, and `graph` is only the
-    /// description of the open graph (`layers.open`). Without them `graph` renders over the whole
-    /// timeline.
+    /// [`Self::new`] for a project's routing: `tracks` are the tracks that play media, by the
+    /// names `routing` gives them, and `open` is the open graph's description, which the
+    /// routing leaves out.
     #[allow(clippy::too_many_arguments)]
-    pub fn with_layers(
+    pub fn with_routing(
         backend: &dyn MediaBackend,
         timebase: Option<Timebase>,
         tracks: &[RenderTrack],
-        graph: &GraphDesc,
-        layers: Option<&LayerSet>,
+        routing: &Routing,
+        open: &GraphDesc,
         tempo: Tempo,
         bus: &Bus,
         registry: &Registry,
         size: OutputSize,
     ) -> Result<Self, EngineError> {
-        let mut videos = Vec::new();
-        let mut audio = Vec::new();
+        Self::build(
+            backend, timebase, tracks, routing, open, false, tempo, bus, registry, size,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build(
+        backend: &dyn MediaBackend,
+        timebase: Option<Timebase>,
+        tracks: &[RenderTrack],
+        routing: &Routing,
+        open: &GraphDesc,
+        single: bool,
+        tempo: Tempo,
+        bus: &Bus,
+        registry: &Registry,
+        size: OutputSize,
+    ) -> Result<Self, EngineError> {
+        // The readers, in the order of `tracks`, with each one's length.
+        let mut readers = Vec::new();
+        let mut durations = Vec::new();
+        let mut first_video = None;
         for track in tracks {
             match &track.media {
                 TrackMedia::Video { path, stream } => {
                     let video = backend.open_video_stream(path, *stream)?;
                     let info = video.info();
                     let fps = info.frame_rate.as_f64();
-                    videos.push(VideoReader {
-                        name: track.name.clone(),
-                        in_mix: track.in_mix,
-                        duration: info.frame_count as f64 / fps,
+                    let duration = info.frame_count as f64 / fps;
+                    first_video.get_or_insert(Timebase {
+                        width: info.width,
+                        height: info.height,
+                        frame_rate: info.frame_rate,
+                    });
+                    durations.push(duration);
+                    readers.push(Reader::Video(VideoReader {
+                        duration,
                         fps,
                         video,
                         items: track.items.clone(),
                         have_frame: false,
-                    });
+                    }));
                 }
-                TrackMedia::Audio(modulator) => audio.push(AudioReader {
-                    name: track.name.clone(),
-                    modulator: modulator.clone(),
-                    items: track.items.clone(),
-                }),
+                TrackMedia::Audio(modulator) => {
+                    durations.push(modulator.duration_secs());
+                    readers.push(Reader::Audio(AudioReader {
+                        modulator: modulator.clone(),
+                        items: track.items.clone(),
+                        layout: Layout::EMPTY,
+                    }));
+                }
             }
         }
-        let timebase = timebase
-            .or_else(|| {
-                videos.first().map(|v| {
-                    let info = v.video.info();
-                    Timebase {
-                        width: info.width,
-                        height: info.height,
-                        frame_rate: info.frame_rate,
-                    }
-                })
-            })
-            .unwrap_or(Timebase::DEFAULT);
+        let timebase = timebase.or(first_video).unwrap_or(Timebase::DEFAULT);
         if !timebase.is_valid() {
             return Err(EngineError::Timebase(timebase));
         }
         let fps = timebase.fps();
         let (width, height) = size.resolve(timebase.width, timebase.height);
-        for reader in &mut videos {
-            let info = reader.video.info();
-            let native = (info.width, info.height) == (width, height);
-            reader
-                .video
-                .set_output_size((!native).then_some((width, height)));
+        for reader in &mut readers {
+            match reader {
+                Reader::Video(v) => {
+                    let info = v.video.info();
+                    let native = (info.width, info.height) == (width, height);
+                    v.video
+                        .set_output_size((!native).then_some((width, height)));
+                }
+                Reader::Audio(a) => a.layout = a.modulator.layout(fps),
+            }
         }
-        let end = videos
+        let end = tracks
             .iter()
-            .map(|v| items_end(&v.items, v.duration))
-            .chain(
-                audio
-                    .iter()
-                    .map(|a| items_end(&a.items, a.modulator.duration_secs())),
-            )
+            .zip(&durations)
+            .map(|(t, &d)| items_end(&t.items, d))
             .fold(0.0, f64::max);
 
-        let plan = match layers {
-            None => vec![vec![ItemPlan {
-                graph_id: 0,
-                desc: graph.clone(),
-                first: EVERYWHERE.0,
-                end: EVERYWHERE.1,
-                frame_base: 0,
-                pre_roll: true,
-            }]],
-            Some(set) => plan_layers(set, graph, fps),
-        };
-        let layered = layers.is_some();
-        let open = layers.map_or(0, |set| set.open);
-
-        for name in plan
-            .iter()
-            .flatten()
-            .flat_map(|item| source_names(&item.desc, AUDIO_INPUT, DEFAULT_AUDIO))
-        {
-            if !is_special_source(&name)
-                && !audio.iter().any(|t| t.name == name)
-                && !videos.iter().any(|v| v.name == name)
-            {
-                audio.push(AudioReader {
-                    name,
-                    modulator: Arc::new(Modulator::silent()),
-                    items: Vec::new(),
-                });
-            }
-        }
-
         let video_layout = Layout::video(width, height);
-        let mut layouts: HashMap<String, Layout> = videos
-            .iter()
-            .map(|v| (v.name.clone(), video_layout))
-            .collect();
-        for track in &audio {
-            layouts.insert(track.name.clone(), track.modulator.layout(fps));
-        }
-        // A video input naming no track reads a picture of zeros, like a gap.
-        for name in plan
-            .iter()
-            .flatten()
-            .flat_map(|item| source_names(&item.desc, VIDEO_INPUT, DEFAULT_VIDEO))
-        {
-            layouts.entry(name).or_insert(video_layout);
-        }
-        // Generators take their layout from the main ports, which are there even when nothing
-        // is called that: the picture, and the first audio track's shape (or silence at the
-        // default rate when there is none).
-        layouts
-            .entry(DEFAULT_VIDEO.to_owned())
-            .or_insert(video_layout);
-        if !layouts.contains_key(DEFAULT_AUDIO) {
-            let layout = audio.first().map_or_else(
-                || Modulator::silent().layout(fps),
-                |track| track.modulator.layout(fps),
-            );
-            layouts.insert(DEFAULT_AUDIO.to_owned(), layout);
-        }
-        let default_audio = layouts[DEFAULT_AUDIO];
-        if layered {
-            // The signals only layers supply: the track mix's picture, the layer below and
-            // nothing, for pictures and for sound.
-            for name in [TRACK_MIX_SOURCE, LAYER_BELOW_SOURCE, NO_SOURCE] {
-                layouts.entry(name.to_owned()).or_insert(video_layout);
-            }
-            for name in [LAYER_BELOW_AUDIO, NO_AUDIO_SOURCE] {
-                layouts.entry(name.to_owned()).or_insert(default_audio);
-            }
+        let bus = bus.clone().sanitized();
+        // What a graph placed nowhere is inspected against: the main ports and every track by
+        // name.
+        let mut sources = HashMap::new();
+        sources.insert(DEFAULT_VIDEO.to_owned(), video_layout);
+        sources.insert(DEFAULT_AUDIO.to_owned(), mix_layout(bus.channels, fps));
+        for (track, reader) in tracks.iter().zip(&readers) {
+            let layout = match reader {
+                Reader::Video(_) => video_layout,
+                Reader::Audio(a) => a.layout,
+            };
+            sources.entry(track.name.clone()).or_insert(layout);
         }
         let options = CompileOptions {
             frame_rate: fps,
             tempo,
-            sources: layouts,
+            sources,
             output: video_layout,
             pixel_scale: f64::from(width) / f64::from(timebase.width),
             audio_bus: bus.name.clone(),
         };
-        let stack = Stack::build(StackPlan {
-            layers: plan,
-            layered,
+        let media = routing
+            .tracks
+            .iter()
+            .map(|t| {
+                let i = tracks.iter().position(|r| r.name == t.name)?;
+                Some(MediaInfo {
+                    reader: i,
+                    audio: match &readers[i] {
+                        Reader::Audio(a) => Some(a.layout),
+                        Reader::Video(_) => None,
+                    },
+                    duration: durations[i],
+                })
+            })
+            .collect();
+        let items = routing
+            .tracks
+            .iter()
+            .map(|t| {
+                tracks
+                    .iter()
+                    .find(|r| r.name == t.name)
+                    .map(|r| r.items.clone())
+                    .unwrap_or_default()
+            })
+            .collect();
+        let route = Route::build(RoutePlan {
+            routing,
+            open,
+            media,
+            items,
             registry,
             options: &options,
-            bus,
-            default_audio,
+            bus: &bus,
             fps,
-            audio_rate: DEFAULT_AUDIO_RATE,
-            open,
+            single,
         })?;
-        let bus = bus.clone().sanitized();
 
         let max_warmup = DEFAULT_MAX_WARMUP_FRAMES as usize;
-        Ok(Self {
-            tracks: Tracks { videos, audio, fps },
+        let mut renderer = Self {
+            tracks: Tracks {
+                readers,
+                fps,
+                video_layout,
+            },
             info: RenderInfo {
                 width,
                 height,
@@ -474,29 +473,58 @@ impl Renderer {
             },
             fps,
             options,
-            latency: stack.latency(),
-            warmup: stack.warmup(max_warmup),
+            latency: route.latency(),
+            warmup: 0,
             max_warmup,
-            stack,
+            route,
             next_source: None,
             rgb: Vec::with_capacity(video_layout.len()),
             bus,
+            audio_rate: DEFAULT_AUDIO_RATE,
+            resampler: None,
             audio: None,
-        })
+        };
+        renderer.set_audio_rate(DEFAULT_AUDIO_RATE);
+        Ok(renderer)
+    }
+
+    /// Whether the render's sound is rendered here: some FX renders sound, and it isn't just a
+    /// track passed through.
+    fn renders_audio(&self) -> bool {
+        self.route.renders_audio() && self.route.passthrough().is_none()
+    }
+
+    fn update_warmup(&mut self) {
+        let warm = self.route.warmup(self.max_warmup);
+        self.warmup = if self.renders_audio() {
+            warm.max(1)
+        } else {
+            warm
+        };
     }
 
     /// Limits the frames pre-rendered before a seek to `frames`. Rendering restarts from the
     /// next request.
     pub fn set_max_warmup_frames(&mut self, frames: u32) {
         self.max_warmup = frames.min(MAX_WARMUP_FRAMES_LIMIT) as usize;
-        self.warmup = self.stack.warmup(self.max_warmup);
+        self.update_warmup();
         self.next_source = None;
     }
 
-    /// Renders the audio output at `rate` samples a second (48 kHz unless set).
+    /// Renders the sound at `rate` samples a second (48 kHz unless set).
     pub fn set_audio_rate(&mut self, rate: u32) {
-        self.stack.set_audio_rate(rate.max(1), self.fps);
-        self.warmup = self.stack.warmup(self.max_warmup);
+        self.audio_rate = rate.max(1);
+        let layout = self.route.audio_layout();
+        self.resampler = self.renders_audio().then(|| {
+            SinkResampler::new(
+                layout.len(),
+                layout.samples_per_pixel,
+                self.bus.channels,
+                self.fps,
+                self.audio_rate,
+            )
+        });
+        self.update_warmup();
         self.audio = None;
         self.next_source = None;
     }
@@ -509,21 +537,18 @@ impl Renderer {
     /// What the render's audio is: the bus's track mix, a track passed through, or rendered
     /// sound.
     pub fn audio_sink(&self) -> AudioSink {
-        if self.stack.has_audio() {
-            let (sample_rate, channels) = self.stack.sound_format();
-            return AudioSink::Rendered {
-                sample_rate,
-                channels,
-            };
-        }
-        match self.stack.passthrough() {
-            Some(track) => AudioSink::Passthrough(track.to_owned()),
-            None => AudioSink::TrackMix,
+        match self.route.passthrough() {
+            Some(track) if self.route.renders_audio() => AudioSink::Passthrough(track.to_owned()),
+            _ if self.renders_audio() => AudioSink::Rendered {
+                sample_rate: self.audio_rate,
+                channels: self.bus.channels,
+            },
+            _ => AudioSink::TrackMix,
         }
     }
 
-    /// The rendered audio of the frame [`Self::render`] last returned, when the graph renders
-    /// sound ([`AudioSink::Rendered`]).
+    /// The rendered audio of the frame [`Self::render`] last returned, when FX render sound
+    /// ([`AudioSink::Rendered`]).
     pub fn audio(&self) -> Option<&AudioBlock> {
         self.audio.as_ref()
     }
@@ -544,51 +569,51 @@ impl Renderer {
     /// `None` if there is no such output (the node doesn't feed the graph's output).
     /// Read-only: nothing about the render changes.
     ///
-    /// With graph layers this reads the items that played at the last rendered frame, the open
-    /// graph's first and then the top-most layer's down, and each item's graph at the last source
-    /// frame it processed.
+    /// This reads the FX that ran in the last processed source frame, those playing the open
+    /// graph first, the master's before the tracks'.
     pub fn tap(&self, node: &str, output: usize) -> Option<&Signal> {
-        self.stack.tap(node, output)
+        self.route.tap(node, output)
     }
 
-    /// The level of every node output in the last rendered frame. With graph layers, of the open
-    /// graph's item playing then, else the top-most item playing; likewise for the costs, meters
-    /// and parameter levels below.
+    /// The level of every node output in the last rendered frame: of the first FX that ran
+    /// playing the open graph, else the first FX that ran; likewise for the costs, meters and
+    /// parameter levels below.
     pub fn levels(&self) -> Vec<OutputLevel> {
-        self.stack.levels()
+        self.route.levels()
     }
 
     /// How long every node took to process the last rendered frame.
     pub fn costs(&self) -> Vec<rastersong_graph::NodeCost> {
-        self.stack.costs()
+        self.route.costs()
     }
 
     /// The meter values of the nodes that publish them, from the last rendered frame.
     pub fn meters(&self) -> Vec<rastersong_graph::NodeMeters> {
-        self.stack.meters()
+        self.route.meters()
     }
 
     /// The value of every modulated parameter in the last rendered frame.
     pub fn param_levels(&self) -> Vec<rastersong_graph::ParamLevel> {
-        self.stack.param_levels()
+        self.route.param_levels()
     }
 
     pub fn info(&self) -> &RenderInfo {
         &self.info
     }
 
-    /// The sources, frame rate, tempo and output size the graph was compiled against.
+    /// The sources, frame rate, tempo and output size the open graph was compiled against: as
+    /// its first FX, else as the master's.
     pub fn compile_options(&self) -> &CompileOptions {
-        &self.options
+        self.route.compile_options().unwrap_or(&self.options)
     }
 
-    /// Each node's own latency and warmup: the open graph's first item's, else the first item's.
+    /// Each node's own latency and warmup: the open graph's first FX's, else the first FX's.
     pub fn node_stats(&self) -> &[rastersong_graph::NodeStats] {
-        self.stack.node_stats()
+        self.route.node_stats()
     }
 
-    /// Frames between a source frame going in and its result coming out: with layers, the sum
-    /// of the layers' latencies.
+    /// Frames between a source frame going in and its result coming out: the longest path of
+    /// FX latencies to the master.
     pub fn latency_frames(&self) -> usize {
         self.latency
     }
@@ -629,7 +654,10 @@ impl Renderer {
         let continue_forward =
             next_output.is_some_and(|next| next <= index && index - next <= self.warmup);
         if !continue_forward {
-            self.stack.reset();
+            self.route.reset();
+            if let Some(resampler) = &mut self.resampler {
+                resampler.reset();
+            }
             self.next_source = Some(index.saturating_sub(self.warmup));
         }
 
@@ -651,92 +679,30 @@ impl Renderer {
         Ok(Some(&self.rgb))
     }
 
-    /// Feeds source frame `m` (and its audio) through the graphs and keeps the output.
+    /// Feeds source frame `m` (and its audio) through the routing and keeps the output.
     fn process(&mut self, m: usize) -> Result<(), EngineError> {
-        if let Err(e) = self.stack.step(m, &mut self.tracks, self.max_warmup) {
+        if let Err(e) = self.route.step(m, &mut self.tracks, self.max_warmup) {
             self.next_source = None;
             return Err(e);
         }
-        to_rgb8(self.stack.picture(), &mut self.rgb);
-        // Like the picture, the sound comes out `latency` frames after its source. Frames no item
-        // supplies sound for are silent.
-        if self.stack.has_audio() {
+        let out = self.route.output();
+        if out.video.is_empty() {
+            self.rgb.clear();
+            self.rgb.resize(self.tracks.video_layout.len(), 0);
+        } else {
+            to_rgb8(&out.video, &mut self.rgb);
+        }
+        // Like the picture, the sound comes out `latency` frames after its source.
+        if let Some(resampler) = &mut self.resampler {
             let frame = m as i64 - self.latency as i64;
-            self.audio = Some(
-                self.stack
-                    .sound(frame)
-                    .cloned()
-                    .unwrap_or_else(|| self.silence(frame)),
-            );
+            let layout = self.route.audio_layout();
+            let block = if out.audio.len() == layout.len() {
+                resampler.push(frame, &out.audio)
+            } else {
+                resampler.push(frame, &vec![0.0; layout.len()])
+            };
+            self.audio = Some(block);
         }
         Ok(())
     }
-
-    /// Silence for output frame `frame`, in the format of the rendered sound.
-    fn silence(&self, frame: i64) -> AudioBlock {
-        let (sample_rate, channels) = self.stack.sound_format();
-        let rate = f64::from(sample_rate);
-        let first = frame_start(frame, rate, self.fps);
-        let end = frame_start(frame + 1, rate, self.fps);
-        AudioBlock {
-            start: first.max(0) as u64,
-            sample_rate,
-            channels,
-            samples: if first < 0 {
-                Vec::new()
-            } else {
-                vec![0.0; (end - first).max(0) as usize * channels as usize]
-            },
-        }
-    }
-}
-
-/// The items of `set` as frames to compile, layer by layer from the bottom. Empty layers pass
-/// everything through, so they are left out; so are items of a graph the project doesn't have.
-fn plan_layers(set: &LayerSet, open: &GraphDesc, fps: f64) -> Vec<Vec<ItemPlan>> {
-    // The first frame at or after a time, in the half-open spans items play (a hair of slack for
-    // times written as multiples of the frame).
-    let frame_of = |t: f64| (t * fps - 1e-6).ceil() as i64;
-    set.layers
-        .iter()
-        .map(|layer| {
-            layer
-                .iter()
-                .filter_map(|item| {
-                    let desc = if item.graph == set.open {
-                        open
-                    } else {
-                        &set.graphs.iter().find(|(id, _)| *id == item.graph)?.1
-                    };
-                    let (first, end) = (
-                        frame_of(item.position),
-                        frame_of(item.position + item.length),
-                    );
-                    (end > first).then(|| ItemPlan {
-                        graph_id: item.graph,
-                        desc: bind_inputs(desc, &item.bindings),
-                        first,
-                        end,
-                        frame_base: (item.start * fps).round() as i64 - first,
-                        pre_roll: item.pre_roll,
-                    })
-                })
-                .collect::<Vec<_>>()
-        })
-        .filter(|items| !items.is_empty())
-        .collect()
-}
-
-/// The track names read by the graph's input nodes of type `kind`, which read `default` unless
-/// set otherwise.
-fn source_names(graph: &GraphDesc, kind: &str, default: &str) -> Vec<String> {
-    graph
-        .nodes
-        .iter()
-        .filter(|n| n.kind == kind)
-        .map(|n| match n.params.get(PORT_PARAM) {
-            Some(ParamValue::Text(name)) => name.clone(),
-            _ => default.to_owned(),
-        })
-        .collect()
 }

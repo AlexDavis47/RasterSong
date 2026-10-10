@@ -148,10 +148,11 @@ fn preview_scale_renders_smaller_frames() {
 #[test]
 fn reports_errors_and_recovers() {
     let engine = engine();
-    // Valid JSON, but the graph has no output node.
+    // Valid JSON, but a node of a type that doesn't exist.
     load(
         &engine,
-        r#"{ "version": 0, "nodes": [ { "id": "v", "type": "video_input" } ] }"#,
+        r#"{ "version": 0, "nodes": [ { "id": "b", "type": "bogus" }, { "id": "o", "type": "output" } ],
+            "connections": [ { "from": "b", "to": "o" } ] }"#,
     );
     wait_until("the failure", || {
         matches!(engine.status(), EngineStatus::Failed(_))
@@ -316,7 +317,8 @@ fn graph_failures_keep_the_video_info() {
     let engine = engine();
     load(
         &engine,
-        r#"{ "version": 0, "nodes": [ { "id": "v", "type": "video_input" } ] }"#,
+        r#"{ "version": 0, "nodes": [ { "id": "b", "type": "bogus" }, { "id": "o", "type": "output" } ],
+            "connections": [ { "from": "b", "to": "o" } ] }"#,
     );
     wait_until("the failure", || {
         matches!(engine.status(), EngineStatus::Failed(_))

@@ -32,14 +32,6 @@ pub const AUDIO_INPUT: &str = "audio_input";
 pub const DEFAULT_VIDEO: &str = "Video";
 /// The main audio port. As an FX, the host track's sound fills it.
 pub const DEFAULT_AUDIO: &str = "Audio";
-/// The host signal holding the track mix's picture: the top video track with an item at each
-/// frame. Bypassing the whole graph shows it.
-pub const TRACK_MIX_SOURCE: &str = "@track_mix";
-/// The host signal an input bound to *Layer below* reads: the picture or sound of the graph layer
-/// underneath (the track mix's picture under the bottom layer).
-pub const LAYER_BELOW_SOURCE: &str = "@layer_below";
-/// The host signal of an input nothing is bound to: always zeros.
-pub const NO_SOURCE: &str = "@none";
 /// The parameter of the audio output that names the output bus it writes to.
 pub const BUS_PARAM: &str = "bus";
 /// The bus an audio output writes to unless set otherwise: the project's first, master bus.

@@ -6,8 +6,8 @@ use rastersong_media::MediaBackend;
 
 use crate::timeline::{Bus, Timebase};
 use crate::{
-    AudioBlock, AudioSink, DEFAULT_AUDIO_RATE, EngineError, LayerSet, OutputSize, RenderInfo,
-    RenderTrack, Renderer,
+    AudioBlock, AudioSink, DEFAULT_AUDIO_RATE, EngineError, OutputSize, RenderInfo, RenderTrack,
+    Renderer, Routing,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -24,10 +24,10 @@ pub struct RenderSettings {
     pub audio_rate: Option<u32>,
     /// The output bus whose sound is rendered.
     pub bus: Bus,
-    /// The project's graph items ([`crate::Project::layer_set`]): with them each item renders its
-    /// graph where it plays and `graph` is the open graph's description. `None` renders `graph`
-    /// over the whole timeline.
-    pub layers: Option<LayerSet>,
+    /// The project's routing ([`crate::Project::routing`]), with `graph` the open graph's
+    /// description. `None` renders `graph` as the master's FX, its ports named after tracks
+    /// reading them.
+    pub routing: Option<Routing>,
 }
 
 /// One rendered frame, as packed RGB8.
@@ -49,7 +49,7 @@ pub trait FrameSink {
     fn frame(&mut self, frame: RenderedFrame) -> Result<(), EngineError>;
 }
 
-/// Renders `tracks` through `graph` (or `settings.layers`) into `sink`, starting from frame 0 so
+/// Renders `tracks` through `graph` (or `settings.routing`) into `sink`, starting from frame 0 so
 /// the result is exact.
 pub fn render(
     backend: &dyn MediaBackend,
@@ -58,19 +58,32 @@ pub fn render(
     settings: &RenderSettings,
     sink: &mut dyn FrameSink,
 ) -> Result<RenderInfo, EngineError> {
-    let mut renderer = Renderer::with_layers(
-        backend,
-        settings.timebase,
-        tracks,
-        graph,
-        settings.layers.as_ref(),
-        settings.tempo,
-        &settings.bus,
-        Registry::shared(),
-        settings
-            .size
-            .map_or(OutputSize::Native, |(w, h)| OutputSize::Exact(w, h)),
-    )?;
+    let size = settings
+        .size
+        .map_or(OutputSize::Native, |(w, h)| OutputSize::Exact(w, h));
+    let mut renderer = match &settings.routing {
+        Some(routing) => Renderer::with_routing(
+            backend,
+            settings.timebase,
+            tracks,
+            routing,
+            graph,
+            settings.tempo,
+            &settings.bus,
+            Registry::shared(),
+            size,
+        ),
+        None => Renderer::new(
+            backend,
+            settings.timebase,
+            tracks,
+            graph,
+            settings.tempo,
+            &settings.bus,
+            Registry::shared(),
+            size,
+        ),
+    }?;
     renderer.set_audio_rate(settings.audio_rate.unwrap_or(DEFAULT_AUDIO_RATE));
     let mut info = *renderer.info();
     if let Some(limit) = settings.frames {
