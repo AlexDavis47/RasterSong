@@ -6,12 +6,12 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 
 | Node | What it does |
 |---|---|
-| [Audio In](#audio_input) | An input port for sound, one frame's worth per block, -1 to 1, channels interleaved. Audio is the main port, which the track the graph is on fills; other names are filled by receives |
-| [Video In](#video_input) | An input port for pictures, as RGB from 0 to 1. Video is the main port, which the track the graph is on fills; other names are filled by receives |
+| [Audio In](#audio_input) | An input port for sound, one frame's worth per block, -1 to 1, channels interleaved. Audio is the main port, which a graph item reads from what is below it unless set otherwise; other names are ports of their own |
+| [Video In](#video_input) | An input port for pictures, as RGB from 0 to 1. Video is the main port, which a graph item reads from what is below it unless set otherwise; other names are ports of their own |
 
 ### `audio_input`
 
-**Audio In**: An input port for sound, one frame's worth per block, -1 to 1, channels interleaved. Audio is the main port, which the track the graph is on fills; other names are filled by receives
+**Audio In**: An input port for sound, one frame's worth per block, -1 to 1, channels interleaved. Audio is the main port, which a graph item reads from what is below it unless set otherwise; other names are ports of their own
 
 **Outputs**
 
@@ -21,11 +21,11 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `port` (Port) | `Audio` | text | no | The port's name. Audio is the main port; any other name is a port of its own, filled by a receive |
+| `port` (Port) | `Audio` | text | no | The port's name. Audio is the main port; any other name is a port of its own |
 
 ### `video_input`
 
-**Video In**: An input port for pictures, as RGB from 0 to 1. Video is the main port, which the track the graph is on fills; other names are filled by receives
+**Video In**: An input port for pictures, as RGB from 0 to 1. Video is the main port, which a graph item reads from what is below it unless set otherwise; other names are ports of their own
 
 **Outputs**
 
@@ -35,7 +35,7 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `port` (Port) | `Video` | text | no | The port's name. Video is the main port; any other name is a port of its own, filled by a receive |
+| `port` (Port) | `Video` | text | no | The port's name. Video is the main port; any other name is a port of its own |
 
 ## Generators
 

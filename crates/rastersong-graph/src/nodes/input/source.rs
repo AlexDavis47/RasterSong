@@ -1,6 +1,6 @@
 //! Input ports: where signals enter the graph. Each reads the port it names, and whoever uses the
-//! graph fills the ports: as an FX, the host track fills the main ports (`Video`, `Audio`) and
-//! receives fill the others.
+//! graph fills the ports: each graph item on the timeline picks a source for every port (by
+//! default what is below it for the main ports, `Video` and `Audio`).
 
 use crate::nodes::{
     AUDIO_INPUT, Category, DEFAULT_AUDIO, DEFAULT_VIDEO, NodeKind, NodeSpec, PORT_PARAM,

@@ -325,7 +325,7 @@ through *Layer below*. Stage 2b replaced them with Reaper-style routing (folders
 turned out too complex for the people RasterSong is for. Stage 2c makes the timeline **Premiere-style**
 ([Decisions](decisions.md#premiere-style-timeline-october-2026)): Graphs, Video and Audio sections, video layered,
 audio summed, and graph tracks on top whose items pick a source for each input. The model below describes the
-target.
+target; the first pass of it has shipped (stage 2c below).
 
 **Rule: explicit over hidden.** Every signal a graph uses enters through a port that something visibly filled.
 There are no fallbacks and no overrides that only apply in some situations (the old "Audio Output replaces the
@@ -523,7 +523,7 @@ raw.
    - ~~**feature** Graph items in the timeline: copy, cut and paste, box select, and moving an item to another
      layer by dragging.~~ *(Superseded: item FX use the track item editing.)*
    - [x] **feature** Renderer switching graphs at item edges, one renderer state per item, layers as a pipeline
-     *(done; carried over to item FX, see [Routing](engine.md#routing); the cache key is still the project
+     *(done; carried over to item FX, see [Composition](engine.md#composition); the cache key is still the project
      version, so an edit to one graph re-renders every frame)*.
    - ~~**feature** Layer-below sound under the bottom layer and the track mix sound under frames no item supplies
      sound for~~ *(superseded: stage 2b mixes audio inside the renderer, so FX hear their track or folder)*.
@@ -554,7 +554,7 @@ raw.
      shows its length rather than only its start.
    - [x] **bug** With no graph items the open graph still renders over the whole timeline, which is an implicit
      graph ([Decisions](decisions.md#timeline-routing-folders-and-graphs-as-fx-october-2026)). With nothing placed,
-     play the plain track mix. *(Done: the app and the CLI; see [Routing](engine.md#routing).)*
+     play the plain track mix. *(Done: the app and the CLI; see [Composition](engine.md#composition).)*
    - [x] **bug** Only audio tracks can be reordered; video tracks can't, and on audio tracks the header widgets
      cover most of the grip. Make every track draggable from its header background, and test it headless (the only
      reorder test needs a GPU and has stale coordinates). *(Done: header labels no longer select text, so a drag on
@@ -586,23 +586,31 @@ raw.
 
    **2c. Premiere-style timeline** (the model above; see
    [Decisions](decisions.md#premiere-style-timeline-october-2026)).
-   - [ ] **chore** Video, audio and graph track lists replace the track tree; folders, master sends, FX chains,
-     receives and through nodes are removed.
-   - [ ] **feature** Graph tracks of graph items (no overlap, trim, mute, pre-roll) with a source per input port:
-     Below, the mixes, track stems, outputs of graphs below, nothing.
-   - [ ] **feature** Composition in the renderer: stems, video and audio mixes, graph tracks bottom to top, the
-     topmost active item as the master.
+   - [x] **chore** Video, audio and graph track lists replace the track tree; folders, master sends, FX chains,
+     receives and through nodes are removed ([Timeline](app.md#timeline)).
+   - [x] **feature** Graph tracks of graph items (no overlap, trim, mute, pre-roll) with a source per input port:
+     Below, the mixes, track stems, outputs of graphs below, nothing ([Graph tracks](app.md#graph-tracks)).
+   - [x] **feature** Composition in the renderer: stems, video and audio mixes, graph tracks bottom to top, the
+     topmost active item as the master ([Composition](engine.md#composition)).
    - [ ] **feature** Output port nodes (plain outputs besides Video Output and Audio Output), read by graphs above
-     and later by subgraph pins.
-   - [ ] **feature** Timeline sections (Graphs, Video, Audio) with a thick divider, a + Track row each, and
-     reordering within a section.
-   - [ ] **feature** Linked drops: a resource places every resource of its file, grouped; Alt places one.
-   - [ ] **feature** Graph lanes, graph drops and the graph item inspector with a source picker per port.
+     and later by subgraph pins. *(Not built: `Source::Graph` reads only the main Video and Audio outputs; folded
+     into the input/output redesign below.)*
+   - [x] **feature** Timeline sections (Graphs, Video, Audio) with a thick divider and reordering within a section
+     ([Timeline](app.md#timeline)). *(The + Track rows were dropped; see the feedback below.)*
+   - [x] **feature** Linked drops: a resource places every resource of its file, grouped; Alt places one
+     ([Timeline](app.md#timeline)).
+   - [x] **feature** Graph lanes, graph drops and the graph item inspector with a source picker per port
+     ([Graph tracks](app.md#graph-tracks)).
    - [ ] **feature** A cache key made of the active graphs' versions, so editing one graph keeps frames rendered
      only by others.
    - [ ] **feature** Graph Progress node.
    - [ ] **chore** Run graph tracks as a pipeline across frames again, as graph layers did.
    - [ ] **feature** Inspecting connections in a graph that isn't under the playhead.
+
+   **Known gaps in 2c** (found while writing its docs, not yet scheduled):
+   - [ ] **feature** Drag a graph item to another graph track (a move stays on its own track).
+   - [ ] **feature** A note on a graph with no Audio Output saying it is silent where it plays.
+   - [ ] **chore** The default timeline panel is 300 px tall, so four or more tracks scroll.
 
    **2c feedback (October 2026, from the first hands-on pass).**
    - [x] **bug** The timeline shows on launch, over a default length, with each empty section naming what to drop in it ([Timeline](app.md#timeline)).

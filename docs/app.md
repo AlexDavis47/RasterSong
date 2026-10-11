@@ -24,7 +24,7 @@ Our own editor, drawn on a pannable, zoomable canvas (see [Decisions](decisions.
   Ctrl+ or Shift+click adds or removes it; drag to move the selection. Ctrl+A selects every node, Esc clears the
   selection.
 - **Alt+click** a node bypasses it (or the whole selection, if it is selected): a bypassed node passes its main
-  input through. **Bypass FX**, on the canvas, skips every FX and shows and plays the track mix, to compare
+  input through. **Bypass graphs**, on the canvas, skips every graph track and shows and plays the mix, to compare
   with the original.
 - Drag from a pin to connect. An input takes one connection; a new one replaces the old. Dragging a connected
   input picks its wire up to move it. Dropping a wire on empty space opens the node search, connected.
@@ -33,11 +33,10 @@ Our own editor, drawn on a pannable, zoomable canvas (see [Decisions](decisions.
   diamond toggles show or hide the others. Hiding a connected parameter disconnects it.
 - A graph's inputs are **ports**: **Video In** and **Audio In** nodes, each reading the port its *Port* setting
   names (titled `▣ In: Video`, `♪ In: Audio`, … unless renamed). `Video` and `Audio` are the main ports; any other
-  name is a port of its own, and several nodes can read one port. Whoever uses the graph fills the ports: as an
-  [FX](#fx), the main ports read what it is on and the others the tracks its receives name, so tracks add no nodes
-  and renaming a track leaves the graph alone. Ports are added and
-  deleted like any node. Every graph has one **Output**, which can't be deleted or copied; a graph missing one gets
-  one when opened.
+  name is a port of its own, and several nodes can read one port. Whoever uses the graph fills the ports: each
+  graph item on the timeline picks a source for every port ([Graph tracks](#graph-tracks)), so tracks add no nodes
+  and renaming a track leaves the graph alone. Ports are added and deleted like any node. Every graph has one
+  **Output**, which can't be deleted or copied; a graph missing one gets one when opened.
 - Right-click empty space to add a node there: the search box has focus immediately; type, use ↑/↓, and press
   Enter (or click). Right-click a node to copy, duplicate, bypass or delete it; Delete removes the selection,
   Backspace removes it and reconnects the wires around it, Ctrl+D duplicates it.
@@ -109,44 +108,46 @@ and data streams aren't listed.
 Resources are named after their file (video keeps the extension, audio drops it, and a stream's title is added),
 made unique with `_2`, `_3`, …. Nothing reaches the timeline until it is placed: **drag a resource onto the
 timeline** to add a track playing it from where it is dropped, or double-click it (or right-click → Add to
-Timeline) to add one at the playhead. The track is named after the resource, and an audio track gets its Audio
-Input node as before. Right-click a card renames a resource (its tracks keep their names, since graphs select tracks by
-name) or removes it; removing a resource that tracks play asks first and removes those tracks with it. A resource
+Timeline) to add one at the playhead. The track is named after the resource. Right-click a card renames a resource (its tracks keep their names, since
+graph sources read tracks by name) or removes it; removing a resource that tracks play asks first and removes those tracks with it. A resource
 whose file is missing is drawn in red, with its path in the tooltip and a **Relocate…** button under the card, outside the drag area so it always takes the click (also in the
 right-click menu, for any resource): pick where the file is now, and the other streams of the same file follow.
 Until it is found, the tracks that play it read as gaps and say so in their lanes. The panel checks about once a
 second, so a file that comes back (a drive plugged in) is picked up by itself.
 
-**Graphs** are resources too, on their own tab. A project can hold any number; **New graph** adds a
-passthrough (the video wired to Video Output, the sound to Audio Output) and opens it. Double-click a graph (or
-right-click → Open in editor) to open it in the node editor, which swaps it with the open one. The open graph is
-shown in bold. A graph applies only where it is used as an [FX](#fx): with no FX on, the preview and the CLI play
-the plain track mix, and the open graph is only a description to edit. Right-click also renames, duplicates or
-removes a graph (the open graph can't be removed; removing one removes the FX that use it). Drag a graph card onto
-the timeline to add it as an FX. **File → Import Graph…** and **Export
-Graph…** read and write a graph as its own file.
+**Graphs** are resources too, on their own tab. A project can hold any number; **New graph** adds the template (the
+video wired to Video Output, the sound to Audio Output) and opens it. Double-click a graph (or right-click → Open in
+editor) to open it in the node editor, which swaps it with the open one. The open graph is shown in bold. A graph
+applies only where it is placed as a **graph item** on a [graph track](#graph-tracks): with none placed, the preview
+and the CLI play the plain mixes, and the open graph is only a description to edit. Right-click also renames,
+duplicates or removes a graph (the open graph can't be removed; removing one removes its graph items). Drag a graph
+card into the Graphs section of the timeline to place it. **File → Import Graph…** and **Export Graph…** read and
+write a graph as its own file.
 
 ## Timeline
 
-A ruler and one **track tree** with Reaper-style track headers on the left: video, audio and empty tracks in any
-order, and **folders** holding the tracks below them. A new project starts with three folders, *Video*, *Audio*
-and *Control*: new video tracks go at the bottom of Video and new audio tracks at the bottom of Audio, and Control
-sends nowhere, for tracks only graphs read. A folder header has a ⏷ / ⏵ toggle that hides or shows the tracks in it,
-its name, its volume (which scales everything in it), mute, solo and ×; its lane is a plain band, since a folder
-holds no items of its own. Each folder level indents the header, with a guide line down the left. A folder's mute
-or solo, or its master send turned off, applies to everything in it, and removing a folder moves what was in it up
-a level. The ruler's corner has the **Time** / **Tempo** button (minutes and seconds, or bars and beats with the
-tempo bar and its **Metronome** toggle) and the Snap button. The timeline shows from launch, over a
-default ten seconds, with each empty section naming what to drop in it. Each track
-is a lane of **items**, the stretches of its file placed on the timeline. The video header shows the track's name
-(its file's name until renamed), size and frame rate; each audio header has
-the track's name (renaming a track updates the bindings that read it), its volume in the track mix, and, at the
-top of the tree, its bus when the project has several (a track in a folder goes where the folder goes). Every
-header has **mute** and **solo** (*S*: while any track of a kind is soloed, only soloed tracks of that kind are in
-the [track mix](engine.md#track-mix-and-output-buses); soloing a folder solos what is in it); every header also has
-a × that removes the track. Tracks left out of the mix are drawn dimmed. Each track's lane has its own outline (the selected track's is the accent color), so neighbouring tracks are easy to tell apart. The project lasts to the end of its last item and
-runs at its [timebase](engine.md#timeline). There is no way to make an empty track: a track appears when
-a resource is placed (File → Add Audio Tracks… places several audio files at once, each named after its file).
+The timeline has three **sections** under a ruler, divided by a thick line: **Graphs** on top, then **Video**, then
+**Audio**. Tracks stay in their section and reorder within it. The ruler's corner has the **Time** / **Tempo**
+button (minutes and seconds, or bars and beats with the tempo bar and its **Metronome** toggle) and the Snap
+button. The timeline shows from launch, over a default ten seconds, with each empty section naming what to drop
+in it. Each track is a lane of **items**, the stretches of its file (or, in the Graphs section, graphs) placed on
+the timeline.
+
+- **Video tracks layer.** The top video track with an item at a frame wins, as in Premiere or Resolve; the
+  **video mix** is that picture.
+- **Audio tracks are summed** into their bus at their volumes: the **audio mix**
+  ([track mix](engine.md#track-mix-and-output-buses)). While any track of a kind is **soloed** (*S*), only soloed
+  tracks of that kind are in the mix. Tracks left out of the mix are drawn dimmed.
+- **Every track is also a stem.** A graph can read any track on its own, before its volume, mute and solo.
+- **Graph tracks** hold graph items; see [Graph tracks](#graph-tracks).
+
+The video header shows the track's name (its file's name until renamed), size and frame rate; each audio header has
+the track's name (renaming a track updates the sources that read it), its volume and, when the project has several
+buses, its bus. Every header has **mute** and, for video and audio, **solo**, and a × that removes the track. Each
+track's lane has its own outline (the selected track's is the accent color), so neighbouring tracks are easy to
+tell apart. The project lasts to the end of its last item and runs at its [timebase](engine.md#timeline). There is
+no way to make an empty track: a track appears when a resource is placed (File → Add Audio Tracks… places several
+audio files at once, each named after its file).
 Dropping a resource on a track puts it there from the drop point: a track of the same resource gets another item,
 and any other track (a track holds one resource only) makes a new track instead. Dropped **on the line between two
 tracks**, or above the first or below the last track of a section, the resource gets a new track there, whatever
@@ -154,6 +155,9 @@ it is dropped on: a thick **ghost line** shows the place. A track's right-click 
 **New track below**, which list the resources of its kind and put the one chosen on a new track there, at the
 playhead.
 Click a media card to select it, Ctrl+click (or Shift+click) to add cards to the selection or take them out: dragging any selected card takes them all (stems, say), each onto a track of its own in the panel's order, and the bubble reads "name and N more". A card outside the selection drags alone. Dragging a graph onto the Graphs section works the same as media: dropped on a graph track it goes on that track, on the line between two graph tracks (or below the last one) it gets a new graph track there, anywhere else a new track on top.
+**Linked drops.** A resource places **every resource of its file** at the same time, each on its own track of its
+kind (the video on a video track, each audio stream on an audio track), grouped so they move together. Hold **Alt**
+to place only the one dragged. A video with sound dropped on the timeline therefore arrives with its sound.
 While a card is dragged a **drag bubble** (a pill with the card's icon and name) follows the pointer; it pops in,
 blooms where it is dropped, and shrinks back to the card when nothing takes it. Over the lanes a **ghost** shows
 where the drop will land: an outlined item on the track that takes it, or a ghost row where the new track will
@@ -200,16 +204,13 @@ audio's waveform, and behaves like empty lane space. Items can't start before th
   a few pixels. Hold **Shift** to drag freely.
 - Every edit undoes as one step.
 
-Right-click a header for its menu: **Send to master** turns the track's master send off or on (off leaves it, and
-everything in it, out of the mix; FX can still receive it), **Default height** resets its height, and **Remove
-track** removes it. Drag the bottom edge of a header to change
-the track's **height**; double-clicking the edge, or the header's menu, resets it. Drag a header by its free space
-or its labels (not its name field, buttons, volume or bus) to move the track, with everything in it: up or down
-among all the tracks, and left or right (one indent per level) to take it out of a folder or put it in the folder
-it lands under. A marker line shows where it goes, indented as deep as it will sit; a drop that would leave the
-tree invalid (a folder into itself) is refused. Frames rendered so far are marked in green along the bottom of the ruler.
-The tree, collapsed folders, item groups, heights, solo, mutes and master sends are saved with the project and undo like
-any edit.
+Right-click a header for its menu: **Default height** resets its height, **New track above** / **New track below**
+(see above) add a track and **Remove track** removes it. A video or audio header also shows the track's name, size
+or volume, and **mute** and **solo**; a graph track's header has its name and mute. Drag the bottom edge of a
+header to change the track's **height**; double-clicking the edge, or the header's menu, resets it. Drag a header
+by its free space or its labels (not its name field, buttons, volume or bus) to **reorder** the track **within its
+section**; a marker line shows where it goes. Frames rendered so far are marked in green along the bottom of the
+ruler. Item groups, heights, solo and mutes are saved with the project and undo like any edit.
 
 - The scroll wheel zooms time around the pointer, from half the whole project down to a few frames (over the
   headers it scrolls the tracks); middle- or right-drag pans in both directions; F shows the whole project.
@@ -222,42 +223,46 @@ any edit.
   rendering ahead wraps from the region's end to its start, so the loop plays without waiting. The region is saved
   with the project.
 
-### FX
+### Graph tracks
 
-Graphs process the timeline as **FX**, in chains on items, tracks, folders and the master; how they render is
-described in [Routing](engine.md#routing). Each header's **FX** button opens its track's (or folder's) chain, lit
-while the chain has FX, its tooltip listing them; **Master FX** beside **+ Track** opens the master's; an item's
-right-click menu has **FX…** for the item's own chain, and **Pre-roll FX** (on by default: the item's FX warm up as
-if they had run before the item, so trimming its left edge changes nothing after it). An item with FX says so in
-its bar.
+The **Graphs** section holds **graph tracks**, and each holds **graph items**: a graph placed on the timeline,
+like an adjustment layer in a video editor. How they render is described in
+[Composition](engine.md#composition).
 
-**Drag a graph card** from the Resources panel's Graphs tab onto the timeline to add it to the end of a chain: over
-an item, the item's; over a track's lane or header, the track's (or folder's); below the tracks, the master's. The
-chain it would join is outlined while it is dragged, and its window opens when it lands. A new FX's ports named after
-tracks receive from them.
-
-The **FX window** shows one chain, in the order it runs. Each FX has its **on** checkbox (off leaves it out, as if
-it weren't there), its graph's name (double-click it to open the graph in the editor), **⏶**/**⏷** to move it
-earlier or later and **×** to remove it. A graph with no Video Output passes the picture through and one with no
-Audio Output for the master bus passes the sound through; the FX says so. Below, one row per port other than the
-main ones, with a combo box: the track that **receives** into it (its picture and sound after its own FX, before
-its volume) or **Nothing** (zeros). A track can't receive into its own FX, and receives that make a loop fail the
-render with an error naming the tracks. A receive from a track that no longer exists says so in a note: that port
-reads nothing until another is chosen. **+ Add FX** adds any of the project's graphs. Renaming a track renames the
-receives from it. Chains are saved with the project and undo like any edit.
+- **Drag a graph card** from the Resources panel's Graphs tab into the Graphs section: onto a graph track it goes
+  on that track from the drop point, on the line between two graph tracks (or below the last) it gets a new graph
+  track there, anywhere else a new track on top. An empty section says *Drag a graph here to make a graph track*.
+- **The topmost graph item playing is the master.** At each frame the picture and sound you see and hear are the
+  Video Output and Audio Output of the item on the highest graph track that has one there, or the plain mixes where
+  none does. Items on one track never overlap: placing or moving one trims what it lands on. A muted graph track
+  or item is skipped, so what is below it shows through. **Bypass graphs** (on the canvas) skips every graph track
+  to compare with the original.
+- **Items** have the same bar, trim, split, mute, copy, paste and group commands as other items, and **pre-roll**
+  (on by default): the graph warms up as if it had run before the item, so trimming the left edge changes nothing
+  after it. Dragging a graph item moves it within its own track, applied when you let go; it doesn't move between
+  tracks yet. Double-click an item to open its graph in the editor.
+- **The graph item inspector.** Selecting a graph item shows one row per input port of its graph, each with a
+  source picker: **Below** (the graph playing under this one, or the mix with none; the default for `Video` and
+  `Audio`), **Video mix** or **Audio mix**, **Track: name** (a track's stem, read before its volume and mute, so a
+  muted kick can still drive an effect), **Graph track: name** (an output of a graph track below this one), or
+  **Nothing** (zeros). Other ports start on the track of the same name, if one exists. A source that has gone
+  (a removed track, a graph track no longer below) says so and reads nothing until another is picked. Renaming a
+  track updates the sources that read it. Sources only point down, so graphs can't loop.
+- A new graph starts as a visible template (`In: Video` into Video Output, `In: Audio` into Audio Output), so a
+  fresh graph item changes nothing. A graph placed over graphs below it chains them unless a source is changed.
 
 ## Preview audio
 
-Plays the master bus (the first output bus) and follows the playhead: its **track mix**, the audio tracks
-routed to it at their volumes, leaving out muted ones (and unsoloed ones while any is soloed). When an FX has an
-**Audio Output** writing to the master bus, playback plays the rendered sound instead: the tree mixed by the
-renderer at the tracks' volumes, through every FX (see [Routing](engine.md#routing)); a track received straight into
-the master's only such FX plays as it is. A bus with more than two channels plays its first two. When playback slows because rendering can't
-keep up, the audio is time-stretched (WSOLA: slowed without lowering the pitch) to stay with the picture, and fades
-out when playback all but stops. Volume, mute and master sends shape the mix, never what receives read.
+Plays the master bus (the first output bus) and follows the playhead: its **audio mix**, the audio tracks routed to
+it at their volumes, leaving out muted ones (and unsoloed ones while any is soloed). When the topmost graph item
+playing has an **Audio Output** writing to the master bus that doesn't just pass the mix through, playback plays
+the rendered sound instead, through the same sink the export uses (see [Composition](engine.md#composition)); a
+graph with no Audio Output is silent where it plays. A bus with more than two channels plays its first two. When
+playback slows because rendering can't keep up, the audio is time-stretched (WSOLA: slowed without lowering the
+pitch) to stay with the picture, and fades out when playback all but stops. Volume, mute and solo shape the mix,
+never what a graph reads from a track's stem.
 
-With several buses, each top-level audio track's and folder's header shows the bus it is routed to, with a menu to
-change it.
+With several buses, each audio track's header shows the bus it is routed to, with a menu to change it.
 
 ## Settings
 

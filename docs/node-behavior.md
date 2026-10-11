@@ -69,9 +69,9 @@ resolution.
 ## Ports
 
 `?` marks optional inputs. Video In and Audio In are the graph's input ports: each reads the port its `port`
-setting names (`Video` and `Audio` are the main ports). Whoever uses the graph fills the ports: in a graph placed on
-an FX chain, the main ports read what the FX sits on and the others read the tracks its receives name (see
-[Routing](engine.md#routing)). A port nothing fills reads zeros.
+setting names (`Video` and `Audio` are the main ports). Whoever uses the graph fills the ports: each graph item on the
+timeline picks a source for every port, by default what is below it for the main ports (see
+[Composition](engine.md#composition)). A port nothing fills reads zeros.
 
 ## Split and Combine Channels
 

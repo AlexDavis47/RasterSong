@@ -450,7 +450,7 @@ See [Timeline, resources and routing](roadmap.md#timeline-resources-and-routing)
 *Superseded by [Premiere-style timeline](#premiere-style-timeline-october-2026). Mixing inside the renderer, the
 real-time mixer path and the single-graph form carry over; FX chains, receives and through nodes are removed.*
 
-How stage 2b built the routing above ([Routing](engine.md#routing)):
+How stage 2b built the routing above ([Composition](engine.md#composition) replaced it):
 
 - **One routed renderer.** The renderer walks the track tree each frame: a track's items (each through its item
   FX), then the track's FX chain, then into its folder's mix, up to the master and its FX. A folder or the master
