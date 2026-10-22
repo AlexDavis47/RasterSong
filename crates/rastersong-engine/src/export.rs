@@ -144,8 +144,12 @@ pub fn export(
     path: &Path,
     progress: &mut dyn FnMut(usize, usize) -> bool,
 ) -> Result<RenderInfo, EngineError> {
+    let _span = tracing::trace_span!("export").entered();
     let result = (|| {
-        let (tracks, sources) = job.load(backend, cache)?;
+        let (tracks, sources) = {
+            let _span = tracing::trace_span!("load").entered();
+            job.load(backend, cache)?
+        };
         let render_settings =
             job.render_settings(settings.bus.clone(), settings.size, settings.range.clone());
         let mut sink = FileSink::new(
@@ -262,6 +266,7 @@ impl FrameSink for FileSink {
             writer.push_audio(&audio.samples);
         }
         if let Some((mixer, mixed)) = &mut self.mix {
+            let _span = tracing::trace_span!("mix_audio").entered();
             let sample = |frame: usize| {
                 (frame as f64 / self.frame_rate * f64::from(self.audio_rate)).round() as usize
             };

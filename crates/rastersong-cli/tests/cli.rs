@@ -69,6 +69,38 @@ fn the_extension_picks_the_format() {
 }
 
 #[test]
+fn trace_writes_each_stage_of_the_export() {
+    let tmp = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
+    let trace = tmp.join("export.trace.json");
+    let _ = std::fs::remove_file(&trace);
+    let output = render_files(
+        &tmp.join("traced.mkv"),
+        &["--size", "64x48", "--trace", trace.to_str().unwrap()],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = std::fs::read_to_string(&trace).unwrap();
+    for stage in [
+        "export",
+        "frame",
+        "decode",
+        "graph",
+        "node",
+        "to_rgb8",
+        "encode_convert",
+        "encode_video",
+    ] {
+        assert!(
+            text.contains(&format!(r#""name":"{stage}""#)),
+            "no `{stage}` span in the trace"
+        );
+    }
+}
+
+#[test]
 fn a_failed_export_leaves_no_file() {
     let out = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("odd.mov");
     // ProRes needs an even size.

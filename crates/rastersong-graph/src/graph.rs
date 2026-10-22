@@ -146,6 +146,8 @@ impl std::fmt::Debug for Graph {
 
 struct Step {
     id: Arc<str>,
+    /// The node's type, e.g. `delay`.
+    kind: Arc<str>,
     /// One node, or one per channel when channels are processed separately.
     nodes: Vec<Box<dyn Node>>,
     /// Per-channel buffers when `nodes` has one instance per channel.
@@ -691,6 +693,8 @@ impl Graph {
         for i in 0..self.steps.len() {
             let (done, rest) = self.steps.split_at_mut(i);
             let Step {
+                id,
+                kind,
                 nodes,
                 split,
                 interpolation,
@@ -702,6 +706,7 @@ impl Graph {
                 meters,
                 ..
             } = &mut rest[0];
+            let _node = tracing::trace_span!("node", id = &**id, kind = &**kind).entered();
             for input in inputs.iter_mut() {
                 input.update(done, *interpolation);
             }
@@ -724,9 +729,12 @@ impl Graph {
                 params: &values,
             };
             let started = std::time::Instant::now();
-            match split {
-                Some(split) => split.process(nodes, &ctx, refs, params, outputs),
-                None => nodes[0].process(&ctx, refs, outputs),
+            {
+                let _process = tracing::trace_span!("process").entered();
+                match split {
+                    Some(split) => split.process(nodes, &ctx, refs, params, outputs),
+                    None => nodes[0].process(&ctx, refs, outputs),
+                }
             }
             *micros = started.elapsed().as_secs_f32() * 1e6;
             for (level, output) in levels.iter_mut().zip(outputs.iter()) {
@@ -865,6 +873,7 @@ impl<'a> Compiler<'a> {
         self.step_of[n] = self.steps.len();
         self.steps.push(Step {
             id: p.id.as_str().into(),
+            kind: p.kind.as_str().into(),
             nodes,
             split,
             interpolation: p.interpolation,

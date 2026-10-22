@@ -314,15 +314,23 @@ impl MediaWriter {
             return Err(encode_error(ffmpeg::Error::from(ret)));
         }
         tag_frame(&mut self.frame, self.rgb_output);
-        self.scaler.scale_into(&self.rgb, &mut self.frame)?;
+        {
+            let _span = tracing::trace_span!("encode_convert").entered();
+            self.scaler.scale_into(&self.rgb, &mut self.frame)?;
+        }
         self.frame.set_pts(Some(self.frames_written));
         self.frames_written += 1;
-        self.video
-            .encoder
-            .send_frame(&self.frame)
-            .map_err(error("encoding video"))?;
-        write_packets(&mut self.output, &mut self.video)?;
+        {
+            let _span =
+                tracing::trace_span!("encode_video", encoder = self.video_encoder).entered();
+            self.video
+                .encoder
+                .send_frame(&self.frame)
+                .map_err(error("encoding video"))?;
+            write_packets(&mut self.output, &mut self.video)?;
+        }
 
+        let _span = tracing::trace_span!("encode_audio").entered();
         self.write_audio_until(self.video_end(), false)
     }
 

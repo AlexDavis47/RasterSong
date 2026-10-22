@@ -106,10 +106,15 @@ pub fn render(
     sink.start(&info, &renderer.audio_sink())?;
     let total = range.end.saturating_sub(first);
     for index in first..range.end {
-        renderer
-            .render(index, &|| false)?
-            .expect("offline renders are never cancelled");
+        let _frame = tracing::trace_span!("frame", index).entered();
+        {
+            let _span = tracing::trace_span!("render").entered();
+            renderer
+                .render(index, &|| false)?
+                .expect("offline renders are never cancelled");
+        }
         if index >= range.start {
+            let _span = tracing::trace_span!("write").entered();
             let (rgb, audio) = renderer.output();
             sink.frame(RenderedFrame { index, rgb, audio })?;
         }

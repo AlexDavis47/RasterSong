@@ -33,6 +33,9 @@ cargo run --release -p rastersong-cli -- render video.mp4 song.wav examples/grap
 cargo run --release -p rastersong-cli -- render video.mp4 song.wav graph.json frames/ --size 320x180 --frames 60
 cargo run --release -p rastersong-cli -- render video.mp4 song.wav graph.json out.mkv --audio-offset -1.5
 
+# Record where the render spends its time (see Profiling below)
+cargo run --release -p rastersong-cli -- render my-project.rastersong out.mkv --trace out.trace.json
+
 # Open the app on a project or a video
 cargo run --release -p rastersong-gui -- my-project.rastersong
 
@@ -44,6 +47,36 @@ Prerequisites: the Rust toolchain (pinned by `rust-toolchain.toml`) and **libcla
 use to generate their headers. On Windows, install LLVM (`winget install LLVM.LLVM`) or set `LIBCLANG_PATH`;
 Linux and macOS usually have it already (`apt install libclang-dev` otherwise). On macOS, building FFmpeg also needs
 the Xcode command line tools.
+
+## Profiling
+
+Two tools, for two questions. Profile release builds: they keep line tables (`debug = "line-tables-only"`), so
+both tools can name Rust functions and lines.
+
+- **Which stage of the render is slow: `--trace`.** `rastersong-cli render ... --trace out.trace.json` writes a
+  Chrome-format trace of every span in the RasterSong crates: per frame `frame`, `render` (`compose`, each
+  `video_source` with its `decode`, `seek` and `decode_convert`, `to_signal`, each `graph` with a `node` span per
+  node, tagged with its id and type, and that node's `process`), `to_rgb8`, and `write` (`mix_audio`,
+  `encode_convert`, `encode_video`, `encode_audio`). Open it in [Perfetto](https://ui.perfetto.dev). A `node`
+  span's time outside its `process` is the graph moving data for it: resampling inputs and computing modulated
+  parameters. The spans are `trace` level, so without `--trace` they are filtered out and cost nothing measurable;
+  with it a 1080p export ran no slower.
+- **Which function is slow: [samply](https://github.com/mstange/samply).** A sampling profiler that needs no code
+  changes and sees into FFmpeg and the OS too. Install it with `cargo install samply --locked`; on Windows it
+  records through `xperf`, which comes with the Windows Performance Toolkit (in the Windows SDK or ADK). Then:
+
+  ```sh
+  cargo build --release -p rastersong-cli
+  samply record target/release/rastersong-cli.exe render my-project.rastersong out.mkv --frames 120
+  ```
+
+  It opens the profile in the Firefox Profiler when the render ends. `--save-only -o profile.json.gz` keeps it for
+  later (`samply load profile.json.gz`). Profile the GUI the same way with `target/release/rastersong.exe`.
+  If RasterSong's functions show as `fun_…`, symbolize their addresses against the PDB with LLVM's
+  `llvm-symbolizer --obj target/release/rastersong-cli.exe --relative-address --inlining`, which also resolves
+  inlined functions.
+
+Record results worth keeping in [Benchmarks](benchmarks.md).
 
 ## Packaging
 

@@ -10,7 +10,8 @@ use rastersong_engine::{
     TrackKind, TrackSpec, VIDEO_SOURCE,
 };
 use rastersong_lang::tr_args;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::filter::{EnvFilter, LevelFilter, Targets};
+use tracing_subscriber::prelude::*;
 
 /// Headless RasterSong renderer.
 #[derive(Debug, Parser)]
@@ -58,6 +59,11 @@ struct RenderArgs {
     /// has none. Defaults to the project's first bus, the master.
     #[arg(long)]
     bus: Option<String>,
+    /// Write a timeline of where the render spends its time to this file: each frame's decode,
+    /// graph nodes, conversion and encoding, in Chrome's trace format. Open it in
+    /// https://ui.perfetto.dev. Tracing slows the render a little.
+    #[arg(long, value_name = "FILE")]
+    trace: Option<PathBuf>,
 }
 
 fn parse_size(s: &str) -> Result<(u32, u32), String> {
@@ -75,17 +81,43 @@ fn parse_size(s: &str) -> Result<(u32, u32), String> {
 }
 
 fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")),
-        )
-        .with_writer(std::io::stderr)
-        .init();
+    let cli = Cli::parse();
+    let trace = match &cli.command {
+        Command::Render(args) => args.trace.as_deref(),
+        Command::Info => None,
+    };
+    // Flushes the trace file when dropped, at the end of `main`.
+    let _trace = init_logging(trace);
 
-    match Cli::parse().command {
+    match cli.command {
         Command::Info => info(),
         Command::Render(args) => render(args),
     }
+}
+
+/// Logs warnings (or `RUST_LOG`) to stderr and, with `trace`, writes every RasterSong span to
+/// that file as a Chrome trace. The returned guard finishes the file when dropped.
+fn init_logging(trace: Option<&Path>) -> Option<tracing_chrome::FlushGuard> {
+    let log = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stderr)
+        .with_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")));
+    let (chrome, guard) = match trace {
+        Some(path) => {
+            let (layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
+                .file(path)
+                .include_args(true)
+                .build();
+            let ours = Targets::new()
+                .with_default(LevelFilter::OFF)
+                .with_target("rastersong_engine", LevelFilter::TRACE)
+                .with_target("rastersong_graph", LevelFilter::TRACE)
+                .with_target("rastersong_media", LevelFilter::TRACE);
+            (Some(layer.with_filter(ours)), Some(guard))
+        }
+        None => (None, None),
+    };
+    tracing_subscriber::registry().with(log).with(chrome).init();
+    guard
 }
 
 fn info() -> Result<()> {

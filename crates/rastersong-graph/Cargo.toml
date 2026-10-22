@@ -13,6 +13,7 @@ publish.workspace = true
 rastersong-lang.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tracing.workspace = true
 
 [features]
 # Test helpers for other crates: `rastersong_graph::testing`.

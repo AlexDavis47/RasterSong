@@ -174,8 +174,10 @@ impl MediaReader for Tracks {
                     return Ok(());
                 };
                 let index = reader.frame_at(at);
+                let _span = tracing::trace_span!("video_source", track, index).entered();
                 match reader.video.frame(index) {
                     Ok(frame) => {
+                        let _span = tracing::trace_span!("to_signal").entered();
                         let mut signal = Signal {
                             data: std::mem::take(&mut out.video),
                             layout: self.video_layout,
@@ -197,6 +199,7 @@ impl MediaReader for Tracks {
                 out.picture = !out.video.is_empty();
             }
             Reader::Audio(reader) => {
+                let _span = tracing::trace_span!("audio_source", track).entered();
                 out.video.clear();
                 out.audio.resize(reader.layout.len(), 0.0);
                 reader
@@ -688,10 +691,13 @@ impl Renderer {
 
     /// Feeds source frame `m` (and its audio) through the composition and keeps the output.
     fn process(&mut self, m: usize) -> Result<(), EngineError> {
+        let compose = tracing::trace_span!("compose", source = m).entered();
         if let Err(e) = self.compose.step(m, &mut self.tracks, self.max_warmup) {
             self.next_source = None;
             return Err(e);
         }
+        drop(compose);
+        let _span = tracing::trace_span!("to_rgb8").entered();
         let out = self.compose.output();
         if out.video.is_empty() {
             self.rgb.clear();

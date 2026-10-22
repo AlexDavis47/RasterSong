@@ -583,6 +583,18 @@ Resolve, and only graph inputs are new.
 - **Encoders run on every core.** FFmpeg's encoders default to one thread; the writer asks for automatic threading,
   which made ProRes about 11× and FFV1 about 6× faster at 1080p.
 
+### Profiling (October 2026)
+
+- **samply for sampling, `tracing` spans for stages.** samply is free, works on Windows, macOS and Linux, needs no
+  code changes and reads PDBs, so it is the one profiler the docs name ([Development](development.md#profiling)).
+  Spans answer what a sampler can't show directly: which frame stage and which graph node the time belongs to.
+- **Spans at `trace` level, written only on request.** `--trace` adds a `tracing-chrome` layer (MIT) filtered to
+  the RasterSong crates; the stderr log keeps its own filter. Perfetto reads the file, so there is no viewer to
+  maintain. A frame's spans cost far less than its work, so they stay in release builds rather than behind a
+  feature.
+- **No profiler built into the GUI yet.** The node badges (View → Show performance) cover the editor's question;
+  an in-app timeline can come later if the trace file proves too indirect.
+
 ## Open
 
 ### Open: "Audio to video" / "Video to audio" names

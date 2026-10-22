@@ -222,6 +222,7 @@ impl FfmpegVideoSource {
     /// Decodes until the decoder outputs an indexed frame, returning its frame number, or `None`
     /// once the stream is exhausted. Unindexed output (undecodable leading frames) is skipped.
     fn decode_next(&mut self) -> Result<Option<usize>, MediaError> {
+        let _span = tracing::trace_span!("decode").entered();
         let mut errors = 0;
         loop {
             match self.decoder.receive_frame(&mut self.decoded) {
@@ -255,6 +256,7 @@ impl FfmpegVideoSource {
 
     /// Converts the decoder's current output to an upright RGB frame at the output size.
     fn convert(&mut self) -> Result<VideoFrame, MediaError> {
+        let _span = tracing::trace_span!("decode_convert").entered();
         let (width, height) = self
             .output_size
             .unwrap_or((self.info.width, self.info.height));
@@ -319,6 +321,7 @@ impl VideoSource for FfmpegVideoSource {
             .position
             .is_some_and(|pos| pos < index && pos + 1 >= key_frame);
         if !forward {
+            let _span = tracing::trace_span!("seek", index).entered();
             self.seek(key)?;
         }
 

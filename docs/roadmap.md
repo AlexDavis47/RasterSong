@@ -256,6 +256,23 @@ Renames, merges, splits and removals need **no migration** while the format is v
   as a badge on the node, and optionally a heat colour across the whole graph (View → Show performance). Report
   cost as time per frame and as a share of the graph's total, at the current preview resolution. The numbers are
   advisory and never part of the cache key. Feeds the benchmarks workflow in [benchmarks.md](benchmarks.md).
+- [x] **chore** Profiling: samply as the documented sampling profiler, and `rastersong-cli render --trace` for a
+  per-frame, per-node timeline of an export ([Development](development.md#profiling)).
+
+Found by profiling 1080p exports (see [Benchmarks](benchmarks.md#2026-10-22-where-an-export-spends-its-time)),
+roughly in order of payoff:
+
+- [ ] **feature** Render on more than one core. 94% of an export runs on one thread of 24. Candidates: nodes
+  without dependencies on each other (the three `delay`s in `bass_wave`), channels of a split node, row bands
+  of stateless per-sample nodes, and decoding and encoding on their own threads alongside the graph.
+- [ ] **feature** Compute modulated parameters at the modulator's resolution. Today each modulated parameter is
+  resampled to the picture's full length (6 M values at 1080p RGB) and mapped through its range per sample, every
+  frame: about 20% of `bass_wave`'s time (`resample`, `ParamBinding::update`).
+- [ ] **chore** Fewer whole-frame copies: `memmove` is about 11% of `bass_wave` (ports copied in the composition,
+  outputs assigned, rings pushed).
+- [ ] **chore** Cheaper inner loops: `DelayLine::read` does two modulo operations per sample (8.5%), the modulated
+  `filter` calls `exp` per sample (7.5%), and `to_rgb8` rounds per sample (3–20% of a frame depending on the
+  graph).
 
 ### Inspecting connections
 
