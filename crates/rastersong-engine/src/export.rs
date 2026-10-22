@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rastersong_graph::{GraphDesc, Registry, Tempo, render_form};
-use rastersong_media::{AudioCache, AudioClip, ExportFormat, MediaBackend, MediaWriter};
+use rastersong_media::{AudioCache, ExportFormat, MediaBackend, MediaWriter};
 
 use crate::playback::{MixTrack, Mixer};
 use crate::sources::Modulator;
@@ -181,7 +181,7 @@ pub struct SourceTrack {
 }
 
 /// Writes rendered frames into a file in an [`ExportFormat`], with the sound of a bus: the
-/// graph's, or else the mix of the tracks routed to it.
+/// graph's, or else the mix of the tracks routed to it, mixed frame by frame as the render goes.
 #[derive(Debug)]
 pub struct FileSink {
     path: PathBuf,
@@ -193,6 +193,9 @@ pub struct FileSink {
     /// The bus written: the track mix takes its tracks and its channels.
     bus: Bus,
     writer: Option<MediaWriter>,
+    /// The track mix, when the graph renders no sound, and the sample frames mixed so far.
+    mix: Option<(Mixer, usize)>,
+    frame_rate: f64,
 }
 
 impl FileSink {
@@ -210,6 +213,8 @@ impl FileSink {
             audio_rate,
             bus,
             writer: None,
+            mix: None,
+            frame_rate: 0.0,
         }
     }
 
@@ -224,33 +229,28 @@ impl FileSink {
 
 impl FrameSink for FileSink {
     fn start(&mut self, info: &RenderInfo, sink: &AudioSink) -> Result<(), EngineError> {
-        self.writer = Some(match sink {
+        let (sample_rate, channels) = match sink {
             // The graph's own sound arrives with each frame.
             AudioSink::Rendered {
                 sample_rate,
                 channels,
-            } => MediaWriter::create_streaming(
-                &self.path,
-                self.format,
-                info.width,
-                info.height,
-                info.frame_rate,
-                *sample_rate,
-                *channels,
-            )?,
+            } => (*sample_rate, *channels),
             // The tracks as placed on the timeline: the bus's audio mix.
             AudioSink::TrackMix => {
-                let mixed = mix(&self.tracks, &self.bus, info, self.audio_rate);
-                MediaWriter::create(
-                    &self.path,
-                    self.format,
-                    info.width,
-                    info.height,
-                    info.frame_rate,
-                    Some(&mixed),
-                )?
+                self.mix = Some((bus_mixer(&self.tracks, &self.bus), 0));
+                (self.audio_rate, self.bus.channels)
             }
-        });
+        };
+        self.frame_rate = info.frame_rate.as_f64();
+        self.writer = Some(MediaWriter::create_streaming(
+            &self.path,
+            self.format,
+            info.width,
+            info.height,
+            info.frame_rate,
+            sample_rate,
+            channels,
+        )?);
         Ok(())
     }
 
@@ -259,34 +259,42 @@ impl FrameSink for FileSink {
         if let Some(audio) = frame.audio {
             writer.push_audio(&audio.samples);
         }
+        if let Some((mixer, mixed)) = &mut self.mix {
+            let end = ((frame.index + 1) as f64 / self.frame_rate * f64::from(self.audio_rate))
+                .round() as usize;
+            let block = mix_block(mixer, self.bus.channels, self.audio_rate, *mixed, end);
+            writer.push_audio(&block);
+            *mixed = end;
+        }
         Ok(writer.write_frame(frame.rgb)?)
     }
 }
 
-/// The project's length of the `tracks` routed to `bus`, mixed to the bus's channels at `rate`.
-fn mix(tracks: &[SourceTrack], bus: &Bus, info: &RenderInfo, rate: u32) -> AudioClip {
-    let tracks = tracks
-        .iter()
-        .filter(|t| t.bus == bus.name)
-        .map(|t| t.track.clone())
-        .collect();
-    let seconds = info.frames as f64 / info.frame_rate.as_f64();
-    let channels = bus.channels as usize;
-    let mut samples = vec![0.0; (seconds * f64::from(rate)).round() as usize * channels];
-    Mixer::new(tracks).render_channels(0.0, f64::from(rate), channels, &mut samples);
-    AudioClip {
-        sample_rate: rate,
-        channels: bus.channels,
-        samples: samples.into(),
-    }
+/// Mixes the `tracks` routed to `bus`.
+fn bus_mixer(tracks: &[SourceTrack], bus: &Bus) -> Mixer {
+    Mixer::new(
+        tracks
+            .iter()
+            .filter(|t| t.bus == bus.name)
+            .map(|t| t.track.clone())
+            .collect(),
+    )
+}
+
+/// Sample frames `from..to` of the mix at `rate`, in `channels` interleaved.
+fn mix_block(mixer: &Mixer, channels: u32, rate: u32, from: usize, to: usize) -> Vec<f32> {
+    let channels = channels as usize;
+    let mut samples = vec![0.0; to.saturating_sub(from) * channels];
+    let rate = f64::from(rate);
+    mixer.render_channels(from as f64 / rate, rate, channels, &mut samples);
+    samples
 }
 
 #[cfg(test)]
 mod tests {
-    use rastersong_media::Rational;
-
     use super::*;
-    use crate::{Item, Timebase};
+    use crate::Item;
+    use rastersong_media::AudioClip;
 
     #[test]
     fn the_mix_follows_the_timeline_and_its_bus() {
@@ -315,34 +323,20 @@ mod tests {
                 },
             },
         ];
-        let timebase = Timebase {
-            width: 2,
-            height: 2,
-            frame_rate: Rational::new(1, 1),
-        };
-        let info = RenderInfo {
-            width: 2,
-            height: 2,
-            frame_rate: timebase.frame_rate,
-            frames: 2,
-            timebase,
-        };
-        // 2 s at 2 Hz on the stereo Main bus: only track `a` is routed to it. Each item's first
-        // sample falls on its edge, where its fade in starts from silence ...
+        // 2 s at 2 Hz on the stereo Main bus, mixed in two blocks: only track `a` is routed
+        // to it. Each item's first sample falls on its edge, where its fade in starts from
+        // silence ...
         let main = Bus::main();
-        let mixed = mix(&tracks, &main, &info, 2);
-        assert_eq!((mixed.sample_rate, mixed.channels), (2, 2));
-        assert_eq!(*mixed.samples, [0.0, 0.0, 0.5, 0.5, 0.0, 0.0, 0.0, 0.0]);
+        let mixer = bus_mixer(&tracks, &main);
+        let mixed = [mix_block(&mixer, 2, 2, 0, 1), mix_block(&mixer, 2, 2, 1, 4)].concat();
+        assert_eq!(mixed, [0.0, 0.0, 0.5, 0.5, 0.0, 0.0, 0.0, 0.0]);
         // ... and `b` plays on its own mono bus at its volume, from 1 s.
         let stems = Bus {
             name: "Stems".into(),
             channels: 1,
         };
-        let stem = mix(&tracks, &stems, &info, 2);
-        assert_eq!(
-            (stem.channels, &*stem.samples),
-            (1, &[0.0, 0.0, 0.0, 0.125][..])
-        );
+        let stem = mix_block(&bus_mixer(&tracks, &stems), 1, 2, 0, 4);
+        assert_eq!(stem, [0.0, 0.0, 0.0, 0.125]);
     }
 
     #[test]

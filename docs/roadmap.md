@@ -41,7 +41,8 @@ are defects, **feature** is new behavior, **chore** is cleanup or refactoring wi
 - Buffer health and playback speed indicators
 
 **Phase 5: Export & Polish**
-- Export (H.264 via OS/hardware encoders, ProRes, FFV1) with progress
+- Export (H.264 via OS/hardware encoders, ProRes, FFV1) with progress (done in the GUI and CLI, see
+  [Export](app.md#export))
 - State snapshots for faster seeking with stateful graphs
 - SIMD and parallelism work guided by benchmarks
 - Packaging and installers
@@ -651,8 +652,16 @@ raw.
      layout, automation tracks as a source for graph ports.
    - [ ] **feature** Glue and Make unique for edit lists.
 6. **Export**
-   - [ ] **feature** GUI export of the master output, with buses written as streams in one file or as separate files
-     (separate by default when there is more than one bus).
+   - [x] **feature** The Export window: H.264 MP4, ProRes MOV or FFV1 MKV (only the formats whose encoders work on
+     this machine), quality or profile, one bus, project or custom size, with progress, time left and Cancel
+     ([Export](app.md#export)).
+   - [ ] **feature** Buses written as streams in one file or as separate files (separate by default when there is
+     more than one bus).
+   - [ ] **feature** Export through an FFmpeg the user installed, found in common places or in a folder they pick,
+     run as a separate program, for encoders the bundled build can't ship (x264, x265, fdk-aac).
+   - [ ] **chore** Widen the bundled FFmpeg with permissively licensed libraries: dav1d (AV1 decoding), libvpx,
+     SVT-AV1 and libopus (WebM export for Linux, which has no OS H.264 encoder), and the native DNxHD, PNG, GIF,
+     FLAC and Vorbis encoders.
 
 ### Workflows to check at the end
 

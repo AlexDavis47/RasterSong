@@ -285,6 +285,25 @@ master can't be removed. Removing a bus that tracks are routed to, or that Audio
 lists them: the tracks move to the master, and the Audio Outputs are left writing to a bus that isn't there (shown
 in red in the inspector) and aren't rendered until set to another.
 
+## Export
+
+**File → Export…** opens the Export window. It renders the whole project from the first frame at full resolution,
+on its own thread, while the app stays usable.
+
+- **Format**: *H.264 (MP4)* with AAC sound, *ProRes (MOV)* with 24-bit PCM, or *FFV1 lossless (MKV)* with 16-bit
+  PCM. Only formats whose encoder works on this machine are listed; H.264 needs a GPU or OS encoder (NVENC, AMF,
+  Quick Sync, VideoToolbox or Media Foundation), and the line under the settings names the one in use.
+- **Quality** (H.264: low, medium or high) or **Profile** (ProRes: Proxy, LT, Standard or HQ).
+- **Sound**: the bus written, the master by default. Its sound is the graph's Audio Output for it, or else the mix
+  of the tracks routed to it.
+- **Size**: the project's, or *Custom*. H.264 and ProRes need an even width and height; the window says so and
+  won't start until the size is even.
+
+*Export…* asks where to save, next to the project and named after it. While it runs the window shows the progress,
+the frame and the time left, and *Cancel*, which stops it and removes the unfinished file. Closing the window
+doesn't stop an export; opening it again shows the progress. When it ends the window says where the file went, or
+why it failed. Tracks whose files are missing are left out, as in the preview.
+
 ## Keys
 
 Space plays/pauses, ←/→ step one frame, Home jumps to the start, R turns looping on and off, F fits whichever panel

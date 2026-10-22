@@ -556,6 +556,28 @@ Resolve, and only graph inputs are new.
 - **Kept from the routing rebuild:** item groups, output buses, mixing inside the renderer, latency alignment and
   per-item pre-roll. **Removed:** folders, master sends, receives, FX chains and the FX window.
 
+### Export formats and encoders (October 2026)
+
+- **Three formats for 1.0:** H.264 in MP4 with AAC for sharing, ProRes in QuickTime with 24-bit PCM for editing,
+  and FFV1 in Matroska with 16-bit PCM for lossless masters. They stay a short list of presets rather than a
+  codec-by-codec dialog; a full choice of encoders comes with an FFmpeg the user installs.
+- **H.264 only through GPU and OS encoders**, tried in the order NVENC, AMF, Quick Sync, VideoToolbox, Media
+  Foundation, so a GPU's encoder wins over the OS's software one. They are licensed by their vendors, which keeps
+  x264 (GPL) and the patent pools out of RasterSong. A machine where none opens doesn't list H.264.
+- **Probed, not assumed:** each format's encoders are opened once at 256×256 and only formats that open are
+  offered. Opening at the real size tries the probe's winner first and falls back down the list (NVENC refuses
+  frames under about 145 pixels).
+- **H.264 bit rate from bits per pixel** (0.05, 0.1, 0.2 per frame) rather than each encoder's own quality scale,
+  since the encoders don't share one. A keyframe every two seconds.
+- **BT.709 limited-range YUV** for H.264 and ProRes, tagged in the file; FFV1 stays RGB and lossless.
+- **The track mix is mixed frame by frame** as the export goes, not for the whole project first, so a long project
+  doesn't need its whole soundtrack in memory.
+- **One export path:** `rastersong_engine::export` loads the tracks and writes the file for both the CLI and the
+  GUI; a failed or cancelled export removes the file.
+- **An installed FFmpeg is an option, never a requirement.** Users who want x264, x265 or anything else the bundled
+  LGPL build can't ship can point RasterSong at their own FFmpeg (planned). It runs as a separate program, fed
+  frames over a pipe, and is never loaded into RasterSong; the bundled build stays enough for every common format.
+
 ## Open
 
 ### Open: "Audio to video" / "Video to audio" names
@@ -575,4 +597,5 @@ Value ranges (video `0..1`, audio `-1..1`) and mono-only modulators are still to
 
 - **License review:** the custom LICENSE is a first draft. Have it reviewed, or switch to an established source-available license (e.g. PolyForm Strict), before any paid release.
 - **Snapshots:** memory budget and spacing for state snapshots.
-- **Hardware encoder fallback:** what to offer for H.264 export on machines with no usable OS/hardware encoder.
+- **Hardware encoder fallback:** machines with no usable GPU or OS H.264 encoder (mostly Linux without a GPU) get
+  ProRes and FFV1 today; WebM (VP9 or AV1 with Opus) from the bundled build and an installed FFmpeg are planned.
