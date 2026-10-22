@@ -595,6 +595,25 @@ Resolve, and only graph inputs are new.
 - **No profiler built into the GUI yet.** The node badges (View → Show performance) cover the editor's question;
   an in-app timeline can come later if the trace file proves too indirect.
 
+### Modulated parameters are worked out in runs (October 2026)
+
+A modulated parameter reaches the node as one value per sample of its main input, as before; what changed is how
+those values are made ([Benchmarks](benchmarks.md#2026-10-22-modulated-parameters-in-runs)).
+
+- **Nodes still read a buffer of values.** Reading each value on demand from the modulator at its own length (no
+  picture-sized buffer at all) was tried first and made `bass_wave` 1.9× slower: finding the source position
+  and mapping it moved into every node's inner loop, once per sample, where a filled buffer costs one load.
+- **`resample` works in runs.** An audio block stretched over a picture reads each source sample for thousands of
+  samples in a row, so the runs are found first and then filled (hold) or ramped (linear) without finding a
+  position per sample. Each run's ends are settled with the per-sample formula, so the output is bit for bit
+  what it was; a property test compares the two.
+- **Split nodes get their values directly.** `resample_split` writes each channel's buffer while resampling,
+  instead of resampling to the interleaved length and copying every channel out.
+- **Mapping runs once per source sample when it can.** With hold interpolation, every sample reading one source
+  sample gets the same value, so the source is mapped first (a few thousand values) and then spread. Linear
+  interpolation has to map after interpolating, or clamping and whole-number rounding would come out different,
+  so it maps every value, in a loop with the settings worked out beforehand so it vectorizes.
+
 ## Open
 
 ### Open: "Audio to video" / "Video to audio" names

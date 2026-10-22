@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::desc::{
     Channels, Connection, GeneratorLayout, GraphDesc, Grouping, Interpolation, Modulation, NodeDesc,
 };
-use crate::dsp::{DelayLine, resample};
+use crate::dsp::{DelayLine, resample, resample_split};
 use crate::nodes::{
     AUDIO_INPUT, AUDIO_OUTPUT, BUS_PARAM, DEFAULT_BUS, MAX_METERS, Meter, OUTPUT, Registry,
 };
@@ -169,6 +169,7 @@ struct ParamBinding {
     /// The parameter's index in the node's specs.
     index: usize,
     spec: &'static ParamSpec,
+    /// The modulating signal, latency compensated but left at its own length.
     input: InputBinding,
     base: f64,
     modulation: Modulation,
@@ -178,22 +179,63 @@ struct ParamBinding {
     limits: (f64, f64),
     /// Whether each sample's value is rounded to a whole number before clamping.
     integer: bool,
-    /// The modulated value of each sample, at the main input's length.
-    values: Signal,
+    /// The main input's length, which the values are worked out at.
+    len: usize,
+    /// The modulated value of each sample of the main input: one buffer, or one per channel when
+    /// the node runs one instance per channel.
+    values: Vec<Vec<f32>>,
+    /// With hold interpolation from a shorter signal, the value at each of its samples: every
+    /// sample of the main input reading one of them gets that value, so they are mapped before
+    /// being spread out, a few thousand times rather than millions. Empty otherwise.
+    held: Vec<f32>,
 }
 
 impl ParamBinding {
+    /// Works out this frame's values from the modulating signal, resampled and split into the
+    /// channel buffers in one pass, so no full-length copy is made to resample into and split.
+    /// Held values are mapped at the signal's own length, before being spread out.
     fn update(&mut self, done: &[Step], interpolation: Interpolation) {
         self.input.update(done, interpolation);
-        let signal = self.input.get(done);
-        let (lo, hi) = self.limits;
-        for (v, &s) in self.values.data.iter_mut().zip(&signal.data) {
-            let value = self
-                .spec
-                .modulated(self.base, self.modulation, f64::from(s), self.range);
-            let value = if self.integer { value.round() } else { value };
-            *v = value.clamp(lo, hi) as f32;
+        let signal = &self.input.get(done).data;
+        let group = self.input.group;
+        if self.held.is_empty() {
+            resample_split(signal, self.len, group, interpolation, &mut self.values);
+            let mut values = std::mem::take(&mut self.values);
+            for channel in &mut values {
+                self.map(channel);
+            }
+            self.values = values;
+        } else {
+            self.held.copy_from_slice(signal);
+            let mut held = std::mem::take(&mut self.held);
+            self.map(&mut held);
+            resample_split(&held, self.len, group, interpolation, &mut self.values);
+            self.held = held;
         }
+    }
+
+    /// Turns modulating samples into the parameter's values in place: what
+    /// [`ParamSpec::modulated`] gives, rounded for whole numbers and held to the limits. The
+    /// settings are worked out once, outside the loop, so it vectorizes.
+    fn map(&self, values: &mut [f32]) {
+        let (base, mode, (lo, hi)) = (self.base, self.modulation.mode, self.limits);
+        let sweep = self.spec.modulation_sweep(self.modulation, self.range);
+        let value = |s: f32| base + sweep * f64::from(mode.shape(s));
+        if self.integer {
+            for v in values {
+                *v = value(*v).round().clamp(lo, hi) as f32;
+            }
+        } else {
+            for v in values {
+                *v = value(*v).clamp(lo, hi) as f32;
+            }
+        }
+    }
+
+    /// The value at sample `j` of the main input.
+    fn value_at(&self, j: usize) -> f32 {
+        let channels = self.values.len();
+        self.values[j % channels][j / channels]
     }
 }
 
@@ -201,8 +243,6 @@ impl ParamBinding {
 struct ChannelSplit {
     /// `inputs[channel][input]`: that input's samples for one channel.
     inputs: Vec<Vec<Signal>>,
-    /// `params[channel][k]`: modulated parameter `k`'s values for one channel.
-    params: Vec<Vec<Signal>>,
     /// `outputs[channel][output]`.
     outputs: Vec<Vec<Signal>>,
 }
@@ -232,19 +272,14 @@ impl ChannelSplit {
                 deinterleave(&input.data, c, channels, &mut channel[k].data);
             }
         }
-        for (k, param) in params.iter().enumerate() {
-            for (c, channel) in self.params.iter_mut().enumerate() {
-                deinterleave(&param.values.data, c, channels, &mut channel[k].data);
-            }
-        }
         for (c, node) in nodes.iter_mut().enumerate() {
             let mut refs = [&EMPTY_SIGNAL; MAX_INPUTS];
             for (slot, input) in refs.iter_mut().zip(&self.inputs[c]) {
                 *slot = input;
             }
             let mut values = [None; MAX_PARAMS];
-            for (param, channel) in params.iter().zip(&self.params[c]) {
-                values[param.index] = Some(channel.data.as_slice());
+            for param in params {
+                values[param.index] = Some(param.values[c].as_slice());
             }
             let ctx = ProcessContext {
                 params: &values,
@@ -653,12 +688,11 @@ impl Graph {
                 step.params.iter().map(|p| ParamLevel {
                     node: step.id.clone(),
                     index: p.index,
-                    value: p
-                        .values
-                        .data
-                        .get(p.values.data.len() / 2)
-                        .copied()
-                        .unwrap_or(0.0),
+                    value: if p.len == 0 {
+                        0.0
+                    } else {
+                        p.value_at(p.len / 2)
+                    },
                 })
             })
             .collect()
@@ -719,8 +753,10 @@ impl Graph {
             }
             let refs = &refs[..inputs.len()];
             let mut values = [None; MAX_PARAMS];
-            for param in params.iter() {
-                values[param.index] = Some(param.values.data.as_slice());
+            if split.is_none() {
+                for param in params.iter() {
+                    values[param.index] = Some(param.values[0].as_slice());
+                }
             }
             let ctx = ProcessContext {
                 frame,
@@ -858,8 +894,7 @@ impl<'a> Compiler<'a> {
         let split = (shape.channels > 1).then(|| {
             let channel = Signal::zeros(shape.channel_layout.unwrap());
             ChannelSplit {
-                inputs: vec![vec![channel.clone(); p.wires.len()]; shape.channels],
-                params: vec![vec![channel; params.len()]; shape.channels],
+                inputs: vec![vec![channel; p.wires.len()]; shape.channels],
                 outputs: vec![
                     shape
                         .node_outputs
@@ -1164,15 +1199,20 @@ impl<'a> Compiler<'a> {
                     bounds,
                 } = p.modulation_of(index)?;
                 let (src, port) = p.param_wires[index]?;
+                let len = shape.reference.len();
+                let src_len = self.layouts[src][port].len();
+                let hold = p.interpolation == Interpolation::Hold;
+                let channel_len = shape.channel_layout.map_or(len, |l| l.len());
                 Some(ParamBinding {
                     index,
                     spec: &p.specs[index],
+                    // Left at its own length: `update` resamples it as it maps it.
                     input: self.binding(
                         shape,
                         aligned,
                         Some((src, port)),
                         self.layouts[src][port],
-                        true,
+                        false,
                         p.grouping,
                     ),
                     base,
@@ -1180,7 +1220,13 @@ impl<'a> Compiler<'a> {
                     range,
                     limits: bounds,
                     integer: p.integer[index],
-                    values: Signal::zeros(shape.reference),
+                    len,
+                    values: vec![vec![0.0; channel_len]; shape.channels],
+                    held: if hold && src_len > 0 && src_len < len {
+                        vec![0.0; src_len]
+                    } else {
+                        Vec::new()
+                    },
                 })
             })
             .collect()
@@ -1719,4 +1765,53 @@ fn schedule(pending: &[Pending], output: usize) -> Result<Vec<usize>, GraphError
     let mut order = Vec::new();
     visit(output, pending, &mut marks, &mut order, &mut Vec::new())?;
     Ok(order)
+}
+
+#[cfg(test)]
+mod tests {
+    use proptest::prelude::*;
+
+    use super::*;
+    use crate::ModMode;
+
+    static SPEC: ParamSpec = ParamSpec::number("p", 0.0, -10.0, 10.0);
+
+    proptest! {
+        /// The mapping, with its settings worked out once per frame, gives exactly what
+        /// [`ParamSpec::modulated`] gives sample by sample, rounded and held to the limits.
+        #[test]
+        fn mapping_matches_the_spec(
+            samples in prop::collection::vec(-2.0f32..2.0, 1..64),
+            base in -5.0f64..5.0,
+            amount in -300.0f64..300.0,
+            unipolar: bool,
+            integer: bool,
+        ) {
+            let modulation = Modulation {
+                amount,
+                mode: if unipolar { ModMode::Unipolar } else { ModMode::Bipolar },
+            };
+            let (range, limits) = ((-10.0, 10.0), (-4.0, 6.0));
+            let binding = ParamBinding {
+                index: 0,
+                spec: &SPEC,
+                input: InputBinding { source: None, compensation: None, resampled: None, group: 1 },
+                base,
+                modulation,
+                range,
+                limits,
+                integer,
+                len: samples.len(),
+                values: Vec::new(),
+                held: Vec::new(),
+            };
+            let mut mapped = samples.clone();
+            binding.map(&mut mapped);
+            for (&s, &m) in samples.iter().zip(&mapped) {
+                let value = SPEC.modulated(base, modulation, f64::from(s), range);
+                let value = if integer { value.round() } else { value };
+                prop_assert_eq!(m.to_bits(), (value.clamp(limits.0, limits.1) as f32).to_bits());
+            }
+        }
+    }
 }

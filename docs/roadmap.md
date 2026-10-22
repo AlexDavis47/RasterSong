@@ -267,14 +267,17 @@ roughly in order of payoff:
   of stateless per-sample nodes, and decoding and encoding on their own threads alongside the graph.
   Memory bandwidth caps any scheme at about 20–24 fps for the example graphs at 1080p on the 3900X
   ([Benchmarks](benchmarks.md#2026-10-22-how-far-more-cores-can-go)), so the traffic cuts below come first.
-- [ ] **feature** Compute modulated parameters at the modulator's resolution. Today each modulated parameter is
-  resampled to the picture's full length (6 M values at 1080p RGB) and mapped through its range per sample, every
-  frame: about 20% of `bass_wave`'s time (`resample`, `ParamBinding::update`).
+- [x] **feature** Compute modulated parameters at the modulator's resolution. *Done: see
+  [Decisions](decisions.md#modulated-parameters-are-worked-out-in-runs-october-2026); resampling works in runs,
+  split nodes get their values without a copy, and held values are mapped per source sample. The example graphs
+  render 26–27% faster with bit-identical output. Nodes still read a per-sample buffer: reading on demand was
+  slower.*
 - [ ] **chore** Fewer whole-frame copies: `memmove` is about 11% of `bass_wave` (ports copied in the composition,
   outputs assigned, rings pushed).
 - [ ] **chore** Cheaper inner loops: `DelayLine::read` does two modulo operations per sample (8.5%), the modulated
   `filter` calls `exp` per sample (7.5%), and `to_rgb8` rounds per sample (3–20% of a frame depending on the
-  graph).
+  graph). A held modulated value repeats for thousands of samples, so nodes that redesign a filter from it could
+  skip the redesign while it is unchanged.
 
 ### Inspecting connections
 

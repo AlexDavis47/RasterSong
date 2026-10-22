@@ -125,8 +125,11 @@ so a full-scale signal moves the value `sweep` from its base, either way for bip
 turns the value down. Every parameter is
 linear, frequencies included. A newly connected signal starts at 25%, one
 way. Modulated values are kept within the slider range (widened to include the base value, and within the limits;
-`ParamSpec::modulation_bounds`), so there is no overshoot. The compiler resamples the signal to the main input's length (with the node's interpolation
-and latency compensation, like any secondary input) and hands the node the values through `ctx.param(i)`;
+`ParamSpec::modulation_bounds`), so there is no overshoot. The compiler works out the value at every sample of the main input (with the node's
+interpolation and latency compensation, like any secondary input) and hands the node the values through `ctx.param(i)`;
+for a node that runs one copy per channel, they are written straight into each channel's buffer. Held values are
+mapped at the signal's own length before being spread out
+([Decisions](decisions.md#modulated-parameters-are-worked-out-in-runs-october-2026));
 unmodulated parameters stay constants the node reads from its own fields, so they cost nothing.
 `PrepareContext::modulation(i)` gives the range a modulated parameter can move over, for sizing buffers and warmup.
 Specs also say which parameters show a pin on new nodes (`exposed`).

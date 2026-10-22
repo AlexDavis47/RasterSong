@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::hint::black_box;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use rastersong_graph::nodes::{DEFAULT_AUDIO, DEFAULT_VIDEO};
 use rastersong_graph::{
     CompileOptions, Graph, GraphDesc, Layout, ParamValue, PrepareContext, ProcessContext, Registry,
     Signal, Sources,
@@ -75,11 +76,11 @@ fn graphs(c: &mut Criterion) {
     let audio = Layout::audio(AUDIO_BLOCK);
     let sources = HashMap::from([
         (
-            "video".to_owned(),
+            DEFAULT_VIDEO.to_owned(),
             Signal::from_data(video, ramp(video.len(), 1.0)),
         ),
         (
-            "audio".to_owned(),
+            DEFAULT_AUDIO.to_owned(),
             Signal::from_data(audio, ramp(audio.len(), 2.0)),
         ),
     ]);
@@ -98,7 +99,10 @@ fn graphs(c: &mut Criterion) {
             &CompileOptions {
                 frame_rate: FPS,
                 tempo: Default::default(),
-                sources: HashMap::from([("video".to_owned(), video), ("audio".to_owned(), audio)]),
+                sources: HashMap::from([
+                    (DEFAULT_VIDEO.to_owned(), video),
+                    (DEFAULT_AUDIO.to_owned(), audio),
+                ]),
                 output: video,
                 pixel_scale: 1.0,
                 audio_bus: "Main".to_owned(),

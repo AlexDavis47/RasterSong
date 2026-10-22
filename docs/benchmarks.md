@@ -141,3 +141,32 @@ node pass does (`out = a * k + b`: two reads, one write per sample) on 1 to 24 t
   frame: modulated parameters at the modulator's resolution, fewer whole-frame copies, and later working on bands
   of rows that stay in cache across several nodes.
 - Each copy also decodes and encodes, so the totals slightly understate what the graphs alone could do.
+
+## 2026-10-22: Modulated parameters in runs
+
+Same machine. `cargo bench -p rastersong-graph` (example graphs, 1080p frames, one thread) and the same CLI exports
+as [above](#2026-10-22-how-far-more-cores-can-go), before and after the change described in
+[Decisions](decisions.md#modulated-parameters-are-worked-out-in-runs-october-2026). Output is bit-identical.
+
+| Graph | Bench before | Bench after | Change |
+|---|---|---|---|
+| `am_bands` | 49.8 ms | 37.2 ms | −26% |
+| `bass_wave` | 174.8 ms | 130.1 ms | −26% |
+| `packed_crush` | 108.0 ms | 78.4 ms | −27% |
+
+| Export (GPU H.264) | 1 copy before | 1 copy after | 8 copies before | 8 copies after |
+|---|---|---|---|---|
+| `bass_wave` | 3.7 fps | 5.2 fps | 18.4 fps | 21.1 fps |
+| `am_bands` | 8.7 fps | 10.7 fps | 23.7 fps | 26.7 fps |
+
+### Notes
+
+- `am_bands` has no modulated parameters; it gained from `resample` working in runs, which its secondary inputs
+  go through too.
+- Resampling a 1,600-sample audio block over a 1080p channel took 19.9 ms (hold) and 29.5 ms (linear) before, and
+  about 4 ms and 9 ms after.
+- Eight exports at once got faster too, so the change lowered memory traffic as well as arithmetic.
+- The first attempt, reading every value on demand from the modulator inside the nodes, made `bass_wave` 321 ms
+  and `packed_crush` 163 ms per frame and was dropped.
+- The `cargo bench` graph group was broken by the Video In and Audio In port names; the bench now fills the
+  `Video` and `Audio` ports.

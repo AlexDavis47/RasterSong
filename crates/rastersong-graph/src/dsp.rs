@@ -19,22 +19,169 @@ pub fn resample(src: &[f32], dst: &mut [f32], group: usize, mode: Interpolation)
         }
         return;
     }
-    let groups = dst.len() / group;
-    let ratio = src.len() as f64 / groups as f64;
-    let last = src.len() - 1;
-    for (g, chunk) in dst.chunks_mut(group).enumerate() {
-        let pos = (g as f64 + 0.5) * ratio - 0.5;
-        let value = match mode {
-            Interpolation::Hold => src[(((g as f64 + 0.5) * ratio) as usize).min(last)],
+    let len = dst.len();
+    let ratio = src.len() as f64 / (len / group) as f64;
+    runs(src.len(), len.div_ceil(group), ratio, mode, |i, groups| {
+        let samples = &mut dst[groups.start * group..(groups.end * group).min(len)];
+        match mode {
+            Interpolation::Hold => samples.fill(src[i]),
             Interpolation::Linear => {
-                let pos = pos.clamp(0.0, last as f64);
-                let i = pos as usize;
-                let frac = (pos - i as f64) as f32;
-                let next = src[(i + 1).min(last)];
-                src[i] + (next - src[i]) * frac
+                let lerp = Lerp::new(src, i, ratio);
+                if group == 1 {
+                    for (g, out) in groups.zip(samples) {
+                        *out = lerp.at(g);
+                    }
+                } else {
+                    for (g, chunk) in groups.zip(samples.chunks_mut(group)) {
+                        chunk.fill(lerp.at(g));
+                    }
+                }
             }
+        }
+    });
+}
+
+/// The source sample group `g` of a resampled block reads (for linear interpolation, the first
+/// of the two it interpolates between), `ratio` source samples per group.
+#[inline]
+fn source_index(g: usize, ratio: f64, last: usize, mode: Interpolation) -> usize {
+    match mode {
+        Interpolation::Hold => (((g as f64 + 0.5) * ratio) as usize).min(last),
+        Interpolation::Linear => ((g as f64 + 0.5) * ratio - 0.5).clamp(0.0, last as f64) as usize,
+    }
+}
+
+/// Linear interpolation from source sample `i` towards the next, for the groups that read `i`.
+struct Lerp {
+    i: usize,
+    last: usize,
+    ratio: f64,
+    value: f32,
+    step: f32,
+}
+
+impl Lerp {
+    fn new(src: &[f32], i: usize, ratio: f64) -> Self {
+        let last = src.len() - 1;
+        Self {
+            i,
+            last,
+            ratio,
+            value: src[i],
+            step: src[(i + 1).min(last)] - src[i],
+        }
+    }
+
+    /// The value of group `g`, one of those whose [`source_index`] is `i`.
+    #[inline]
+    fn at(&self, g: usize) -> f32 {
+        let pos = ((g as f64 + 0.5) * self.ratio - 0.5).clamp(0.0, self.last as f64);
+        self.value + self.step * (pos - self.i as f64) as f32
+    }
+}
+
+/// Splits groups `0..groups` of a block resampled from `src_len` samples into the runs that
+/// read the same [`source_index`], in order, and calls `run` with each index and its groups. A
+/// frame of audio stretched over a picture changes index a few thousand times in millions of
+/// samples, so working a run at a time saves finding the index for every one.
+///
+/// Each run's ends are settled with [`source_index`] itself, so the runs are exactly what
+/// computing the index group by group would give.
+fn runs(
+    src_len: usize,
+    groups: usize,
+    ratio: f64,
+    mode: Interpolation,
+    mut run: impl FnMut(usize, std::ops::Range<usize>),
+) {
+    let last = src_len - 1;
+    let index = |g| source_index(g, ratio, last, mode);
+    let mut g = 0;
+    while g < groups {
+        let i = index(g);
+        let mut end = if i >= last {
+            groups
+        } else {
+            // Where the position reaches the next source sample, estimated.
+            let edge = match mode {
+                Interpolation::Hold => (i + 1) as f64,
+                Interpolation::Linear => (i + 1) as f64 + 0.5,
+            };
+            ((edge / ratio - 0.5).ceil().max(0.0) as usize).clamp(g + 1, groups)
         };
-        chunk.fill(value);
+        while end > g + 1 && index(end - 1) > i {
+            end -= 1;
+        }
+        while end < groups && index(end) <= i {
+            end += 1;
+        }
+        run(i, g..end);
+        g = end;
+    }
+}
+
+/// [`resample`] to `len` samples and split into `dst.len()` interleaved channels in one pass:
+/// `dst[c][k]` gets sample `k * dst.len() + c` of the resampled block. For the values of a
+/// modulated parameter, written straight into the buffers a node reads, without a full-length
+/// copy to resample into and split.
+pub fn resample_split(
+    src: &[f32],
+    len: usize,
+    group: usize,
+    mode: Interpolation,
+    dst: &mut [Vec<f32>],
+) {
+    let channels = dst.len();
+    if let [only] = dst {
+        resample(src, only, group, mode);
+    } else if src.is_empty() {
+        dst.iter_mut().for_each(|channel| channel.fill(0.0));
+    } else if src.len() == len {
+        for (c, channel) in dst.iter_mut().enumerate() {
+            for (out, &x) in channel.iter_mut().zip(src.iter().skip(c).step_by(channels)) {
+                *out = x;
+            }
+        }
+    } else {
+        let ratio = src.len() as f64 / (len / group) as f64;
+        let last = src.len() - 1;
+        if group == channels {
+            // Each group is one sample of every channel: a mono signal over RGB pixels.
+            runs(
+                src.len(),
+                dst[0].len(),
+                ratio,
+                mode,
+                |i, groups| match mode {
+                    Interpolation::Hold => {
+                        for channel in dst.iter_mut() {
+                            channel[groups.clone()].fill(src[i]);
+                        }
+                    }
+                    Interpolation::Linear => {
+                        let lerp = Lerp::new(src, i, ratio);
+                        for g in groups {
+                            let value = lerp.at(g);
+                            for channel in dst.iter_mut() {
+                                channel[g] = value;
+                            }
+                        }
+                    }
+                },
+            );
+        } else {
+            for j in 0..len {
+                let g = j / group;
+                let i = source_index(g, ratio, last, mode);
+                let value = match mode {
+                    Interpolation::Hold => src[i],
+                    Interpolation::Linear => Lerp::new(src, i, ratio).at(g),
+                };
+                if let Some(out) = dst[j % channels].get_mut(j / channels) {
+                    *out = value;
+                }
+            }
+        }
     }
 }
 
@@ -470,6 +617,96 @@ mod tests {
         let mut dst = [0.0; 2];
         resample(&[1.0, 2.0, 3.0, 4.0], &mut dst, 1, Interpolation::Hold);
         assert_eq!(dst, [2.0, 4.0]);
+    }
+
+    /// Resampling one group at a time, finding each group's position on its own: what
+    /// [`resample`] did before it worked in runs, and must still give bit for bit.
+    fn resample_by_group(src: &[f32], dst: &mut [f32], group: usize, mode: Interpolation) {
+        if src.len() == dst.len() || src.is_empty() {
+            if src.len() == dst.len() {
+                dst.copy_from_slice(src);
+            } else {
+                dst.fill(0.0);
+            }
+            return;
+        }
+        let ratio = src.len() as f64 / (dst.len() / group) as f64;
+        let last = src.len() - 1;
+        for (g, chunk) in dst.chunks_mut(group).enumerate() {
+            let pos = (g as f64 + 0.5) * ratio - 0.5;
+            let value = match mode {
+                Interpolation::Hold => src[(((g as f64 + 0.5) * ratio) as usize).min(last)],
+                Interpolation::Linear => {
+                    let pos = pos.clamp(0.0, last as f64);
+                    let i = pos as usize;
+                    let frac = (pos - i as f64) as f32;
+                    let next = src[(i + 1).min(last)];
+                    src[i] + (next - src[i]) * frac
+                }
+            };
+            chunk.fill(value);
+        }
+    }
+
+    fn resample_case()
+    -> impl proptest::strategy::Strategy<Value = (Vec<f32>, usize, usize, Interpolation)> {
+        use proptest::prelude::*;
+        (
+            prop::collection::vec(-2.0f32..2.0, 0..60),
+            0usize..500,
+            1usize..5,
+            prop_oneof![Just(Interpolation::Hold), Just(Interpolation::Linear)],
+        )
+    }
+
+    proptest::proptest! {
+        /// Working in runs gives exactly what finding every group's position did, stretching,
+        /// shrinking, with partial groups and from empty sources.
+        #[test]
+        fn runs_match_resampling_group_by_group((src, len, group, mode) in resample_case()) {
+            let (mut runs, mut by_group) = (vec![9.0; len], vec![9.0; len]);
+            resample(&src, &mut runs, group, mode);
+            resample_by_group(&src, &mut by_group, group, mode);
+            let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+            proptest::prop_assert_eq!(bits(&runs), bits(&by_group));
+        }
+
+        /// Splitting while resampling gives each channel exactly its samples of the resampled
+        /// block.
+        #[test]
+        fn split_matches_resampling_then_splitting(
+            (src, groups, group, mode) in resample_case(),
+            channels in 1usize..4,
+        ) {
+            let len = groups * channels;
+            let mut whole = vec![0.0; len];
+            resample(&src, &mut whole, group, mode);
+            let mut split = vec![vec![9.0; groups]; channels];
+            resample_split(&src, len, group, mode, &mut split);
+            for (c, channel) in split.iter().enumerate() {
+                let expected: Vec<u32> =
+                    whole.iter().skip(c).step_by(channels).map(|x| x.to_bits()).collect();
+                let got: Vec<u32> = channel.iter().map(|x| x.to_bits()).collect();
+                proptest::prop_assert_eq!(got, expected, "channel {}", c);
+            }
+        }
+    }
+
+    #[test]
+    fn an_audio_block_over_a_1080p_picture_matches_group_by_group() {
+        let src: Vec<f32> = (0..1600).map(|i| (i as f32 * 0.37).sin()).collect();
+        for (len, group) in [(1920 * 1080, 1), (1920 * 1080 * 3, 3)] {
+            for mode in [Interpolation::Hold, Interpolation::Linear] {
+                let (mut runs, mut by_group) = (vec![0.0; len], vec![0.0; len]);
+                resample(&src, &mut runs, group, mode);
+                resample_by_group(&src, &mut by_group, group, mode);
+                assert!(
+                    runs.iter()
+                        .zip(&by_group)
+                        .all(|(a, b)| a.to_bits() == b.to_bits())
+                );
+            }
+        }
     }
 
     #[test]
