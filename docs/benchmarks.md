@@ -104,3 +104,40 @@ and `roundf` 5%, FFmpeg (decode, scale, FFV1) about 5%.
 
 - With encoders threaded, the format no longer decides the speed; the graph does, on one core.
 - The roadmap's [Performance](roadmap.md#performance) section lists the follow-ups.
+
+## 2026-10-22: How far more cores can go
+
+Same machine (2 × 32 GB DDR4-3200, dual channel). Before any threading work, two measurements of the ceiling:
+copies of `rastersong-cli render` run at once (each one thread of graph work, the same 1080p30 noisy H.264
+input and a 10 s song, GPU H.264 out), and a probe that streams 1080p-RGB-sized `f32` signals the way a cheap
+node pass does (`out = a * k + b`: two reads, one write per sample) on 1 to 24 threads.
+
+### Copies of the export at once
+
+| Copies | `bass_wave` per copy | `bass_wave` total | `am_bands` per copy | `am_bands` total |
+|---|---|---|---|---|
+| 1 | 3.7 fps | 3.7 fps | 8.7 fps | 8.6 fps |
+| 2 | 3.4 fps | 6.7 fps | 7.5 fps | 14.9 fps |
+| 4 | 3.1 fps | 12.0 fps | 5.7 fps | 22.5 fps |
+| 8 | 2.3 fps | 18.4 fps | 3.2 fps | 23.7 fps |
+| 12 | 1.7 fps | 19.8 fps | 2.1 fps | 24.4 fps |
+
+### Streaming probe
+
+| Threads | 1 | 2 | 4 | 8 | 12 | 24 |
+|---|---|---|---|---|---|---|
+| GB/s moved | 18.9 | 23.2 | 21.3 | 20.2 | 21.1 | 23.4 |
+
+### Notes
+
+- **Memory bandwidth is the ceiling, and it is low.** One thread streaming whole frames already uses about 80%
+  of what the machine can move; more threads add almost nothing. Each 1080p signal is 24 MB, larger than a
+  core complex's 16 MB of L3, so every node pass goes to RAM.
+- Independent renders level off at about 20 fps (`bass_wave`, 5.4×) and 24 fps (`am_bands`, 2.8×). At ~23 GB/s
+  that is roughly 1 GB of memory traffic per frame for either graph. `bass_wave` scales further only because more
+  of its time is arithmetic (`exp`, the delay's modulo) rather than streaming.
+- So splitting frames into chunks across renderers would not beat threading within a frame here: both hit the
+  same wall, and only the within-frame kind stays bit-exact. What raises the ceiling is moving fewer bytes per
+  frame: modulated parameters at the modulator's resolution, fewer whole-frame copies, and later working on bands
+  of rows that stay in cache across several nodes.
+- Each copy also decodes and encodes, so the totals slightly understate what the graphs alone could do.
