@@ -556,6 +556,45 @@ Resolve, and only graph inputs are new.
 - **Kept from the routing rebuild:** item groups, output buses, mixing inside the renderer, latency alignment and
   per-item pre-roll. **Removed:** folders, master sends, receives, FX chains and the FX window.
 
+### Export formats and encoders (October 2026)
+
+- **Three formats for 1.0:** H.264 in MP4 with AAC for sharing, ProRes in QuickTime with 24-bit PCM for editing,
+  and FFV1 in Matroska with 16-bit PCM for lossless masters. They stay a short list of presets rather than a
+  codec-by-codec dialog; a full choice of encoders comes with an FFmpeg the user installs.
+- **H.264 only through GPU and OS encoders**, tried in the order NVENC, AMF, Quick Sync, VideoToolbox, Media
+  Foundation, so a GPU's encoder wins over the OS's software one. They are licensed by their vendors, which keeps
+  x264 (GPL) and the patent pools out of RasterSong. A machine where none opens doesn't list H.264.
+- **No Quick Sync in the release build.** FFmpeg reaches it through Intel's libvpl dispatcher, a C++ library that
+  would have to be linked into avcodec. The writer still tries `h264_qsv`, so an FFmpeg that has it (the
+  development build, or a replaced one) uses it. Intel machines fall back to Media Foundation on Windows.
+- **Probed, not assumed:** each format's encoders are opened once at 256×256 and only formats that open are
+  offered. Opening at the real size tries the probe's winner first and falls back down the list (NVENC refuses
+  frames under about 145 pixels).
+- **H.264 bit rate from bits per pixel** (0.05, 0.1, 0.2 per frame) rather than each encoder's own quality scale,
+  since the encoders don't share one. A keyframe every two seconds.
+- **BT.709 limited-range YUV** for H.264 and ProRes, tagged in the file; FFV1 stays RGB and lossless.
+- **The track mix is mixed frame by frame** as the export goes, not for the whole project first, so a long project
+  doesn't need its whole soundtrack in memory.
+- **One export path:** `rastersong_engine::export` loads the tracks and writes the file for both the CLI and the
+  GUI; a failed or cancelled export removes the file.
+- **An installed FFmpeg is an option, never a requirement.** Users who want x264, x265 or anything else the bundled
+  LGPL build can't ship can point RasterSong at their own FFmpeg (planned). It runs as a separate program, fed
+  frames over a pipe, and is never loaded into RasterSong; the bundled build stays enough for every common format.
+- **Encoders run on every core.** FFmpeg's encoders default to one thread; the writer asks for automatic threading,
+  which made ProRes about 11× and FFV1 about 6× faster at 1080p.
+
+### Profiling (October 2026)
+
+- **samply for sampling, `tracing` spans for stages.** samply is free, works on Windows, macOS and Linux, needs no
+  code changes and reads PDBs, so it is the one profiler the docs name ([Development](development.md#profiling)).
+  Spans answer what a sampler can't show directly: which frame stage and which graph node the time belongs to.
+- **Spans at `trace` level, written only on request.** `--trace` adds a `tracing-chrome` layer (MIT) filtered to
+  the RasterSong crates; the stderr log keeps its own filter. Perfetto reads the file, so there is no viewer to
+  maintain. A frame's spans cost far less than its work, so they stay in release builds rather than behind a
+  feature.
+- **No profiler built into the GUI yet.** The node badges (View → Show performance) cover the editor's question;
+  an in-app timeline can come later if the trace file proves too indirect.
+
 ## Open
 
 ### Open: "Audio to video" / "Video to audio" names
@@ -575,4 +614,7 @@ Value ranges (video `0..1`, audio `-1..1`) and mono-only modulators are still to
 
 - **License review:** the custom LICENSE is a first draft. Have it reviewed, or switch to an established source-available license (e.g. PolyForm Strict), before any paid release.
 - **Snapshots:** memory budget and spacing for state snapshots.
-- **Hardware encoder fallback:** what to offer for H.264 export on machines with no usable OS/hardware encoder.
+- **H.264 patents:** AMD's AMF headers say the user owes any codec royalties. Check whether exporting H.264
+  through GPU and OS encoders needs a patent license of RasterSong's own before a paid release.
+- **Hardware encoder fallback:** machines with no usable GPU or OS H.264 encoder (mostly Linux without a GPU) get
+  ProRes and FFV1 today; WebM (VP9 or AV1 with Opus) from the bundled build and an installed FFmpeg are planned.

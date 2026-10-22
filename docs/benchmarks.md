@@ -50,3 +50,57 @@ makes one entry per node kind from `NodeKind::BENCH`, and `lowpass` is now `filt
   the delay line does two modulo operations per sample, and modulated `lowpass` and `bitcrush` call `exp`/`exp2`
   per sample. Branch- and channel-level parallelism (three channels in `bass_wave`) is also unused.
 - At ½ preview scale the graph cost drops about 4×, at ¼ about 16×.
+
+## 2026-10-22: Export encoders
+
+AMD Ryzen 9 3900X (24 threads), Windows 11, release build. 60 frames of 1080p30 with noise, video only, through
+`MediaWriter` (frame conversion included). H.264 went through the GPU encoder.
+
+| Format | One encoder thread (before) | Automatic threads (after) |
+|---|---|---|
+| H.264 (GPU) | 195 fps | 208 fps |
+| ProRes HQ (`prores_ks`) | 1.5 fps | 16 fps |
+| FFV1 | 8.7 fps | 50 fps |
+
+### Notes
+
+- Converting RGB frames to the encoder's pixel format costs about 5 ms per frame; the encoders were the cost.
+- `prores_ks` searches for a quantizer per slice and stays slow on detailed frames even threaded. FFmpeg's
+  `prores` encoder wrote the same frames at about 180 fps (measured with the `ffmpeg` program).
+
+## 2026-10-22: Where an export spends its time
+
+Same machine. 300 frames of 1080p30 H.264 (noisy test pattern) and a 10 s song through the example graphs, written
+with `rastersong-cli render ... --trace` (FFV1) and profiled with samply (120 frames of `bass_wave`). See
+[Profiling](development.md#profiling).
+
+| Graph | MP4 (GPU H.264) | MKV (FFV1) |
+|---|---|---|
+| `am_bands` | 6.6 fps | 7.8 fps |
+| `bass_wave` | 4.1 fps | 3.9 fps |
+
+### Share of the export, from the trace
+
+| Stage | `am_bands` | `bass_wave` |
+|---|---|---|
+| Graph nodes (`graph`) | 50% | 82% |
+| … inside nodes' `process` | 28% | 47% |
+| … resampling inputs and modulated parameters | 21% | 35% |
+| Composition copies (`compose` self) | 9% | 4% |
+| `to_rgb8` | 20% | 5% |
+| Decode, convert and `to_signal` | 6% | 3% |
+| Encode (`write`, FFV1) | 15% | 5% |
+
+Heaviest nodes in `bass_wave`, per frame: `filter` 85 ms (half of it computing its modulated cutoff), each
+`delay` about 30 ms, `combine` 17 ms, `split` 10 ms.
+
+### From samply (`bass_wave`)
+
+94% of samples are on the main thread. Its top functions: `dsp::resample` 14%, `memmove` 11%,
+`DelayLine::read` 8.5%, `exp` (modulated `filter`) 7.5%, `ParamBinding::update` 5%, `dsp::mix` 5%, `round`
+and `roundf` 5%, FFmpeg (decode, scale, FFV1) about 5%.
+
+### Notes
+
+- With encoders threaded, the format no longer decides the speed; the graph does, on one core.
+- The roadmap's [Performance](roadmap.md#performance) section lists the follow-ups.

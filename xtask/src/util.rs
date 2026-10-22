@@ -70,6 +70,11 @@ pub fn extract(archive: &Path, dest: &Path) -> Result<()> {
     let name = archive.file_name().unwrap().to_string_lossy();
     if name.ends_with(".zip") {
         zip::ZipArchive::new(File::open(archive)?)?.extract(dest)?;
+    } else if name.ends_with(".tar.gz") {
+        tar::Archive::new(flate2::read::GzDecoder::new(BufReader::new(File::open(
+            archive,
+        )?)))
+        .unpack(dest)?;
     } else if name.ends_with(".tar.xz") {
         let tar_path = archive.with_extension("");
         {
@@ -113,5 +118,55 @@ pub fn single_subdir(dir: &Path) -> Result<PathBuf> {
             "expected exactly one top-level directory in {}",
             dir.display()
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+
+    use super::*;
+
+    /// A fresh, empty directory for one test.
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("rastersong-xtask-{name}"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn zip_and_tar_gz_archives_unpack() {
+        let dir = temp_dir("extract");
+
+        let zip_path = dir.join("pack.zip");
+        let mut zip = zip::ZipWriter::new(File::create(&zip_path).unwrap());
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        zip.start_file("pack/bin/a.txt", options).unwrap();
+        zip.write_all(b"from zip").unwrap();
+        zip.finish().unwrap();
+
+        let gz_path = dir.join("pack.tar.gz");
+        let mut tar = tar::Builder::new(flate2::write::GzEncoder::new(
+            File::create(&gz_path).unwrap(),
+            flate2::Compression::default(),
+        ));
+        let mut header = tar::Header::new_gnu();
+        header.set_size(8);
+        header.set_mode(0o644);
+        tar.append_data(&mut header, "pack/include/b.h", &b"from tar"[..])
+            .unwrap();
+        tar.into_inner().unwrap().finish().unwrap();
+
+        extract(&zip_path, &dir.join("z")).unwrap();
+        extract(&gz_path, &dir.join("t")).unwrap();
+        let unzipped = single_subdir(&dir.join("z")).unwrap();
+        assert_eq!(fs::read(unzipped.join("bin/a.txt")).unwrap(), b"from zip");
+        assert_eq!(
+            fs::read(dir.join("t/pack/include/b.h")).unwrap(),
+            b"from tar"
+        );
+        fs::remove_dir_all(&dir).ok();
     }
 }

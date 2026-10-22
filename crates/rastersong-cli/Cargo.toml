@@ -16,6 +16,7 @@ png.workspace = true
 rastersong-engine.workspace = true
 rastersong-lang.workspace = true
 tracing.workspace = true
+tracing-chrome.workspace = true
 tracing-subscriber.workspace = true
 
 [lints]

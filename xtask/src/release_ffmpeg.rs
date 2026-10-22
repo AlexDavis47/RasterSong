@@ -7,6 +7,10 @@
 //! libraries except zlib, no programs, no avdevice or avfilter, and only the encoders the app uses.
 //! The package then needs one license, one source tarball and one configure line per platform.
 //!
+//! H.264 export goes through GPU and OS encoders: Media Foundation (Windows), VideoToolbox (macOS),
+//! NVENC and AMF (Windows and Linux). NVENC and AMF need only their vendors' MIT-licensed headers
+//! at build time and load the driver at runtime, so they add no library to the package.
+//!
 //! Windows builds with MSYS2's UCRT64 toolchain. macOS builds an arm64 and an x86_64 slice and
 //! merges them into universal libraries.
 
@@ -17,13 +21,14 @@ use std::process::Command;
 use anyhow::{Context, Result, bail, ensure};
 
 use crate::ffmpeg::{SOURCE_VERSION, fetch_source, source_url};
-use crate::util::{copy_dir, run, workspace_root};
+use crate::util::{copy_dir, download, extract, run, single_subdir, workspace_root};
 
 /// The FFmpeg libraries the app loads: those enabled by the `ffmpeg-next` features in the workspace
 /// Cargo.toml, plus avutil.
 pub const LIBS: &[&str] = &["avcodec", "avformat", "avutil", "swresample", "swscale"];
 
-/// Every encoder the app uses. Add an encoder here when an export format needs it.
+/// Every encoder the app uses on every platform. Add an encoder here when an export format needs
+/// it; the GPU and OS encoders are in [`platform_encoders`].
 const ENCODERS: &[&str] = &[
     "ffv1",
     "prores_ks",
@@ -32,6 +37,66 @@ const ENCODERS: &[&str] = &[
     "pcm_f32le",
     "aac",
 ];
+
+/// A header-only SDK an encoder is built against, fetched pinned and verified.
+struct HeaderSdk {
+    name: &'static str,
+    url: &'static str,
+    sha256: &'static str,
+    /// The header (relative to the unpacked directory) whose leading comment is the license.
+    license_header: &'static str,
+}
+
+/// NVIDIA's Video Codec SDK headers, for NVENC. 12.1 rather than 13, which needs a newer driver
+/// (530 and later rather than 570).
+const NV_CODEC_HEADERS: HeaderSdk = HeaderSdk {
+    name: "nv-codec-headers 12.1.14.0",
+    url: "https://github.com/FFmpeg/nv-codec-headers/releases/download/n12.1.14.0/nv-codec-headers-12.1.14.0.tar.gz",
+    sha256: "62b30ab37e4e9be0d0c5b37b8fee4b094e38e570984d56e1135a6b6c2c164c9f",
+    license_header: "include/ffnvcodec/nvEncodeAPI.h",
+};
+
+/// AMD's AMF headers, for AMF. FFmpeg needs 1.5.2 or later.
+const AMF_HEADERS: HeaderSdk = HeaderSdk {
+    name: "AMF headers 1.5.2",
+    url: "https://github.com/GPUOpen-LibrariesAndSDKs/AMF/releases/download/v1.5.2/AMF-headers-v1.5.2.tar.gz",
+    sha256: "d3c12eb324edf05e214608b6a395a51dd95770ed9d45520185d6c3a206811c99",
+    license_header: "AMF/core/Version.h",
+};
+
+/// The header SDKs this platform's build uses.
+fn header_sdks() -> &'static [HeaderSdk] {
+    if cfg!(target_os = "macos") {
+        &[]
+    } else {
+        &[NV_CODEC_HEADERS, AMF_HEADERS]
+    }
+}
+
+/// The GPU and OS H.264 encoders built on this platform, and the configure switches they need.
+/// Quick Sync is left out: it needs Intel's libvpl dispatcher (C++) linked into avcodec.
+fn platform_encoders() -> (&'static [&'static str], &'static [&'static str]) {
+    if cfg!(windows) {
+        (
+            &["h264_mf", "h264_nvenc", "h264_amf"],
+            &[
+                "--enable-mediafoundation",
+                // h264_mf uses D3D11 types whether or not it is given D3D11 frames.
+                "--enable-d3d11va",
+                "--enable-ffnvcodec",
+                "--enable-nvenc",
+                "--enable-amf",
+            ],
+        )
+    } else if cfg!(target_os = "macos") {
+        (&["h264_videotoolbox"], &["--enable-videotoolbox"])
+    } else {
+        (
+            &["h264_nvenc", "h264_amf"],
+            &["--enable-ffnvcodec", "--enable-nvenc", "--enable-amf"],
+        )
+    }
+}
 
 /// Whether to include FFmpeg's HEVC decoder. HEVC is covered by patent pools, separately from
 /// FFmpeg's copyright license; whether to keep shipping it is to be settled before a paid release.
@@ -112,6 +177,7 @@ pub fn build(force: bool) -> Result<PathBuf> {
     if cfg!(windows) {
         prepare_static_libs(&work_dir)?;
     }
+    let header_licenses = fetch_headers(&work_dir)?;
 
     let slice_dirs: Vec<PathBuf> = slices()
         .into_iter()
@@ -147,7 +213,7 @@ pub fn build(force: bool) -> Result<PathBuf> {
     )?;
     fs::write(
         install_dir.join(BUILD_INFO_FILE),
-        build_info(&lines, &work_dir)?,
+        build_info(&lines, &work_dir, &header_licenses)?,
     )?;
     fs::rename(&archive, source_archive())?;
     fs::write(&stamp, &pin)?;
@@ -173,7 +239,23 @@ fn configure_args(slice: Slice, work_dir: &Path) -> Vec<String> {
     ]
     .map(String::from)
     .into();
-    args.push(format!("--enable-encoder={}", ENCODERS.join(",")));
+    let (encoders, switches) = platform_encoders();
+    args.extend(switches.iter().map(|s| s.to_string()));
+    args.push(format!(
+        "--enable-encoder={}",
+        ENCODERS
+            .iter()
+            .chain(encoders)
+            .copied()
+            .collect::<Vec<_>>()
+            .join(",")
+    ));
+    if !header_sdks().is_empty() {
+        args.push(format!(
+            "--extra-cflags=-I{}/include",
+            shell_path(&headers_dir(work_dir))
+        ));
+    }
     if !HEVC_DECODER {
         args.extend(["--disable-decoder=hevc", "--disable-parser=hevc"].map(String::from));
     }
@@ -220,13 +302,81 @@ fn build_slice(slice: Slice, source: &Path, work_dir: &Path, prefix: &Path) -> R
         args.iter().map(|a| quote(a)).collect::<Vec<_>>().join(" ")
     );
     let jobs = std::thread::available_parallelism().map_or(4, |n| n.get());
-    let script = format!("{configure} && make -j{jobs} && make install");
+    // ffnvcodec is found through pkg-config, from the headers fetched into the work directory.
+    let pkg_config_path = shell_path(&headers_dir(work_dir).join("lib/pkgconfig"));
+    let script = format!(
+        "PKG_CONFIG_PATH={} {configure} && make -j{jobs} && make install",
+        quote(&pkg_config_path)
+    );
 
     println!("Configuring FFmpeg {SOURCE_VERSION} (this build takes several minutes)");
     let mut cmd = shell(&script);
     cmd.current_dir(&build_dir)
         .env("MACOSX_DEPLOYMENT_TARGET", MACOS_DEPLOYMENT_TARGET);
     run(&mut cmd)
+}
+
+/// Where the header SDKs are installed for the build: `include/` and `lib/pkgconfig/`.
+fn headers_dir(work_dir: &Path) -> PathBuf {
+    work_dir.join("headers")
+}
+
+/// Downloads and installs this platform's header SDKs into [`headers_dir`]. Returns each SDK's name
+/// and license text, for the build information.
+fn fetch_headers(work_dir: &Path) -> Result<Vec<(&'static str, String)>> {
+    let dest = headers_dir(work_dir);
+    let include = dest.join("include");
+    let mut licenses = Vec::new();
+    for sdk in header_sdks() {
+        let file = sdk.url.rsplit('/').next().unwrap();
+        let archive = work_dir.join(file);
+        download(sdk.url, &archive, sdk.sha256)?;
+        let unpacked = work_dir.join(format!("unpacked-{file}"));
+        extract(&archive, &unpacked)?;
+        let root = single_subdir(&unpacked)?;
+        // nv-codec-headers keeps its headers in include/; the AMF tarball has AMF/ at the top.
+        let headers = if root.join("include").is_dir() {
+            root.join("include")
+        } else {
+            root.clone()
+        };
+        copy_dir(&headers, &include)?;
+        if let Ok(template) = fs::read_to_string(root.join("ffnvcodec.pc.in")) {
+            let pkgconfig = dest.join("lib/pkgconfig");
+            fs::create_dir_all(&pkgconfig)?;
+            fs::write(
+                pkgconfig.join("ffnvcodec.pc"),
+                template.replace("@@PREFIX@@", &shell_path(&dest)),
+            )?;
+        }
+        let header = fs::read_to_string(root.join(sdk.license_header))
+            .with_context(|| format!("reading the license of {}", sdk.name))?;
+        licenses.push((sdk.name, leading_comment(&header)));
+    }
+    Ok(licenses)
+}
+
+/// The text of the comment a source file starts with, without its comment markers.
+fn leading_comment(source: &str) -> String {
+    let mut lines = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        let text = if let Some(rest) = trimmed.strip_prefix("//") {
+            rest
+        } else if trimmed.starts_with("/*") || trimmed.starts_with('*') {
+            if trimmed.ends_with("*/") && !lines.is_empty() {
+                break;
+            }
+            trimmed
+                .trim_start_matches("/*")
+                .trim_start_matches('*')
+                .trim_end_matches("*/")
+        } else {
+            break;
+        };
+        lines.push(text.strip_prefix(' ').unwrap_or(text).trim_end().to_owned());
+    }
+    lines.join("\n").trim().to_owned() + "\n"
 }
 
 /// Libraries from MSYS2 that the Windows DLLs link statically, with their license files: zlib, and
@@ -358,7 +508,11 @@ fn merge_universal(slices: &[PathBuf], dest: &Path) -> Result<()> {
     Ok(())
 }
 
-fn build_info(configure_lines: &[String], work_dir: &Path) -> Result<String> {
+fn build_info(
+    configure_lines: &[String],
+    work_dir: &Path,
+    header_licenses: &[(&str, String)],
+) -> Result<String> {
     let platform = match std::env::consts::OS {
         "macos" => "macOS (universal: arm64 and x86_64 built separately and merged)",
         "windows" => "Windows (MSYS2 UCRT64 toolchain)",
@@ -385,6 +539,15 @@ fn build_info(configure_lines: &[String], work_dir: &Path) -> Result<String> {
         "\nThe libraries are loaded dynamically and may be replaced with your own build of the same\n\
          FFmpeg major version: replace the av*/sw* library files that ship with RasterSong.\n",
     );
+    if !header_licenses.is_empty() {
+        info.push_str(
+            "\nThe GPU encoders were built against these vendor headers, under their own licenses.\n\
+             No library from them is linked; the encoders load the graphics driver at runtime.\n",
+        );
+        for (name, license) in header_licenses {
+            info.push_str(&format!("\n----- {name} -----\n\n{license}"));
+        }
+    }
     if cfg!(windows) {
         info.push_str(
             "\nThe DLLs include these libraries from MSYS2, linked statically, under their own licenses:\n",
@@ -458,4 +621,21 @@ fn files_with_extension(dir: &Path, extension: &str) -> Result<Vec<PathBuf>> {
         }
     }
     Ok(files)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::leading_comment;
+
+    #[test]
+    fn license_comments_lose_their_markers() {
+        let block =
+            "/*\n * Copyright (c) NVIDIA\n *\n * Permission is granted.\n */\n\n/** docs */\n";
+        assert_eq!(
+            leading_comment(block),
+            "Copyright (c) NVIDIA\n\nPermission is granted.\n"
+        );
+        let lines = "// \n// MIT license\n//\n// Copyright AMD\n\n#pragma once\n";
+        assert_eq!(leading_comment(lines), "MIT license\n\nCopyright AMD\n");
+    }
 }

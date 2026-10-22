@@ -542,7 +542,7 @@ fn offline_renders_the_composition() {
     let mut comp = composition(&tracks, &[(1, invert())]);
     comp.graph_tracks = vec![graph_track("G", vec![span(0, FRAMES, 1)])];
     let settings = RenderSettings {
-        frames: Some(8),
+        range: Some(0..8),
         composition: Some(comp),
         ..Default::default()
     };
@@ -553,6 +553,7 @@ fn offline_renders_the_composition() {
         &GraphDesc::from_json(&passthrough()).unwrap(),
         &settings,
         &mut sink,
+        &mut |_, _| true,
     )
     .unwrap();
     assert_eq!(sink.0, reference(&invert(), 8));

@@ -9,6 +9,7 @@ mod clock;
 mod compose;
 mod composition;
 mod error;
+pub mod export;
 mod listen;
 mod offline;
 pub mod playback;
@@ -52,9 +53,10 @@ pub use rastersong_graph::{
     Tempo, audio_output_bus, range_span, render_form,
 };
 pub use rastersong_media::{
-    AudioCache, AudioClip, AudioOptions, BackendInfo, FakeBackend, FakeVideo, FfmpegBackend,
-    LibraryInfo, LosslessWriter, MediaBackend, MediaError, Rational, Samples, StreamInfo,
-    StreamKind, Version, VideoFrame, VideoInfo, lgpl_url,
+    AudioCache, AudioClip, AudioOptions, AvailableFormat, BackendInfo, ExportFormat, FakeBackend,
+    FakeVideo, FfmpegBackend, FormatKind, LibraryInfo, MediaBackend, MediaError, MediaWriter,
+    ProResProfile, Quality, Rational, Samples, StreamInfo, StreamKind, Version, VideoFrame,
+    VideoInfo, export_formats, lgpl_url,
 };
 pub use renderer::{
     DEFAULT_AUDIO_TRACK, OutputSize, RenderInfo, RenderTrack, Renderer, TrackMedia, VIDEO_SOURCE,

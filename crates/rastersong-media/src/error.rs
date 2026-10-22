@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use rastersong_lang::tr_args;
 
-/// What can go wrong reading media. The text comes from the lang files (`error.media.*`); the
+/// What can go wrong reading or writing media. The text comes from the lang files (`error.media.*`); the
 /// reasons FFmpeg itself gives are passed through as it words them.
 #[derive(Debug, Clone)]
 pub enum MediaError {
@@ -20,6 +20,8 @@ pub enum MediaError {
     /// The frame is listed in the file but the decoder did not produce it (e.g. corrupt or truncated data).
     FrameUnavailable(usize),
     Decode(String),
+    /// Writing a file failed.
+    Encode(String),
 }
 
 impl std::fmt::Display for MediaError {
@@ -47,6 +49,7 @@ impl std::fmt::Display for MediaError {
                 &[("index", &index.to_string())],
             ),
             Self::Decode(message) => tr_args("error.media.decode", &[("message", message)]),
+            Self::Encode(message) => tr_args("error.media.encode", &[("message", message)]),
         };
         f.write_str(&text)
     }

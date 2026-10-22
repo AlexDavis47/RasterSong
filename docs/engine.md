@@ -165,8 +165,8 @@ another): only the Audio Output writing to it is compiled.
   soften it.
 - **Latency.** Both outputs line up at the later one's latency: the picture is held back to match the sound, or
   the other way round, so they stay in sync without the host doing anything.
-- **Preview and export.** Each cached frame carries its sound, which preview playback reads. The CLI writes it to
-  the `.mkv` as it renders.
+- **Preview and export.** Each cached frame carries its sound, which preview playback reads. Export writes it to
+  the file as it renders.
 - **Volume.** The node's `volume` (in dB, −48 to 12 on the slider, −120 to 60 typed) applies before sanitizing and
   clipping, and a peak meter on the node shows the result.
 
@@ -274,15 +274,23 @@ and the node at fault.
 ## Export / Offline Rendering
 
 Export uses the same graph and engine as preview, rendering every frame in order from the start at full resolution
-as fast as possible, with progress and estimated time remaining.
+as fast as possible. `RenderSettings::range` writes only some frames (the GUI's loop region); the renderer warms up
+before the range as far as the graph's warmup needs, uncapped, or renders from frame 0 when the graph's history is
+unbounded, so a range is exact too. `offline::render` reports the frames rendered and the total after each frame to
+a `progress` callback, which cancels the render (`EngineError::Cancelled`) by returning `false`.
 
-Planned export formats:
+`export::export` is the one export path, used by the CLI and the GUI:
 
-- **H.264 MP4** for sharing, encoded through OS/hardware encoders (Media Foundation on Windows, VideoToolbox on macOS, NVENC/QSV/AMF where available)
-- **ProRes** and **FFV1** for high-quality / lossless output, using FFmpeg's built-in encoders
+- `ExportJob::from_project` takes the timeline, the render form of the open graph, the composition, tempo and audio
+  rate. `ExportJob::load` decodes each audio track (through the audio cache) into the render's tracks and the
+  sources of the track mix.
+- `FileSink` writes the frames through `MediaWriter` (see [Media](media.md)) with the bus's sound: the graph's
+  Audio Output as it renders, or else the track mix of the tracks routed to the bus.
+- A failed or cancelled export removes the file.
 
-Today the CLI renders to `.mkv` (lossless FFV1 with PCM sound) or a directory of PNG frames; the GUI has no export
-yet.
+Formats: **H.264 MP4** with AAC for sharing, through GPU or OS encoders (NVENC, AMF, QSV, VideoToolbox, Media
+Foundation); **ProRes** in QuickTime and lossless **FFV1** in Matroska, through FFmpeg's own encoders. The CLI picks
+the format by extension (`.mp4`, `.mov`, `.mkv`); any other path is a directory of PNG frames.
 
 ## Performance
 

@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 
 use ffmpeg_next as ffmpeg;
 
-pub use writer::LosslessWriter;
+pub use writer::{MediaWriter, export_formats};
 
 use crate::{
     AudioClip, AudioOptions, MediaBackend, MediaError, StreamInfo, StreamKind, VideoSource,

@@ -29,8 +29,23 @@ synthetic frames. (Licensing of FFmpeg itself is in [Licensing](licensing.md#ffm
   and frame rate or sample rate and channels, title and language tags), leaving out cover pictures, subtitles and
   data. `open_video_stream` and `AudioOptions::stream` open a stream by its index; without one, the best stream of
   the kind, as FFmpeg picks it.
-- **Encode:** `LosslessWriter` writes lossless FFV1 video with PCM sound into Matroska; the CLI uses it for `.mkv`
-  output. Other export formats are planned (see [Engine](engine.md#export--offline-rendering)).
+- **Encode:** `MediaWriter` writes packed RGB8 frames and interleaved `f32` sound in an `ExportFormat`:
+  - `H264` (MP4 with AAC): bit rate from `Quality` (0.05, 0.1 or 0.2 bits per pixel per frame), a keyframe every
+    two seconds. The encoder is the first that opens of `h264_nvenc`, `h264_amf`, `h264_qsv`,
+    `h264_videotoolbox` and `h264_mf`, so the GPU's own encoder wins over the OS's.
+  - `ProRes` (QuickTime with 24-bit PCM): `prores_ks` at the chosen profile, 4:2:2 10-bit, tagged `apl0`.
+  - `Ffv1` (Matroska with 16-bit PCM): lossless, RGB, bit-exact through our decoder.
+
+  Video encoders open with FFmpeg's automatic thread count (one per core, frame or slice threads, whichever the
+  encoder has) instead of its default of one; ProRes and FFV1 run on the CPU and are otherwise held to one core.
+  `MediaWriter::video_threads` reports the count. See [Benchmarks](benchmarks.md#2026-10-22-export-encoders).
+
+  Frames are converted with the same `Scaler` as decoding, to BT.709 limited-range YUV (or RGB for FFV1), and the
+  file is tagged to match. Formats with subsampled chroma refuse an odd width or height;
+  `FormatKind::size_problem` says which side is odd and `nearest_size` gives the even size one pixel up. Video packets the encoder
+  leaves without a duration get one frame, or MP4 and QuickTime drop the last frame. `export_formats()` lists the
+  formats that work on this machine, found once by opening each format's encoders at 256×256 (FFmpeg's log is
+  silenced while encoders are tried). See [Engine](engine.md#export--offline-rendering).
 - **Audio cache:** `AudioCache` decodes each audio stream once into an uncompressed `f32` file and reads it back
   through a memory map (`Samples`), so a track costs address space rather than memory, every reader shares one
   copy, and reopening a project decodes nothing. Files are named by the SHA-256 of the source's bytes (remembered

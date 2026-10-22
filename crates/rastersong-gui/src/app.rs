@@ -19,7 +19,10 @@ use rastersong_engine::{
 };
 use rastersong_lang::{tr, tr_args};
 
+mod export_window;
 mod settings_window;
+
+pub use export_window::ExportState;
 
 use crate::audio_out::AudioOut;
 
@@ -178,6 +181,13 @@ pub struct App {
     show_about: bool,
     show_settings: bool,
     settings_tab: settings_window::SettingsTab,
+    /// The Export window's settings.
+    export: export_window::ExportDialog,
+    running_export: Option<export_window::RunningExport>,
+    /// How the last export ended.
+    export_outcome: Option<ExportState>,
+    /// The audio cache the engine was configured with, which export uses too.
+    audio_cache: Option<rastersong_engine::AudioCache>,
     /// The output bus waiting on the "remove bus?" warning.
     bus_removal: Option<String>,
     /// Files with several streams, waiting on the import dialog in turn.
@@ -260,6 +270,10 @@ impl App {
             show_about: false,
             show_settings: false,
             settings_tab: settings_window::SettingsTab::default(),
+            export: export_window::ExportDialog::default(),
+            running_export: None,
+            export_outcome: None,
+            audio_cache: None,
             bus_removal: None,
             pending_imports: VecDeque::new(),
             resource_removal: None,
@@ -360,7 +374,14 @@ impl App {
         self.settings = settings;
         self.settings.apply_language();
         self.engine.set_preview_scale(self.settings.preview_scale());
-        self.engine.set_config(self.settings.engine_config());
+        self.apply_engine_config();
+    }
+
+    /// Hands the settings' engine configuration to the engine; export takes its audio cache.
+    fn apply_engine_config(&mut self) {
+        let config = self.settings.engine_config();
+        self.audio_cache = config.audio_cache.clone();
+        self.engine.set_config(config);
     }
 
     /// Hands the whole project to the engine.
@@ -1413,6 +1434,10 @@ impl App {
                 if ui.button(tr("menu.file.save_as")).clicked() {
                     ui.close();
                     self.save(true);
+                }
+                if ui.button(tr("menu.file.export")).clicked() {
+                    ui.close();
+                    self.open_export();
                 }
                 ui.separator();
                 if ui.button(tr("menu.file.import_media")).clicked() {
@@ -2816,6 +2841,7 @@ impl App {
             });
         self.show_about = open;
         self.settings_window(ui.ctx());
+        self.export_window(ui.ctx());
     }
 
     fn project_name(&self) -> String {

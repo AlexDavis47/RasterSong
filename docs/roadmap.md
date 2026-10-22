@@ -41,7 +41,8 @@ are defects, **feature** is new behavior, **chore** is cleanup or refactoring wi
 - Buffer health and playback speed indicators
 
 **Phase 5: Export & Polish**
-- Export (H.264 via OS/hardware encoders, ProRes, FFV1) with progress
+- Export (H.264 via OS/hardware encoders, ProRes, FFV1) with progress (done in the GUI and CLI, see
+  [Export](app.md#export))
 - State snapshots for faster seeking with stateful graphs
 - SIMD and parallelism work guided by benchmarks
 - Packaging and installers
@@ -255,6 +256,23 @@ Renames, merges, splits and removals need **no migration** while the format is v
   as a badge on the node, and optionally a heat colour across the whole graph (View → Show performance). Report
   cost as time per frame and as a share of the graph's total, at the current preview resolution. The numbers are
   advisory and never part of the cache key. Feeds the benchmarks workflow in [benchmarks.md](benchmarks.md).
+- [x] **chore** Profiling: samply as the documented sampling profiler, and `rastersong-cli render --trace` for a
+  per-frame, per-node timeline of an export ([Development](development.md#profiling)).
+
+Found by profiling 1080p exports (see [Benchmarks](benchmarks.md#2026-10-22-where-an-export-spends-its-time)),
+roughly in order of payoff:
+
+- [ ] **feature** Render on more than one core. 94% of an export runs on one thread of 24. Candidates: nodes
+  without dependencies on each other (the three `delay`s in `bass_wave`), channels of a split node, row bands
+  of stateless per-sample nodes, and decoding and encoding on their own threads alongside the graph.
+- [ ] **feature** Compute modulated parameters at the modulator's resolution. Today each modulated parameter is
+  resampled to the picture's full length (6 M values at 1080p RGB) and mapped through its range per sample, every
+  frame: about 20% of `bass_wave`'s time (`resample`, `ParamBinding::update`).
+- [ ] **chore** Fewer whole-frame copies: `memmove` is about 11% of `bass_wave` (ports copied in the composition,
+  outputs assigned, rings pushed).
+- [ ] **chore** Cheaper inner loops: `DelayLine::read` does two modulo operations per sample (8.5%), the modulated
+  `filter` calls `exp` per sample (7.5%), and `to_rgb8` rounds per sample (3–20% of a frame depending on the
+  graph).
 
 ### Inspecting connections
 
@@ -651,8 +669,24 @@ raw.
      layout, automation tracks as a source for graph ports.
    - [ ] **feature** Glue and Make unique for edit lists.
 6. **Export**
-   - [ ] **feature** GUI export of the master output, with buses written as streams in one file or as separate files
-     (separate by default when there is more than one bus).
+   - [x] **feature** The Export window: H.264 MP4, ProRes MOV or FFV1 MKV (only the formats whose encoders work on
+     this machine), quality or profile, one bus, project or custom size, with progress, time left and Cancel
+     ([Export](app.md#export)).
+   - [x] **bug** ProRes and FFV1 exported on one core: the encoders kept FFmpeg's default of one thread. They now
+     use one per core, about 11× faster for ProRes and 6× for FFV1 at 1080p
+     ([Media](media.md), [Benchmarks](benchmarks.md#2026-10-22-export-encoders)).
+   - [ ] **feature** Try FFmpeg's `prores` encoder in place of `prores_ks`: about 13× faster on detailed frames,
+     with coarser rate control and usually larger files. Compare quality and size before switching.
+   - [x] **chore** The release FFmpeg builds the H.264 encoders: Media Foundation, NVENC and AMF on Windows, NVENC
+     and AMF on Linux, VideoToolbox on macOS ([Development](development.md)). Quick Sync is left out (it needs
+     Intel's C++ dispatcher linked in). macOS and Linux are checked only by the release workflow.
+   - [ ] **feature** Buses written as streams in one file or as separate files (separate by default when there is
+     more than one bus).
+   - [ ] **feature** Export through an FFmpeg the user installed, found in common places or in a folder they pick,
+     run as a separate program, for encoders the bundled build can't ship (x264, x265, fdk-aac).
+   - [ ] **chore** Widen the bundled FFmpeg with permissively licensed libraries: dav1d (AV1 decoding), libvpx,
+     SVT-AV1 and libopus (WebM export for Linux, which has no OS H.264 encoder), and the native DNxHD, PNG, GIF,
+     FLAC and Vorbis encoders.
 
 ### Workflows to check at the end
 

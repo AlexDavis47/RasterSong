@@ -362,7 +362,7 @@ impl App {
         });
         help(ui, tr("settings.render_ahead.help"));
         if engine_changed {
-            self.engine.set_config(self.settings.engine_config());
+            self.apply_engine_config();
         }
 
         section(ui, tr("settings.graph_editor"));

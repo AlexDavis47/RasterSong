@@ -278,6 +278,7 @@ impl ChainRt {
             while flags.len() > *own + 1 {
                 flags.pop_front();
             }
+            let _span = tracing::trace_span!("graph", id = *graph_id).entered();
             graph
                 .process((f_in + base).max(0) as u64, &PortSources(ports))
                 .map_err(|e| (e, *graph_id))?;

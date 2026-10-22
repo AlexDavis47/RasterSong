@@ -16,7 +16,7 @@ pub mod timeline;
 pub mod value_box;
 pub mod widgets;
 
-pub use app::{App, STARTER_GRAPH};
+pub use app::{App, ExportState, STARTER_GRAPH};
 pub use audio_out::AudioOut;
 pub use editor::{GraphEditor, without_layout};
 pub use settings::Settings;

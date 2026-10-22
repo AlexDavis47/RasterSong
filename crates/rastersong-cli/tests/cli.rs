@@ -16,6 +16,104 @@ fn info_reports_lgpl_ffmpeg() {
     assert!(stdout.contains("avcodec"), "{stdout}");
 }
 
+/// Renders the RGB pattern through a passthrough graph with the music into `out`.
+fn render_files(out: &std::path::Path, extra: &[&str]) -> std::process::Output {
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let fixture = |name: &str| workspace.join("fixtures").join(name);
+    let tmp = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
+    let graph = tmp.join("passthrough.json");
+    std::fs::write(
+        &graph,
+        r#"{ "version": 0,
+          "nodes": [ { "id": "v", "type": "video_input" }, { "id": "o", "type": "output" } ],
+          "connections": [ { "from": "v", "to": "o" } ] }"#,
+    )
+    .unwrap();
+    Command::new(env!("CARGO_BIN_EXE_rastersong-cli"))
+        .arg("render")
+        .arg(fixture("rgb_pattern.mkv"))
+        .arg(fixture("music.wav"))
+        .arg(&graph)
+        .arg(out)
+        .args(["--frames", "6"])
+        .args(extra)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn the_extension_picks_the_format() {
+    use rastersong_engine::{FfmpegBackend, MediaBackend, StreamKind};
+
+    let tmp = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
+    for (name, video, audio) in [
+        ("format.mov", "prores", "pcm_s24le"),
+        ("format.mkv", "ffv1", "pcm_s16le"),
+    ] {
+        let out = tmp.join(name);
+        let output = render_files(&out, &["--size", "64x48"]);
+        assert!(
+            output.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let streams = FfmpegBackend::new().unwrap().streams(&out).unwrap();
+        let codec = |video_kind: bool| {
+            streams
+                .iter()
+                .find(|s| matches!(s.kind, StreamKind::Video { .. }) == video_kind)
+                .map(|s| s.codec.as_str())
+        };
+        assert_eq!((codec(true), codec(false)), (Some(video), Some(audio)));
+    }
+}
+
+#[test]
+fn trace_writes_each_stage_of_the_export() {
+    let tmp = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
+    let trace = tmp.join("export.trace.json");
+    let _ = std::fs::remove_file(&trace);
+    let output = render_files(
+        &tmp.join("traced.mkv"),
+        &["--size", "64x48", "--trace", trace.to_str().unwrap()],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = std::fs::read_to_string(&trace).unwrap();
+    for stage in [
+        "export",
+        "frame",
+        "decode",
+        "graph",
+        "node",
+        "to_rgb8",
+        "encode_convert",
+        "encode_video",
+    ] {
+        assert!(
+            text.contains(&format!(r#""name":"{stage}""#)),
+            "no `{stage}` span in the trace"
+        );
+    }
+}
+
+#[test]
+fn a_failed_export_leaves_no_file() {
+    let out = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("odd.mov");
+    // ProRes needs an even size.
+    let output = render_files(&out, &["--size", "33x17"]);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("33×17"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!out.exists());
+}
+
 #[test]
 fn a_graph_with_an_audio_output_exports_its_sound() {
     use rastersong_engine::{AudioOptions, FfmpegBackend, MediaBackend};
