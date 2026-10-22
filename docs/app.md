@@ -292,7 +292,7 @@ the app stays usable.
 
 - **Format**: *H.264 (MP4)* with AAC sound, *ProRes (MOV)* with 24-bit PCM, or *FFV1 lossless (MKV)* with 16-bit
   PCM. Only formats whose encoder works on this machine are listed; H.264 needs a GPU or OS encoder (NVENC, AMF,
-  Quick Sync, VideoToolbox or Media Foundation), and the line under the settings names the one in use.
+  VideoToolbox or Media Foundation), and the line under the settings names the one in use.
 - **Quality** (H.264: low, medium or high) or **Profile** (ProRes: Proxy, LT, Standard or HQ).
 - **Sound**: the bus written, the master by default. Its sound is the graph's Audio Output for it, or else the mix
   of the tracks routed to it.

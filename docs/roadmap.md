@@ -655,6 +655,9 @@ raw.
    - [x] **feature** The Export window: H.264 MP4, ProRes MOV or FFV1 MKV (only the formats whose encoders work on
      this machine), quality or profile, one bus, project or custom size, with progress, time left and Cancel
      ([Export](app.md#export)).
+   - [x] **chore** The release FFmpeg builds the H.264 encoders: Media Foundation, NVENC and AMF on Windows, NVENC
+     and AMF on Linux, VideoToolbox on macOS ([Development](development.md)). Quick Sync is left out (it needs
+     Intel's C++ dispatcher linked in). macOS and Linux are checked only by the release workflow.
    - [ ] **feature** Buses written as streams in one file or as separate files (separate by default when there is
      more than one bus).
    - [ ] **feature** Export through an FFmpeg the user installed, found in common places or in a folder they pick,

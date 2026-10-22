@@ -564,6 +564,9 @@ Resolve, and only graph inputs are new.
 - **H.264 only through GPU and OS encoders**, tried in the order NVENC, AMF, Quick Sync, VideoToolbox, Media
   Foundation, so a GPU's encoder wins over the OS's software one. They are licensed by their vendors, which keeps
   x264 (GPL) and the patent pools out of RasterSong. A machine where none opens doesn't list H.264.
+- **No Quick Sync in the release build.** FFmpeg reaches it through Intel's libvpl dispatcher, a C++ library that
+  would have to be linked into avcodec. The writer still tries `h264_qsv`, so an FFmpeg that has it (the
+  development build, or a replaced one) uses it. Intel machines fall back to Media Foundation on Windows.
 - **Probed, not assumed:** each format's encoders are opened once at 256×256 and only formats that open are
   offered. Opening at the real size tries the probe's winner first and falls back down the list (NVENC refuses
   frames under about 145 pixels).
@@ -597,5 +600,7 @@ Value ranges (video `0..1`, audio `-1..1`) and mono-only modulators are still to
 
 - **License review:** the custom LICENSE is a first draft. Have it reviewed, or switch to an established source-available license (e.g. PolyForm Strict), before any paid release.
 - **Snapshots:** memory budget and spacing for state snapshots.
+- **H.264 patents:** AMD's AMF headers say the user owes any codec royalties. Check whether exporting H.264
+  through GPU and OS encoders needs a patent license of RasterSong's own before a paid release.
 - **Hardware encoder fallback:** machines with no usable GPU or OS H.264 encoder (mostly Linux without a GPU) get
   ProRes and FFV1 today; WebM (VP9 or AV1 with Opus) from the bundled build and an installed FFmpeg are planned.

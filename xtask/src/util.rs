@@ -70,6 +70,11 @@ pub fn extract(archive: &Path, dest: &Path) -> Result<()> {
     let name = archive.file_name().unwrap().to_string_lossy();
     if name.ends_with(".zip") {
         zip::ZipArchive::new(File::open(archive)?)?.extract(dest)?;
+    } else if name.ends_with(".tar.gz") {
+        tar::Archive::new(flate2::read::GzDecoder::new(BufReader::new(File::open(
+            archive,
+        )?)))
+        .unpack(dest)?;
     } else if name.ends_with(".tar.xz") {
         let tar_path = archive.with_extension("");
         {
