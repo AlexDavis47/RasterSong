@@ -553,6 +553,7 @@ fn offline_renders_the_composition() {
         &GraphDesc::from_json(&passthrough()).unwrap(),
         &settings,
         &mut sink,
+        &mut |_, _| true,
     )
     .unwrap();
     assert_eq!(sink.0, reference(&invert(), 8));

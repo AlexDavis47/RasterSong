@@ -1,5 +1,5 @@
-//! Offline rendering: every frame in order from the start, as fast as possible. Used by the CLI
-//! now, and by export later.
+//! Offline rendering: every frame in order from the start, as fast as possible. Used by export
+//! ([`crate::export`]) and the CLI.
 
 use rastersong_graph::{GraphDesc, Registry, Tempo};
 use rastersong_media::MediaBackend;
@@ -50,13 +50,15 @@ pub trait FrameSink {
 }
 
 /// Renders `tracks` through `graph` (or `settings.composition`) into `sink`, starting from frame 0 so
-/// the result is exact.
+/// the result is exact. `progress` hears the frames done and the total after each frame, and
+/// cancels the render with [`EngineError::Cancelled`] by returning `false`.
 pub fn render(
     backend: &dyn MediaBackend,
     tracks: &[RenderTrack],
     graph: &GraphDesc,
     settings: &RenderSettings,
     sink: &mut dyn FrameSink,
+    progress: &mut dyn FnMut(usize, usize) -> bool,
 ) -> Result<RenderInfo, EngineError> {
     let size = settings
         .size
@@ -96,6 +98,9 @@ pub fn render(
             .expect("offline renders are never cancelled");
         let (rgb, audio) = renderer.output();
         sink.frame(RenderedFrame { index, rgb, audio })?;
+        if !progress(index + 1, info.frames) {
+            return Err(EngineError::Cancelled);
+        }
     }
     Ok(info)
 }
@@ -168,7 +173,9 @@ mod tests {
                 0.0,
             ),
         ];
-        render(&backend(), &tracks, &graph, settings, sink)
+        render(&backend(), &tracks, &graph, settings, sink, &mut |_, _| {
+            true
+        })
     }
 
     #[test]
@@ -193,6 +200,39 @@ mod tests {
         run(&settings, &mut sink).unwrap();
         assert_eq!(sink.frames.len(), 3);
         assert!(sink.frames.iter().all(|&(_, len, _)| len == 2 * 2 * 3));
+    }
+
+    #[test]
+    fn progress_hears_every_frame_and_can_cancel() {
+        let graph = GraphDesc::from_json(PASSTHROUGH).unwrap();
+        let tracks = [RenderTrack::video(crate::VIDEO_SOURCE, "clip")];
+        let mut heard = Vec::new();
+        let mut sink = Recorder::default();
+        render(
+            &backend(),
+            &tracks,
+            &graph,
+            &RenderSettings::default(),
+            &mut sink,
+            &mut |done, total| {
+                heard.push((done, total));
+                true
+            },
+        )
+        .unwrap();
+        assert_eq!(heard, (1..=10).map(|i| (i, 10)).collect::<Vec<_>>());
+
+        let mut sink = Recorder::default();
+        let result = render(
+            &backend(),
+            &tracks,
+            &graph,
+            &RenderSettings::default(),
+            &mut sink,
+            &mut |done, _| done < 3,
+        );
+        assert!(matches!(result, Err(EngineError::Cancelled)));
+        assert_eq!(sink.frames.len(), 3);
     }
 
     #[test]

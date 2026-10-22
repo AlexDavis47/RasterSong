@@ -51,14 +51,10 @@ impl Scaler {
         if self.dst.width() != width || self.dst.height() != height {
             self.dst = frame::Video::new(Pixel::RGB24, width, height);
         }
-        // SAFETY: both frames are valid; dst has allocated buffers matching its format and size.
-        let ret = unsafe { ffi::sws_scale_frame(self.ctx, self.dst.as_mut_ptr(), src.as_ptr()) };
-        if ret < 0 {
-            return Err(MediaError::Decode(tr_args(
-                "error.media.scaler_convert",
-                &[("reason", &ffmpeg::Error::from(ret).to_string())],
-            )));
-        }
+        let mut dst = std::mem::replace(&mut self.dst, frame::Video::empty());
+        let result = self.scale_into(src, &mut dst);
+        self.dst = dst;
+        result?;
 
         let row = width as usize * 3;
         let stride = self.dst.stride(0);
@@ -68,6 +64,24 @@ impl Scaler {
             out.extend_from_slice(&data[y * stride..y * stride + row]);
         }
         Ok(out)
+    }
+
+    /// Converts `src` into `dst`, which has allocated, writable buffers. The size, pixel format
+    /// and color tags of each frame say what to convert from and to.
+    pub fn scale_into(
+        &mut self,
+        src: &frame::Video,
+        dst: &mut frame::Video,
+    ) -> Result<(), MediaError> {
+        // SAFETY: both frames are valid; dst has allocated buffers matching its format and size.
+        let ret = unsafe { ffi::sws_scale_frame(self.ctx, dst.as_mut_ptr(), src.as_ptr()) };
+        if ret < 0 {
+            return Err(MediaError::Decode(tr_args(
+                "error.media.scaler_convert",
+                &[("reason", &ffmpeg::Error::from(ret).to_string())],
+            )));
+        }
+        Ok(())
     }
 }
 

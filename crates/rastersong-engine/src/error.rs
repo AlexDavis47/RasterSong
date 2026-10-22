@@ -13,6 +13,12 @@ pub enum EngineError {
     /// Raised by an output, e.g. when writing a file fails.
     #[error("{0}")]
     Output(String),
+    /// An audio track's file can't be decoded.
+    #[error("{}", tr_args("error.audio_track", &[("name", .name), ("error", &.error.to_string())]))]
+    AudioTrack { name: String, error: MediaError },
+    /// The render was stopped before it finished.
+    #[error("{}", rastersong_lang::tr("error.render.cancelled"))]
+    Cancelled,
     /// A graph placed on a graph track can't be compiled or fails.
     #[error("{}", fx_message(*.graph, .error))]
     Fx { graph: u32, error: GraphError },

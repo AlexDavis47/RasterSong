@@ -27,9 +27,9 @@ Because the code isn't open source, outside contributions will require a contrib
 
 ## Codec Patents
 
-Codec patents are separate from copyright licenses. Today the only encoder used is FFmpeg's own lossless FFV1 (with
-PCM audio), in the CLI. H.264 export is planned to go through OS and hardware encoders, which are licensed by the
-platform vendor, and ProRes through FFmpeg's own LGPL encoder.
+Codec patents are separate from copyright licenses. H.264 export goes through GPU and OS encoders (NVENC, AMF, QSV,
+VideoToolbox, Media Foundation), which are licensed by their vendor; FFmpeg only passes frames to them. ProRes,
+FFV1, AAC and PCM use FFmpeg's own LGPL encoders.
 
 ## Other Dependencies
 

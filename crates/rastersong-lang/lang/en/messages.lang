@@ -78,6 +78,7 @@ error.project.track_resource = track "{track}" plays a resource the project does
 error.project.fx_graph = graph {graph} on a graph track can't be rendered: {error}
 error.project.timebase = the project is {width}×{height} at {rate} frames a second, which can't be rendered
 error.audio_track = audio track `{name}`: {error}
+error.render.cancelled = the render was cancelled
 error.audio_unavailable = Audio playback is unavailable: {error}
 error.no_output_device = no output device
 
@@ -102,6 +103,9 @@ error.media.no_audio = {path} has no audio stream
 error.media.frame_out_of_range = frame {index} is out of range (the video has {count} frames)
 error.media.frame_unavailable = frame {index} could not be decoded
 error.media.decode = decoding failed: {message}
+error.media.encode = writing the file failed: {message}
+error.media.no_encoder = no encoder for .{format} works here ({reason})
+error.media.odd_size = this format needs an even width and height, not {width}×{height}
 error.media.audio_invalid = invalid audio output: {rate} Hz, {channels} channels
 error.media.audio_setup = could not set up audio conversion: {reason}
 error.media.audio_convert = audio conversion failed: {reason}
