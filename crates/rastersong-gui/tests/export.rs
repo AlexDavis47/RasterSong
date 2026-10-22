@@ -8,13 +8,18 @@ use eframe::egui;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use rastersong_engine::{
-    AudioClip, FakeBackend, FakeVideo, FfmpegBackend, GraphDesc, MediaBackend, Project, Rational,
-    TrackKind,
+    AudioClip, AudioOptions, FakeBackend, FakeVideo, FfmpegBackend, GraphDesc, LoopRegion,
+    MediaBackend, Project, Rational, Timebase, TrackKind,
 };
 use rastersong_gui::{App, AudioOut, ExportState, STARTER_GRAPH};
 
 /// The starter project over a fake video of `frames` frames at 64×36, 30 fps, and a song.
 fn app(frames: usize) -> App {
+    app_with(frames, |_| {})
+}
+
+/// [`app`] with the project changed by `edit`.
+fn app_with(frames: usize, edit: impl FnOnce(&mut Project)) -> App {
     let backend = FakeBackend::new()
         .with_video(
             "clip",
@@ -36,6 +41,7 @@ fn app(frames: usize) -> App {
     let mut project = Project::new(GraphDesc::from_json(STARTER_GRAPH).unwrap());
     project.add_track(TrackKind::Video, "video", "clip");
     project.add_track(TrackKind::Audio, "audio", "song");
+    edit(&mut project);
     App::new(Arc::new(backend), project, None, AudioOut::silent(None))
 }
 
@@ -143,4 +149,69 @@ fn cancel_stops_the_export_and_removes_the_file() {
             .query_by_label("The export was cancelled.")
             .is_some()
     );
+}
+
+#[test]
+fn the_loop_region_can_be_exported_alone() {
+    let mut harness = harness(app_with(60, |project| {
+        project.loop_region = Some(LoopRegion {
+            start: 0.5,
+            end: 1.0,
+            enabled: false,
+        });
+    }));
+    harness.state_mut().open_export();
+    harness.run_steps(2);
+    // The combo box on the Range line.
+    let range = harness.get_by_label("Range").rect().center();
+    harness
+        .get_all_by_role(egui::accesskit::Role::ComboBox)
+        .min_by(|a, b| {
+            (a.rect().center().y - range.y)
+                .abs()
+                .total_cmp(&(b.rect().center().y - range.y).abs())
+        })
+        .unwrap()
+        .click();
+    harness.run_steps(2);
+    assert!(harness.query_by_label_contains("Whole project").is_some());
+    harness.get_by_label_contains("Loop region").click();
+    harness.run_steps(2);
+
+    let path = temp_file("region.mkv");
+    harness.state_mut().start_export(path.clone());
+    assert_eq!(finish(&mut harness), ExportState::Done(path.clone()));
+
+    let backend = FfmpegBackend::new().unwrap();
+    // 0.5 s to 1 s at 30 fps.
+    assert_eq!(backend.open_video(&path).unwrap().info().frame_count, 15);
+    let audio = backend.load_audio(&path, AudioOptions::default()).unwrap();
+    let seconds = audio.frames() as f64 / f64::from(audio.sample_rate);
+    assert!((seconds - 0.5).abs() < 0.01, "{seconds} s of sound");
+}
+
+#[test]
+fn an_odd_size_says_which_side_and_offers_the_nearest_even_size() {
+    let mut harness = harness(app_with(60, |project| {
+        project.timebase = Some(Timebase {
+            width: 63,
+            height: 36,
+            frame_rate: Rational::new(30, 1),
+        });
+    }));
+    harness.state_mut().open_export();
+    harness.run_steps(2);
+    assert!(
+        harness
+            .query_by_label_contains("has an odd width")
+            .is_some()
+    );
+    harness.get_by_label("Use 64×36").click();
+    harness.run_steps(2);
+    assert!(
+        harness
+            .query_by_label_contains("has an odd width")
+            .is_none()
+    );
+    assert!(harness.query_by_label("Use 64×36").is_none());
 }

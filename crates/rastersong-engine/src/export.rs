@@ -1,6 +1,7 @@
 //! Export: a project rendered from the start into a file, with progress and cancel. The CLI
 //! and the GUI's export dialog both go through here.
 
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -101,18 +102,18 @@ impl ExportJob {
         Ok((tracks, sources))
     }
 
-    /// The render settings for `bus` at `size` (the project's for `None`), stopping after
-    /// `frames` if given.
+    /// The render settings for `bus` at `size` (the project's for `None`), writing `range` (every
+    /// frame for `None`).
     pub fn render_settings(
         &self,
         bus: Bus,
         size: Option<(u32, u32)>,
-        frames: Option<usize>,
+        range: Option<Range<usize>>,
     ) -> RenderSettings {
         RenderSettings {
             timebase: self.timeline.timebase,
             size,
-            frames,
+            range,
             tempo: self.tempo,
             audio_rate: Some(self.audio_rate),
             bus,
@@ -127,8 +128,8 @@ pub struct ExportSettings {
     pub format: ExportFormat,
     /// Output size; `None` is the project's.
     pub size: Option<(u32, u32)>,
-    /// Export only the first `frames` frames.
-    pub frames: Option<usize>,
+    /// The frames to export, `start..end`; `None` is the whole project.
+    pub range: Option<Range<usize>>,
     /// The bus whose sound is written.
     pub bus: Bus,
 }
@@ -146,7 +147,7 @@ pub fn export(
     let result = (|| {
         let (tracks, sources) = job.load(backend, cache)?;
         let render_settings =
-            job.render_settings(settings.bus.clone(), settings.size, settings.frames);
+            job.render_settings(settings.bus.clone(), settings.size, settings.range.clone());
         let mut sink = FileSink::new(
             path,
             settings.format,
@@ -193,8 +194,9 @@ pub struct FileSink {
     /// The bus written: the track mix takes its tracks and its channels.
     bus: Bus,
     writer: Option<MediaWriter>,
-    /// The track mix, when the graph renders no sound, and the sample frames mixed so far.
-    mix: Option<(Mixer, usize)>,
+    /// The track mix, when the graph renders no sound, and the sample frame mixed up to; it
+    /// starts at the first frame written.
+    mix: Option<(Mixer, Option<usize>)>,
     frame_rate: f64,
 }
 
@@ -237,7 +239,7 @@ impl FrameSink for FileSink {
             } => (*sample_rate, *channels),
             // The tracks as placed on the timeline: the bus's audio mix.
             AudioSink::TrackMix => {
-                self.mix = Some((bus_mixer(&self.tracks, &self.bus), 0));
+                self.mix = Some((bus_mixer(&self.tracks, &self.bus), None));
                 (self.audio_rate, self.bus.channels)
             }
         };
@@ -260,11 +262,14 @@ impl FrameSink for FileSink {
             writer.push_audio(&audio.samples);
         }
         if let Some((mixer, mixed)) = &mut self.mix {
-            let end = ((frame.index + 1) as f64 / self.frame_rate * f64::from(self.audio_rate))
-                .round() as usize;
-            let block = mix_block(mixer, self.bus.channels, self.audio_rate, *mixed, end);
+            let sample = |frame: usize| {
+                (frame as f64 / self.frame_rate * f64::from(self.audio_rate)).round() as usize
+            };
+            let from = mixed.unwrap_or_else(|| sample(frame.index));
+            let end = sample(frame.index + 1);
+            let block = mix_block(mixer, self.bus.channels, self.audio_rate, from, end);
             writer.push_audio(&block);
-            *mixed = end;
+            *mixed = Some(end);
         }
         Ok(writer.write_frame(frame.rgb)?)
     }

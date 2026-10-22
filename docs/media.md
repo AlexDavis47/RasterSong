@@ -37,7 +37,8 @@ synthetic frames. (Licensing of FFmpeg itself is in [Licensing](licensing.md#ffm
   - `Ffv1` (Matroska with 16-bit PCM): lossless, RGB, bit-exact through our decoder.
 
   Frames are converted with the same `Scaler` as decoding, to BT.709 limited-range YUV (or RGB for FFV1), and the
-  file is tagged to match. Formats with subsampled chroma refuse an odd width or height. Video packets the encoder
+  file is tagged to match. Formats with subsampled chroma refuse an odd width or height;
+  `FormatKind::size_problem` says which side is odd and `nearest_size` gives the even size one pixel up. Video packets the encoder
   leaves without a duration get one frame, or MP4 and QuickTime drop the last frame. `export_formats()` lists the
   formats that work on this machine, found once by opening each format's encoders at 256×256 (FFmpeg's log is
   silenced while encoders are tried). See [Engine](engine.md#export--offline-rendering).

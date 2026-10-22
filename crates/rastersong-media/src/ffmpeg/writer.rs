@@ -210,16 +210,8 @@ impl MediaWriter {
         audio: Option<(u32, u32)>,
     ) -> Result<Self, MediaError> {
         super::init()?;
-        if format.kind().needs_even_size()
-            && (!width.is_multiple_of(2) || !height.is_multiple_of(2))
-        {
-            return Err(MediaError::Encode(tr_args(
-                "error.media.odd_size",
-                &[
-                    ("width", &width.to_string()),
-                    ("height", &height.to_string()),
-                ],
-            )));
+        if let Some(problem) = format.kind().size_problem(width, height) {
+            return Err(MediaError::Encode(problem));
         }
         let spec = spec(format);
         let mut output = format::output_as(path, spec.muxer).map_err(|e| MediaError::Open {

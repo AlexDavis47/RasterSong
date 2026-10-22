@@ -184,7 +184,7 @@ fn render(args: RenderArgs) -> Result<()> {
             &ExportSettings {
                 format: kind.default_format(),
                 size: args.size,
-                frames: args.frames,
+                range: args.frames.map(|n| 0..n),
                 bus,
             },
             out,
@@ -192,7 +192,7 @@ fn render(args: RenderArgs) -> Result<()> {
         )?,
         None => {
             let (tracks, _) = job.load(&backend, audio_cache.as_ref())?;
-            let settings = job.render_settings(bus, args.size, args.frames);
+            let settings = job.render_settings(bus, args.size, args.frames.map(|n| 0..n));
             let mut sink = output::PngSequence::new(out);
             rastersong_engine::render(
                 &backend,

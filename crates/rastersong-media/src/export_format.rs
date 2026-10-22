@@ -1,6 +1,8 @@
 //! The file formats RasterSong exports to. Each preset names a container, a video codec and an
 //! audio codec; which encoder implements it is decided by the backend when the file is opened.
 
+use rastersong_lang::{tr, tr_args};
+
 /// A format to write a render to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ExportFormat {
@@ -70,9 +72,51 @@ impl FormatKind {
         }
     }
 
+    /// The video codec's name, the same in every language.
+    pub fn codec_name(self) -> &'static str {
+        match self {
+            Self::H264 => "H.264",
+            Self::ProRes => "ProRes",
+            Self::Ffv1 => "FFV1",
+        }
+    }
+
     /// Whether the frame width and height must be even (formats with subsampled chroma).
     pub fn needs_even_size(self) -> bool {
         !matches!(self, Self::Ffv1)
+    }
+
+    /// The size closest to `width` × `height` this format can encode: one pixel more on an odd
+    /// side where sizes must be even.
+    pub fn nearest_size(self, width: u32, height: u32) -> (u32, u32) {
+        if self.needs_even_size() {
+            (width.next_multiple_of(2), height.next_multiple_of(2))
+        } else {
+            (width, height)
+        }
+    }
+
+    /// Why this format can't encode `width` × `height`, saying which side is odd and the
+    /// nearest size that works; `None` when it can.
+    pub fn size_problem(self, width: u32, height: u32) -> Option<String> {
+        let (even_width, even_height) = self.nearest_size(width, height);
+        let side = match (even_width != width, even_height != height) {
+            (false, false) => return None,
+            (true, false) => tr("export.odd_side.width"),
+            (false, true) => tr("export.odd_side.height"),
+            (true, true) => tr("export.odd_side.both"),
+        };
+        Some(tr_args(
+            "export.odd_size",
+            &[
+                ("format", self.codec_name()),
+                ("width", &width.to_string()),
+                ("height", &height.to_string()),
+                ("side", side),
+                ("even_width", &even_width.to_string()),
+                ("even_height", &even_height.to_string()),
+            ],
+        ))
     }
 }
 
@@ -122,6 +166,17 @@ mod tests {
         }
         assert_eq!(FormatKind::from_extension("MP4"), Some(FormatKind::H264));
         assert_eq!(FormatKind::from_extension("png"), None);
+    }
+
+    #[test]
+    fn odd_sizes_name_the_odd_side_and_the_size_that_works() {
+        assert_eq!(FormatKind::H264.size_problem(1920, 1080), None);
+        assert_eq!(FormatKind::Ffv1.size_problem(1919, 1079), None);
+        let message = FormatKind::ProRes.size_problem(1919, 1080).unwrap();
+        assert!(message.contains("1919×1080"), "{message}");
+        assert!(message.contains("odd width"), "{message}");
+        assert!(message.contains("1920×1080"), "{message}");
+        assert_eq!(FormatKind::H264.nearest_size(33, 17), (34, 18));
     }
 
     #[test]

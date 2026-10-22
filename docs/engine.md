@@ -274,8 +274,10 @@ and the node at fault.
 ## Export / Offline Rendering
 
 Export uses the same graph and engine as preview, rendering every frame in order from the start at full resolution
-as fast as possible. `offline::render` reports the frames done and the total after each frame to a `progress`
-callback, which cancels the render (`EngineError::Cancelled`) by returning `false`.
+as fast as possible. `RenderSettings::range` writes only some frames (the GUI's loop region); the renderer warms up
+before the range as far as the graph's warmup needs, uncapped, or renders from frame 0 when the graph's history is
+unbounded, so a range is exact too. `offline::render` reports the frames rendered and the total after each frame to
+a `progress` callback, which cancels the render (`EngineError::Cancelled`) by returning `false`.
 
 `export::export` is the one export path, used by the CLI and the GUI:
 

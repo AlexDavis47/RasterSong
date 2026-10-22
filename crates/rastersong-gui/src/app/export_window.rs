@@ -16,6 +16,7 @@ use rastersong_engine::{
 use rastersong_lang::{tr, tr_args};
 
 use super::App;
+use crate::timeline::timecode;
 use crate::value_box::ValueBox;
 
 /// What the Export window is set to, kept while the app runs.
@@ -27,6 +28,8 @@ pub(super) struct ExportDialog {
     bus: Option<String>,
     /// Output size; `None` is the project's.
     size: Option<(u32, u32)>,
+    /// Export only the loop region, when there is one.
+    region: bool,
 }
 
 impl Default for ExportDialog {
@@ -36,6 +39,7 @@ impl Default for ExportDialog {
             format: FormatKind::H264.default_format(),
             bus: None,
             size: None,
+            region: false,
         }
     }
 }
@@ -159,7 +163,7 @@ impl App {
         let settings = ExportSettings {
             format,
             size: self.export.size,
-            frames: None,
+            range: self.export_region(),
             bus,
         };
         let done = Arc::new(AtomicUsize::new(0));
@@ -310,6 +314,10 @@ impl App {
                 ui.end_row();
                 self.export.bus = (bus != master).then_some(bus);
 
+                ui.label(tr("export.range"));
+                self.export_range(ui);
+                ui.end_row();
+
                 ui.label(tr("export.size"));
                 self.export_size(ui);
                 ui.end_row();
@@ -327,18 +335,23 @@ impl App {
         );
 
         let (width, height) = self.export_output_size();
-        let odd = format.kind().needs_even_size() && (width % 2 == 1 || height % 2 == 1);
-        if odd {
-            ui.colored_label(
-                ui.visuals().warn_fg_color,
-                tr_args(
-                    "export.odd_size",
+        let problem = format.kind().size_problem(width, height);
+        let odd = problem.is_some();
+        if let Some(problem) = problem {
+            ui.colored_label(ui.visuals().warn_fg_color, problem);
+            let (even_width, even_height) = format.kind().nearest_size(width, height);
+            if ui
+                .button(tr_args(
+                    "export.odd_size.fix",
                     &[
-                        ("width", &width.to_string()),
-                        ("height", &height.to_string()),
+                        ("width", &even_width.to_string()),
+                        ("height", &even_height.to_string()),
                     ],
-                ),
-            );
+                ))
+                .clicked()
+            {
+                self.export.size = Some((even_width, even_height));
+            }
         }
 
         match &self.export_outcome {
@@ -367,16 +380,71 @@ impl App {
         }
     }
 
+    /// The project's size and frame rate: its own, or what the engine took from its video.
+    fn export_timebase(&self) -> Timebase {
+        self.project
+            .timebase
+            .or_else(|| self.engine.info().map(|info| info.timebase))
+            .unwrap_or(Timebase::DEFAULT)
+    }
+
     /// The size the export renders at: the chosen one, or the project's.
     fn export_output_size(&self) -> (u32, u32) {
         self.export.size.unwrap_or_else(|| {
-            let timebase = self
-                .project
-                .timebase
-                .or_else(|| self.engine.info().map(|info| info.timebase))
-                .unwrap_or(Timebase::DEFAULT);
+            let timebase = self.export_timebase();
             (timebase.width, timebase.height)
         })
+    }
+
+    /// The frames the export writes when set to the loop region and there is one; `None` is the
+    /// whole project.
+    fn export_region(&self) -> Option<std::ops::Range<usize>> {
+        let fps = self.export_timebase().frame_rate.as_f64();
+        self.project
+            .loop_region
+            .filter(|_| self.export.region)
+            .and_then(|region| region.frames(fps))
+    }
+
+    /// The whole project, or only its loop region.
+    fn export_range(&mut self, ui: &mut Ui) {
+        let length = self
+            .engine
+            .info()
+            .map_or(0.0, |info| info.frames as f64 / info.frame_rate.as_f64());
+        let whole = tr_args("export.range.whole", &[("length", &timecode(length))]);
+        let region = self.project.loop_region.map(|r| {
+            tr_args(
+                "export.range.region",
+                &[("start", &timecode(r.start)), ("end", &timecode(r.end))],
+            )
+        });
+        let mut chosen = self.export.region && region.is_some();
+        let response = egui::ComboBox::from_id_salt("export-range")
+            .selected_text(if chosen {
+                region.clone().unwrap_or_default()
+            } else {
+                whole.clone()
+            })
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut chosen, false, whole);
+                match region {
+                    Some(region) => {
+                        ui.selectable_value(&mut chosen, true, region);
+                    }
+                    None => {
+                        ui.label(RichText::new(tr("export.range.no_region")).weak());
+                    }
+                }
+            });
+        if self.project.loop_region.is_none() {
+            response
+                .response
+                .on_hover_text(tr("export.range.no_region"));
+        }
+        if self.project.loop_region.is_some() {
+            self.export.region = chosen;
+        }
     }
 
     /// The project's size, or a size of its own.

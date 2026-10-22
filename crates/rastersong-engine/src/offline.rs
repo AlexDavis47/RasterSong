@@ -1,13 +1,15 @@
 //! Offline rendering: every frame in order from the start, as fast as possible. Used by export
 //! ([`crate::export`]) and the CLI.
 
+use std::ops::Range;
+
 use rastersong_graph::{GraphDesc, Registry, Tempo};
 use rastersong_media::MediaBackend;
 
 use crate::timeline::{Bus, Timebase};
 use crate::{
-    AudioBlock, AudioSink, Composition, DEFAULT_AUDIO_RATE, EngineError, OutputSize, RenderInfo,
-    RenderTrack, Renderer,
+    AudioBlock, AudioSink, Composition, DEFAULT_AUDIO_RATE, EngineError, MAX_WARMUP_FRAMES_LIMIT,
+    OutputSize, RenderInfo, RenderTrack, Renderer,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -16,8 +18,10 @@ pub struct RenderSettings {
     pub timebase: Option<Timebase>,
     /// Processing and output size. `None` uses the project's size.
     pub size: Option<(u32, u32)>,
-    /// Render only the first `frames` frames.
-    pub frames: Option<usize>,
+    /// The frames to write, `start..end`, cut to the project's length; `None` is every frame.
+    /// Frames before the start are rendered first only as far as the graph needs history (from
+    /// the first frame when its history is unbounded), so the result is exact.
+    pub range: Option<Range<usize>>,
     /// The project tempo, for beat and bar units.
     pub tempo: Tempo,
     /// The rate the graph's sound is rendered at; `None` is [`DEFAULT_AUDIO_RATE`].
@@ -30,7 +34,8 @@ pub struct RenderSettings {
     pub composition: Option<Composition>,
 }
 
-/// One rendered frame, as packed RGB8.
+/// One rendered frame, as packed RGB8. `index` is its frame in the project, so a range starts
+/// past 0.
 #[derive(Debug)]
 pub struct RenderedFrame<'a> {
     pub index: usize,
@@ -49,9 +54,11 @@ pub trait FrameSink {
     fn frame(&mut self, frame: RenderedFrame) -> Result<(), EngineError>;
 }
 
-/// Renders `tracks` through `graph` (or `settings.composition`) into `sink`, starting from frame 0 so
-/// the result is exact. `progress` hears the frames done and the total after each frame, and
-/// cancels the render with [`EngineError::Cancelled`] by returning `false`.
+/// Renders `tracks` through `graph` (or `settings.composition`) into `sink`: every frame, or
+/// `settings.range`, exactly. `progress` hears the frames rendered and the total after each
+/// frame (warmup before the range included), and cancels the render with
+/// [`EngineError::Cancelled`] by returning `false`. The returned info's `frames` is the number
+/// of frames written.
 pub fn render(
     backend: &dyn MediaBackend,
     tracks: &[RenderTrack],
@@ -87,18 +94,26 @@ pub fn render(
         ),
     }?;
     renderer.set_audio_rate(settings.audio_rate.unwrap_or(DEFAULT_AUDIO_RATE));
+    // Warm up as far as the graph remembers, however far that is.
+    renderer.set_max_warmup_frames(MAX_WARMUP_FRAMES_LIMIT);
     let mut info = *renderer.info();
-    if let Some(limit) = settings.frames {
-        info.frames = info.frames.min(limit);
-    }
+    let range = settings.range.clone().unwrap_or(0..info.frames);
+    let range = range.start.min(info.frames)..range.end.min(info.frames);
+    // A graph whose history is unbounded (feedback) is exact only rendered from the start.
+    let unbounded = renderer.warmup_frames() >= MAX_WARMUP_FRAMES_LIMIT as usize;
+    let first = if unbounded { 0 } else { range.start };
+    info.frames = range.len();
     sink.start(&info, &renderer.audio_sink())?;
-    for index in 0..info.frames {
+    let total = range.end.saturating_sub(first);
+    for index in first..range.end {
         renderer
             .render(index, &|| false)?
             .expect("offline renders are never cancelled");
-        let (rgb, audio) = renderer.output();
-        sink.frame(RenderedFrame { index, rgb, audio })?;
-        if !progress(index + 1, info.frames) {
+        if index >= range.start {
+            let (rgb, audio) = renderer.output();
+            sink.frame(RenderedFrame { index, rgb, audio })?;
+        }
+        if !progress(index + 1 - first, total) {
             return Err(EngineError::Cancelled);
         }
     }
@@ -179,6 +194,31 @@ mod tests {
     }
 
     #[test]
+    fn a_range_writes_only_its_frames() {
+        let settings = RenderSettings {
+            range: Some(3..6),
+            ..Default::default()
+        };
+        let mut sink = Recorder::default();
+        let info = run(&settings, &mut sink).unwrap();
+        assert_eq!(info.frames, 3);
+        assert_eq!(sink.info.unwrap().frames, 3);
+        // The fake video's red channel is the frame index.
+        assert_eq!(
+            sink.frames,
+            [(3, 24, 3), (4, 24, 4), (5, 24, 5)],
+            "the frames of the whole render, from 3"
+        );
+        // A range past the end is cut to the project.
+        let settings = RenderSettings {
+            range: Some(8..50),
+            ..Default::default()
+        };
+        let mut sink = Recorder::default();
+        assert_eq!(run(&settings, &mut sink).unwrap().frames, 2);
+    }
+
+    #[test]
     fn renders_every_frame_in_order() {
         let mut sink = Recorder::default();
         let info = run(&RenderSettings::default(), &mut sink).unwrap();
@@ -193,7 +233,7 @@ mod tests {
     fn honors_size_and_frame_limit() {
         let settings = RenderSettings {
             size: Some((2, 2)),
-            frames: Some(3),
+            range: Some(0..3),
             ..Default::default()
         };
         let mut sink = Recorder::default();
