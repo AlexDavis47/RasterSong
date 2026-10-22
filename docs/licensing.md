@@ -19,15 +19,17 @@ Because the code isn't open source, outside contributions will require a contrib
 - **Dynamically link** FFmpeg and ship its shared libraries alongside the app. Static linking under the LGPL would require providing relinkable object files.
 - LGPL obligations we meet:
   - Ship FFmpeg as separate, replaceable shared libraries
-  - Credit FFmpeg and include the LGPL license text in the app (About / licenses screen) and installer
+  - Credit FFmpeg (the About dialog) and ship the LGPL license text with the libraries (`FFmpeg-LICENSE.txt` in
+    every package, and in the installer once there is one)
   - Publish the exact FFmpeg source version and configure line used for each release
   - Don't restrict users from replacing the FFmpeg libraries or reverse engineering for that purpose
 - Users never download or install FFmpeg themselves. Downloading FFmpeg at runtime was considered and rejected: it doesn't help with licensing and hurts reliability (offline use, firewalls, antivirus, version drift).
 
 ## Codec Patents
 
-Codec patents are separate from copyright licenses. H.264 export goes through OS and hardware encoders, which are
-licensed by the platform vendor. ProRes and FFV1 export use FFmpeg's own LGPL encoders.
+Codec patents are separate from copyright licenses. Today the only encoder used is FFmpeg's own lossless FFV1 (with
+PCM audio), in the CLI. H.264 export is planned to go through OS and hardware encoders, which are licensed by the
+platform vendor, and ProRes through FFmpeg's own LGPL encoder.
 
 ## Other Dependencies
 

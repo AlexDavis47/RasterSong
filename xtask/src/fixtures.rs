@@ -117,6 +117,18 @@ const FIXTURES: &[Fixture] = &[
         args: &["-f", "lavfi", "-i", TONE, "-t", "2", "-c:a", "aac", "-b:a", "96k"],
     },
     Fixture {
+        name: "two_audio.mkv",
+        purpose: "One video and two titled audio streams (mono 440 Hz, stereo 880 Hz), for choosing streams on import",
+        args: &[
+            "-f", "lavfi", "-i", "testsrc2=size=64x48:rate=30:duration=1",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=1",
+            "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000:duration=1",
+            "-map", "0", "-map", "1", "-map", "2", "-c:v", "ffv1", "-c:a", "pcm_s16le", "-ac:a:1", "2",
+            "-metadata:s:a:0", "title=Music", "-metadata:s:a:0", "language=eng",
+            "-metadata:s:a:1", "title=Voice",
+        ],
+    },
+    Fixture {
         name: "rgb_pattern.mkv",
         purpose: "Moving test pattern in lossless 8-bit RGB FFV1, for golden renders (decodes identically everywhere)",
         args: &[

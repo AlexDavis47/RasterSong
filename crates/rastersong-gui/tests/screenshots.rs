@@ -13,9 +13,13 @@ use eframe::egui;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use rastersong_engine::{
-    AudioClip, FakeBackend, FakeVideo, GraphDesc, Project, ProjectTrack, Rational, TimelineMode,
+    AudioClip, FakeBackend, FakeVideo, GraphDesc, ItemRef, Project, Rational, TimelineMode,
+    TrackKind,
 };
 use rastersong_gui::theme::WireStyle;
+
+mod common;
+use common::TrackLists;
 use rastersong_gui::{App, AudioOut, STARTER_GRAPH, ThemeChoice};
 
 fn app(theme: ThemeChoice) -> App {
@@ -27,6 +31,15 @@ fn app_with_tracks(theme: ThemeChoice, tracks: usize) -> App {
 }
 
 fn app_in_mode(theme: ThemeChoice, tracks: usize, mode: TimelineMode) -> App {
+    app_edited(theme, tracks, mode, |_| {})
+}
+
+fn app_edited(
+    theme: ThemeChoice,
+    tracks: usize,
+    mode: TimelineMode,
+    edit: impl FnOnce(&mut Project),
+) -> App {
     let backend = FakeBackend::new()
         .with_video(
             "clip",
@@ -46,16 +59,48 @@ fn app_in_mode(theme: ThemeChoice, tracks: usize, mode: TimelineMode) -> App {
             },
         );
     let mut project = Project::new(GraphDesc::from_json(STARTER_GRAPH).unwrap());
-    project.video = Some(PathBuf::from("clip"));
+    project.add_track(TrackKind::Video, "video", "clip");
     project.timeline_mode = mode;
     for name in ["audio", "drums", "bass"].into_iter().take(tracks) {
-        project
-            .audio_tracks
-            .push(ProjectTrack::new(name.into(), PathBuf::from("song")));
+        project.add_track(TrackKind::Audio, name, "song");
     }
+    edit(&mut project);
     let mut app = App::new(Arc::new(backend), project, None, AudioOut::silent(None));
     with_theme(&mut app, theme);
     app
+}
+
+#[test]
+#[ignore = "needs a GPU; run explicitly to look at the UI"]
+fn bus_screenshots() {
+    let mut harness = gpu_harness(app_edited(
+        ThemeChoice::Dark,
+        3,
+        TimelineMode::Time,
+        |project| {
+            project.buses.push(rastersong_engine::Bus {
+                name: "Stems".into(),
+                channels: 6,
+            });
+            project.track_of_mut(TrackKind::Audio, 1).bus = "Stems".into();
+        },
+    ));
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while harness.state().engine().info().is_none() {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for the project"
+        );
+        harness.step();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    harness.run_steps(3);
+    save(&mut harness, "buses-timeline");
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
+    harness.run_steps(2);
+    harness.get_by_label("Project").click();
+    harness.run_steps(3);
+    save(&mut harness, "buses-settings");
 }
 
 fn with_theme(app: &mut App, theme: ThemeChoice) {
@@ -453,7 +498,7 @@ fn two_track_app(theme: ThemeChoice) -> App {
     app_with_tracks(theme, 2)
 }
 
-/// Dragging a track header to reorder, and Alt+click on mute to solo.
+/// Dragging a track header to reorder, and soloing a track.
 #[test]
 #[ignore = "needs a GPU; run explicitly to look at the UI"]
 fn track_screenshots() {
@@ -462,8 +507,15 @@ fn track_screenshots() {
     wait_for_frames(&mut harness, 10);
     save(&mut harness, "dark-16-two-tracks");
 
-    // Drag the second header above the first.
-    let from = egui::pos2(205.0, 842.0);
+    // Drag the second audio header above the first, by its kind icon.
+    let from = harness
+        .get_all_by_label("♪")
+        .nth(1)
+        .unwrap()
+        .rect()
+        .center();
+    let x = from.x;
+    let row = rastersong_gui::timeline::LANE_HEIGHT;
     harness.event(egui::Event::PointerMoved(from));
     harness.run_steps(1);
     harness.event(egui::Event::PointerButton {
@@ -473,13 +525,13 @@ fn track_screenshots() {
         modifiers: egui::Modifiers::NONE,
     });
     harness.run_steps(1);
-    for y in [830.0, 800.0, 760.0, 742.0] {
-        harness.event(egui::Event::PointerMoved(egui::pos2(205.0, y)));
+    for y in [0.2, 0.5, 0.8, 1.0].map(|t| from.y - row * t) {
+        harness.event(egui::Event::PointerMoved(egui::pos2(x, y)));
         harness.run_steps(2);
     }
     save(&mut harness, "dark-17-track-drag");
     harness.event(egui::Event::PointerButton {
-        pos: egui::pos2(205.0, 742.0),
+        pos: egui::pos2(x, from.y - row),
         button: egui::PointerButton::Primary,
         pressed: false,
         modifiers: egui::Modifiers::NONE,
@@ -489,39 +541,117 @@ fn track_screenshots() {
     let names: Vec<String> = harness
         .state()
         .project()
-        .audio_tracks
+        .audios()
         .iter()
         .map(|t| t.name.clone())
         .collect();
     assert_eq!(names, ["drums", "audio"]);
 
-    // Alt+click the first track's mute button: solo.
-    let mutes = harness.get_all_by_label("🔊");
-    let first = mutes.into_iter().next().unwrap().rect().center();
-    harness.event(egui::Event::PointerMoved(first));
-    harness.run_steps(1);
-    for pressed in [true, false] {
-        harness.event_modifiers(
-            egui::Event::PointerButton {
-                pos: first,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: egui::Modifiers::ALT,
-            },
-            egui::Modifiers::ALT,
-        );
-        harness.run_steps(1);
-    }
-    harness.run_steps(3);
+    // The first audio track's solo button (the video's is first).
+    harness.get_all_by_label("S").nth(1).unwrap().click();
+    harness.run_steps(4);
     save(&mut harness, "dark-19-solo");
-    let muted: Vec<bool> = harness
+    let solo: Vec<bool> = harness
         .state()
         .project()
-        .audio_tracks
+        .audios()
         .iter()
-        .map(|t| t.muted)
+        .map(|t| t.solo)
         .collect();
-    assert_eq!(muted, [false, true]);
+    assert_eq!(solo, [true, false]);
+}
+
+/// The sections: two graph tracks over the video and audio, a graph item selected with its
+/// inspector open.
+#[test]
+#[ignore = "needs a GPU; run explicitly to look at the UI"]
+fn graph_track_screenshots() {
+    let app = app_edited(ThemeChoice::Dark, 2, TimelineMode::Time, |project| {
+        let side = project.add_graph(
+            "Sidechain",
+            Some(
+                GraphDesc::from_json(
+                    r#"{ "version": 0, "nodes": [
+                        { "id": "v", "type": "video_input" },
+                        { "id": "k", "type": "audio_input", "params": { "port": "Kick" } },
+                        { "id": "o", "type": "output" } ],
+                        "connections": [ { "from": "v", "to": "o" } ] }"#,
+                )
+                .unwrap(),
+            ),
+        );
+        let open = project.graph_id;
+        let bottom = project.add_graph_track("Graphs");
+        project.place_graph(&bottom, open, 0.0, 2.0);
+        let top = project.add_graph_track("Graphs");
+        project.place_graph(&top, side, 0.5, 1.0);
+        project.set_graph_source(
+            &top,
+            0,
+            "Kick",
+            rastersong_engine::Source::Track("audio".into()),
+        );
+    });
+    let mut harness = gpu_harness(app);
+    wait_for_frames(&mut harness, 10);
+    save(&mut harness, "dark-28-graph-tracks");
+    let bar = harness.state().timeline_layout().graph_lanes[0];
+    let x = harness.state().timeline_view().x(bar.left(), 1.0);
+    let at = egui::pos2(x, bar.top() + 7.0);
+    harness.event(egui::Event::PointerMoved(at));
+    harness.run_steps(1);
+    for pressed in [true, false] {
+        harness.event(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(1);
+    }
+    harness.run_steps(4);
+    save(&mut harness, "dark-29-graph-item-inspector");
+    assert!(harness.state().selected_graph_item().is_some());
+}
+
+/// Tracks of several items, a muted item, grouped items and a taller track.
+#[test]
+#[ignore = "needs a GPU; run explicitly to look at the UI"]
+fn item_screenshots() {
+    use rastersong_engine::Item;
+    let app = app_edited(ThemeChoice::Dark, 2, TimelineMode::Time, |project| {
+        project.track_of_mut(TrackKind::Video, 0).items = vec![
+            Item {
+                end: Some(1.5),
+                ..Item::whole(0.0)
+            },
+            Item {
+                start: 2.0,
+                ..Item::whole(2.0)
+            },
+        ];
+        project.track_of_mut(TrackKind::Audio, 0).items = project.videos()[0].items.clone();
+        project.track_of_mut(TrackKind::Audio, 1).items = vec![
+            Item {
+                end: Some(1.0),
+                ..Item::whole(0.5)
+            },
+            Item {
+                muted: true,
+                start: 1.0,
+                ..Item::whole(2.5)
+            },
+        ];
+        project.track_of_mut(TrackKind::Audio, 1).height = Some(110.0);
+        let (video, audio) = (
+            project.videos()[0].name.clone(),
+            project.audios()[0].name.clone(),
+        );
+        project.group_items(&[ItemRef::new(video, 0), ItemRef::new(audio, 0)]);
+    });
+    let mut harness = gpu_harness(app);
+    wait_for_frames(&mut harness, 10);
+    save(&mut harness, "dark-20-items");
 }
 
 #[test]
@@ -702,4 +832,31 @@ fn meter_screenshots() {
     std::thread::sleep(Duration::from_millis(60));
     harness.step();
     save(&mut harness, "dark-24-inspect-transition");
+}
+
+/// A resource card dragged over the timeline: the drag bubble at the pointer, the card faded.
+#[test]
+#[ignore = "needs a GPU; run explicitly to look at the UI"]
+fn drag_bubble_screenshots() {
+    let mut harness = gpu_harness(app(ThemeChoice::Dark));
+    wait_for_frames(&mut harness, 10);
+    let card = harness.get_by_label("clip").rect().center();
+    let area = harness.state().timeline_area();
+    let to = egui::pos2(area.center().x, area.bottom() - 30.0);
+    harness.event(egui::Event::PointerMoved(card));
+    harness.run_steps(1);
+    harness.event(egui::Event::PointerButton {
+        pos: card,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.run_steps(1);
+    for t in [0.25, 0.5, 0.75, 1.0] {
+        harness.event(egui::Event::PointerMoved(card + (to - card) * t));
+        harness.run_steps(1);
+    }
+    // Past the pick-up bloop.
+    harness.run_steps(20);
+    save(&mut harness, "dark-30-drag-bubble");
 }

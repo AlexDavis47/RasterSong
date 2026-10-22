@@ -3,9 +3,10 @@
 mod common;
 
 use std::cell::Cell;
+use std::sync::Arc;
 
 use common::{FINITE, FRAMES, INFINITE, renderer, renderer_with, sequential};
-use rastersong_engine::{OutputSize, Registry};
+use rastersong_engine::{OutputSize, Registry, RenderTrack};
 
 /// Deterministic jumps around the video: backwards, far forwards, small hops.
 fn jumpy_order() -> Vec<usize> {
@@ -46,10 +47,9 @@ fn seeking_is_close_for_infinite_memory_graphs() {
 /// even when it has none.
 #[test]
 fn the_audio_layout_exists_without_a_track_named_audio() {
-    use common::{AUDIO, VIDEO, backend};
+    use common::{AUDIO, backend};
     use rastersong_engine::sources::Modulator;
-    use rastersong_engine::{AudioTrack, GraphDesc};
-    use std::path::Path;
+    use rastersong_engine::{GraphDesc, RenderTrack};
     use std::sync::Arc;
     let graph = GraphDesc::from_json(
         r#"{ "version": 0,
@@ -65,18 +65,15 @@ fn the_audio_layout_exists_without_a_track_named_audio() {
           ] }"#,
     )
     .unwrap();
-    let song = || AudioTrack {
-        name: AUDIO.into(),
-        modulator: Arc::new(Modulator::new(&common::audio())),
-        offset: 0.0,
-    };
+    let song = || RenderTrack::audio(AUDIO, Arc::new(Modulator::new(&common::audio())), 0.0);
     for tracks in [vec![song()], vec![]] {
         let mut r = rastersong_engine::Renderer::new(
             &backend(),
-            Path::new(VIDEO),
-            &tracks,
+            None,
+            &common::tracks(tracks),
             &graph,
             Default::default(),
+            &rastersong_engine::Bus::main(),
             &Registry::default(),
             OutputSize::Native,
         )
@@ -186,17 +183,16 @@ fn latency_is_compensated_across_seeks() {
 
 #[test]
 fn stereo_tracks_reach_the_graph_interleaved() {
-    use std::path::Path;
     use std::sync::Arc;
 
     use rastersong_engine::sources::Modulator;
-    use rastersong_engine::{AudioClip, AudioTrack, ChannelMap, GraphDesc, Kind, Renderer};
+    use rastersong_engine::{AudioClip, ChannelMap, GraphDesc, Kind, RenderTrack, Renderer};
 
     // Left is a constant 0.5, right -0.5; the graph splits off the right and shows its level.
     let clip = AudioClip {
         sample_rate: 9000,
         channels: 2,
-        samples: [0.5, -0.5].repeat(9000 * 3),
+        samples: [0.5, -0.5].repeat(9000 * 3).into(),
     };
     let graph = r#"{ "version": 0,
       "nodes": [
@@ -209,14 +205,15 @@ fn stereo_tracks_reach_the_graph_interleaved() {
       ] }"#;
     let mut r = Renderer::new(
         &common::backend(),
-        Path::new(common::VIDEO),
-        &[AudioTrack {
-            name: "audio".into(),
-            modulator: Arc::new(Modulator::new(&clip)),
-            offset: 0.0,
-        }],
+        None,
+        &common::tracks(vec![RenderTrack::audio(
+            "Audio",
+            Arc::new(Modulator::new(&clip)),
+            0.0,
+        )]),
         &GraphDesc::from_json(graph).unwrap(),
         Default::default(),
+        &rastersong_engine::Bus::main(),
         &Registry::default(),
         OutputSize::Native,
     )
@@ -261,7 +258,7 @@ fn an_audio_output_renders_sound_with_each_frame() {
         r.audio_sink(),
         AudioSink::Rendered {
             sample_rate: 48_000,
-            channels: 1
+            channels: 2
         }
     );
     // 30 fps: exactly 1600 samples a frame at 48 kHz, one block after another.
@@ -290,7 +287,7 @@ fn an_audio_output_renders_sound_with_each_frame() {
 }
 
 #[test]
-fn a_track_wired_straight_to_the_audio_output_is_passed_through() {
+fn a_track_wired_straight_to_the_audio_output_is_rendered_as_it_is() {
     use rastersong_engine::AudioSink;
 
     let graph = SOUND.replace(
@@ -298,42 +295,46 @@ fn a_track_wired_straight_to_the_audio_output_is_passed_through() {
         r#"{ "from": "audio", "to": "sound" }"#,
     );
     let mut r = renderer(&graph);
-    assert_eq!(r.audio_sink(), AudioSink::Passthrough("audio".into()));
-    r.render(0, &|| false).unwrap();
-    assert!(r.audio().is_none());
-    assert_eq!(renderer(common::FINITE).audio_sink(), AudioSink::Source);
+    // The port reads the track called `Audio` on its own, which isn't the mix: rendered.
+    assert!(matches!(r.audio_sink(), AudioSink::Rendered { .. }));
+    r.render(3, &|| false).unwrap();
+    let peak = r
+        .audio()
+        .unwrap()
+        .samples
+        .iter()
+        .fold(0.0f32, |m, x| m.max(x.abs()));
+    assert!((0.7..=0.81).contains(&peak), "{peak}");
+    assert_eq!(renderer(common::FINITE).audio_sink(), AudioSink::TrackMix);
 }
 
 #[test]
 fn tracks_at_different_rates_meet_in_one_graph() {
-    use std::path::Path;
     use std::sync::Arc;
 
     use rastersong_engine::sources::Modulator;
-    use rastersong_engine::{AudioClip, AudioSink, AudioTrack, GraphDesc, Renderer, Severity};
+    use rastersong_engine::{AudioClip, AudioSink, GraphDesc, RenderTrack, Renderer, Severity};
 
     // A 9 kHz mono track and a 16 kHz stereo one, combined into the audio output: their blocks
     // differ in length (300 and 533 frames at 30 fps), so the second is stretched to the first.
     let mono = AudioClip {
         sample_rate: 9_000,
         channels: 1,
-        samples: vec![0.25; 9_000 * 3],
+        samples: vec![0.25; 9_000 * 3].into(),
     };
     let stereo = AudioClip {
         sample_rate: 16_000,
         channels: 2,
-        samples: [0.5, -0.5].repeat(16_000 * 3),
+        samples: [0.5, -0.5].repeat(16_000 * 3).into(),
     };
-    let track = |name: &str, clip: &AudioClip| AudioTrack {
-        name: name.into(),
-        modulator: Arc::new(Modulator::new(clip)),
-        offset: 0.0,
+    let track = |name: &str, clip: &AudioClip| {
+        RenderTrack::audio(name, Arc::new(Modulator::new(clip)), 0.0)
     };
     let graph = r#"{ "version": 0,
       "nodes": [
         { "id": "video", "type": "video_input" },
-        { "id": "a", "type": "audio_input", "params": { "source": "low" } },
-        { "id": "b", "type": "audio_input", "params": { "source": "high" } },
+        { "id": "a", "type": "audio_input", "params": { "port": "low" } },
+        { "id": "b", "type": "audio_input", "params": { "port": "high" } },
         { "id": "mix", "type": "combine" }, { "id": "sound", "type": "audio_output" },
         { "id": "out", "type": "output" }
       ],
@@ -343,10 +344,11 @@ fn tracks_at_different_rates_meet_in_one_graph() {
       ] }"#;
     let mut r = Renderer::new(
         &common::backend(),
-        Path::new(common::VIDEO),
-        &[track("low", &mono), track("high", &stereo)],
+        None,
+        &common::tracks(vec![track("low", &mono), track("high", &stereo)]),
         &GraphDesc::from_json(graph).unwrap(),
         Default::default(),
+        &rastersong_engine::Bus::main(),
         &Registry::default(),
         OutputSize::Native,
     )
@@ -402,4 +404,220 @@ fn the_warmup_cap_limits_only_the_pre_render_never_the_effect() {
             .unwrap()
     };
     assert!(seek_error(0) > seek_error(9999));
+}
+
+/// Renders the video track `video` through a passthrough graph on `timebase`, and returns the red
+/// value (the fake video's frame index) and size of every frame.
+fn passthrough_frames(
+    timebase: Option<rastersong_engine::Timebase>,
+    video: rastersong_engine::RenderTrack,
+) -> (rastersong_engine::RenderInfo, Vec<u8>) {
+    use rastersong_engine::{GraphDesc, Renderer};
+    let mut r = Renderer::new(
+        &common::backend(),
+        timebase,
+        &[video],
+        &GraphDesc::from_json(common::FINITE_PASSTHROUGH).unwrap(),
+        Default::default(),
+        &rastersong_engine::Bus::main(),
+        &Registry::default(),
+        OutputSize::Native,
+    )
+    .unwrap();
+    let info = *r.info();
+    let reds = (0..info.frames)
+        .map(|i| r.render(i, &|| false).unwrap().unwrap()[0])
+        .collect();
+    (info, reds)
+}
+
+#[test]
+fn the_project_timebase_is_the_clock() {
+    use rastersong_engine::{Rational, RenderTrack, Timebase};
+
+    // Without a timebase of its own the project takes the first video's.
+    let (info, reds) = passthrough_frames(None, RenderTrack::video("Video", common::VIDEO));
+    assert_eq!(
+        (info.width, info.height, info.frames),
+        (16, 8, common::FRAMES)
+    );
+    assert_eq!(info.frame_rate, Rational::new(30, 1));
+    assert_eq!(reds, (0..common::FRAMES as u8).collect::<Vec<_>>());
+
+    // At half the video's rate and size, every other frame is shown, scaled to the project.
+    let timebase = Timebase {
+        width: 8,
+        height: 4,
+        frame_rate: Rational::new(15, 1),
+    };
+    let (info, reds) =
+        passthrough_frames(Some(timebase), RenderTrack::video("Video", common::VIDEO));
+    assert_eq!((info.width, info.height, info.frames), (8, 4, 30));
+    assert_eq!(info.timebase, timebase);
+    assert_eq!(reds, (0..30).map(|i| 2 * i as u8).collect::<Vec<_>>());
+}
+
+#[test]
+fn items_place_the_video_and_gaps_read_zeros() {
+    use rastersong_engine::{Item, RenderTrack};
+
+    // Half a second in, from frame 10 of the video to frame 30, at double speed: 10 frames.
+    let mut video = RenderTrack::video("Video", common::VIDEO);
+    video.items = vec![Item {
+        position: 0.5,
+        start: 10.0 / 30.0,
+        end: Some(1.0),
+        rate: 2.0,
+        ..Item::whole(0.5)
+    }];
+    let (info, reds) = passthrough_frames(None, video.clone());
+    assert_eq!(info.frames, 25);
+    assert!(reds[..15].iter().all(|&r| r == 0), "before the item: zeros");
+    assert_eq!(
+        reds[15..],
+        (0..10).map(|i| 10 + 2 * i as u8).collect::<Vec<_>>()
+    );
+
+    // A muted item is a gap.
+    video.items[0].muted = true;
+    let (_, reds) = passthrough_frames(None, video);
+    assert!(reds.iter().all(|&r| r == 0));
+}
+
+#[test]
+fn the_main_port_reads_the_mix_and_a_port_naming_no_track_reads_zeros() {
+    use rastersong_engine::{GraphDesc, RenderTrack, Renderer};
+
+    // The master's main Video port is the tracks' mix, whatever they are called.
+    let (info, reds) = passthrough_frames(None, RenderTrack::video("other", common::VIDEO));
+    assert_eq!(info.frames, common::FRAMES);
+    assert_eq!(reds, (0..common::FRAMES as u8).collect::<Vec<_>>());
+
+    let named = common::FINITE_PASSTHROUGH.replace(
+        r#""type": "video_input""#,
+        r#""type": "video_input", "params": { "port": "Nope" }"#,
+    );
+    let mut r = Renderer::new(
+        &common::backend(),
+        None,
+        &[RenderTrack::video("other", common::VIDEO)],
+        &GraphDesc::from_json(&named).unwrap(),
+        Default::default(),
+        &rastersong_engine::Bus::main(),
+        &Registry::default(),
+        OutputSize::Native,
+    )
+    .unwrap();
+    for i in 0..common::FRAMES {
+        assert!(
+            r.render(i, &|| false)
+                .unwrap()
+                .unwrap()
+                .iter()
+                .all(|&b| b == 0)
+        );
+    }
+}
+
+#[test]
+fn without_graphs_the_top_video_track_playing_shows() {
+    use rastersong_engine::{GraphDesc, Item, Renderer, single_composition};
+
+    // Track `top` plays the first half second of the clip from 1 s; `bottom` the whole clip.
+    let top_track = || RenderTrack {
+        items: vec![Item {
+            end: Some(0.5),
+            ..Item::whole(1.0)
+        }],
+        ..RenderTrack::video("top", common::VIDEO)
+    };
+    let top = top_track();
+    let bottom = RenderTrack::video("bottom", common::VIDEO);
+    let graph = GraphDesc::from_json(common::FINITE).unwrap();
+    let tracks = [top, bottom];
+    let mut r = Renderer::with_composition(
+        &common::backend(),
+        None,
+        &tracks,
+        &single_composition(&tracks, &graph).without_graphs(),
+        &graph,
+        Default::default(),
+        &rastersong_engine::Bus::main(),
+        &Registry::default(),
+        OutputSize::Native,
+    )
+    .unwrap();
+    let reds: Vec<u8> = (0..common::FRAMES)
+        .map(|i| r.render(i, &|| false).unwrap().unwrap()[0])
+        .collect();
+    let expected: Vec<u8> = (0..common::FRAMES as u8)
+        .map(|i| if (30..45).contains(&i) { i - 30 } else { i })
+        .collect();
+    assert_eq!(reds, expected);
+
+    // Out of the mix (muted, or another soloed), the top track is skipped: the bottom shows.
+    let top = RenderTrack {
+        in_mix: false,
+        ..top_track()
+    };
+    let tracks = [top, RenderTrack::video("bottom", common::VIDEO)];
+    let mut r = Renderer::with_composition(
+        &common::backend(),
+        None,
+        &tracks,
+        &single_composition(&tracks, &graph).without_graphs(),
+        &graph,
+        Default::default(),
+        &rastersong_engine::Bus::main(),
+        &Registry::default(),
+        OutputSize::Native,
+    )
+    .unwrap();
+    let reds: Vec<u8> = (0..common::FRAMES)
+        .map(|i| r.render(i, &|| false).unwrap().unwrap()[0])
+        .collect();
+    assert_eq!(reds, (0..common::FRAMES as u8).collect::<Vec<_>>());
+}
+
+#[test]
+fn only_the_rendered_bus_has_its_audio_output_compiled() {
+    use rastersong_engine::{AudioSink, Bus, GraphDesc, Renderer};
+
+    let graph = GraphDesc::from_json(&SOUND.replace(
+        r#"{ "id": "sound", "type": "audio_output" }"#,
+        r#"{ "id": "sound", "type": "audio_output", "params": { "bus": "Surround" } }"#,
+    ))
+    .unwrap();
+    let sink_for = |bus: &Bus| {
+        let r = Renderer::new(
+            &common::backend(),
+            None,
+            &common::tracks(vec![RenderTrack::audio(
+                "Audio",
+                Arc::new(rastersong_engine::sources::Modulator::new(&common::audio())),
+                0.0,
+            )]),
+            &graph,
+            Default::default(),
+            bus,
+            &Registry::default(),
+            OutputSize::Native,
+        )
+        .unwrap();
+        r.audio_sink()
+    };
+    // Main has no Audio Output: it plays its track mix.
+    assert_eq!(sink_for(&Bus::main()), AudioSink::TrackMix);
+    // The Surround bus renders it with its six channels, mono going to every one.
+    let surround = Bus {
+        name: "Surround".into(),
+        channels: 6,
+    };
+    assert_eq!(
+        sink_for(&surround),
+        AudioSink::Rendered {
+            sample_rate: 48_000,
+            channels: 6
+        }
+    );
 }

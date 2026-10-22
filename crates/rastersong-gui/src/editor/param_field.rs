@@ -215,11 +215,14 @@ pub fn param_field(
         *value = value.clamp(shown.0, shown.1);
         *custom = Some(shown);
     }
+    // The handle runs along the rail, inset from the track's ends; the value under the pointer is
+    // the one whose handle is drawn there.
+    let rail = Rect::from_center_size(rect.center(), vec2(rect.width() - 8.0, 4.0));
     if (track.clicked() || track.dragged())
         && !ui.input(|i| i.modifiers.alt)
         && let Some(p) = track.interact_pointer_pos()
     {
-        let t = f64::from((p.x - rect.left()) / rect.width());
+        let t = f64::from((p.x - rail.left()) / rail.width());
         *value = from_fraction(t, shown);
         if range.whole {
             *value = value.round().clamp(range.limits.0, range.limits.1);
@@ -227,7 +230,6 @@ pub fn param_field(
     }
 
     let fraction = |v: f64| to_fraction(v, shown) as f32;
-    let rail = Rect::from_center_size(rect.center(), vec2(rect.width() - 8.0, 4.0));
     let x = |v: f64| rail.left() + rail.width() * fraction(v);
     paint_rail(ui, rail, x(*value));
     if let Some(m) = &modulated {

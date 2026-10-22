@@ -6,12 +6,13 @@ pub mod audio_out;
 pub mod editor;
 pub mod effects;
 pub mod history;
+pub mod item_inspector;
 pub mod name_edit;
 pub mod preview;
+pub mod resources;
 pub mod settings;
 pub mod theme;
 pub mod timeline;
-pub mod track_ops;
 pub mod value_box;
 pub mod widgets;
 

@@ -11,13 +11,14 @@ use rastersong_graph::Tempo;
 use rastersong_media::AudioClip;
 
 use crate::AudioBlock;
+use crate::timeline::Item;
 
 /// One track in the mix.
 #[derive(Debug, Clone)]
 pub struct MixTrack {
     pub clip: Arc<AudioClip>,
-    /// Seconds the track starts after the video.
-    pub offset: f64,
+    /// Where the clip plays on the timeline.
+    pub items: Vec<Item>,
     /// Linear gain; 0 for muted.
     pub gain: f32,
 }
@@ -55,12 +56,38 @@ impl Mixer {
     }
 
     /// Writes `out.len() / 2` interleaved stereo frames at `rate` Hz, starting at `start` seconds
-    /// of video time. Time outside a track is silence; mono tracks play in both channels.
+    /// of timeline time. Time outside a track's items is silence; mono tracks play in both
+    /// channels.
     pub fn render(&self, start: f64, rate: f64, out: &mut [f32]) {
         out.fill(0.0);
         if let Some((source, gain)) = &self.rendered {
             render_blocks(source.as_ref(), *gain, start, rate, out);
         }
+        self.mix_tracks(start, rate, out.as_chunks_mut::<2>().0);
+    }
+
+    /// Writes the tracks' mix as `out.len() / channels` interleaved frames of `channels` at `rate`
+    /// Hz, starting at `start` seconds, as a bus of that many channels sums them: a mono track
+    /// plays in every channel, any other track's channels go to the bus's channels in order
+    /// (channels the bus doesn't have are left out, and channels the track doesn't have are
+    /// silent). Rendered sound, if any, is left out.
+    pub fn render_channels(&self, start: f64, rate: f64, channels: usize, out: &mut [f32]) {
+        out.fill(0.0);
+        match channels {
+            1 => self.mix_tracks(start, rate, out.as_chunks_mut::<1>().0),
+            2 => self.mix_tracks(start, rate, out.as_chunks_mut::<2>().0),
+            3 => self.mix_tracks(start, rate, out.as_chunks_mut::<3>().0),
+            4 => self.mix_tracks(start, rate, out.as_chunks_mut::<4>().0),
+            5 => self.mix_tracks(start, rate, out.as_chunks_mut::<5>().0),
+            6 => self.mix_tracks(start, rate, out.as_chunks_mut::<6>().0),
+            7 => self.mix_tracks(start, rate, out.as_chunks_mut::<7>().0),
+            8 => self.mix_tracks(start, rate, out.as_chunks_mut::<8>().0),
+            _ => {}
+        }
+    }
+
+    /// Adds the tracks to `out`, frames of `N` channels at `rate` from `start` seconds.
+    fn mix_tracks<const N: usize>(&self, start: f64, rate: f64, out: &mut [[f32; N]]) {
         for track in self.tracks.iter().filter(|t| t.gain > 0.0) {
             let clip = &track.clip;
             let channels = clip.channels as usize;
@@ -68,19 +95,44 @@ impl Mixer {
             if frames < 2 || channels == 0 {
                 continue;
             }
-            let step = f64::from(clip.sample_rate) / rate;
-            let mut pos = (start - track.offset) * f64::from(clip.sample_rate);
-            for frame in out.as_chunks_mut::<2>().0 {
-                if pos >= 0.0 && pos < (frames - 1) as f64 {
-                    let i = pos as usize;
-                    let frac = (pos - i as f64) as f32;
-                    let at = |f: usize, c: usize| clip.samples[f * channels + c.min(channels - 1)];
-                    for (c, out) in frame.iter_mut().enumerate() {
-                        let a = at(i, c);
-                        *out += (a + (at(i + 1, c) - a) * frac) * track.gain;
+            let duration = clip.duration_secs();
+            // A mono track plays in every channel; channels a track doesn't have are silent.
+            let source_channel = |c: usize| {
+                if channels == 1 {
+                    Some(0)
+                } else {
+                    (c < channels).then_some(c)
+                }
+            };
+            let at = |f: usize, c: usize| clip.samples[f * channels + c];
+            for (j, frame) in out.iter_mut().enumerate() {
+                let t = start + j as f64 / rate;
+                // Each item is mixed over the ones before it by its gain, which fades at its
+                // edges, as the renderer's track readers do (`Modulator::fill_items`).
+                let mut mixed = [0.0f32; N];
+                for item in &track.items {
+                    let g = item.gain_at(t, duration) as f32;
+                    if g <= 0.0 {
+                        continue;
+                    }
+                    let pos = item.source_time(t) * f64::from(clip.sample_rate);
+                    for (c, mixed) in mixed.iter_mut().enumerate() {
+                        let x = if let Some(c) = source_channel(c)
+                            && pos >= 0.0
+                            && pos < (frames - 1) as f64
+                        {
+                            let i = pos as usize;
+                            let a = at(i, c);
+                            a + (at(i + 1, c) - a) * (pos - i as f64) as f32
+                        } else {
+                            0.0
+                        };
+                        *mixed += (x - *mixed) * g;
                     }
                 }
-                pos += step;
+                for (out, mixed) in frame.iter_mut().zip(mixed) {
+                    *out += mixed * track.gain;
+                }
             }
         }
     }
@@ -344,7 +396,7 @@ mod tests {
     fn mixer(clip: Arc<AudioClip>) -> Mixer {
         Mixer::new(vec![MixTrack {
             clip,
-            offset: 0.0,
+            items: vec![Item::whole(0.0)],
             gain: 1.0,
         }])
     }
@@ -380,17 +432,17 @@ mod tests {
         let clip = Arc::new(AudioClip {
             sample_rate: 4,
             channels: 2,
-            samples: vec![1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0],
+            samples: vec![1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0].into(),
         });
         let mixer = Mixer::new(vec![
             MixTrack {
                 clip: clip.clone(),
-                offset: 1.0,
+                items: vec![Item::whole(1.0)],
                 gain: 0.5,
             },
             MixTrack {
                 clip,
-                offset: 0.0,
+                items: vec![Item::whole(0.0)],
                 gain: 0.0,
             },
         ]);
@@ -398,8 +450,9 @@ mod tests {
         // 4 Hz output from 0 s: the track starts at 1 s and lasts 1 s.
         mixer.render(0.0, 4.0, &mut out);
         assert_eq!(&out[..8], [0.0; 8], "before the offset: silence");
+        assert_eq!(&out[8..10], [0.0; 2], "the item's edge, where it fades in");
         assert_eq!(
-            &out[8..12],
+            &out[10..14],
             [0.5, -0.5, 0.5, -0.5],
             "left and right kept, gain applied"
         );

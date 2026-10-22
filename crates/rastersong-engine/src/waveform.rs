@@ -17,8 +17,10 @@ pub type Peak = (f32, f32);
 #[derive(Debug, Clone)]
 pub struct Waveform {
     sample_rate: f64,
-    /// The mono mix, for zooms finer than the first level.
-    samples: Vec<f32>,
+    /// The clip, shared (usually mapped from the audio cache), mixed to mono where zooms finer
+    /// than the first level read it.
+    clip: AudioClip,
+    channels: usize,
     /// `levels[k]` holds peaks over buckets of `BASE_BUCKET × LEVEL_FACTOR^k` samples.
     levels: Vec<Vec<Peak>>,
 }
@@ -27,15 +29,10 @@ impl Waveform {
     /// Mixes `clip` to mono (by averaging its channels) and builds its peak pyramid.
     pub fn new(clip: &AudioClip) -> Self {
         let channels = clip.channels.max(1) as usize;
-        let samples: Vec<f32> = clip
-            .samples
-            .chunks_exact(channels)
-            .map(|frame| frame.iter().sum::<f32>() / channels as f32)
-            .collect();
         let mut levels: Vec<Vec<Peak>> = vec![
-            samples
-                .chunks(BASE_BUCKET)
-                .map(|chunk| peak_of(chunk.iter().map(|&s| (s, s))))
+            clip.samples
+                .chunks(BASE_BUCKET * channels)
+                .map(|chunk| peak_of(mono(chunk, channels).map(|s| (s, s))))
                 .collect(),
         ];
         while levels.last().is_some_and(|l| l.len() > 1) {
@@ -49,13 +46,19 @@ impl Waveform {
         }
         Self {
             sample_rate: f64::from(clip.sample_rate.max(1)),
-            samples,
+            clip: clip.clone(),
+            channels,
             levels,
         }
     }
 
+    /// Samples per channel.
+    fn frames(&self) -> usize {
+        self.clip.samples.len() / self.channels
+    }
+
     pub fn duration_secs(&self) -> f64 {
-        self.samples.len() as f64 / self.sample_rate
+        self.frames() as f64 / self.sample_rate
     }
 
     /// Peaks of `buckets` equal slices of the time from `start` to `end` seconds (relative to
@@ -80,7 +83,7 @@ impl Waveform {
             let t0 = start + (end - start) * b as f64 / buckets as f64;
             let t1 = start + (end - start) * (b + 1) as f64 / buckets as f64;
             let s0 = (t0 * self.sample_rate).floor().max(0.0) as usize;
-            let s1 = ((t1 * self.sample_rate).ceil().max(0.0) as usize).min(self.samples.len());
+            let s1 = ((t1 * self.sample_rate).ceil().max(0.0) as usize).min(self.frames());
             let peak = if s0 >= s1 {
                 (0.0, 0.0)
             } else {
@@ -92,12 +95,22 @@ impl Waveform {
                         let i0 = (s0 / bucket).min(i1.saturating_sub(1));
                         peak_of(peaks[i0..i1].iter().copied())
                     }
-                    None => peak_of(self.samples[s0..s1].iter().map(|&s| (s, s))),
+                    None => {
+                        let samples = &self.clip.samples[s0 * self.channels..s1 * self.channels];
+                        peak_of(mono(samples, self.channels).map(|s| (s, s)))
+                    }
                 }
             };
             out.push(peak);
         }
     }
+}
+
+/// Interleaved `samples` mixed to mono by averaging each frame's channels.
+fn mono(samples: &[f32], channels: usize) -> impl Iterator<Item = f32> + '_ {
+    samples
+        .chunks_exact(channels)
+        .map(move |frame| frame.iter().sum::<f32>() / channels as f32)
 }
 
 fn peak_of(peaks: impl Iterator<Item = Peak>) -> Peak {
@@ -114,7 +127,7 @@ mod tests {
         AudioClip {
             sample_rate,
             channels: 1,
-            samples,
+            samples: samples.into(),
         }
     }
 

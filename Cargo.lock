@@ -3416,7 +3416,9 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "ffmpeg-next",
+ "memmap2",
  "rastersong-lang",
+ "sha2",
  "tracing",
 ]
 

@@ -11,7 +11,7 @@ and [Node authoring](node-authoring.md); for what CI checks see [Testing](testin
   - **macOS:** no trustworthy prebuilt LGPL shared build exists, so it downloads the official source release, verifies it and builds it (several minutes, once).
 - `.cargo/config.toml` points `FFMPEG_DIR` at `third_party/ffmpeg/`, and `rastersong-media`'s build script copies the shared libraries next to the binaries and tests Cargo builds, so `cargo run` and `cargo test` need no PATH changes.
 - The BtbN development builds are configured with `--enable-version3` (LGPL **v3**) and carry dozens of external libraries, each with its own license and source obligations. They are never shipped.
-- Packages ship the **release FFmpeg** instead: `cargo xtask build-ffmpeg` builds it from the official source release into `third_party/ffmpeg-release/` on every platform (`xtask/src/release_ffmpeg.rs`). It is LGPL v2.1 or later, with no external libraries except zlib, no programs, no avdevice or avfilter, all demuxers and decoders, and only the encoders the app uses. Its build checks that the libraries link nothing but each other and system libraries. Windows builds it with MSYS2's UCRT64 toolchain (`pacman -S make diffutils mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-nasm mingw-w64-ucrt-x86_64-zlib`; set `MSYS2_ROOT` if it isn't in `C:\msys64`). macOS builds arm64 and x86_64 separately and merges them into universal libraries.
+- Packages ship the **release FFmpeg** instead: `cargo xtask build-ffmpeg` builds it from the official source release into `third_party/ffmpeg-release/` on every platform (`xtask/src/release_ffmpeg.rs`). It is LGPL v2.1 or later, with no external libraries except zlib (and, on Windows, statically linked winpthreads and libgcc), no programs, no avdevice or avfilter, all demuxers and decoders, and only the encoders the app uses. Its build checks that the libraries link nothing but each other and system libraries. Windows builds it with MSYS2's UCRT64 toolchain (`pacman -S make diffutils mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-nasm mingw-w64-ucrt-x86_64-zlib`; set `MSYS2_ROOT` if it isn't in `C:\msys64`). macOS builds arm64 and x86_64 separately and merges them into universal libraries.
 - The HEVC decoder is behind one switch (`HEVC_DECODER` in `release_ffmpeg.rs`), pending a decision on HEVC patent licensing before any paid release.
 - Tests in `rastersong-media` fail if the loaded FFmpeg reports any non-LGPL license, was configured with `--enable-gpl` or `--enable-nonfree`, or doesn't match the major version the bindings were built against.
 
@@ -23,9 +23,11 @@ cargo xtask fixtures       # generate media test fixtures into fixtures/
 cargo test --workspace
 cargo run -p rastersong-gui
 
-# Render a video through a graph, modulated by an audio file, to a lossless .mkv or to a
-# directory of PNG frames. The .mkv's soundtrack is the graph's Audio Output (rendered at
-# --audio-rate, 48000 by default), or the audio file untouched when the graph has none
+# Render a project, or a video through a graph modulated by an audio file, to a lossless .mkv or
+# to a directory of PNG frames. The .mkv's soundtrack is the master bus (or --bus <name>): the
+# graph's Audio Output for it (rendered at --audio-rate: the project's, or 48000), or the mix of
+# the audio tracks routed to it when the graph has none, with the bus's channels
+cargo run --release -p rastersong-cli -- render my-project.rastersong out.mkv
 cargo run --release -p rastersong-cli -- render video.mp4 song.wav examples/graphs/am_bands.json out.mkv
 cargo run --release -p rastersong-cli -- render video.mp4 song.wav graph.json frames/ --size 320x180 --frames 60
 cargo run --release -p rastersong-cli -- render video.mp4 song.wav graph.json out.mkv --audio-offset -1.5
@@ -61,8 +63,8 @@ packages, the FFmpeg source and the notes in `.github/release-notes.md`, which t
 unsigned builds. Nothing is signed or notarized yet, so Windows SmartScreen and macOS Gatekeeper warn on first
 launch.
 
-Planned for paid releases:
+`cargo xtask dist` already builds the macOS `.app` (FFmpeg libraries in `Frameworks/` via rpath) and the Linux
+AppImage. Planned for paid releases:
 
-- **Windows:** installer, FFmpeg DLLs next to the executable
-- **macOS:** `.app` bundle, FFmpeg libraries in `Frameworks/` via rpath
-- **Linux:** AppImage
+- **Windows:** an installer (today a zip with the FFmpeg DLLs next to the executable)
+- Code signing on Windows and macOS, and notarization on macOS

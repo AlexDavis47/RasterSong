@@ -67,16 +67,14 @@ impl History {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
-    use rastersong_engine::GraphDesc;
+    use rastersong_engine::{GraphDesc, TrackKind};
 
     use super::*;
 
     fn project(video: &str) -> Project {
         let mut project =
             Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
-        project.video = Some(PathBuf::from(video));
+        project.add_track(TrackKind::Video, "video", video);
         project
     }
 

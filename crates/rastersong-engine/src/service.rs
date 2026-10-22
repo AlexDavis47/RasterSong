@@ -3,25 +3,29 @@
 
 use std::collections::HashMap;
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 
 use rastersong_graph::{CompileOptions, GraphDesc, NodeStats, Registry, Tempo, render_form};
 use rastersong_lang::{tr, tr_args};
-use rastersong_media::{AudioClip, AudioOptions, MediaBackend};
+use rastersong_media::{AudioCache, AudioClip, MediaBackend};
 
 use crate::audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE, SinkResampler};
 use crate::cache::{CacheKey, Frame, FrameCache};
+use crate::composition::Composition;
 use crate::listen::{self, ListenTarget, Listened};
 use crate::playback::RenderedSource;
 use crate::project::{DEFAULT_MAX_WARMUP_FRAMES, MAX_WARMUP_FRAMES_LIMIT};
 use crate::renderer;
 use crate::sources::Modulator;
 use crate::tap::{self, TapOutcome, TapRequest};
+use crate::timeline::{Timebase, Timeline, TrackKind, TrackSpec, items_end};
 use crate::waveform::Waveform;
-use crate::{AudioTrack, EngineError, OutputSize, RenderInfo, Renderer};
+use crate::{
+    EngineError, OutputSize, RenderInfo, RenderTrack, Renderer, TrackMedia, single_composition,
+};
 
 /// Preview resolution. Processing cost scales with pixel count, so a quarter-scale preview is
 /// about 16× cheaper. Because parameters are in normalized units, it looks like a scaled-down
@@ -86,6 +90,8 @@ pub struct EngineConfig {
     pub cache_bytes: usize,
     /// How far ahead of the playhead to render, memory permitting.
     pub lookahead_secs: f64,
+    /// Where decoded audio is kept and memory-mapped from. `None` decodes audio into memory.
+    pub audio_cache: Option<AudioCache>,
 }
 
 impl Default for EngineConfig {
@@ -93,18 +99,9 @@ impl Default for EngineConfig {
         Self {
             cache_bytes: 1 << 30,
             lookahead_secs: 10.0,
+            audio_cache: None,
         }
     }
-}
-
-/// An audio track as the project describes it.
-#[derive(Debug, Clone, PartialEq)]
-pub struct AudioTrackSpec {
-    /// The name audio input nodes select it by.
-    pub name: String,
-    pub path: PathBuf,
-    /// Seconds the track starts after the video (before it, if negative).
-    pub offset: f64,
 }
 
 /// A decoded audio track, for playback and display.
@@ -124,6 +121,9 @@ pub struct Failure {
     pub node: Option<String>,
     /// The message without the "node `id`:" lead-in, for showing under the node's name.
     pub detail: String,
+    /// The placed graph at fault, by id, when a graph item's graph failed; `None` when the graph
+    /// given to [`Engine::set_graph`] did. `node` is a node of this graph.
+    pub graph: Option<u32>,
 }
 
 impl Failure {
@@ -133,6 +133,7 @@ impl Failure {
             detail: message.clone(),
             message,
             node: None,
+            graph: None,
         }
     }
 
@@ -140,11 +141,17 @@ impl Failure {
         Self {
             message: error.to_string(),
             detail: match error {
-                EngineError::Graph(e) => e.detail(),
+                EngineError::Graph(e) | EngineError::Fx { error: e, .. } => e.detail(),
                 other => other.to_string(),
             },
             node: match error {
-                EngineError::Graph(e) => e.node().map(str::to_owned),
+                EngineError::Graph(e) | EngineError::Fx { error: e, .. } => {
+                    e.node().map(str::to_owned)
+                }
+                _ => None,
+            },
+            graph: match error {
+                EngineError::Fx { graph, .. } => Some(*graph),
                 _ => None,
             },
         }
@@ -166,7 +173,7 @@ pub struct RenderProgress {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum EngineStatus {
-    /// No video or graph yet.
+    /// No tracks or graph yet.
     Idle,
     /// Opening media and compiling the graph.
     Loading,
@@ -224,10 +231,12 @@ struct TapDone {
 }
 
 struct State {
-    video: Option<PathBuf>,
-    tracks: Vec<AudioTrackSpec>,
+    timeline: Timeline,
     graph: Option<GraphDesc>,
-    /// Skips the whole graph: the video goes straight to the output.
+    /// The project's composition; `None` renders `graph` over the whole timeline, its ports
+    /// named after tracks reading them.
+    composition: Option<Composition>,
+    /// Skips every graph: the output is the mix.
     bypass_all: bool,
     tempo: Tempo,
     key: CacheKey,
@@ -258,9 +267,13 @@ struct State {
 
 /// The parts of the project a renderer is built from.
 struct Snapshot {
-    video: PathBuf,
-    tracks: Vec<AudioTrackSpec>,
+    timeline: Timeline,
+    /// The open graph.
     graph: GraphDesc,
+    /// The project's composition, if it has one.
+    composition: Option<Composition>,
+    /// Skips every graph.
+    bypass_all: bool,
     tempo: Tempo,
     audio_rate: u32,
     max_warmup_frames: u32,
@@ -283,9 +296,9 @@ impl Engine {
             cache: Mutex::new(FrameCache::new(key, config.cache_bytes)),
             config: Mutex::new(config),
             state: Mutex::new(State {
-                video: None,
-                tracks: Vec::new(),
+                timeline: Timeline::default(),
                 graph: None,
+                composition: None,
                 bypass_all: false,
                 tempo: Tempo::default(),
                 key,
@@ -298,7 +311,7 @@ impl Engine {
                 compile_options: None,
                 audio_rate: DEFAULT_AUDIO_RATE,
                 max_warmup_frames: DEFAULT_MAX_WARMUP_FRAMES,
-                audio_sink: AudioSink::Source,
+                audio_sink: AudioSink::TrackMix,
                 tap: None,
                 listen: None,
                 changes: 0,
@@ -343,16 +356,22 @@ impl Engine {
         *lock(&self.shared.on_update) = Some(Arc::new(callback));
     }
 
-    pub fn set_video(&self, video: Option<PathBuf>) {
-        self.edit(|state| state.video = video);
-    }
-
-    /// The audio tracks. Audio inputs naming a track that isn't here read silence.
-    pub fn set_audio_tracks(&self, tracks: Vec<AudioTrackSpec>) {
-        if lock(&self.shared.state).tracks == tracks {
-            return;
+    /// The timebase and tracks to render. Input nodes naming a track that isn't here read
+    /// zeros. Setting the timeline already in use changes nothing.
+    pub fn set_timeline(&self, timeline: Timeline) {
+        {
+            let mut state = lock(&self.shared.state);
+            if state.timeline == timeline {
+                return;
+            }
+            // Audio track levels and buses only shape the audio mix, which isn't rendered here:
+            // changing them keeps every rendered frame.
+            if state.timeline.renders_like(&timeline) {
+                state.timeline = timeline;
+                return;
+            }
         }
-        self.edit(|state| state.tracks = tracks);
+        self.edit(|state| state.timeline = timeline);
     }
 
     /// The graph to render. Setting a graph that renders the same as the one in use changes
@@ -363,9 +382,7 @@ impl Engine {
             let state = lock(&self.shared.state);
             if let Some(old) = &state.graph {
                 let registry = Registry::shared();
-                if render_form(old, registry, state.bypass_all)
-                    == render_form(&graph, registry, state.bypass_all)
-                {
+                if render_form(old, registry) == render_form(&graph, registry) {
                     return;
                 }
             }
@@ -373,7 +390,26 @@ impl Engine {
         self.edit(|state| state.graph = Some(graph));
     }
 
-    /// Skips the whole graph, as if the video were plugged straight into the output.
+    /// Sets the project's composition: its tracks, graph tracks and the graphs they use; see
+    /// [Composition](../../../docs/engine.md#composition). `None` renders the open graph (see
+    /// [`Self::set_graph`]) over the whole timeline, its ports named after tracks reading them. Like
+    /// [`Self::set_graph`], changes that don't alter what the graphs render (labels, positions,
+    /// nodes that feed nothing) are not edits.
+    pub fn set_composition(&self, composition: Option<Composition>) {
+        let composition = composition.map(|mut composition| {
+            let registry = Registry::shared();
+            for (_, graph) in &mut composition.graphs {
+                *graph = render_form(graph, registry);
+            }
+            composition
+        });
+        if lock(&self.shared.state).composition == composition {
+            return;
+        }
+        self.edit(|state| state.composition = composition);
+    }
+
+    /// Skips every graph: the output shows and plays the mix.
     pub fn set_bypass_all(&self, bypass: bool) {
         if lock(&self.shared.state).bypass_all == bypass {
             return;
@@ -505,7 +541,7 @@ impl Engine {
     pub fn tap(&self, request: &TapRequest) -> TapOutcome {
         let mut state = lock(&self.shared.state);
         if matches!(state.status, EngineStatus::Failed(_))
-            || state.video.is_none()
+            || state.timeline.tracks.is_empty()
             || state.graph.is_none()
         {
             return TapOutcome::NotRendered;
@@ -677,7 +713,8 @@ impl Wanted {
 }
 
 /// Decoded audio by file, so editing the graph or an offset doesn't decode again.
-type AudioCache = HashMap<PathBuf, DecodedAudio>;
+/// Decoded audio by file and stream.
+type DecodedFiles = HashMap<(PathBuf, Option<usize>), DecodedAudio>;
 
 #[derive(Clone)]
 struct DecodedAudio {
@@ -695,7 +732,7 @@ struct Worker {
     tap_failed: Option<CacheKey>,
     /// Turns the listened connection's signal into sound, for the connection it was made for.
     listen_sink: Option<ListenSink>,
-    audio: AudioCache,
+    audio: DecodedFiles,
     /// The `changes` count when the project last failed; nothing is retried until it moves.
     failed_at: Option<u64>,
 }
@@ -783,7 +820,9 @@ impl Worker {
                 // Nothing is asking, and what it would answer with is out of date.
                 self.tap_built = None;
             }
-            if let (Some(video), Some(graph), false) = (&state.video, &state.graph, stuck) {
+            if let (false, Some(graph), false) =
+                (state.timeline.tracks.is_empty(), &state.graph, stuck)
+            {
                 if (state.tap.is_some() || state.listen.is_some())
                     && self.tap_failed != Some(state.key)
                 {
@@ -804,7 +843,7 @@ impl Worker {
                         return Some(Job::BuildTap {
                             key: state.key,
                             edits: self.shared.edits.load(Ordering::SeqCst),
-                            project: Self::snapshot(&state, video, graph),
+                            project: Self::snapshot(&state, graph),
                         });
                     }
                 }
@@ -816,12 +855,12 @@ impl Worker {
                 let job = Job::Build {
                     key: state.key,
                     edits: self.shared.edits.load(Ordering::SeqCst),
-                    project: Self::snapshot(&state, video, graph),
+                    project: Self::snapshot(&state, graph),
                 };
                 state.status = EngineStatus::Loading;
                 return Some(job);
             }
-            if state.video.is_none() || state.graph.is_none() {
+            if state.timeline.tracks.is_empty() || state.graph.is_none() {
                 state.status = EngineStatus::Idle;
             }
             let seen = state.changes;
@@ -834,11 +873,12 @@ impl Worker {
     }
 
     /// The parts of the project a renderer is built from.
-    fn snapshot(state: &State, video: &Path, graph: &GraphDesc) -> Snapshot {
+    fn snapshot(state: &State, graph: &GraphDesc) -> Snapshot {
         Snapshot {
-            video: video.to_owned(),
-            tracks: state.tracks.clone(),
-            graph: render_form(graph, Registry::shared(), state.bypass_all),
+            timeline: state.timeline.clone(),
+            graph: render_form(graph, Registry::shared()),
+            composition: state.composition.clone(),
+            bypass_all: state.bypass_all,
             tempo: state.tempo,
             audio_rate: state.audio_rate,
             max_warmup_frames: state.max_warmup_frames,
@@ -864,7 +904,7 @@ impl Worker {
 
     fn build(&mut self, key: CacheKey, edits: u64, project: Snapshot) {
         self.built = None;
-        let tracks = self.load_tracks(&project.tracks);
+        let tracks = self.load_tracks(&project.timeline.tracks);
         let result = tracks.and_then(|(tracks, loaded)| {
             // Publish the audio even if the graph turns out not to compile: playback needs it.
             lock(&self.shared.state).loaded = loaded;
@@ -874,21 +914,7 @@ impl Worker {
         // A graph that can't render shouldn't hide the video: the timeline and playhead still
         // need its length and frame rate.
         let video_info = match &result {
-            Err(_) => self
-                .shared
-                .backend
-                .open_video(&project.video)
-                .ok()
-                .map(|video| {
-                    let info = video.info();
-                    let (width, height) = key.scale.output_size().resolve(info.width, info.height);
-                    RenderInfo {
-                        width,
-                        height,
-                        frame_rate: info.frame_rate,
-                        frames: info.frame_count,
-                    }
-                }),
+            Err(_) => self.fallback_info(&project.timeline, key),
             Ok(_) => None,
         };
 
@@ -911,7 +937,7 @@ impl Worker {
                 state.status = EngineStatus::Failed(failure);
                 state.info = video_info;
                 state.node_stats.clear();
-                state.audio_sink = AudioSink::Source;
+                state.audio_sink = AudioSink::TrackMix;
                 self.failed_at = Some(state.changes);
             }
         }
@@ -922,19 +948,47 @@ impl Worker {
     /// A renderer for `project` at the preview scale of `key`.
     fn renderer(
         &self,
-        tracks: &[AudioTrack],
+        tracks: &[RenderTrack],
         key: CacheKey,
         project: &Snapshot,
     ) -> Result<Renderer, Failure> {
-        Renderer::new(
-            self.shared.backend.as_ref(),
-            &project.video,
-            tracks,
-            &project.graph,
-            project.tempo,
-            Registry::shared(),
-            key.scale.output_size(),
-        )
+        let backend = self.shared.backend.as_ref();
+        let (timebase, bus) = (project.timeline.timebase, project.timeline.master());
+        let size = key.scale.output_size();
+        let registry = Registry::shared();
+        match (&project.composition, project.bypass_all) {
+            (None, false) => Renderer::new(
+                backend,
+                timebase,
+                tracks,
+                &project.graph,
+                project.tempo,
+                &bus,
+                registry,
+                size,
+            ),
+            (composition, bypass) => {
+                let composition = composition
+                    .clone()
+                    .unwrap_or_else(|| single_composition(tracks, &project.graph));
+                let composition = if bypass {
+                    composition.without_graphs()
+                } else {
+                    composition
+                };
+                Renderer::with_composition(
+                    backend,
+                    timebase,
+                    tracks,
+                    &composition,
+                    &project.graph,
+                    project.tempo,
+                    &bus,
+                    registry,
+                    size,
+                )
+            }
+        }
         .map(|mut renderer| {
             renderer.set_audio_rate(project.audio_rate);
             renderer.set_max_warmup_frames(project.max_warmup_frames);
@@ -948,7 +1002,7 @@ impl Worker {
     fn build_tap(&mut self, key: CacheKey, edits: u64, project: Snapshot) {
         self.tap_built = None;
         let renderer = self
-            .load_tracks(&project.tracks)
+            .load_tracks(&project.timeline.tracks)
             .and_then(|(tracks, _)| self.renderer(&tracks, key, &project));
         if self.shared.edits.load(Ordering::SeqCst) != edits {
             return; // Edited while building; the tap asks again.
@@ -1044,6 +1098,8 @@ impl Worker {
                             resampler: SinkResampler::new(
                                 shape.0,
                                 shape.1,
+                                // Played in stereo, as the preview is.
+                                if shape.1 == 1 { 1 } else { 2 },
                                 info.frame_rate.as_f64(),
                                 rate,
                             ),
@@ -1099,48 +1155,115 @@ impl Worker {
     /// Decodes each track (reusing earlier decodes of the same file).
     fn load_tracks(
         &mut self,
-        specs: &[AudioTrackSpec],
-    ) -> Result<(Vec<AudioTrack>, Vec<LoadedTrack>), Failure> {
+        specs: &[TrackSpec],
+    ) -> Result<(Vec<RenderTrack>, Vec<LoadedTrack>), Failure> {
         // Forget files no track uses any more.
-        self.audio
-            .retain(|path, _| specs.iter().any(|s| &s.path == path));
+        self.audio.retain(|(path, stream), _| {
+            specs
+                .iter()
+                .any(|s| s.kind == TrackKind::Audio && &s.path == path && s.stream == *stream)
+        });
         let mut tracks = Vec::with_capacity(specs.len());
         let mut loaded = Vec::with_capacity(specs.len());
         for spec in specs {
-            let decoded = match self.audio.get(&spec.path) {
-                Some(cached) => cached.clone(),
-                None => {
-                    let clip = self
-                        .shared
-                        .backend
-                        .load_audio(&spec.path, AudioOptions::default())
-                        .map_err(|e| {
-                            Failure::new(tr_args(
-                                "error.audio_track",
-                                &[("name", &spec.name), ("error", &e.to_string())],
-                            ))
-                        })?;
-                    let entry = DecodedAudio {
-                        modulator: Arc::new(Modulator::new(&clip)),
-                        waveform: Arc::new(Waveform::new(&clip)),
-                        clip: Arc::new(clip),
-                    };
-                    self.audio.insert(spec.path.clone(), entry.clone());
-                    entry
+            let media = match spec.kind {
+                TrackKind::Video => TrackMedia::Video {
+                    path: spec.path.clone(),
+                    stream: spec.stream,
+                },
+                TrackKind::Audio => {
+                    let decoded = self.decode(spec)?;
+                    loaded.push(LoadedTrack {
+                        name: spec.name.clone(),
+                        clip: decoded.clip,
+                        waveform: decoded.waveform,
+                    });
+                    TrackMedia::Audio(decoded.modulator)
                 }
             };
-            tracks.push(AudioTrack {
+            tracks.push(RenderTrack {
                 name: spec.name.clone(),
-                modulator: decoded.modulator,
-                offset: spec.offset,
-            });
-            loaded.push(LoadedTrack {
-                name: spec.name.clone(),
-                clip: decoded.clip,
-                waveform: decoded.waveform,
+                media,
+                items: spec.items.clone(),
+                in_mix: spec.gain > 0.0,
             });
         }
         Ok((tracks, loaded))
+    }
+
+    /// The audio of an audio track, decoded once per file.
+    fn decode(&mut self, spec: &TrackSpec) -> Result<DecodedAudio, Failure> {
+        let key = (spec.path.clone(), spec.stream);
+        if let Some(cached) = self.audio.get(&key) {
+            return Ok(cached.clone());
+        }
+        let backend = self.shared.backend.as_ref();
+        let options = spec.audio_options();
+        let audio_cache = lock(&self.shared.config).audio_cache.clone();
+        let clip = match &audio_cache {
+            Some(cache) => cache.load(backend, &spec.path, options),
+            None => backend.load_audio(&spec.path, options),
+        }
+        .map_err(|e| {
+            Failure::new(tr_args(
+                "error.audio_track",
+                &[("name", &spec.name), ("error", &e.to_string())],
+            ))
+        })?;
+        let entry = DecodedAudio {
+            modulator: Arc::new(Modulator::new(&clip)),
+            waveform: Arc::new(Waveform::new(&clip)),
+            clip: Arc::new(clip),
+        };
+        self.audio.insert(key, entry.clone());
+        Ok(entry)
+    }
+
+    /// The project's size, rate and length as far as they can be known without a renderer, for
+    /// a project whose graph can't render: the timeline and playhead still need them. Tracks
+    /// that can't be read count as empty.
+    fn fallback_info(&self, timeline: &Timeline, key: CacheKey) -> Option<RenderInfo> {
+        let backend = &self.shared.backend;
+        let mut first_video = None;
+        let mut end = 0.0_f64;
+        for track in &timeline.tracks {
+            let duration = match track.kind {
+                TrackKind::Video => {
+                    let Ok(video) = backend.open_video_stream(&track.path, track.stream) else {
+                        continue;
+                    };
+                    let info = video.info().clone();
+                    first_video.get_or_insert(Timebase {
+                        width: info.width,
+                        height: info.height,
+                        frame_rate: info.frame_rate,
+                    });
+                    info.frame_count as f64 / info.frame_rate.as_f64()
+                }
+                TrackKind::Audio => match self.audio.get(&(track.path.clone(), track.stream)) {
+                    Some(decoded) => decoded.clip.duration_secs(),
+                    None => continue,
+                },
+            };
+            end = end.max(items_end(&track.items, duration));
+        }
+        let timebase = timeline
+            .timebase
+            .or(first_video)
+            .unwrap_or(Timebase::DEFAULT);
+        timebase.is_valid().then(|| {
+            let (width, height) = key
+                .scale
+                .output_size()
+                .resolve(timebase.width, timebase.height);
+            RenderInfo {
+                width,
+                height,
+                frame_rate: timebase.frame_rate,
+                frames: timebase.frames_in(end),
+                timebase,
+            }
+        })
     }
 
     /// Frames ahead of the playhead to keep rendered: the lookahead time, limited so that most of

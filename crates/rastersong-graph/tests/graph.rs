@@ -14,11 +14,12 @@ fn options() -> CompileOptions {
         frame_rate: 30.0,
         tempo: Default::default(),
         sources: HashMap::from([
-            ("video".to_owned(), Layout::rgb(W, H)),
-            ("audio".to_owned(), Layout::audio(AUDIO)),
+            ("Video".to_owned(), Layout::rgb(W, H)),
+            ("Audio".to_owned(), Layout::audio(AUDIO)),
         ]),
         output: Layout::rgb(W, H),
         pixel_scale: 1.0,
+        audio_bus: "Main".to_owned(),
     }
 }
 
@@ -35,11 +36,11 @@ fn sources(video: impl Fn(usize) -> f32, audio: impl Fn(usize) -> f32) -> HashMa
     let (v, a) = (Layout::rgb(W, H), Layout::audio(AUDIO));
     HashMap::from([
         (
-            "video".to_owned(),
+            "Video".to_owned(),
             Signal::from_data(v, (0..v.len()).map(video).collect()),
         ),
         (
-            "audio".to_owned(),
+            "Audio".to_owned(),
             Signal::from_data(a, (0..a.len()).map(audio).collect()),
         ),
     ])
@@ -59,7 +60,7 @@ fn passthrough_returns_the_video() {
     let input = sources(|i| i as f32 / 100.0, |_| 0.0);
     let out = graph.process(0, &input).unwrap();
     assert!(out.layout.same_shape(&Layout::rgb(W, H)));
-    assert_eq!(out.data, input["video"].data);
+    assert_eq!(out.data, input["Video"].data);
     assert_eq!(graph.latency_frames(), 0);
 }
 
@@ -76,7 +77,7 @@ fn split_and_combine_round_trip_with_swapped_channels() {
     let mut graph = compile(&json).unwrap();
     let input = sources(|i| i as f32, |_| 0.0);
     let out = graph.process(0, &input).unwrap();
-    for (o, i) in out.data.chunks(3).zip(input["video"].data.chunks(3)) {
+    for (o, i) in out.data.chunks(3).zip(input["Video"].data.chunks(3)) {
         assert_eq!(o, [i[2], i[1], i[0]]);
     }
 }
@@ -90,7 +91,7 @@ fn interleave_and_pack_round_trip() {
     );
     let mut graph = compile(&json).unwrap();
     let input = sources(|i| i as f32, |_| 0.0);
-    assert_eq!(graph.process(0, &input).unwrap().data, input["video"].data);
+    assert_eq!(graph.process(0, &input).unwrap().data, input["Video"].data);
 }
 
 #[test]
@@ -122,7 +123,7 @@ fn modulators_are_resampled_to_the_carrier() {
 fn unused_nodes_are_not_run() {
     // A node reading a source the host doesn't provide is fine as long as it doesn't feed the output.
     let json = graph_json(
-        r#"{ "id": "video", "type": "video_input" }, { "id": "other", "type": "video_input", "params": { "source": "nope" } },
+        r#"{ "id": "video", "type": "video_input" }, { "id": "other", "type": "video_input", "params": { "port": "nope" } },
            { "id": "out", "type": "output" }"#,
         r#"{ "from": "video", "to": "out" }"#,
     );
@@ -147,12 +148,8 @@ fn unconnected_inputs_read_zeros() {
     assert!(out.data.iter().all(|x| x.is_finite()));
 }
 
-fn render_form_of(json: &str, bypass_all: bool) -> GraphDesc {
-    rastersong_graph::render_form(
-        &GraphDesc::from_json(json).unwrap(),
-        &Registry::default(),
-        bypass_all,
-    )
+fn render_form_of(json: &str) -> GraphDesc {
+    rastersong_graph::render_form(&GraphDesc::from_json(json).unwrap(), &Registry::default())
 }
 
 const CHAIN: &str = r#"{ "version": 0,
@@ -165,7 +162,7 @@ const CHAIN: &str = r#"{ "version": 0,
 
 #[test]
 fn render_form_ignores_nodes_that_do_not_feed_the_output() {
-    let base = render_form_of(CHAIN, false);
+    let base = render_form_of(CHAIN);
     // An orphan node, an orphan wired from the chain, and editor-only details change nothing.
     let with_orphans = CHAIN
         .replace(
@@ -178,33 +175,21 @@ fn render_form_ignores_nodes_that_do_not_feed_the_output() {
             r#"{ "from": "d", "to": "out" }"#,
             r#"{ "from": "d", "to": "out" }, { "from": "d", "to": "x" }, { "from": "n", "to": "x.@bits" }"#,
         );
-    assert_eq!(render_form_of(&with_orphans, false), base);
+    assert_eq!(render_form_of(&with_orphans), base);
     // Changing a node that does feed the output is a change.
     let louder = CHAIN.replace(r#""time": 1"#, r#""time": 2"#);
-    assert_ne!(render_form_of(&louder, false), base);
+    assert_ne!(render_form_of(&louder), base);
     // So is bypassing it, but bypassing an orphan is not.
     let bypassed = CHAIN.replace(
         r#""id": "d", "type": "delay""#,
         r#""id": "d", "type": "delay", "bypass": true"#,
     );
-    assert_ne!(render_form_of(&bypassed, false), base);
+    assert_ne!(render_form_of(&bypassed), base);
     let orphan_bypassed = with_orphans.replace(
         r#""id": "x", "type": "bitcrush""#,
         r#""id": "x", "type": "bitcrush", "bypass": true"#,
     );
-    assert_eq!(render_form_of(&orphan_bypassed, false), base);
-}
-
-#[test]
-fn render_form_with_global_bypass_wires_the_video_to_the_output() {
-    let form = render_form_of(CHAIN, true);
-    let ids: Vec<&str> = form.nodes.iter().map(|n| n.id.as_str()).collect();
-    assert_eq!(ids, ["video", "out"]);
-    let mut graph = Graph::compile(&form, &Registry::default(), &options()).unwrap();
-    let out = graph
-        .process(0, &sources(|i| i as f32 / 10.0, |_| 0.0))
-        .unwrap();
-    assert_eq!(out.data[3], 0.3);
+    assert_eq!(render_form_of(&orphan_bypassed), base);
 }
 
 #[test]
@@ -412,7 +397,7 @@ fn separate_channels_on_a_node_that_cant_fall_back_to_together_with_a_warning() 
             .any(|d| d.severity == rastersong_graph::Severity::Warning)
     );
     let input = sources(|i| i as f32, |_| 0.0);
-    assert_eq!(graph.process(0, &input).unwrap().data, input["video"].data);
+    assert_eq!(graph.process(0, &input).unwrap().data, input["Video"].data);
 }
 
 #[test]
@@ -515,7 +500,7 @@ fn stereo_options(frames: u32) -> CompileOptions {
     let mut options = options();
     options
         .sources
-        .insert("audio".into(), Layout::audio_channels(frames, 2));
+        .insert("Audio".into(), Layout::audio_channels(frames, 2));
     options
 }
 
@@ -551,7 +536,7 @@ fn stereo_splits_into_left_and_right_and_combines_back() {
         vec![1., -1., 2., -2., 3., -3.],
     );
     let mut input = sources(|_| 0.0, |_| 0.0);
-    input.insert("audio".into(), audio);
+    input.insert("Audio".into(), audio);
     graph.process(0, &input).unwrap();
     // The combined signal's level: right (-1, -2, -3) then left ten times (10, 20, 30).
     let level = graph
@@ -780,7 +765,7 @@ struct Level {
 impl Node for Level {
     fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
         ctx.sources
-            .get("video")
+            .get("Video")
             .map(|&layout| vec![layout])
             .ok_or_else(|| "needs the video's layout".to_owned())
     }
@@ -903,7 +888,7 @@ fn bypassed_nodes_pass_their_main_input_through() {
     let mut bypassed = compile(&json(r#", "bypass": true"#)).unwrap();
     assert_eq!(
         bypassed.process(0, &input).unwrap().data,
-        input["video"].data
+        input["Video"].data
     );
     assert_eq!(bypassed.latency_frames(), 0);
     // Without the flag the same chain is a real node chain, and the flag round-trips.
@@ -996,7 +981,7 @@ fn time_units_mean_the_same_together_and_separate() {
         assert_eq!(a, b, "frame {n}");
         if n > 0 {
             // Row 1 of this frame is row 0 of the same frame's input.
-            assert_eq!(a[row..2 * row], input["video"].data[..row]);
+            assert_eq!(a[row..2 * row], input["Video"].data[..row]);
         }
     }
 }
@@ -1068,14 +1053,21 @@ fn audio_outputs_without_input_or_processing_leave_the_source_audio_alone() {
            { "id": "sound", "type": "audio_output" }, { "id": "out", "type": "output" }"#,
         r#"{ "from": "video", "to": "out" }, { "from": "audio", "to": "sound" }"#,
     );
-    assert_eq!(compile(&json).unwrap().audio_passthrough(), Some("audio"));
+    assert_eq!(compile(&json).unwrap().audio_passthrough(), Some("Audio"));
+    // At another volume the sound is rendered, not passed through.
+    let louder = json.replace(
+        r#""type": "audio_output" }"#,
+        r#""type": "audio_output", "params": { "volume": -6 } }"#,
+    );
+    assert_ne!(louder, json);
+    assert_eq!(compile(&louder).unwrap().audio_passthrough(), None);
     // Unconnected audio outputs don't change what renders.
-    let with = render_form_of(&json, false);
+    let with = render_form_of(&json);
     let extra = json.replace(
         r#"{ "id": "out", "type": "output" }"#,
         r#"{ "id": "out", "type": "output" }, { "id": "idle", "type": "audio_output" }"#,
     );
-    assert_eq!(render_form_of(&extra, false), with);
+    assert_eq!(render_form_of(&extra), with);
 }
 
 #[test]
@@ -1087,8 +1079,26 @@ fn only_one_audio_output_and_nothing_reads_an_output() {
     );
     assert!(matches!(
         compile(&two),
-        Err(GraphError::AudioOutputCount(2))
+        Err(GraphError::AudioOutputCount { ref bus, count: 2 }) if bus == "Main"
     ));
+    // One per bus is fine, and only the rendered bus's is compiled.
+    let buses = GraphDesc::from_json(&two.replace(
+        r#""id": "b", "type": "audio_output""#,
+        r#""id": "b", "type": "audio_output", "params": { "bus": "Stems" }"#,
+    ))
+    .unwrap();
+    let audio_for = |bus: &str| {
+        let options = CompileOptions {
+            audio_bus: bus.to_owned(),
+            ..options()
+        };
+        Graph::compile(&buses, &Registry::default(), &options)
+            .unwrap()
+            .audio_layout()
+    };
+    assert!(audio_for("Main").is_some());
+    assert!(audio_for("Stems").is_some());
+    assert!(audio_for("Drums").is_none());
     let reads = graph_json(
         r#"{ "id": "video", "type": "video_input" }, { "id": "audio", "type": "audio_input" },
            { "id": "a", "type": "audio_output" }, { "id": "d", "type": "delay" }, { "id": "out", "type": "output" }"#,
@@ -1130,7 +1140,7 @@ fn both_outputs_line_up_at_the_later_latency() {
 }
 
 #[test]
-fn odd_audio_output_layouts_are_written_as_stereo_with_a_warning() {
+fn odd_audio_output_layouts_are_written_across_the_bus_with_a_warning() {
     let json = graph_json(
         r#"{ "id": "video", "type": "video_input" }, { "id": "a", "type": "to_audio" },
            { "id": "sound", "type": "audio_output" }, { "id": "out", "type": "output" }"#,
@@ -1139,7 +1149,7 @@ fn odd_audio_output_layouts_are_written_as_stereo_with_a_warning() {
     let graph = compile(&json).unwrap();
     let warnings = graph.diagnostics();
     assert_eq!(warnings.len(), 1, "{warnings:?}");
-    assert!(warnings[0].message.contains("stereo"));
+    assert!(warnings[0].message.contains("bus"));
 }
 
 /// A generator's parameter driven by a constant signal gives what the same value set by hand does.

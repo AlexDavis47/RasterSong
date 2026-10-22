@@ -110,13 +110,20 @@ pub struct Theme {
     pub preview_bg: Color32,
 
     pub lane_bg: Color32,
+    /// The outline around each timeline lane, so two tracks side by side read as two.
+    pub lane_outline: Color32,
     pub tick: Color32,
     pub tick_label: Color32,
     pub playhead: Color32,
     pub video_block: Color32,
     pub audio_block: Color32,
+    /// Graph items on the graph layers.
+    pub graph_block: Color32,
     pub block_text: Color32,
     pub cached: Color32,
+    /// The drag bubble that follows the pointer during a drag, and its text.
+    pub bubble: Color32,
+    pub bubble_text: Color32,
 }
 
 impl Theme {
@@ -162,13 +169,17 @@ impl Theme {
         preview_bg: Color32::BLACK,
 
         lane_bg: Color32::from_gray(30),
+        lane_outline: Color32::from_gray(96),
         tick: Color32::from_gray(110),
         tick_label: Color32::from_gray(150),
         playhead: Color32::WHITE,
         video_block: Color32::from_rgb(0x2d, 0x4f, 0x7a),
         audio_block: Color32::from_rgb(0xa8, 0x6a, 0x26),
+        graph_block: Color32::from_rgb(0x8e, 0x6c, 0xc8),
         block_text: Color32::from_gray(20),
         cached: Color32::from_rgb(0x5c, 0xd6, 0x6a),
+        bubble: Color32::from_rgb(0x3a, 0x6f, 0xc4),
+        bubble_text: Color32::from_gray(250),
     };
 
     pub const LIGHT: Theme = Theme {
@@ -213,13 +224,17 @@ impl Theme {
         preview_bg: Color32::from_gray(24),
 
         lane_bg: Color32::from_gray(222),
+        lane_outline: Color32::from_gray(140),
         tick: Color32::from_gray(150),
         tick_label: Color32::from_gray(95),
         playhead: Color32::from_gray(20),
         video_block: Color32::from_rgb(0x9c, 0xbc, 0xe8),
         audio_block: Color32::from_rgb(0xec, 0xb8, 0x78),
+        graph_block: Color32::from_rgb(0xc4, 0xb0, 0xe8),
         block_text: Color32::from_gray(30),
         cached: Color32::from_rgb(0x2c, 0x9e, 0x3c),
+        bubble: Color32::from_rgb(0x2f, 0x6b, 0xd6),
+        bubble_text: Color32::from_gray(255),
     };
 
     /// The theme egui is currently showing.
@@ -328,6 +343,14 @@ mod tests {
     fn picks_the_theme_from_the_visuals() {
         assert_eq!(Theme::for_visuals(&egui::Visuals::dark()), &Theme::DARK);
         assert_eq!(Theme::for_visuals(&egui::Visuals::light()), &Theme::LIGHT);
+    }
+
+    #[test]
+    fn lane_outlines_stand_out_from_the_lane_fill() {
+        for theme in [&Theme::DARK, &Theme::LIGHT] {
+            let gap = |a: Color32, b: Color32| a.r().abs_diff(b.r());
+            assert!(gap(theme.lane_outline, theme.lane_bg) >= 40);
+        }
     }
 
     #[test]

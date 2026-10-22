@@ -9,24 +9,29 @@ use common::{
     AUDIO, FINITE, FINITE_PASSTHROUGH, FRAMES, VIDEO, backend, crush, sequential, wait_until,
 };
 use rastersong_engine::{
-    AudioTrackSpec, Engine, EngineConfig, EngineStatus, GraphDesc, OutputSize, PreviewScale,
+    Engine, EngineConfig, EngineStatus, GraphDesc, Item, OutputSize, PreviewScale, Timeline,
+    TrackKind, TrackSpec,
 };
 
 fn engine() -> Engine {
     Engine::new(Arc::new(backend()), EngineConfig::default())
 }
 
-fn track(name: &str, offset: f64) -> AudioTrackSpec {
-    AudioTrackSpec {
-        name: name.into(),
-        path: PathBuf::from(AUDIO),
-        offset,
-    }
+/// The video, and an audio track of the song for each name, starting at the given time.
+fn set_tracks(engine: &Engine, audio: &[(&str, f64)]) {
+    let video = TrackSpec::new("Video", TrackKind::Video, PathBuf::from(VIDEO));
+    let tracks = audio.iter().map(|&(name, position)| TrackSpec {
+        items: vec![Item::whole(position)],
+        ..TrackSpec::new(name, TrackKind::Audio, PathBuf::from(AUDIO))
+    });
+    engine.set_timeline(Timeline {
+        tracks: std::iter::once(video).chain(tracks).collect(),
+        ..Timeline::default()
+    });
 }
 
 fn load(engine: &Engine, graph: &str) {
-    engine.set_video(Some(PathBuf::from(VIDEO)));
-    engine.set_audio_tracks(vec![track("audio", 0.0)]);
+    set_tracks(engine, &[("Audio", 0.0)]);
     engine.set_graph(GraphDesc::from_json(graph).unwrap());
 }
 
@@ -143,10 +148,11 @@ fn preview_scale_renders_smaller_frames() {
 #[test]
 fn reports_errors_and_recovers() {
     let engine = engine();
-    // Valid JSON, but the graph has no output node.
+    // Valid JSON, but a node of a type that doesn't exist.
     load(
         &engine,
-        r#"{ "version": 0, "nodes": [ { "id": "v", "type": "video_input" } ] }"#,
+        r#"{ "version": 0, "nodes": [ { "id": "b", "type": "bogus" }, { "id": "o", "type": "output" } ],
+            "connections": [ { "from": "b", "to": "o" } ] }"#,
     );
     wait_until("the failure", || {
         matches!(engine.status(), EngineStatus::Failed(_))
@@ -181,6 +187,7 @@ fn respects_the_cache_budget() {
         EngineConfig {
             cache_bytes: 20 * 16 * 8 * 3,
             lookahead_secs: 10.0,
+            audio_cache: None,
         },
     );
     load(&engine, FINITE);
@@ -199,7 +206,7 @@ fn respects_the_cache_budget() {
 #[test]
 fn renders_without_audio_and_reports_cached_ranges() {
     let engine = engine();
-    engine.set_video(Some(PathBuf::from(VIDEO)));
+    set_tracks(&engine, &[]);
     engine.set_graph(GraphDesc::from_json(FINITE).unwrap());
     wait_until("all frames", || engine.buffered_from(0) == FRAMES);
     assert_eq!(engine.cached_ranges(), vec![0..FRAMES]);
@@ -211,18 +218,20 @@ fn audio_offset_changes_the_render_and_back() {
     let engine = engine();
     load(&engine, FINITE);
     wait_until("frames", || engine.buffered_from(0) == FRAMES);
-    assert!((engine.loaded_tracks()[0].clip.duration_secs() - 3.0).abs() < 1e-9);
+    assert!((engine.loaded_tracks()[0].clip.duration_secs() - 2.0).abs() < 1e-9);
     let original = engine.frame(30).unwrap();
 
-    engine.set_audio_tracks(vec![track("audio", 0.5)]);
-    wait_until("re-render", || engine.buffered_from(0) == FRAMES);
+    set_tracks(&engine, &[("Audio", 0.5)]);
+    // The project runs to the end of the last item: the song now ends half a second later.
+    wait_until("re-render", || engine.buffered_from(0) == FRAMES + 15);
+    assert_eq!(engine.info().unwrap().frames, FRAMES + 15);
     assert_ne!(
         engine.frame(30).unwrap().rgb,
         original.rgb,
         "the offset moves the modulation"
     );
 
-    engine.set_audio_tracks(vec![track("audio", 0.0)]);
+    set_tracks(&engine, &[("Audio", 0.0)]);
     wait_until("re-render", || engine.buffered_from(0) == FRAMES);
     assert_eq!(
         engine.frame(30).unwrap().rgb,
@@ -235,7 +244,7 @@ fn audio_offset_changes_the_render_and_back() {
 const DRUMS: &str = r#"{ "version": 0,
   "nodes": [
     { "id": "video", "type": "video_input" },
-    { "id": "drums", "type": "audio_input", "params": { "source": "drums" } },
+    { "id": "drums", "type": "audio_input", "params": { "port": "drums" } },
     { "id": "am", "type": "am", "params": { "depth": 2 } },
     { "id": "out", "type": "output" }
   ],
@@ -246,17 +255,17 @@ const DRUMS: &str = r#"{ "version": 0,
 #[test]
 fn audio_inputs_read_their_own_track_and_missing_tracks_are_silent() {
     let engine = engine();
-    engine.set_video(Some(PathBuf::from(VIDEO)));
+    set_tracks(&engine, &[]);
     engine.set_graph(GraphDesc::from_json(DRUMS).unwrap());
     // Only an `audio` track: `drums` reads silence, so AM leaves the video unchanged.
-    engine.set_audio_tracks(vec![track("audio", 0.0)]);
+    set_tracks(&engine, &[("Audio", 0.0)]);
     wait_until("silent render", || engine.buffered_from(0) == FRAMES);
     assert_eq!(engine.status(), EngineStatus::Ready);
     let silent = engine.frame(20).unwrap();
     let plain = sequential(FINITE_PASSTHROUGH, OutputSize::Native);
     assert_eq!(silent.rgb, plain[20]);
 
-    engine.set_audio_tracks(vec![track("audio", 0.0), track("drums", 0.0)]);
+    set_tracks(&engine, &[("Audio", 0.0), ("drums", 0.0)]);
     wait_until("drums render", || engine.buffered_from(0) == FRAMES);
     assert_ne!(
         engine.frame(20).unwrap().rgb,
@@ -308,7 +317,8 @@ fn graph_failures_keep_the_video_info() {
     let engine = engine();
     load(
         &engine,
-        r#"{ "version": 0, "nodes": [ { "id": "v", "type": "video_input" } ] }"#,
+        r#"{ "version": 0, "nodes": [ { "id": "b", "type": "bogus" }, { "id": "o", "type": "output" } ],
+            "connections": [ { "from": "b", "to": "o" } ] }"#,
     );
     wait_until("the failure", || {
         matches!(engine.status(), EngineStatus::Failed(_))
@@ -340,20 +350,21 @@ fn cached_frames_carry_rendered_sound_that_playback_reads() {
         engine.audio_sink(),
         AudioSink::Rendered {
             sample_rate: 48_000,
-            channels: 1
+            channels: 2
         }
     );
     let block = engine.frame(5).unwrap().audio.clone().unwrap();
     assert_eq!((block.start, block.frames()), (8_000, 1600));
 
-    // Playback of the rendered sound: frames 2 to 4 at 30 fps, mixed to stereo at 48 kHz.
+    // Playback of the rendered sound: frames 2 to 4 at 30 fps, mixed to stereo at 48 kHz. The
+    // mono sound went to both channels of the stereo Main bus.
     let mixer = Mixer::rendered(engine.rendered_audio(), 1.0);
     let mut out = vec![0.0; 4800 * 2];
     mixer.render(2.0 / 30.0, 48_000.0, &mut out);
     let cached = engine.frame(2).unwrap().audio.clone().unwrap();
     for (j, pair) in out[..200].chunks(2).enumerate() {
         assert_eq!(pair[0], pair[1], "mono plays in both channels");
-        assert!((pair[0] - cached.samples[j]).abs() < 1e-6, "sample {j}");
+        assert!((pair[0] - cached.samples[2 * j]).abs() < 1e-6, "sample {j}");
     }
 }
 

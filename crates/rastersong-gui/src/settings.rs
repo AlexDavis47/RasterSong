@@ -39,6 +39,8 @@ pub struct Settings {
     pub cache_mib: u32,
     /// How far ahead of the playhead to render, in seconds.
     pub render_ahead_secs: f64,
+    /// Whether timeline items snap to the grid, item edges and the playhead while dragged.
+    pub snap: bool,
 }
 
 impl Default for Settings {
@@ -56,6 +58,7 @@ impl Default for Settings {
             language: rastersong_lang::ENGLISH_CODE.to_owned(),
             cache_mib: Self::DEFAULT_CACHE_MIB,
             render_ahead_secs: Self::DEFAULT_RENDER_AHEAD_SECS,
+            snap: true,
         }
     }
 }
@@ -69,7 +72,7 @@ impl Settings {
     pub const CACHE_MIB_RANGE: std::ops::RangeInclusive<u32> = 64..=32768;
     pub const RENDER_AHEAD_RANGE: std::ops::RangeInclusive<f64> = 1.0..=120.0;
 
-    /// The cache budget and lookahead the engine should use.
+    /// The cache budget, lookahead and audio cache directory the engine should use.
     pub fn engine_config(&self) -> rastersong_engine::EngineConfig {
         rastersong_engine::EngineConfig {
             cache_bytes: self
@@ -81,6 +84,7 @@ impl Settings {
                 *Self::RENDER_AHEAD_RANGE.start(),
                 *Self::RENDER_AHEAD_RANGE.end(),
             ),
+            audio_cache: rastersong_engine::AudioCache::in_user_dir(),
         }
     }
 

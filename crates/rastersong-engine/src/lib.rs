@@ -6,6 +6,8 @@
 pub mod audio;
 mod cache;
 mod clock;
+mod compose;
+mod composition;
 mod error;
 mod listen;
 mod offline;
@@ -16,23 +18,30 @@ mod service;
 pub mod sources;
 mod tap;
 mod thumbnails;
+pub mod timeline;
 pub mod waveform;
 
 pub use audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE};
 pub use cache::{CacheKey, Frame, FrameCache};
 pub use clock::PlaybackClock;
+pub use composition::{
+    ComposedGraphTrack, Composition, InputKind, InputPort, MediaTrack, extra_ports, input_ports,
+    is_main_port, port_of,
+};
 pub use error::EngineError;
 pub use listen::ListenTarget;
 pub use offline::{FrameSink, RenderSettings, RenderedFrame, render};
 pub use project::{
-    DEFAULT_INSPECT_RATE, DEFAULT_MAX_WARMUP_FRAMES, INSPECT_RATE_RANGE, LoopRegion,
-    MAX_WARMUP_FRAMES_LIMIT, PROJECT_EXTENSION, PROJECT_VERSION, Project, ProjectTrack,
-    TimelineMode,
+    DEFAULT_INSPECT_RATE, DEFAULT_MAX_WARMUP_FRAMES, Edge, GraphEntry, GraphTrack,
+    INSPECT_RATE_RANGE, ItemRef, LoopRegion, MAX_WARMUP_FRAMES_LIMIT, MIN_ITEM_LENGTH,
+    PASSTHROUGH_GRAPH, PROJECT_EXTENSION, PROJECT_VERSION, Project, ProjectTrack, RATE_RANGE,
+    Resource, ResourceId, ResourceKind, StoredGraph, TimelineMode, resource_name_for, snap_offset,
 };
 pub use rastersong_graph::dsp::Fft;
 pub use rastersong_graph::nodes::support::UNBOUNDED_WARMUP;
 pub use rastersong_graph::nodes::{
-    AUDIO_INPUT, CHANNEL_PORTS, COMBINE, MAX_CHANNELS, OUTPUT, SOURCE_PARAM, SPLIT, VIDEO_INPUT,
+    AUDIO_INPUT, AUDIO_OUTPUT, BUS_PARAM, CHANNEL_PORTS, COMBINE, DEFAULT_AUDIO, DEFAULT_BUS,
+    DEFAULT_VIDEO, MAX_CHANNELS, OUTPUT, PORT_PARAM, SPLIT, VIDEO_INPUT,
 };
 pub use rastersong_graph::{
     Category, ChannelMap, Channels, CompileOptions, Connection, Diagnostic, FORMAT_VERSION,
@@ -40,21 +49,25 @@ pub use rastersong_graph::{
     MODULATION_AMOUNT_LIMITS, Meter, MeterKind, ModMode, Modulation, NodeCost, NodeDesc,
     NodeDiagnostic, NodeMeters, NodeStats, NodeType, OutputLevel, OutputSpec, ParamKind,
     ParamLevel, ParamSpec, ParamValue, Part, Range, Registry, Severity, ShownWhen, Tag, TagRule,
-    Tempo, range_span,
+    Tempo, audio_output_bus, range_span, render_form,
 };
 pub use rastersong_media::{
-    AudioClip, AudioOptions, BackendInfo, FakeBackend, FakeVideo, FfmpegBackend, LibraryInfo,
-    LosslessWriter, MediaBackend, MediaError, Rational, Version, VideoFrame, VideoInfo,
+    AudioCache, AudioClip, AudioOptions, BackendInfo, FakeBackend, FakeVideo, FfmpegBackend,
+    LibraryInfo, LosslessWriter, MediaBackend, MediaError, Rational, Samples, StreamInfo,
+    StreamKind, Version, VideoFrame, VideoInfo, lgpl_url,
 };
 pub use renderer::{
-    AudioTrack, DEFAULT_AUDIO_TRACK, OutputSize, RenderInfo, Renderer, VIDEO_SOURCE,
+    DEFAULT_AUDIO_TRACK, OutputSize, RenderInfo, RenderTrack, Renderer, TrackMedia, VIDEO_SOURCE,
+    single_composition,
 };
 pub use service::{
-    AudioTrackSpec, Engine, EngineConfig, EngineStatus, Failure, LoadedTrack, PreviewScale,
-    RenderProgress,
+    Engine, EngineConfig, EngineStatus, Failure, LoadedTrack, PreviewScale, RenderProgress,
 };
 pub use tap::{PICTURE_SIDE, Picture, Tap, TapOutcome, TapRequest, picture_size};
-pub use thumbnails::{THUMBNAIL_HEIGHT, Thumbnails};
+pub use thumbnails::{THUMBNAIL_HEIGHT, Thumbnails, VideoKey};
+pub use timeline::{
+    Bus, GraphItem, Item, MAX_BUS_CHANNELS, Source, Timebase, Timeline, TrackKind, TrackSpec,
+};
 pub use waveform::Waveform;
 
 /// Initializes the engine and its media backend, and reports what was loaded.

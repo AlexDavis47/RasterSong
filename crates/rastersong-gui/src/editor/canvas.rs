@@ -142,13 +142,10 @@ impl GraphEditor {
             .map(|i| {
                 let node = &self.nodes[i];
                 let kind = self.registry.get(&node.kind);
-                // A linked node is named by the project, whatever label it may have been given.
-                let title = self
-                    .node_is_linked(node)
-                    .then(|| self.linked_title(node))
-                    .flatten()
-                    .or_else(|| node.label.clone())
-                    .or_else(|| self.linked_title(node))
+                let title = node
+                    .label
+                    .clone()
+                    .or_else(|| self.port_title(node))
                     .unwrap_or_else(|| {
                         kind.map_or_else(
                             || tr_args("editor.node.unknown_kind", &[("kind", &node.kind)]),
@@ -1034,9 +1031,10 @@ impl GraphEditor {
         };
         let text = egui::RichText::new(tr_args("editor.error_bar", &[("message", &message)]))
             .color(theme.error_bar_text);
+        // Not selectable, so a click on the message reaches the bar under it.
         ui.put(
             bar.shrink2(vec2(10.0, 0.0)),
-            egui::Label::new(text).truncate(),
+            egui::Label::new(text).truncate().selectable(false),
         );
         if node.is_some() {
             response.clone().on_hover_text(tr("editor.error_bar.hover"));

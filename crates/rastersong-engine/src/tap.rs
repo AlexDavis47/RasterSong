@@ -70,16 +70,22 @@ pub fn picture_size(width: u32, height: u32) -> (u32, u32) {
 /// Draws `signal` stretched over a picture of the project's shape, the way Video Output
 /// does: an RGB signal keeps its channels, anything else is read as a flat run of samples and
 /// shown as gray. Signals in `-1..=1` are shifted into `0..=1` so that negative values show.
+///
+/// The stretch happens at the project's size, as Video Output's does, and the result is then
+/// scaled down to the picture in two dimensions. (Stretching straight to the smaller picture
+/// would read the rows of a picture as one run and lay them side by side.)
 fn picture(signal: &Signal, project: (u32, u32)) -> Picture {
     let (width, height) = picture_size(project.0, project.1);
-    let mut floats = vec![0.0; (width * height * 3) as usize];
+    let (full_width, full_height) = (project.0.max(1), project.1.max(1));
+    let mut full = vec![0.0; (full_width * full_height * 3) as usize];
     Stretcher::default().stretch(
         &signal.data,
         signal.layout.samples_per_pixel as usize,
-        &mut floats,
+        &mut full,
         3,
         Interpolation::Hold,
     );
+    let floats = shrink(&full, (full_width, full_height), (width, height));
     let bipolar = signal.layout.tag.range == Range::Bipolar;
     let rgb = floats
         .iter()
@@ -93,6 +99,42 @@ fn picture(signal: &Signal, project: (u32, u32)) -> Picture {
         })
         .collect();
     Picture { width, height, rgb }
+}
+
+/// Scales an RGB picture of size `from` down to `to` (no larger on either side), each pixel the
+/// average of the pixels it covers.
+fn shrink(rgb: &[f32], from: (u32, u32), to: (u32, u32)) -> Vec<f32> {
+    if from == to {
+        return rgb.to_vec();
+    }
+    let (fw, fh) = (from.0 as usize, from.1 as usize);
+    let (tw, th) = (to.0 as usize, to.1 as usize);
+    let span = |i: usize, to: usize, from: usize| {
+        (i * from / to)..((i + 1) * from / to).max(i * from / to + 1)
+    };
+    let mut out = vec![0.0; tw * th * 3];
+    for y in 0..th {
+        let rows = span(y, th, fh);
+        for x in 0..tw {
+            let columns = span(x, tw, fw);
+            let mut sum = [0.0f32; 3];
+            let mut count = 0.0;
+            for sy in rows.clone() {
+                for sx in columns.clone() {
+                    let at = (sy * fw + sx) * 3;
+                    for (c, total) in sum.iter_mut().enumerate() {
+                        *total += rgb[at + c];
+                    }
+                    count += 1.0;
+                }
+            }
+            let at = (y * tw + x) * 3;
+            for (c, total) in sum.iter().enumerate() {
+                out[at + c] = total / count;
+            }
+        }
+    }
+    out
 }
 
 /// What a tap of `signal` shows. `project` is the size of the rendered picture.
@@ -139,5 +181,28 @@ mod tests {
         let tap = read(request(), &mono, (2, 1), 30.0);
         let picture = tap.picture.unwrap();
         assert_eq!(picture.rgb, [255, 255, 255, 0, 0, 0]);
+    }
+
+    #[test]
+    fn a_picture_larger_than_the_tap_is_scaled_down_in_two_dimensions() {
+        // A horizontal ramp, bright on the right, with the bottom half dark.
+        let (w, h) = (1280, 720);
+        let mut data = Vec::new();
+        for y in 0..h {
+            for x in 0..w {
+                let v = if y < h / 2 { x as f32 / w as f32 } else { 0.0 };
+                data.extend([v, v, v]);
+            }
+        }
+        let signal = Signal::from_data(Layout::new(w, h, 3), data);
+        let picture = read(request(), &signal, (w, h), 30.0).picture.unwrap();
+        assert_eq!((picture.width, picture.height), (320, 180));
+        let red = |x: u32, y: u32| picture.rgb[((y * picture.width + x) * 3) as usize];
+        for y in [0, 40, 89] {
+            assert!(red(0, y) < 3 && red(160, y).abs_diff(128) < 3 && red(319, y) > 250);
+        }
+        for y in [90, 179] {
+            assert_eq!(red(200, y), 0);
+        }
     }
 }

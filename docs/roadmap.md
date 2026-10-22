@@ -36,7 +36,8 @@ are defects, **feature** is new behavior, **chore** is cleanup or refactoring wi
 **Phase 4: GUI** (in progress; the workstreams below are what remains)
 - egui viewer driven only by the engine
 - Node editor and parameter panels
-- Minimal timeline: one video track, one audio track, with an offset
+- Minimal timeline: one video track, one audio track, with an offset (since grown into the multi-track timeline,
+  see [Timeline, resources and routing](#timeline-resources-and-routing))
 - Buffer health and playback speed indicators
 
 **Phase 5: Export & Polish**
@@ -51,9 +52,9 @@ are defects, **feature** is new behavior, **chore** is cleanup or refactoring wi
 - [x] Copy and paste (nodes with their internal connections; see the bug below)
 - [x] New nodes: compressor, gate, distortion
 - [x] Node parameter inputs (modulation)
-- [ ] [Timeline, resources and graph layers](#timeline-resources-and-graph-layers): multi-track timeline of items,
-  the Resources panel with linking and embedding, several graphs on stacked layers, subgraphs, raw files, images,
-  automation clips, output buses and GUI export
+- [ ] [Timeline, resources and routing](#timeline-resources-and-routing): Premiere-style multi-track timeline
+  (Graphs, Video and Audio sections), the Resources panel with linking and embedding, graph tracks whose items pick
+  their inputs, subgraphs, raw files, images, automation tracks, output buses and GUI export
 - [ ] The foundation workstream below (parameter types, units, modulation, text), since most node work depends on it
 - [ ] The settings page (connection inspection is done; its keys are not rebindable yet)
 
@@ -66,11 +67,11 @@ Many items depend on others. Doing them in this order avoids reworking nodes twi
    change below builds on these.
 2. **Project and settings**: the Settings page, max warmup frames.
 3. **Editor fixes**: copy/paste connections, tooltips, timeline Fit removal, performance display.
-4. **Shared UI and metering components**, then **Look/Listen tools** (they reuse the same widgets and the Audio
+4. **Shared UI and metering components**, then **connection inspection** (it reuses the same widgets and the Audio
    Output sink).
 5. **Node work**, starting with shared DSP (filter slope, detectors) so Filter, EQ, Three-Band Split, DC Filter and
    the dynamics nodes use one implementation.
-6. **[Timeline, resources and graph layers](#timeline-resources-and-graph-layers)**, in its own stage order. It
+6. **[Timeline, resources and routing](#timeline-resources-and-routing)**, in its own stage order. It
    replaces the project model, the source nodes and the renderer's single graph, so finish other work that touches
    those (Video and Audio Input, the timeline, project loading) before starting, or fold it into the stages.
 
@@ -189,6 +190,18 @@ Renames, merges, splits and removals need **no migration** while the format is v
   with several limits and gets identical frames; only a seek differs. The Project page of Settings says when the
   graph needs more than the limit and which node needs it, and node stats flag it. See
   [Seeking and warmup](engine.md#seeking-and-warmup).
+- [ ] **feature** **Keybinds.** Every keyboard action can be rebound by the user on a *Keys* page of Settings
+  (Application scope: remembered between sessions, never in project files), with a reset per binding and for all.
+  *Design:* one table of actions (`Action::Undo`, `Action::SplitItems`, `Action::Copy`, …), each with an id for
+  the settings file, a label and help from the language files, a scope (*global*, *timeline*, *graph*) and default
+  chords. Code asks the table (`keys.pressed(ui, Action::SplitItems)`) instead of testing keys, and menus and
+  tooltips show the bound chord from it, so a binding changes everywhere at once. Today the keys are tested in
+  `app.rs` (`shortcuts`), `timeline.rs` (`item_keys`), `editor/canvas.rs` and the menus' shortcut texts, which
+  all move over. The page lists actions by scope with a "press a key" capture and warns about a chord bound twice
+  in the same scope (timeline and graph may share one, since the pointer decides which gets it). Copy, cut and
+  paste arrive from the platform as clipboard events rather than keys (only when the clipboard holds text, for
+  paste), so rebinding them means handling those chords as plain keys and reading the system clipboard ourselves.
+  Mouse modifiers (Ctrl to add to a selection, Shift to drag freely, Alt to stretch) stay fixed for 1.0.
 
 ---
 
@@ -269,14 +282,17 @@ meters already show on hover.
 Reusable widgets, built once in `rastersong-gui` (a `widgets/` module) and used everywhere they apply. See the
 [DRY rule](#code-health-and-dry).
 
-- [x] **feature** **Level meter** *(done for Audio Output and Gain; the preview volume control and timeline headers still to do)* (peak and RMS, with hold and clip indicator), used by Audio Output, Gain,
-  Compressor, Limiter, the preview's volume control and the timeline's audio headers.
-- [x] **feature** **Spectrum analyzer** *(done as a shared widget, `dsp::Fft` underneath, in the inspection popup; the Equalizer, Filter, Three-Band Split and DC Filter inspectors don't show one yet)* (FFT-based, log frequency axis, smoothing), for Equalizer, Filter, Three-Band
-  Split, DC Filter and the Look/Listen popup. FFT through a permissively licensed crate (checked by `cargo-deny`),
-  computed only for visible meters.
+- [x] **feature** **Level meter** (peak and RMS, with hold and clip indicator), used by Audio Output, Gain,
+  Compressor and Limiter.
+- [ ] **feature** Level meters on the preview's volume control and the timeline's audio track headers.
+- [x] **feature** **Spectrum analyzer** (FFT-based, log frequency axis, smoothing) as a shared widget with
+  `dsp::Fft` underneath, shown in the connection inspection popup and computed only for visible meters.
+- [ ] **feature** Spectrum analyzer in the Equalizer, Filter, Three-Band Split and DC Filter inspectors.
 - [x] **feature** **Gain-reduction meter**, so the Compressor, Gate and Limiter show how much reduction is being
   applied right now.
-- [x] **feature** **Waveform / scope** and a **picture thumbnail** widget *(shared in `widgets/`; node previews still to do)* (shared by the Look tool and node previews).
+- [x] **feature** **Waveform / scope** and a **picture thumbnail** widget, shared in `widgets/` and used by
+  connection inspection.
+- [ ] **feature** Node previews using the scope and thumbnail widgets.
 - [x] **feature** **Node telemetry.** A way for a node to publish a few meter values per frame (gain reduction,
   peak, band energy) without allocation in `process` and without affecting output; the editor reads the last
   rendered frame, the same way it reads modulated values. Declared in the node's `SPEC` so the inspector draws the
@@ -291,17 +307,25 @@ Reusable widgets, built once in `rastersong-gui` (a `widgets/` module) and used 
 - [x] Reaper-style track headers, grab-scroll, scroll-zoom, tick lines, tempo ruler, thumbnails and waveforms
 - [x] **chore** Removed the Fit button (its tooltip was wrong and F already fits the view).
 - Automation clips and the multi-clip timeline are now part of
-  [Timeline, resources and graph layers](#timeline-resources-and-graph-layers).
+  [Timeline, resources and routing](#timeline-resources-and-routing).
 
 ---
 
-## Timeline, resources and graph layers
+## Timeline, resources and routing
 
 The 1.0 project model, decided in October 2026 (reasons in
-[Decisions](decisions.md#timeline-resources-and-graph-layers-october-2026)). It replaces the one-video timeline,
-the single graph and the plain JSON project file. Build it in the stages below, in order: each stage is a
-foundation for the next, so nothing is built on a model about to be replaced. Format changes need no migration
-(version 0).
+[Decisions](decisions.md#timeline-resources-and-graph-layers-october-2026) and, for the timeline's shape,
+[Premiere-style timeline](decisions.md#premiere-style-timeline-october-2026)).
+It replaces the one-video timeline, the single graph and the plain JSON project file. Build it in the stages below,
+in order: each stage is a foundation for the next, so nothing is built on a model about to be replaced. Format
+changes need no migration (version 0).
+
+Graph layers shipped first, in stage 2: stacked lanes of graph items above the tracks, each reading the one below
+through *Layer below*. Stage 2b replaced them with Reaper-style routing (folders as buses, graphs as FX), which
+turned out too complex for the people RasterSong is for. Stage 2c makes the timeline **Premiere-style**
+([Decisions](decisions.md#premiere-style-timeline-october-2026)): Graphs, Video and Audio sections, video layered,
+audio summed, and graph tracks on top whose items pick a source for each input. The model below describes the
+target; the first pass of it has shipped (stage 2c below).
 
 **Rule: explicit over hidden.** Every signal a graph uses enters through a port that something visibly filled.
 There are no fallbacks and no overrides that only apply in some situations (the old "Audio Output replaces the
@@ -313,9 +337,9 @@ stretch, and is documented where it happens. Something that reads nothing reads 
 **Project timebase.** The project has its own settings, like a Premiere sequence: resolution, frame rate, audio
 rate, length (to the end of the last item). They are taken from the first video dropped in and can be changed in
 Project settings; items keep their times when they change. A block stays one project frame, and every track is
-conformed to the project grid on its way into a graph. Positions are saved as time, not frames. Graph items snap
-to whole frames; audio items are placed to the sample. Today `RenderInfo` and `pixel_scale` come from the source
-video; both move to the project settings.
+conformed to the project grid on its way into a graph. Positions are saved as time, not frames. Item FX snap
+to whole frames; audio items are placed to the sample. The render size and `pixel_scale` follow the project's
+timebase (done in stage 1).
 
 **Resources.** The Resources panel holds everything a project uses:
 
@@ -358,18 +382,23 @@ video; both move to the project settings.
 
 **Tracks and items.**
 
-- A track holds items from **one resource** only, which can be cut up and rearranged freely. This keeps each
+- **Sections.** The timeline has a **Graphs** section on top, then **Video**, then **Audio**, divided by a thick
+  line; an **Automation** section joins with automation curves (stage 5). Each section has its own tracks and its
+  own **+ Track** row, and tracks are reordered by dragging their header within their section.
+- A media track holds items from **one resource** only, which can be cut up and rearranged freely. This keeps each
   source's layout fixed along the timeline, which graph compilation needs.
-- **+ Track** adds an empty track to drag a resource onto; dragging a resource onto empty timeline space creates a
-  track named after it.
+- **Dropping media places its whole source.** Dragging a resource onto the timeline places every resource from the
+  same file at the same time: the video on a video track, each audio stream on an audio track, grouped. The track
+  under the pointer takes its kind if it can; the others go on the first track of their section that can take
+  them, or a new one. Holding **Alt** places only the resource dragged.
 - An item has a position, in/out points and a **rate modifier**: video holds or skips frames, audio is resampled so
   its pitch shifts like tape (no pitch-preserving stretch in 1.0). Gaps read as zeros. Audio item edges get a short
   fixed fade against clicks.
 - Every item has a **header bar** along its top for dragging and the right-click menu, with a **mute** button (a
   muted item reads as a gap). The area below belongs to the item's content. Items have no solo.
-- Tracks can be **linked** by the user so their items move and split together; nothing links automatically.
-- Track headers keep name, mute and volume, plus solo; track height is adjustable. The offset becomes the item's
-  position.
+- **Items are grouped**, not tracks linked: select several items, then right-click → *Group* (Ctrl+G) or
+  *Ungroup*. Grouped items move, trim, split and delete together, across sections.
+- Track headers keep name, mute and volume, plus solo; track height is adjustable.
 - A new image or automation item made from the Resources panel is 5 seconds long (a Project setting).
 - Editing: move, trim, split at the playhead, delete, Alt+drag an edge to change the rate, snapping (grid, beats,
   item edges, playhead) on by default with a modifier to drag freely, multi-select, copy/paste, glue, undo.
@@ -378,93 +407,248 @@ video; both move to the project settings.
 the Resources panel; a curve made in the panel is dragged in at the default length. Points are edited on the item:
 Ctrl+click on the line adds one, dragging moves it, right-click sets its interpolation and its exact time and
 value. Points snap like items. As a signal a curve is a generator like Oscillator or Beat, sampled at the shared
-generator layout, audio rate by default.
+generator layout, audio rate by default. Automation tracks are never seen or heard; graph items read them as a
+source for an input port, like a stem.
 
-**Track mix and output buses.** With no graph item, the timeline plays the *track mix*: the top video (or image or
-raw-as-video) track with an item at that frame, stretched to the project size as Video Output stretches (no
-per-track opacity or blend modes); and every unmuted audio track summed with its volume into its bus. The master
-audio is a set of **buses** in the project settings, each with a name and a channel count (default *Main*, stereo;
-5.1 is *Main* with six channels; stems are extra buses). Tracks route to a bus (*Main* by default); each Audio
-Output picks one. Adding buses or channels breaks nothing; removing them warns first, listing the connections and
-tracks affected.
+**Mixing and stems.** Video and audio are mixed **inside the renderer**. Video layers: the top track with an item
+at that frame wins, stretched to the project size as Video Output stretches (opacity and blend modes come later).
+Audio is summed with each track's volume, mute and solo. Every track is also a **stem** a graph can read on its
+own, before its volume and mute, so a muted kick track can still drive an effect.
+
+- The master audio is a set of **buses** in the project settings, each with a name and a channel count (default
+  *Main*, stereo; 5.1 is *Main* with six channels; stems are extra buses). Audio tracks route to a bus (*Main* by
+  default), and each Audio Output picks one. Adding buses or channels breaks nothing; removing them warns first,
+  listing the connections and tracks affected.
+- While no active graph renders sound, the app's playback mixer and the CLI sum the audio tracks after rendering,
+  which sounds the same and keeps playback real-time.
 
 **Graphs and ports.** Graphs are resources; a project can have any number.
 
 - A graph has any number of named **Input** and **Output** nodes, each a port. Video Output and Audio Output (one
-  per bus) are the master outputs; other outputs are plain ports, for example an oscillator exposed as a control
-  signal. Input ports replace today's Video Input and Audio Input, which pick a source by name.
+  per bus) are the main outputs; other outputs are plain ports, for example an oscillator exposed as a control
+  signal.
 - **The parent fills the ports, with no fallback.** As a subgraph, the parent graph wires the pins; an unwired pin
-  reads zeros, with a note. On a graph layer the item is the parent: its inspector lists the inputs, each bound to
-  *Layer below* (video, or a bus), a track, or nothing. Bindings belong to the item, so one graph can be placed
-  twice reading different tracks; copying an item keeps them.
-- **New graphs start as a passthrough:** `In: Video` wired to Video Output and `In: Audio` to Audio Output, bound to
-  the layer below when dropped on a layer. Effects are inserted into the wires, and a graph that only changes the
-  picture leaves the sound alone because its audio wire is still there. A master output with nothing connected, or
-  missing, gives black or silence, with a note on the node (or on the item when the node is missing).
-- **Timeline context generators** read where the render is, not what is on the timeline: **Graph Progress** (new;
-  0 to 1 across the item rendering the top-level graph, also inside subgraphs; 0 during pre-roll), and Beat and
-  tempo units as today.
+  reads zeros, with a note. On a graph track, the item picks a source for each input port (see *Graph tracks*).
+- **New graphs start as the template:** `In: Video` wired to Video Output and `In: Audio` to Audio Output, with
+  effects inserted into the wires. Nothing passes through by rule: a graph without an Audio Output is silent, and a
+  main output with nothing connected gives black or silence, each with a note.
+- **Timeline context generators** read where the render is, not what is on the timeline. **Graph Progress** is new:
+  it goes from 0 to 1 across the graph item, also inside subgraphs, and is 0 during pre-roll. Beat and tempo units
+  work as today.
 - **Subgraphs:** dragging a graph resource into a graph adds it as a node whose ports are pins; double-clicking
   opens it, editing the resource everywhere it is used. A subgraph is a linked reference (**Make unique** copies
   it), each use has its own state, a graph can't contain itself (the compiler rejects the cycle), and subgraphs are
   flattened at compile so latency, warmup, channel settings and modulation work unchanged. Exposed parameters are
   [later](#later).
 
-**Graph layers.** Lanes above the tracks holding graph items.
+**Graph tracks.** Graph items sit on graph tracks above the video tracks, like adjustment layers.
 
-- Items on a layer can't overlap (dropping one onto another trims it) and have no crossfades. They can be moved, cut
-  and trimmed, not stretched.
-- **Stacking:** the bottom layer's *Layer below* is the track mix; each layer above reads the one below; the top
-  layer's outputs are the master. A layer with no item at a frame is transparent there. Only master outputs pass
-  between layers; control signals are shared through subgraphs.
-- Layer headers have mute and solo; graph items have mute in their header bar.
-- **Pre-roll** is a per-item setting, on by default: the graph warms up as if it had been running before the item,
-  so trimming the left edge never changes what follows. Off, it starts cold at the edge.
+- Items on one graph track never overlap: placing or moving one trims what it lands on. An item can be trimmed
+  without stretching, muted, and has **pre-roll**, a per-item setting on by default: the graph warms up as if it had
+  been running before the item, so trimming the left edge never changes what follows.
+- **The topmost active graph item is the output.** Its Video Output and Audio Output are the master picture and
+  sound; where no graph item is active, the master is the video mix and the audio mix. A muted graph track is
+  skipped.
+- **Each input port has a source**, picked in the item inspector: *Below*, the video or audio mix, any track's
+  stem, any output port of a graph on a track below, or nothing (zeros, with a note). *Below* is the default for
+  the main ports and is matched by kind: `In: Video` reads the main Video Output of the next active graph below, or
+  the video mix; `In: Audio` the same for sound. So a graph stacked on another chains onto it unless changed.
+  Other ports start on the track of the same name, if there is one. Sources belong to the item, so one graph can
+  be used twice reading different tracks, and copying an item keeps them.
 
-**Editor and preview.** Double-clicking a graph resource or graph item opens it in the editor. The preview always
+**Editor and preview.** Double-clicking a graph resource or a graph item opens it in the editor. The preview always
 shows the master output. Hovering a connection in the open graph inspects it even when the graph isn't under the
 playhead (the tap renderer renders it on its own).
 
-**Engine.** Track readers read items (position, in/out, rate) conformed to the project grid. The renderer keeps a
-compiled graph per graph item and switches at item edges; latency is already compensated against the timeline
-(output frame N comes from source frame N + latency), so graphs with different latencies stay in sync. Each layer
-has its own renderer state, so layers can later run as a pipeline across frames on separate cores. The cache key
-becomes what produced the frame: the active graphs' versions, the versions of the resources and tracks they read,
-and the preview scale, so editing one graph keeps frames rendered only by others. Each video track needs a decoder
-on the render thread, the tap renderer and the thumbnails; benchmark this early.
+**Engine.** Track readers read items (position, in/out, rate) conformed to the project grid. Each frame the
+renderer reads the stems something needs, makes the video and audio mixes, then runs the graph tracks bottom to
+top, filling each active item's ports from its sources; the topmost active item's outputs are the master. Sources
+only point down, so there are no loops. The renderer keeps a compiled graph per item and switches at item edges.
+Latency is compensated against the timeline (output frame N comes from source frame N + latency), so graphs with
+different latencies stay in sync, and graph tracks can run as a pipeline across frames on separate cores. The cache
+key becomes what produced the frame: the active graphs' versions, the versions of the resources and tracks they
+read, and the preview scale, so editing one graph keeps frames rendered only by others. Each video track needs a
+decoder on the render thread, the tap renderer and the thumbnails; benchmark this early.
 
 **Project file.** `.rastersong` becomes a zip: `project.json` (settings, resources with links, embed metadata and
-raw settings, tracks, items, layers, project graphs, tempo, loop region) and `resources/` with embedded files
-stored uncompressed. Embedded files are extracted on open to the AppData cache by content hash, so FFmpeg and
-memory maps read ordinary files. Saving rewrites the zip, copying unchanged entries raw.
+raw settings, the video, audio and graph tracks with their items and sources, project graphs, tempo, loop region)
+and `resources/` with embedded files stored uncompressed. Embedded files are extracted on open to the AppData cache
+by content hash, so FFmpeg and memory maps read ordinary files. Saving rewrites the zip, copying unchanged entries
+raw.
 
 ### Stages
 
 1. **Timebase and tracks**
-   - [ ] **feature** Project settings (resolution, frame rate, length) replace the video as the clock.
-   - [ ] **feature** Tracks of items for video and audio, item header bars with mute, track solo and height, linking.
-   - [ ] **feature** Item editing (move, trim, split, delete, rate drag, snapping, multi-select, copy/paste, undo).
-   - [ ] **feature** Track mix and output buses, with the warning on removal.
-   - [ ] **feature** Track readers in the engine; audio decoded to cache files and memory-mapped (`Modulator` and the
-     waveform read the mapped samples instead of owning copies).
-   - [ ] **chore** New project file contents (still plain JSON at this stage); CLI `render <project> <out>`.
+   - [x] **chore** The model underneath *(done: see [Timeline](engine.md#timeline))*: the project has a timebase
+     (taken from the first video track until set; length to the end of the last item), separate video and audio
+     track lists ([Decisions](decisions.md#video-and-audio-tracks-are-separate-lists-october-2026)), tracks hold
+     items (position, in/out, rate, mute), and every track enters the graph by its name. The app still shows one
+     item per track.
+   - [x] **feature** Project settings (resolution, frame rate) on the Project page of Settings: a Picture section
+     shows the timebase in use, and editing it sets the project's own (the reset button follows the video again).
+   - [x] **feature** Tracks of items for video and audio, item header bars with mute, track solo and height, linking
+     *(done: see [Timeline](app.md#timeline) and
+     [Decisions](decisions.md#tracks-of-items-october-2026); the app still opens one video track until the
+     Resources panel)*.
+   - [x] **feature** Item editing (move, trim, split, delete, rate drag, snapping, multi-select, copy/paste, undo)
+     *(done: see [Timeline](app.md#timeline) and [Decisions](decisions.md#item-editing-october-2026))*.
+   - [x] **feature** Track mix and output buses, with the warning on removal *(done: see
+     [Track mix and output buses](engine.md#track-mix-and-output-buses); with no graph items yet, bypassing the
+     graph plays the track mix, and the CLI's `--bus` renders a bus other than the master)*.
+   - [x] **feature** Track readers in the engine: video conformed to the project's grid and size, audio placed item
+     by item, gaps read zeros.
+   - [x] **feature** Audio decoded to cache files and memory-mapped (`Modulator` and the waveform read the mapped
+     samples instead of owning copies). *(Done: see [Media](media.md); uncompressed WAVs are still decoded to the
+     cache rather than mapped directly, and clearing the cache from Settings waits for the Settings page.)*
+   - [x] **feature** Short fixed fades on audio item edges *(5 ms, crossfading where items overlap; see
+     [Timeline](engine.md#timeline))*.
+   - [x] **chore** New project file contents (still plain JSON at this stage); CLI `render <project> <out>` *(the
+     old `render <video> <audio> <graph> <out>` stays; without an Audio Output the CLI writes the mix of the audio
+     tracks)*.
 2. **Resources and graphs**
-   - [ ] **feature** Resources panel (linked resources only) and the multi-stream import dialog.
-   - [ ] **feature** Graphs as resources; Input and Output port nodes replacing Video Input and Audio Input; the
-     passthrough template.
-   - [ ] **feature** Graph layers: items, bindings in the item inspector, stacking, mute/solo, pre-roll setting.
-   - [ ] **feature** Renderer switching graphs at item edges, one renderer state per layer, the new cache key.
+   - [x] **feature** Resources panel (linked resources only) and the multi-stream import dialog *(done: see
+     [Resources](app.md#resources) and [Decisions](decisions.md#resources-panel-october-2026))*.
+   - [x] **feature** **+ Track**, dropping a resource onto an existing track, and Relocate for missing files *(done:
+     see [Timeline](app.md#timeline) and [Decisions](decisions.md#empty-tracks-relocate-and-graph-resources-october-2026))*.
+   - [x] **feature** Graphs as resources, with the passthrough template *(done: see [Resources](app.md#resources)
+     and [Decisions](decisions.md#empty-tracks-relocate-and-graph-resources-october-2026); one graph is open and
+     rendered at a time until graph layers)*.
+   - [x] **bug** Resources pane polish: Relocate always clickable, rename field no longer closes its menu, media
+     and graphs as one shared card in a grid with Media and Graphs tabs, clearer track outlines *(done: see
+     [Resources](app.md#resources))*.
+   - [x] **chore** `CONTRIBUTING.md` development rules, and one shared channel-count label *(done)*.
+   - Input and Output port nodes *(moved to stage 2b: ports are filled by the host track and receives)*.
+   - [x] **feature** Graph layers: items, bindings in the item inspector, stacking, mute/solo, pre-roll setting
+     *(done: see [Decisions](decisions.md#graph-layers-october-2026))*. *(Replaced by FX in stage 2b.)*
+   - ~~**feature** Graph items in the timeline: copy, cut and paste, box select, and moving an item to another
+     layer by dragging.~~ *(Superseded: item FX use the track item editing.)*
+   - [x] **feature** Renderer switching graphs at item edges, one renderer state per item, layers as a pipeline
+     *(done; carried over to item FX, see [Composition](engine.md#composition); the cache key is still the project
+     version, so an edit to one graph re-renders every frame)*.
+   - ~~**feature** Layer-below sound under the bottom layer and the track mix sound under frames no item supplies
+     sound for~~ *(superseded: stage 2b mixes audio inside the renderer, so FX hear their track or folder)*.
+
+   **2a. Fixes before the routing rebuild.** These don't depend on the model, so they ship first.
+   - [x] **bug** Double-clicking a track's resize edge doesn't reset its height, though its hint says it does. The
+     edge senses drag only (`Sense::drag()` in `timeline.rs`), which never reports a double-click, and the test
+     only drags. Fix: `click_and_drag`, plus a kittest that double-clicks. *(Done: see [Timeline](app.md#timeline).)*
+   - [x] **chore** Audit every hint and tooltip in `ui.lang` that promises an interaction (double-click,
+     right-click, drag, keys) and add the missing kittests (see the rule in [CONTRIBUTING](../CONTRIBUTING.md)).
+     *(Done: see [Testing](testing.md). It found three bugs, fixed below.)*
+   - [x] **bug** Clicking a parameter's slider track set the value a little off from where its handle is drawn
+     (the value was taken along the whole track, the handle runs along a rail inset 4 px at each end).
+   - [x] **bug** A failing graph item's error lost its node, so the error bar couldn't point at the node at fault;
+     the failure now names the node and its graph, and the bar shows it when that graph is open.
+   - [x] **bug** Clicking the error bar's message did nothing: the message label took the click (it was
+     selectable). Only the bar's empty end worked.
+   - [x] **feature** A shared **drag bubble** widget (`widgets/`): a rounded pill with an icon and a label that
+     follows the pointer during any drag. It plays a short "bloop" scale animation on start and on drop, and
+     shrinks back to the source when the drag is cancelled. Resource and graph cards use it first, then item and
+     track drags. *(Done: `widgets::drag_bubble`, used by the cards and track headers; see
+     [Timeline](app.md#timeline). Items move in place while dragged, so they don't show it.)*
+   - [x] **feature** **Drop preview:** while a resource or graph is dragged over the timeline, a ghost item shows
+     where it will land (its length and snapped time on the target track), or a ghost track row shows where a new
+     track will be made. The drop uses the same snapped time; today it is unsnapped. *(Done: see
+     [Timeline](app.md#timeline).)*
+   - [ ] **feature** Know a resource's length before a track plays it (read it at import), so its drop ghost
+     shows its length rather than only its start.
+   - [x] **bug** With no graph items the open graph still renders over the whole timeline, which is an implicit
+     graph ([Decisions](decisions.md#timeline-routing-folders-and-graphs-as-fx-october-2026)). With nothing placed,
+     play the plain track mix. *(Done: the app and the CLI; see [Composition](engine.md#composition).)*
+   - [x] **bug** Only audio tracks can be reordered; video tracks can't, and on audio tracks the header widgets
+     cover most of the grip. Make every track draggable from its header background, and test it headless (the only
+     reorder test needs a GPU and has stale coordinates). *(Done: header labels no longer select text, so a drag on
+     them reaches the header; see [Timeline](app.md#timeline).)*
+   - [x] **bug** Video tracks can't be removed from the app: only audio headers have a ×, and the header menu has
+     no Remove. *(Done: every header has a ×, and the menu has Remove track.)*
+   - [x] **bug** Stale text *(done)*:
+     - The `resources.graph.open_now` hint says the open graph is the one rendered, which is only true with no
+       graph items.
+     - A comment in `timeline.rs` says empty lane space seeks; it box-selects.
+     - A comment in `resources.rs` says nothing accepts `DraggedGraph` yet.
+   - [x] **bug** About links the LGPL 3.0 text, but the release FFmpeg is LGPL 2.1 or later. *(Done: it links the
+     version the loaded build reports; see [App](app.md).)*
+
+   **2b. Routing rebuild** *(replaced by 2c; kept as the record of what was built)*.
+   - [x] **chore** One track tree: folder tracks, master send, any track kind anywhere *(replaced by sections in
+     2c)*.
+   - [x] **feature** Folder mixing inside the renderer (video composite, audio sum). Replaces `@track_mix`. *(The
+     mixing inside the renderer carries over to 2c; folders don't.)*
+   - [x] **feature** Graphs as FX chains on tracks, folders and the master, with receives *(replaced by graph
+     tracks in 2c)*.
+   - [x] **feature** Item FX with trim, mute and pre-roll *(trim, mute and pre-roll carry over to graph items)*.
+   - [x] **feature** Input port nodes replacing Video Input and Audio Input *(done: the same nodes read a named
+     port; see [Decisions](decisions.md#input-ports-october-2026))*.
+   - [x] **feature** Item groups (Group / Ungroup, Ctrl+G), replacing track links *(done: see
+     [Timeline](app.md#timeline); kept in 2c)*.
+   - [x] **feature** Folder rows and the Video / Audio / Control template *(replaced by sections in 2c)*.
+   - [x] **feature** The FX button, chain popup and FX window *(removed in 2c)*.
+
+   **2c. Premiere-style timeline** (the model above; see
+   [Decisions](decisions.md#premiere-style-timeline-october-2026)).
+   - [x] **chore** Video, audio and graph track lists replace the track tree; folders, master sends, FX chains,
+     receives and through nodes are removed ([Timeline](app.md#timeline)).
+   - [x] **feature** Graph tracks of graph items (no overlap, trim, mute, pre-roll) with a source per input port:
+     Below, the mixes, track stems, outputs of graphs below, nothing ([Graph tracks](app.md#graph-tracks)).
+   - [x] **feature** Composition in the renderer: stems, video and audio mixes, graph tracks bottom to top, the
+     topmost active item as the master ([Composition](engine.md#composition)).
+   - [ ] **feature** Output port nodes (plain outputs besides Video Output and Audio Output), read by graphs above
+     and later by subgraph pins. *(Not built: `Source::Graph` reads only the main Video and Audio outputs; folded
+     into the input/output redesign below.)*
+   - [x] **feature** Timeline sections (Graphs, Video, Audio) with a thick divider and reordering within a section
+     ([Timeline](app.md#timeline)). *(The + Track rows were dropped; see the feedback below.)*
+   - [x] **feature** Linked drops: a resource places every resource of its file, grouped; Alt places one
+     ([Timeline](app.md#timeline)).
+   - [x] **feature** Graph lanes, graph drops and the graph item inspector with a source picker per port
+     ([Graph tracks](app.md#graph-tracks)).
+   - [ ] **feature** A cache key made of the active graphs' versions, so editing one graph keeps frames rendered
+     only by others.
    - [ ] **feature** Graph Progress node.
+   - [ ] **chore** Run graph tracks as a pipeline across frames again, as graph layers did.
    - [ ] **feature** Inspecting connections in a graph that isn't under the playhead.
+
+   **Known gaps in 2c** (found while writing its docs, not yet scheduled):
+   - [ ] **feature** Drag a graph item to another graph track (a move stays on its own track).
+   - [ ] **feature** A note on a graph with no Audio Output saying it is silent where it plays.
+   - [ ] **chore** The default timeline panel is 300 px tall, so four or more tracks scroll.
+
+   **2c feedback (October 2026, from the first hands-on pass).**
+   - [x] **bug** The timeline shows on launch, over a default length, with each empty section naming what to drop in it ([Timeline](app.md#timeline)).
+   - [x] **chore** Remove the + Video track / + Audio track / + Graph track rows (visual noise) and with them the
+     ability to make an empty track. A track is only created by placing a resource.
+   - [x] **feature** New tracks come from the track context menu (New track above / New track below, which need an
+     item to place) and from dragging a resource between tracks onto a ghost insertion line (above and below both
+     work). The ghost line was lost and must come back.
+   - [x] **bug** Clicking in the graph editor deselects timeline items; the two selections share the
+     inspector, so a selected graph item hides the node properties even after clicking a node.
+   - [x] **bug** Items must be copy-pastable again (graph items had no copy; now they do, cut and paste included) (Ctrl+C / Ctrl+V on timeline items); the feature existed and was
+     lost.
+   - [x] **feature** Ctrl+A selects every item in the timeline, across all sections.
+   - [x] **bug** The Resources panel's cards wrap to the panel's width instead of running off in one row.
+   - [x] **feature** Several resources dragged into the timeline at once (select cards with Ctrl or Shift click),
+     each on its own track.
+   - [x] **bug** A graph can be dropped on the line between graph tracks and below the last one; before, anything
+     off a graph track made a new track on top.
+   - [ ] **feature** Graph inputs and outputs redesigned: a graph has any number of input and output nodes, and one
+     output can be marked as the main video and one as the main audio output, which is what passes up to the master.
+     Other outputs expose control video or audio signals to graphs above (supersedes the single Video Output / Audio
+     Output design; folds in the output port nodes item above).
+   - [ ] **feature** Passes (later): any node can add passes. A pass is a stacked duplicate directly under the node,
+     visibly connected to it and owned by it, with every parameter mirrored 1:1 from the original and its own input
+     and output taps. One node then processes video and audio identically, or stacks the same effect several times,
+     without editing copies or chaining outputs to inputs.
 3. **Subgraphs**
    - [ ] **feature** Subgraph nodes with pins, linked references, Make unique, cycle check, flattening at compile.
+     Output port nodes (from 2c) become a subgraph's output pins.
 4. **Embedding**
    - [ ] **feature** Zip project file, embed / embed all / unembed (with the relocate-or-save popup), change detection
      and Re-embed, relocating missing files, the user library in AppData.
 5. **More resource kinds**
-   - [ ] **feature** Raw files (interpretation settings, presets, memory-mapped).
+   - [ ] **feature** Raw files read as video or audio (interpretation settings, presets, memory-mapped), placed on
+     video or audio tracks.
    - [ ] **feature** Images.
-   - [ ] **feature** Automation curves: the automation tool, point editing, generator layout.
+   - [ ] **feature** Automation curves and the Automation section: the automation tool, point editing, generator
+     layout, automation tracks as a source for graph ports.
    - [ ] **feature** Glue and Make unique for edit lists.
 6. **Export**
    - [ ] **feature** GUI export of the master output, with buses written as streams in one file or as separate files
@@ -474,19 +658,23 @@ memory maps read ordinary files. Saving rewrites the zip, copying unchanged entr
 
 These are the acceptance tests for the model, end to end in the app:
 
-1. **No graph:** import media, drag it to the timeline, play the track mix like a normal editor.
-2. **One effect throughout:** a new graph (passthrough) with AM inserted on the video wire and an input `Kick` on
-   its modulation, placed on layer 1 over the whole video with `Kick` bound to the kick track. The sound is
-   untouched.
-3. **Effects per section:** graphs A and B side by side on layer 1, trimmed into hard cuts.
-4. **A persistent audio chain:** graph C (a compressor on its audio wire) across layer 1, A and B on layer 2
-   reading C's audio through *Layer below*.
+1. **No graph:** import media, drag it to the timeline, play the mix like a normal editor.
+2. **One effect throughout:** a new graph (the template) with AM inserted on the video wire and an input `Kick` on
+   its modulation, placed on a graph track over the whole project with `Kick` reading the muted kick track's stem.
+   The sound is untouched and the kick isn't heard.
+3. **Effects per section:** graphs A and B as items on one graph track, cut where the effect changes.
+4. **A persistent audio chain:** graph C (a compressor on its audio wire) on the lowest graph track for the whole
+   project; A and B above it read C's sound through *Below* and use it for their modulation.
 5. **Composing graphs:** graph M with inputs `Video`, `Kick`, `Bass` and A and B as subgraphs, `Video` wired into
-   both and into two Blends driven by `Kick` and `Bass`; M's item binds the inputs.
+   both and into two Blends driven by `Kick` and `Bass`; M's item picks the sources.
 6. **Building up over a section:** a graph crossfading dry to wet with Graph Progress; stretching the item sets
    how long it takes.
 7. **Reusing part of a curve:** automation items cut and arranged, glued into a new curve resource, dragged in
    elsewhere.
+8. **Control without output:** an automation track and a raw text file read as audio drive a graph's parameters,
+   and neither is seen or heard (the raw file's track muted, its stem still read).
+9. **Familiar start:** a new project shows the Graphs, Video and Audio sections. A video dropped in puts its
+   picture on a video track and its sound on an audio track, grouped; Alt-dropping places only one.
 
 ---
 
@@ -502,7 +690,7 @@ and a regenerated `nodes.md`.
 - **Video Output**
   - [x] **feature** *Implicit stretch* toggle: stretch the incoming signal to the project's video size as if it
     were connected to the Video input node. **Defaults to on**, so the output always shows something whatever the
-    signal's layout. Shares its implementation with the Look tool.
+    signal's layout. Shares its implementation with connection inspection's picture view.
 
 ### Generators
 
@@ -603,7 +791,7 @@ The aim: one implementation per idea, so fixes and features land in one place. K
 - [x] **chore** **Text.** All strings from lang files (see [Text and localization](#text-and-localization)); no
   string literals in widgets.
 - [ ] **chore** **Stretch.** One "stretch a signal to the project size" implementation, shared by the Stretch node,
-  Video Output and the Look tool.
+  Video Output and connection inspection's picture view.
 - [x] **chore** **Audio sinks.** One resample-sanitize-clip path, shared by Audio Output and the Listen tool.
 - [ ] **chore** Add guard tests where practical (the `mix` one is done): a registry test that fails if a node declares its own `unit` list
   or its own `mix`, so duplicates cannot creep back.
@@ -650,8 +838,8 @@ The aim: one implementation per idea, so fixes and features land in one place. K
 - State snapshots for faster seeking with stateful graphs
 - Timeline: item fades, ripple editing, slip, pitch-preserving stretch, crossfades between graph items
 - Exposed parameters on subgraphs (knobs on the subgraph node bound to inner parameters)
-- Caching each graph layer's output separately, if measurements show it is worth the memory
-- Running graph layers as a pipeline across frames on separate cores
+- Caching each graph track's output separately, if measurements show it is worth the memory
+- Per-track opacity and blend modes in the video mix
 - A tempo map (tempo changes over time)
 - More nodes and interpolation modes
 - Fuzzing

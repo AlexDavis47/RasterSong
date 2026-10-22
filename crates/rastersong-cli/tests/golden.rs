@@ -55,6 +55,10 @@ fn example_graphs_match_golden_frames() {
             .join(graph);
         let _ = std::fs::remove_dir_all(&out);
         let status = Command::new(env!("CARGO_BIN_EXE_rastersong-cli"))
+            .env(
+                "RASTERSONG_CACHE_DIR",
+                PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("golden-cache"),
+            )
             .arg("render")
             .arg(fixture("rgb_pattern.mkv"))
             .arg(fixture("music.wav"))

@@ -1,6 +1,7 @@
 # RasterSong
 
-RasterSong is a video/audio editing tool with a focus on complex datamoshing.
+RasterSong is a video editor with a focus on complex datamoshing: a familiar multi-track timeline (video tracks
+layer, audio tracks mix) whose effects are node graphs.
 
 Pull a kick drum out of your track, use it to amplitude-modulate the red channel, and the red channel waves
 around with every hit. You build effects as a node graph (split, combine, amplitude modulation, delay, bit crush,
@@ -22,9 +23,10 @@ cargo xtask fetch-ffmpeg   # once: downloads the pinned LGPL FFmpeg build
 cargo run --release -p rastersong-gui
 ```
 
-Render without the app:
+Render without the app, a project or a video with a song and a graph:
 
 ```sh
+cargo run --release -p rastersong-cli -- render my-project.rastersong out.mkv
 cargo run --release -p rastersong-cli -- render video.mp4 song.wav examples/graphs/am_bands.json out.mkv
 ```
 

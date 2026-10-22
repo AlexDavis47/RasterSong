@@ -4,19 +4,30 @@ use std::fs::{self, File};
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
+use rastersong_engine::playback::{MixTrack, Mixer};
 use rastersong_engine::{
-    AudioClip, AudioSink, EngineError, FrameSink, LosslessWriter, RenderInfo, RenderedFrame,
+    AudioClip, AudioSink, Bus, EngineError, FrameSink, LosslessWriter, RenderInfo, RenderedFrame,
 };
 
-pub enum Output<'a> {
+/// An audio track the sound of the output can be made of, when the graph renders none.
+#[derive(Debug, Clone)]
+pub struct SourceTrack {
+    /// The bus it is summed into in the track mix.
+    pub bus: String,
+    pub track: MixTrack,
+}
+
+pub enum Output {
     /// Waiting for `start` to learn the frame size and rate.
     Mkv {
         path: PathBuf,
-        /// The source audio, written when the graph doesn't render its own.
-        audio: &'a AudioClip,
-        /// Seconds the source audio starts after the video.
-        offset: f64,
-        writer: Option<LosslessWriter>,
+        /// The audio tracks, mixed into the sound when the graph doesn't render its own.
+        tracks: Vec<SourceTrack>,
+        /// The rate the mix is written at.
+        audio_rate: u32,
+        /// The bus written: the track mix takes its tracks and its channels.
+        bus: Bus,
+        writer: Option<Box<LosslessWriter>>,
     },
     Png {
         dir: PathBuf,
@@ -24,18 +35,20 @@ pub enum Output<'a> {
     },
 }
 
-impl<'a> Output<'a> {
-    /// A `.mkv` path writes a video file with sound (the graph's, or else `audio` starting
-    /// `offset` seconds after the video); anything else is a directory for PNG frames.
-    pub fn new(path: &Path, audio: &'a AudioClip, offset: f64) -> Self {
+impl Output {
+    /// A `.mkv` path writes a video file with the sound of `bus` (the graph's, or else the mix
+    /// of the `tracks` routed to it, at `audio_rate` with the bus's channels); anything else is a
+    /// directory for PNG frames.
+    pub fn new(path: &Path, tracks: Vec<SourceTrack>, audio_rate: u32, bus: Bus) -> Self {
         let is_mkv = path
             .extension()
             .is_some_and(|e| e.eq_ignore_ascii_case("mkv"));
         if is_mkv {
             Self::Mkv {
                 path: path.to_owned(),
-                audio,
-                offset,
+                tracks,
+                audio_rate,
+                bus,
                 writer: None,
             }
         } else {
@@ -61,16 +74,17 @@ fn output_error(context: impl std::fmt::Display, e: impl std::fmt::Display) -> E
     EngineError::Output(format!("{context}: {e}"))
 }
 
-impl FrameSink for Output<'_> {
+impl FrameSink for Output {
     fn start(&mut self, info: &RenderInfo, sink: &AudioSink) -> Result<(), EngineError> {
         match self {
             Self::Mkv {
                 path,
-                audio,
-                offset,
+                tracks,
+                audio_rate,
+                bus,
                 writer,
             } => {
-                *writer = Some(match sink {
+                *writer = Some(Box::new(match sink {
                     // The graph's own sound arrives with each frame.
                     AudioSink::Rendered {
                         sample_rate,
@@ -83,16 +97,18 @@ impl FrameSink for Output<'_> {
                         *sample_rate,
                         *channels,
                     )?,
-                    // The source track, untouched. The CLI has one track, so a track passed
-                    // through is that one.
-                    AudioSink::Source | AudioSink::Passthrough(_) => LosslessWriter::create(
-                        path,
-                        info.width,
-                        info.height,
-                        info.frame_rate,
-                        Some(&shifted(audio, *offset)),
-                    )?,
-                });
+                    // The tracks as placed on the timeline: the bus's audio mix.
+                    AudioSink::TrackMix => {
+                        let mixed = mix(tracks, bus, info, *audio_rate);
+                        LosslessWriter::create(
+                            path,
+                            info.width,
+                            info.height,
+                            info.frame_rate,
+                            Some(&mixed),
+                        )?
+                    }
+                }));
             }
             Self::Png { dir, size } => {
                 fs::create_dir_all(&*dir).map_err(|e| output_error(dir.display(), e))?;
@@ -119,24 +135,21 @@ impl FrameSink for Output<'_> {
     }
 }
 
-/// `clip` starting `offset` seconds later: silence first for a positive offset, the start cut
-/// off for a negative one.
-fn shifted(clip: &AudioClip, offset: f64) -> AudioClip {
-    let channels = clip.channels.max(1) as usize;
-    let frames = (offset.abs() * f64::from(clip.sample_rate)).round() as usize;
-    let samples = if offset >= 0.0 {
-        let mut samples = vec![0.0; frames * channels];
-        samples.extend_from_slice(&clip.samples);
-        samples
-    } else {
-        clip.samples
-            .get(frames * channels..)
-            .unwrap_or_default()
-            .to_vec()
-    };
+/// The project's length of the `tracks` routed to `bus`, mixed to the bus's channels at `rate`.
+fn mix(tracks: &[SourceTrack], bus: &Bus, info: &RenderInfo, rate: u32) -> AudioClip {
+    let tracks = tracks
+        .iter()
+        .filter(|t| t.bus == bus.name)
+        .map(|t| t.track.clone())
+        .collect();
+    let seconds = info.frames as f64 / info.frame_rate.as_f64();
+    let channels = bus.channels as usize;
+    let mut samples = vec![0.0; (seconds * f64::from(rate)).round() as usize * channels];
+    Mixer::new(tracks).render_channels(0.0, f64::from(rate), channels, &mut samples);
     AudioClip {
-        samples,
-        ..clip.clone()
+        sample_rate: rate,
+        channels: bus.channels,
+        samples: samples.into(),
     }
 }
 
@@ -159,21 +172,66 @@ fn write_png(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use rastersong_engine::{Item, Rational, Timebase};
+
     use super::*;
 
     #[test]
-    fn shifting_pads_or_trims_the_start() {
-        let clip = AudioClip {
-            sample_rate: 4,
-            channels: 2,
-            samples: vec![1.0, -1.0, 2.0, -2.0, 3.0, -3.0],
+    fn the_mix_follows_the_timeline_and_its_bus() {
+        let clip = |value| {
+            Arc::new(AudioClip {
+                sample_rate: 4,
+                channels: 1,
+                samples: vec![value; 4].into(),
+            })
         };
+        let tracks = vec![
+            SourceTrack {
+                bus: "Main".into(),
+                track: MixTrack {
+                    clip: clip(0.5),
+                    items: vec![Item::whole(0.0)],
+                    gain: 1.0,
+                },
+            },
+            SourceTrack {
+                bus: "Stems".into(),
+                track: MixTrack {
+                    clip: clip(0.25),
+                    items: vec![Item::whole(1.0)],
+                    gain: 0.5,
+                },
+            },
+        ];
+        let timebase = Timebase {
+            width: 2,
+            height: 2,
+            frame_rate: Rational::new(1, 1),
+        };
+        let info = RenderInfo {
+            width: 2,
+            height: 2,
+            frame_rate: timebase.frame_rate,
+            frames: 2,
+            timebase,
+        };
+        // 2 s at 2 Hz on the stereo Main bus: only track `a` is routed to it. Each item's first
+        // sample falls on its edge, where its fade in starts from silence ...
+        let main = Bus::main();
+        let mixed = mix(&tracks, &main, &info, 2);
+        assert_eq!((mixed.sample_rate, mixed.channels), (2, 2));
+        assert_eq!(*mixed.samples, [0.0, 0.0, 0.5, 0.5, 0.0, 0.0, 0.0, 0.0]);
+        // ... and `b` plays on its own mono bus at its volume, from 1 s.
+        let stems = Bus {
+            name: "Stems".into(),
+            channels: 1,
+        };
+        let stem = mix(&tracks, &stems, &info, 2);
         assert_eq!(
-            shifted(&clip, 0.5).samples,
-            [0.0, 0.0, 0.0, 0.0, 1.0, -1.0, 2.0, -2.0, 3.0, -3.0]
+            (stem.channels, &*stem.samples),
+            (1, &[0.0, 0.0, 0.0, 0.125][..])
         );
-        assert_eq!(shifted(&clip, -0.25).samples, [2.0, -2.0, 3.0, -3.0]);
-        assert!(shifted(&clip, -10.0).samples.is_empty());
-        assert_eq!(shifted(&clip, 0.0), clip);
     }
 }

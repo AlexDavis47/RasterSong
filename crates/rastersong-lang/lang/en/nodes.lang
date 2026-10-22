@@ -12,18 +12,20 @@ node.am.output.out = The processed signal
 node.am.param.depth.label = Depth
 node.am.param.depth.help = How strongly the modulator scales the carrier: carrier × (1 + depth × modulator)
 
-node.audio_input.label = Audio
-node.audio_input.description = The audio track, one frame's worth per block, -1 to 1, channels interleaved
-node.audio_input.output.out = The audio, one frame's worth per block, from -1 to 1; stereo comes as L, R, L, R, …
-node.audio_input.param.source.label = Source
-node.audio_input.param.source.help = Name of the host-supplied audio signal
+node.audio_input.label = Audio In
+node.audio_input.description = An input port for sound, one frame's worth per block, -1 to 1, channels interleaved. Audio is the main port, which a graph item reads from what is below it unless set otherwise; other names are ports of their own
+node.audio_input.output.out = The sound, one frame's worth per block, from -1 to 1; stereo comes as L, R, L, R, …
+node.audio_input.param.port.label = Port
+node.audio_input.param.port.help = The port's name. Audio is the main port; any other name is a port of its own
 
 node.audio_output.label = Audio Output
-node.audio_output.description = The rendered sound: replaces the source audio in the preview and the export
-node.audio_output.doc = Optional. Without it, or with nothing connected, the source audio is used untouched; so is a track wired straight in. Mono and stereo signals are written as they are; any other signal is written as interleaved samples to a stereo track. Each frame's block is resampled from its own rate to the project's audio rate, and clipped to -1 to 1.
+node.audio_output.description = The rendered sound of one output bus: replaces that bus's track mix in the preview and the export
+node.audio_output.doc = Optional, and at most one per bus. Without one, or with nothing connected, the bus plays its track mix: the audio tracks routed to it, at their volumes; a track wired straight in is also used as it is. A mono signal is written to every channel of the bus; any other signal is written as interleaved samples across the bus's channels (a stereo signal to a stereo bus as it is). Each frame's block is resampled from its own rate to the project's audio rate, and clipped to -1 to 1.
 node.audio_output.input.in = The sound to output, from -1 to 1: mono, stereo, or any signal read as samples
 node.audio_output.output.out = The sound as written
 node.audio_output.param.volume.label = Volume
+node.audio_output.param.bus.label = Bus
+node.audio_output.param.bus.help = The output bus this sound goes to, from the buses in Project settings. The project's first bus (Main unless renamed) is the one the preview plays and the export writes. An output naming a bus the project doesn't have is not rendered.
 node.audio_output.param.volume.help = Louder or quieter, in decibels, before the sound is clipped to -1 to 1. 0 changes nothing; the meter shows the peak after the volume, so a peak above 0 dB will clip.
 
 node.beat.label = Beat
@@ -536,11 +538,11 @@ node.transpose.description = Swaps rows and columns: the picture's width and hei
 node.transpose.input.in = The signal to process
 node.transpose.output.out = The processed signal
 
-node.video_input.label = Video
-node.video_input.description = The video as RGB, 0 to 1
-node.video_input.output.out = The video, as RGB from 0 to 1
-node.video_input.param.source.label = Source
-node.video_input.param.source.help = Name of the host-supplied video signal
+node.video_input.label = Video In
+node.video_input.description = An input port for pictures, as RGB from 0 to 1. Video is the main port, which a graph item reads from what is below it unless set otherwise; other names are ports of their own
+node.video_input.output.out = The picture, as RGB from 0 to 1
+node.video_input.param.port.label = Port
+node.video_input.param.port.help = The port's name. Video is the main port; any other name is a port of its own
 
 node.three_band.param.slope.label = Slope (dB/oct)
 node.three_band.param.slope.help = How sharply each crossover separates the bands. The mid band is what remains, so the three bands always add back up to the input at any slope

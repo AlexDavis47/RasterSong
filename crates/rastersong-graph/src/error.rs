@@ -5,15 +5,34 @@ use rastersong_lang::tr_args;
 #[derive(Debug, Clone, PartialEq)]
 pub enum GraphError {
     Parse(String),
-    UnknownNodeType { id: String, kind: String },
+    UnknownNodeType {
+        id: String,
+        kind: String,
+    },
     DuplicateId(String),
-    Connection { connection: String, message: String },
-    MissingInput { node: String, input: String },
+    Connection {
+        connection: String,
+        message: String,
+    },
+    MissingInput {
+        node: String,
+        input: String,
+    },
     Cycle(Vec<String>),
     OutputCount(usize),
-    AudioOutputCount(usize),
-    Node { node: String, message: String },
-    Source { name: String, message: String },
+    /// More than one audio output writes to `bus`.
+    AudioOutputCount {
+        bus: String,
+        count: usize,
+    },
+    Node {
+        node: String,
+        message: String,
+    },
+    Source {
+        name: String,
+        message: String,
+    },
 }
 
 impl std::fmt::Display for GraphError {
@@ -40,9 +59,9 @@ impl std::fmt::Display for GraphError {
             Self::OutputCount(n) => {
                 tr_args("error.graph.output_count", &[("count", &n.to_string())])
             }
-            Self::AudioOutputCount(n) => tr_args(
+            Self::AudioOutputCount { bus, count } => tr_args(
                 "error.graph.audio_output_count",
-                &[("count", &n.to_string())],
+                &[("bus", bus), ("count", &count.to_string())],
             ),
             Self::Node { node, message } => {
                 tr_args("error.graph.node", &[("node", node), ("message", message)])
@@ -68,7 +87,7 @@ impl GraphError {
             Self::Parse(_)
             | Self::Connection { .. }
             | Self::OutputCount(_)
-            | Self::AudioOutputCount(_)
+            | Self::AudioOutputCount { .. }
             | Self::Source { .. } => None,
         }
     }

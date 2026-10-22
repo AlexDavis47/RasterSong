@@ -22,7 +22,7 @@ pub use desc::{
 pub use error::GraphError;
 pub use graph::{
     CompileOptions, Graph, MAX_INPUTS, MAX_PARAMS, NodeCost, NodeDiagnostic, NodeMeters, NodeStats,
-    OutputLevel, ParamLevel, render_form,
+    OutputLevel, ParamLevel, audio_output_bus, render_form,
 };
 pub use node::{
     Diagnostic, InputSpec, LayoutContext, Node, OutputSpec, PrepareContext, ProcessContext,
