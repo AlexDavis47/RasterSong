@@ -50,3 +50,20 @@ makes one entry per node kind from `NodeKind::BENCH`, and `lowpass` is now `filt
   the delay line does two modulo operations per sample, and modulated `lowpass` and `bitcrush` call `exp`/`exp2`
   per sample. Branch- and channel-level parallelism (three channels in `bass_wave`) is also unused.
 - At ½ preview scale the graph cost drops about 4×, at ¼ about 16×.
+
+## 2026-10-22: Export encoders
+
+AMD Ryzen 9 3900X (24 threads), Windows 11, release build. 60 frames of 1080p30 with noise, video only, through
+`MediaWriter` (frame conversion included). H.264 went through the GPU encoder.
+
+| Format | One encoder thread (before) | Automatic threads (after) |
+|---|---|---|
+| H.264 (GPU) | 195 fps | 208 fps |
+| ProRes HQ (`prores_ks`) | 1.5 fps | 16 fps |
+| FFV1 | 8.7 fps | 50 fps |
+
+### Notes
+
+- Converting RGB frames to the encoder's pixel format costs about 5 ms per frame; the encoders were the cost.
+- `prores_ks` searches for a quantizer per slice and stays slow on detailed frames even threaded. FFmpeg's
+  `prores` encoder wrote the same frames at about 180 fps (measured with the `ffmpeg` program).

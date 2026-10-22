@@ -36,6 +36,10 @@ synthetic frames. (Licensing of FFmpeg itself is in [Licensing](licensing.md#ffm
   - `ProRes` (QuickTime with 24-bit PCM): `prores_ks` at the chosen profile, 4:2:2 10-bit, tagged `apl0`.
   - `Ffv1` (Matroska with 16-bit PCM): lossless, RGB, bit-exact through our decoder.
 
+  Video encoders open with FFmpeg's automatic thread count (one per core, frame or slice threads, whichever the
+  encoder has) instead of its default of one; ProRes and FFV1 run on the CPU and are otherwise held to one core.
+  `MediaWriter::video_threads` reports the count. See [Benchmarks](benchmarks.md#2026-10-22-export-encoders).
+
   Frames are converted with the same `Scaler` as decoding, to BT.709 limited-range YUV (or RGB for FFV1), and the
   file is tagged to match. Formats with subsampled chroma refuse an odd width or height;
   `FormatKind::size_problem` says which side is odd and `nearest_size` gives the even size one pixel up. Video packets the encoder

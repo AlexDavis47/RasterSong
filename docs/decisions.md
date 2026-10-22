@@ -580,6 +580,8 @@ Resolve, and only graph inputs are new.
 - **An installed FFmpeg is an option, never a requirement.** Users who want x264, x265 or anything else the bundled
   LGPL build can't ship can point RasterSong at their own FFmpeg (planned). It runs as a separate program, fed
   frames over a pipe, and is never loaded into RasterSong; the bundled build stays enough for every common format.
+- **Encoders run on every core.** FFmpeg's encoders default to one thread; the writer asks for automatic threading,
+  which made ProRes about 11× and FFV1 about 6× faster at 1080p.
 
 ## Open
 

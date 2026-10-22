@@ -193,6 +193,13 @@ impl MediaWriter {
         self.video_encoder
     }
 
+    /// How many threads the video encoder runs on, as FFmpeg reports it once open.
+    pub fn video_threads(&self) -> usize {
+        // SAFETY: the encoder's context is valid while the writer lives; this is a plain field.
+        let count = unsafe { (*self.video.encoder.as_ptr()).thread_count };
+        count.max(1) as usize
+    }
+
     /// Adds interleaved samples to the audio track, if there is one. Values are clipped to
     /// `-1..=1` when the format stores integers.
     pub fn push_audio(&mut self, samples: &[f32]) {
@@ -461,10 +468,13 @@ fn configure_video(
 ) -> Result<encoder::video::Video, MediaError> {
     use ffmpeg::util::color;
 
-    let mut video = codec::context::Context::new_with_codec(codec)
-        .encoder()
-        .video()
-        .map_err(encode_error)?;
+    let mut context = codec::context::Context::new_with_codec(codec);
+    // FFmpeg's default is one thread, which leaves the CPU encoders (ProRes, FFV1) on one core.
+    // 0 lets it pick a thread per core, splitting frames or slices, whichever the encoder
+    // supports; the thread type keeps its default of both. Hardware encoders ignore it.
+    // SAFETY: the context is valid and not yet open; this is a plain field.
+    unsafe { (*context.as_mut_ptr()).thread_count = 0 };
+    let mut video = context.encoder().video().map_err(encode_error)?;
     video.set_width(width);
     video.set_height(height);
     video.set_format(pixel);

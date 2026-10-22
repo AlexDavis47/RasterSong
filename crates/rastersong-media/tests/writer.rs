@@ -233,6 +233,31 @@ fn the_lossless_formats_are_always_available() {
     assert!(kinds.contains(&FormatKind::Ffv1), "{kinds:?}");
 }
 
+/// FFmpeg's encoders default to one thread; ProRes and FFV1 then encode on one core.
+#[test]
+fn the_cpu_encoders_use_more_than_one_thread() {
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    if cores < 2 {
+        eprintln!("skipped: one core");
+        return;
+    }
+    for format in [
+        ExportFormat::ProRes {
+            profile: ProResProfile::Hq,
+        },
+        ExportFormat::Ffv1,
+    ] {
+        let path = temp_file(&format!("threads.{}", format.kind().extension()));
+        let writer =
+            MediaWriter::create(&path, format, 1920, 1080, Rational::new(25, 1), None).unwrap();
+        assert!(
+            writer.video_threads() > 1,
+            "{format:?}: {} thread(s) on {cores} cores",
+            writer.video_threads()
+        );
+    }
+}
+
 #[test]
 fn odd_sizes_are_refused_where_chroma_is_subsampled() {
     let path = temp_file("odd.mov");

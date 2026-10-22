@@ -655,6 +655,11 @@ raw.
    - [x] **feature** The Export window: H.264 MP4, ProRes MOV or FFV1 MKV (only the formats whose encoders work on
      this machine), quality or profile, one bus, project or custom size, with progress, time left and Cancel
      ([Export](app.md#export)).
+   - [x] **bug** ProRes and FFV1 exported on one core: the encoders kept FFmpeg's default of one thread. They now
+     use one per core, about 11× faster for ProRes and 6× for FFV1 at 1080p
+     ([Media](media.md), [Benchmarks](benchmarks.md#2026-10-22-export-encoders)).
+   - [ ] **feature** Try FFmpeg's `prores` encoder in place of `prores_ks`: about 13× faster on detailed frames,
+     with coarser rate control and usually larger files. Compare quality and size before switching.
    - [x] **chore** The release FFmpeg builds the H.264 encoders: Media Foundation, NVENC and AMF on Windows, NVENC
      and AMF on Linux, VideoToolbox on macOS ([Development](development.md)). Quick Sync is left out (it needs
      Intel's C++ dispatcher linked in). macOS and Linux are checked only by the release workflow.
