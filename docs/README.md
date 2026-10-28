@@ -18,7 +18,7 @@ leans on them.
 | Add or change a node | [Node authoring](node-authoring.md), then [Node behavior](node-behavior.md) |
 | Look up a node's ports and parameters | [Node reference](nodes.md) (generated) |
 | Edit graph or project files by hand | [Graph files](graph-format.md) |
-| Work on the desktop app | [Desktop app](app.md) |
+| Work on the desktop app | [Desktop app](app.md), and the redesign in [UI V2](ui-v2.md) |
 | Change wording or add a language | [Text and languages](text.md) |
 | Build, test or package | [Development](development.md), [Testing](testing.md) |
 | Contribute (rules every change follows) | [Contributing](../CONTRIBUTING.md) |
@@ -47,6 +47,7 @@ leans on them.
 **Application**
 
 - [Desktop app](app.md): preview, node editor, inspector, the Resources panel, timeline and graph tracks, settings, output buses, keys, projects.
+- [UI V2](ui-v2.md): the interface redesign, its design tokens and mockups ([`design/ui-v2/`](design/ui-v2/README.md)). A target, moved into Desktop app as it ships.
 - [Text and languages](text.md): where every user-facing string lives, the key scheme, adding a language.
 
 **Project**

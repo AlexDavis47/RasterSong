@@ -813,6 +813,28 @@ and a regenerated `nodes.md`.
 
 ---
 
+## UI V2
+
+The interface redesign in [UI V2](ui-v2.md). Each stage moves its part of that page into [Desktop app](app.md)
+when it ships, with kittests for every gesture its hints name. Stages 1 and 2 come first; the rest are
+independent of each other.
+
+1. [ ] **feature** Design tokens: the dark palette, type sizes, control heights, radii and spacing in `theme.rs`
+   and `apply_style`. Check Inter and JetBrains Mono against [Licensing](licensing.md) before bundling them.
+2. [ ] **feature** Shell: the top bar with the Export… button, the transport under the preview (two rows, no
+   wrapping), Result / Original / Split, and the status bar with pointer hints.
+3. [ ] **feature** Node graph: the category colour strip, wider nodes and larger text, bypassed and warning
+   styles, the error count in the canvas header, the wire legend, the node search palette.
+4. [ ] **feature** Wire probe drum: wrap-around view wheel turned by Alt+scroll, clicks and ↑/↓.
+5. [ ] **feature** Inspector: one layout for node, graph item and track selections; the modulation card.
+6. [ ] **feature** Resources: Media and Graphs together with counts and one filter field.
+7. [ ] **feature** Timeline: calmer headers with remove in the menu, the toolbar's Loop readout.
+8. [ ] **feature** Tempo mode: the tempo group by the Time/Tempo switch, the two-tier ruler, bar shading, the
+   first-beat marker, beat-grid snap and loop, bar.beat in the transport with the beat light.
+9. [ ] **feature** Export window: two columns, the latest rendered frame, the summary and progress beside the
+   settings.
+10. [ ] **feature** The light theme with the same tokens. *After 1.*
+
 ## Code health and DRY
 
 The aim: one implementation per idea, so fixes and features land in one place. Known candidates to consolidate:

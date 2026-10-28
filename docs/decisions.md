@@ -614,6 +614,25 @@ those values are made ([Benchmarks](benchmarks.md#2026-10-22-modulated-parameter
   interpolation has to map after interpolating, or clamping and whole-number rounding would come out different,
   so it maps every value, in a loop with the settings worked out beforehand so it vectorizes.
 
+### UI V2 (October 2026)
+
+The interface is redesigned around where the eye already is, keeping every feature
+([UI V2](ui-v2.md), mockups in [`design/ui-v2/`](design/ui-v2/README.md)).
+
+- **The transport goes under the preview, not in the top bar.** Playing, looping and reading the timecode happen
+  while watching the picture; a transport at the top of the window pulls the eye away from the preview, the graph
+  and the timeline, which are where the work is.
+- **Tempo controls attach to the Time/Tempo switch.** They only mean something in Tempo mode, so they show only
+  then, next to the switch that turns it on, and the ruler and transport change with them.
+- **Nodes keep their category colour, as a strip.** Colour on the whole header made the text harder to read;
+  without colour, nodes were hard to tell apart at a glance. A thin strip along the top keeps both.
+- **Probe views on a wrap-around drum.** Alt+scroll already steps through the views; a wheel that turns with it
+  shows where you are and what comes next, and wrapping means there is no end to hit.
+- **Export shows the latest rendered frame**, so a long export can be checked while it runs.
+- **Tried and dropped:** a routing board for graph items (the port sources shown as a patch bay). The source
+  pickers in the inspector already say what each port reads, and a second way to set them would break the one
+  implementation rule.
+
 ## Open
 
 ### Open: "Audio to video" / "Video to audio" names

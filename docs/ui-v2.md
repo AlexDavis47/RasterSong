@@ -1,0 +1,172 @@
+# UI V2
+
+The plan for the second version of the desktop app's interface. It keeps every feature in [Desktop app](app.md)
+and changes where things live and how they read. This is a **target**, not a description of the code:
+[Desktop app](app.md) stays the source of truth for how the app works today, and each part below moves into it
+as it ships. The work is tracked in the [roadmap](roadmap.md#ui-v2); the reasons are in
+[Decisions](decisions.md#ui-v2-october-2026).
+
+The mockups are in [`design/ui-v2/`](design/ui-v2/README.md), with a live canvas linked from there. Where this
+page and a mockup disagree, this page wins; fix the mockup.
+
+## Priorities
+
+1. **Controls sit next to the work they act on.** The transport goes under the preview, the tempo fields next to
+   the Time/Tempo switch, the bypass toggle in the inspector next to the node it bypasses.
+2. **The graph reads at a glance.** Node text at 12 to 13 px, a category colour strip along the top of each node,
+   a legend for wire colours.
+3. **The inspector follows the selection**: a node, a graph item or a track, each with the same layout.
+4. **Nothing hides behind a tab that doesn't need to.** Media and Graphs share the Resources panel.
+5. **Destructive actions are one step removed.** Removing a track or a resource moves into menus, out of the
+   headers and cards where a stray click hits it.
+6. **The hidden gestures are taught where they apply.** The status bar names the modifier keys for what is under
+   the pointer (Alt to change the probe view, Shift to listen, Ctrl+drag for a loop region).
+7. **Numbers line up.** Every timecode, size, rate and value is set in a monospaced face so it doesn't jitter as
+   it changes.
+
+## Design tokens
+
+The dark theme first. One accent, used for the playhead, the selection, focus and the primary button; colour
+otherwise means a signal or a state, never decoration. All values go in `theme.rs` (the one place colours live).
+
+| Token | Value | Now (`Theme::DARK`) | Used for |
+|---|---|---|---|
+| Ground | `#0E0F11` | egui default | Window background, wells, text fields |
+| Panel | `#16171A` | egui default | Panels, the top bar, the timeline |
+| Raised | `#1C1D21` | egui default | Buttons, dropdowns, nodes |
+| Border | `#2A2C31` | egui default | Panel and control outlines |
+| Divider | `#202227` | | Lines inside a panel |
+| Text | `#ECEDEF` | | Primary text |
+| Text muted | `#A1A4AC` | | Secondary text, units |
+| Text faint | `#868A94` | | Labels, hints, disabled |
+| Accent | `#8FA2FF` | `#6AA8FF` | Playhead, selection, focus, primary button |
+| Audio | `#3FC7B4` | `#3CC4BC` | Audio wires and items |
+| Red / green / blue | `#FF5D5D` / `#4ED37A` / `#5B8CFF` | `#E8554E` / `#4FC45C` / `#4D8EF0` | Channel parts |
+| Low / mid / high | `#FF9A3C` / `#F2D04B` / `#B48CFF` | `#F08A3A` / `#E6CC4A` / `#B07CEC` | Band parts |
+| Graph | `#9C86FF` | `#8E6CC8` | Graph tracks and items |
+| Warning | `#F2B544` | `#F0C040` | Warnings, the first-beat marker |
+| Warning ground | `#26231B`, border `#6E5420`, text `#F4E3BD` | | Warning bars (the odd-size bar in Export) |
+
+Category colours for nodes keep the six in `Theme::categories`; the strip shows them at full strength.
+
+**Type.** Inter for text, JetBrains Mono for numbers (both under the SIL Open Font License; check it against
+[Licensing](licensing.md) before bundling). Sizes: body 13 px, node titles 12.5 px, port labels 11 px, section
+labels 10.5 px in capitals with 0.08 em tracking, the large timecode 15 px.
+
+**Shape.** Controls are 32 px high (26 px inside a segmented control or a dense row), corners 6 px on controls,
+7 to 8 px on nodes and cards, 12 px on windows. Spacing steps are 4, 6, 8, 10, 12, 16 and 20 px.
+
+## Layout
+
+The window keeps the two rows from [Desktop app](app.md): preview, graph and inspector on top; Resources and the
+timeline below. Board: [Main](design/ui-v2/Main.dc.html).
+
+- **Top bar**: the menus, the project name with an "edited" mark, File → Settings, and an **Export…** button on
+  the right. No transport here.
+- **Status bar** along the bottom: the compile state on the left ("Graph compiled", or the error), the hint for
+  what is under the pointer in the middle, the cache use and the project's picture size and rate on the right.
+
+## Preview and transport
+
+The preview is up to 460 px wide. Its header holds **Result / Original / Split** (Original replaces the
+*Unprocessed* toggle) and a **Fit** button.
+
+The **transport sits under the picture**, in two rows that never wrap:
+
+1. Go to start, **play** (the accent button), loop, and the timecode box: position large, length small, the frame
+   number at the right.
+2. **Ahead** (how far is rendered, as a bar with seconds; it names the playback speed when rendering can't keep
+   up), the preview resolution, and the volume.
+
+In Tempo mode the timecode box reads **bar.beat.tick** large and seconds small, with a four-segment beat light
+under it ([Tempo mode](#timeline-in-tempo-mode)).
+
+## Node graph
+
+Board: [GraphDetail](design/ui-v2/GraphDetail.dc.html).
+
+- Each node has a **5 px colour strip** along its top edge in its category colour; the title sits below it, so
+  colour and text don't compete. Nodes are wider (116 px at 100%) so titles fit.
+- A **bypassed** node is drawn faded on a hatched fill, with BYPASSED in its title row. A node with a warning
+  has an amber outline and its message on the node; a failing node a red outline. The canvas header counts them
+  ("1 error · 1 warning"). The error bar along the bottom of the canvas stays: it says why the graph can't render,
+  that the preview shows the last good frame, and has *Show node*.
+- A **legend** in the corner names the wire colours (video, audio, R G B, low mid high) and that thickness is RMS.
+- The canvas header names the open graph and where it is placed ("on Graph track 1 · 0:00–0:03"), with *Add node*
+  (Tab) and *Bypass graphs*.
+- **Node search** opens as a palette over the canvas: a search field, what it connects to when opened from a
+  dropped wire, results grouped by category with a one-line description each, and the keys (↑↓, Enter, Esc) at the
+  bottom.
+
+### The wire probe
+
+Hovering a wire opens the probe, as now: the wire's ends ("Three-Band Split.low → Delay.in"), what it carries,
+a view, a meter and the readings. The list of views becomes a **drum**:
+a vertical wheel of view icons (Picture, Scope, Spectrum, Readings) beside the view, with the active one in the
+middle, highlighted, and its neighbours tilting away above and below. It **wraps around**: past Readings comes
+Picture again.
+
+- Alt+scroll on the wire turns the drum one view per wheel click, as Alt+scroll changes the view today.
+- Clicking an icon turns the drum to it. With the probe focused, ↑/↓ turn it.
+- The drum settles with a short ease; the view cross-fades as it does now.
+- Shift to listen is unchanged; the probe's footer names both gestures.
+
+Each of these is a kittest ([CONTRIBUTING](../CONTRIBUTING.md) rule 14).
+
+## Inspector
+
+Follows the selection, and every kind of selection uses one layout: a header with the kind ("Node", "Graph item",
+"Track"), the name (editable through `name_edit`) and the actions that apply to it (Bypass with its Alt+click hint
+for a node), then sections with capital labels.
+
+For a node: the name, the type with a one-line description, what each output carries, the node settings, then the
+parameters. A **modulated parameter** gets a card: the slider with the modulated range outlined and the ghost
+handle at the live value, the amount knob, the source ("from Three-Band Split · low"), one way / both ways, and
+"Moves by" in the parameter's unit. The behaviour is the same as in [Inspector](app.md#inspector).
+
+## Resources
+
+Media and Graphs show **together**, as two labelled groups with counts ("Media · 4", "Graphs · 2"), not two tabs.
+A filter field at the top narrows both. Cards keep `resource_card`; a missing file keeps its red card and
+Relocate… button. A hint line at the bottom names the drag and double-click gestures.
+
+## Timeline
+
+The three sections, items, trimming and graph items work as in [Timeline](app.md#timeline). The changes:
+
+- Track headers are calmer: name, kind and S/M; **removing a track moves into its right-click menu**.
+- The toolbar holds the **Time / Tempo** switch, **Snap**, and the **Loop** button with the region it covers; with
+  no region it says "Ctrl+drag the ruler for a loop region".
+
+### Timeline in Tempo mode
+
+Board: [Tempo](design/ui-v2/Tempo.dc.html).
+
+- **The tempo fields live in one group attached to the Time/Tempo switch**: bpm (drag to scrub, double-click to
+  type), beats per bar, first beat, and the **Metronome** toggle with four beat lights showing the current beat.
+  In Time mode the group collapses away. File → Settings → Project still edits the same fields.
+- **The ruler has two tiers**: bar numbers bold on top, beats small below (2.2, 2.3, …).
+- **Every other bar is shaded** down through the lanes, and beat lines are fainter than bar lines.
+- An **amber marker** on the ruler shows the first beat.
+- **Snap reads "Snap · beats"**, and the loop region is given in bars ("2.1 – 4.1"); both follow the beat grid.
+  Shift drags freely.
+- The transport under the preview reads bar.beat ([above](#preview-and-transport)).
+
+## Export
+
+Board: [Export](design/ui-v2/Export.dc.html). The window is two columns.
+
+- **Left, the settings**: format as three cards (name, what it is for, the sound it carries, the encoder in use),
+  quality or profile as a segmented control, sound (bus) and range side by side, size with Project / Custom. An
+  odd size shows a warning bar that names the odd side, with a *Use 1282* button.
+- **Right, the result**: the **latest rendered frame** as a 16:9 preview with a "Rendering" tag and its size,
+  labelled with its frame and time; the summary (file, picture, rate, length, warm-up and why); the progress with
+  the time left and Cancel; and the Export… button, disabled with its reason while the size is odd.
+
+Everything else is as in [Export](app.md#export).
+
+## Not covered yet
+
+- **The light theme.** The boards are dark only; `Theme::LIGHT` needs its own pass with the same token names.
+- **The Settings window** keeps its current layout until it gets a board of its own.
+- **Fonts** depend on the licensing check above; until then egui's default face at the sizes above.

@@ -5,7 +5,7 @@ Two rows: along the bottom, the **Resources** panel and the **timeline** beside 
 state; everything is decoded, rendered and cached by the [engine](engine.md) on its render thread.
 
 This describes the app as it is. Changes planned from hands-on testing are in the
-[roadmap](roadmap.md#timeline-resources-and-routing).
+[roadmap](roadmap.md#timeline-resources-and-routing). The interface redesign is planned in [UI V2](ui-v2.md).
 
 ## Preview
 

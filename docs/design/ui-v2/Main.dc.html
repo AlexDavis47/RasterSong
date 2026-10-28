@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RasterSong: edit workspace</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0E0F11}
+a{color:#A9B6FF}a:hover{color:#CDD5FF}
+.rs button,.rs input{font-family:inherit}
+.btn{height:30px;padding:0 10px;border-radius:6px;border:1px solid #2A2C31;background:#1C1D21;color:#ECEDEF;font-size:12.5px;font-weight:500;display:inline-flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap}
+.btn:hover{background:#24262B}
+.ghost{background:transparent;border-color:transparent;color:#C3C6CD}
+.ghost:hover{background:#1C1D21}
+.ib{width:30px;padding:0;justify-content:center}
+.kbd{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#A1A4AC;border:1px solid #33353B;border-bottom-width:2px;border-radius:4px;padding:0 4px;line-height:15px}
+.lbl{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:#868A94;font-weight:600}
+.mono{font-family:'JetBrains Mono',monospace}
+.seg{display:inline-flex;background:#0E0F11;border:1px solid #2A2C31;border-radius:7px;padding:2px;gap:2px}
+.seg button{height:24px;border:0;border-radius:5px;background:transparent;color:#A1A4AC;font-size:12px;font-weight:500;padding:0 9px;cursor:pointer}
+.dd{height:28px;border-radius:6px;border:1px solid #2A2C31;background:#1C1D21;color:#ECEDEF;font-size:12.5px;display:inline-flex;align-items:center;justify-content:space-between;gap:8px;padding:0 8px 0 10px;cursor:pointer;min-width:120px}
+.tog{height:22px;min-width:22px;border-radius:4px;border:1px solid #33353B;background:transparent;color:#A1A4AC;font-size:11px;font-weight:700;padding:0 5px;cursor:pointer;font-family:'JetBrains Mono',monospace}
+.node{position:absolute;width:116px;background:#1E1F23;border:1px solid #33353B;border-radius:8px;box-shadow:0 6px 16px rgba(0,0,0,.35)}
+.nh{position:relative;height:28px;display:flex;align-items:center;gap:6px;padding:4px 9px 0;box-sizing:border-box;border-bottom:1px solid #2A2C31;font-size:12px;font-weight:600;color:#ECEDEF;white-space:nowrap;overflow:hidden;border-radius:7px 7px 0 0}
+.nh .dot{position:absolute;left:0;right:0;top:0;width:auto;height:5px;border-radius:0}
+.nr{height:22px;display:flex;align-items:center;justify-content:space-between;padding:0 10px;font-size:11px;color:#A1A4AC}
+.dot{width:8px;height:8px;border-radius:50%;flex:none}
+.pin{position:absolute;width:9px;height:9px;border-radius:50%;border:2px solid #1E1F23}
+.item{position:absolute;top:3px;bottom:3px;border-radius:5px;overflow:hidden;border:1px solid rgba(255,255,255,.08)}
+.ibar{height:16px;display:flex;align-items:center;gap:6px;padding:0 6px;font-size:10.5px;font-weight:600;white-space:nowrap}
+input[type=range].rng{-webkit-appearance:none;appearance:none;background:transparent;width:100%;height:24px;margin:0;position:relative}
+input[type=range].rng::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:#ECEDEF;border:2px solid #0E0F11;box-shadow:0 0 0 1px #5A5D66}
+input[type=range].rng::-moz-range-thumb{width:12px;height:12px;border-radius:50%;background:#ECEDEF;border:2px solid #0E0F11}
+.field{height:28px;border-radius:6px;border:1px solid #2A2C31;background:#0E0F11;color:#ECEDEF;font-size:12.5px;padding:0 8px;box-sizing:border-box}
+</style>
+</helmet>
+<div class="rs" style="min-height: 900px; background: #0E0F11; color: #ECEDEF; font-family: Inter, system-ui, sans-serif; font-size: 13px; display: flex; flex-direction: column">
+
+<!-- TOP BAR: menus, project, one transport, render health, export -->
+<header style="min-height: 48px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 6px 12px; border-bottom: 1px solid #202227; background: #131417; box-sizing: border-box">
+  <div style="display: flex; align-items: center; gap: 4px; flex: 1 1 320px; min-width: 0">
+    <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true" style="margin-right: 6px"><rect x="2" y="2" width="18" height="18" rx="5" fill="none" stroke="{{accent}}" stroke-width="1.8"></rect><path d="M5 13 Q8 5 11 11 T17 9" fill="none" stroke="#3FC7B4" stroke-width="1.8" stroke-linecap="round"></path></svg>
+    <button class="btn ghost">File</button>
+    <button class="btn ghost">Edit</button>
+    <button class="btn ghost">View</button>
+    <button class="btn ghost">Help</button>
+    <div style="width: 1px; height: 20px; background: #2A2C31; margin: 0 8px"></div>
+    <span style="font-weight: 600; white-space: nowrap">beat_mosh</span>
+    <span style="color: #868A94; font-size: 12px; white-space: nowrap">.rsong · edited</span>
+  </div>
+
+  <div style="display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex: 1 1 320px">
+    <button class="btn ghost ib" aria-label="Settings (Ctrl+,)"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2.2"></circle><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"></path></svg></button>
+    <button class="btn" style="background: #ECEDEF; color: #0E0F11; border-color: #ECEDEF; font-weight: 600">Export…</button>
+  </div>
+</header>
+
+<!-- UPPER ROW: preview | graph | inspector -->
+<div style="display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 6px 0">
+
+  <!-- PREVIEW -->
+  <section aria-label="Preview" style="flex: 1 1 420px; max-width: 460px; height: 484px; background: #16171A; border: 1px solid #24262B; border-radius: 8px; display: flex; flex-direction: column; min-width: 0">
+    <div style="height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 12px; border-bottom: 1px solid #202227">
+      <span style="font-weight: 600">Preview</span>
+      <div class="seg" style="margin-left: auto" role="group" aria-label="Preview shows">
+        <button aria-pressed="true" style="background: #2A2C31; color: #ECEDEF">Result</button>
+        <button>Original</button>
+        <button>Split</button>
+      </div>
+      <button class="btn ghost ib" aria-label="Fit picture (F)"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 5V2h3M11 2h3v3M14 11v3h-3M5 14H2v-3"></path></svg></button>
+    </div>
+    <div style="flex: 1; display: flex; align-items: center; justify-content: center; padding: 12px; background: #0A0B0C; position: relative">
+      <div style="width: 100%; aspect-ratio: 16 / 9; background: linear-gradient(90deg, #050530 0%, #0A0AA8 55%, #1515F0 100%); border-radius: 2px; position: relative">
+        <div style="position: absolute; inset: 38% 0 30% 0; background: repeating-linear-gradient(0deg, rgba(255,80,80,.18) 0 2px, transparent 2px 5px)"></div>
+      </div>
+      <span class="mono" style="position: absolute; left: 14px; bottom: 10px; font-size: 10.5px; color: #868A94">160×90 of 320×180</span>
+    </div>
+    <!-- TRANSPORT: right under the picture -->
+    <div style="padding: 10px 12px; border-top: 1px solid #202227; display: flex; flex-direction: column; gap: 10px; white-space: nowrap">
+      <div style="display: flex; align-items: center; gap: 6px">
+        <button class="btn ghost ib" aria-label="Jump to start (Home)"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3v10M12 3 6 8l6 5z"></path></svg></button>
+        <button class="btn ib" aria-label="Play (Space)" style="width: 40px; height: 36px; background: {{accent}}; border-color: {{accent}}; color: #0E0F11"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3l8 5-8 5z" fill="currentColor"></path></svg></button>
+        <button class="btn ib" aria-label="Loop region on (R)" aria-pressed="true" style="color: {{accent}}; border-color: {{accent}}"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a4 4 0 0 1 4-4h5l-2-2M13 9a4 4 0 0 1-4 4H4l2 2"></path></svg></button>
+        <div style="flex: 1; display: flex; align-items: baseline; gap: 8px; padding: 0 12px; height: 36px; border-radius: 7px; background: #0E0F11; border: 1px solid #2A2C31; margin-left: 4px; min-width: 0">
+          <span class="mono" style="font-size: 18px; font-weight: 600; line-height: 34px">0:01.24</span>
+          <span class="mono" style="font-size: 12px; color: #868A94">/ 0:04.00</span>
+          <span class="mono" style="font-size: 12px; color: #A1A4AC; margin-left: auto">frame 42</span>
+        </div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px">
+        <div style="display: flex; flex-direction: column; gap: 3px; width: 104px" title="How far ahead is rendered">
+          <div style="display: flex; justify-content: space-between; font-size: 10.5px"><span style="color: #A1A4AC">Ahead</span><span class="mono">2.0 s</span></div>
+          <div style="height: 4px; border-radius: 2px; background: #24262B"><div style="width: 66%; height: 4px; border-radius: 2px; background: #4ED37A"></div></div>
+        </div>
+        <button class="dd" style="min-width: 0; flex: none" aria-haspopup="listbox" aria-label="Preview resolution">½ res<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="#A1A4AC" stroke-width="1.4"></path></svg></button>
+        <label style="display: flex; align-items: center; gap: 6px; margin-left: auto; color: #A1A4AC; flex: none">
+          <svg width="16" height="16" viewBox="0 0 16 16" role="img" aria-label="Volume" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2 6h3l4-3v10l-4-3H2zM11.5 5.5a3.5 3.5 0 0 1 0 5"></path></svg>
+          <input type="range" min="0" max="100" value="80" aria-label="Playback volume" style="width: 76px; accent-color: #ECEDEF">
+        </label>
+      </div>
+    </div>
+  </section>
+
+  <!-- NODE GRAPH -->
+  <section aria-label="Node graph" style="flex: 999 1 560px; min-width: 0; height: 484px; background: #16171A; border: 1px solid #24262B; border-radius: 8px; display: flex; flex-direction: column; overflow: hidden">
+    <div style="min-height: 40px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 4px 8px 4px 12px; border-bottom: 1px solid #202227; box-sizing: border-box">
+      <span style="color: #868A94">Graph</span>
+      <svg width="8" height="10" viewBox="0 0 8 10" aria-hidden="true"><path d="M2 1l4 4-4 4" fill="none" stroke="#5A5D66" stroke-width="1.4"></path></svg>
+      <span style="font-weight: 600">am_bands</span>
+      <span style="font-size: 11.5px; color: #A1A4AC; background: #1C1D21; border: 1px solid #2A2C31; border-radius: 10px; padding: 1px 8px">on Graph track 1 · 0:00–0:03</span>
+      <div style="display: flex; gap: 6px; margin-left: auto">
+        <button class="btn" aria-label="Add node (right-click or Tab)"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M7 2v10M2 7h10"></path></svg>Add node <span class="kbd">Tab</span></button>
+        <button class="btn" aria-pressed="false">Bypass graphs</button>
+        <button class="btn ghost ib" aria-label="Frame graph (F)"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 5V2h3M11 2h3v3M14 11v3h-3M5 14H2v-3"></path></svg></button>
+      </div>
+    </div>
+    <div style="flex: 1; position: relative; background-color: #121315; background-image: radial-gradient(#26282D 1px, transparent 1px); background-size: 20px 20px; overflow: hidden">
+      <div style="position: absolute; left: 0; top: 0; width: 720px; height: 444px">
+        <svg width="720" height="444" viewBox="0 0 720 444" aria-hidden="true" style="position: absolute; inset: 0" fill="none" stroke-linecap="round">
+          <path d="M132 109 C172 109 116 85 156 85" stroke="#C9CCD3" stroke-width="3"></path>
+          <path d="M132 307 C172 307 116 283 156 283" stroke="#3FC7B4" stroke-width="3"></path>
+          <path d="M132 307 C172 307 116 417 156 417" stroke="#3FC7B4" stroke-width="2.5"></path>
+          <path d="M272 85 C300 85 272 69 300 69" stroke="#FF5D5D" stroke-width="2.5"></path>
+          <path d="M272 107 C300 107 272 217 300 217" stroke="#4ED37A" stroke-width="2.5"></path>
+          <path d="M272 129 C300 129 272 365 300 365" stroke="#5B8CFF" stroke-width="2.5"></path>
+          <path d="M272 283 C300 283 272 91 300 91" stroke="#FF9A3C" stroke-width="5"></path>
+          <path d="M272 283 C300 283 272 113 300 113" stroke="#FF9A3C" stroke-width="1.6" stroke-dasharray="3 4"></path>
+          <path d="M272 305 C300 305 272 239 300 239" stroke="#F2D04B" stroke-width="3"></path>
+          <path d="M272 327 C300 327 272 387 300 387" stroke="#B48CFF" stroke-width="1.5"></path>
+          <path d="M416 69 C444 69 416 195 444 195" stroke="#FF5D5D" stroke-width="2.5"></path>
+          <path d="M416 217 C444 217 416 217 444 217" stroke="#4ED37A" stroke-width="2.5"></path>
+          <path d="M416 365 C444 365 416 239 444 239" stroke="#5B8CFF" stroke-width="2.5"></path>
+          <path d="M560 195 C574 195 574 195 588 195" stroke="#C9CCD3" stroke-width="3"></path>
+        </svg>
+
+        <div class="node" style="left: 16px; top: 64px"><div class="nh"><span class="dot" style="background: #5B8CFF"></span>In: Video</div><div style="padding: 6px 0"><div class="nr"><span></span><span>video</span></div></div><span class="pin" style="right: -6px; top: 40px; background: #C9CCD3"></span></div>
+        <div class="node" style="left: 16px; top: 262px"><div class="nh"><span class="dot" style="background: #5B8CFF"></span>In: Audio</div><div style="padding: 6px 0"><div class="nr"><span></span><span>audio</span></div></div><span class="pin" style="right: -6px; top: 40px; background: #3FC7B4"></span></div>
+
+        <div class="node" style="left: 156px; top: 40px"><div class="nh"><span class="dot" style="background: #B48CFF"></span>Split Channels</div><div style="padding: 6px 0"><div class="nr"><span>in</span><span>R</span></div><div class="nr"><span></span><span>G</span></div><div class="nr"><span></span><span>B</span></div></div>
+          <span class="pin" style="left: -6px; top: 40px; background: #C9CCD3"></span><span class="pin" style="right: -6px; top: 40px; background: #FF5D5D"></span><span class="pin" style="right: -6px; top: 62px; background: #4ED37A"></span><span class="pin" style="right: -6px; top: 84px; background: #5B8CFF"></span></div>
+        <div class="node" style="left: 156px; top: 238px"><div class="nh"><span class="dot" style="background: #FF9A3C"></span>Three-Band Split</div><div style="padding: 6px 0"><div class="nr"><span>in</span><span>low</span></div><div class="nr"><span></span><span>mid</span></div><div class="nr"><span></span><span>high</span></div></div>
+          <span class="pin" style="left: -6px; top: 40px; background: #3FC7B4"></span><span class="pin" style="right: -6px; top: 40px; background: #FF9A3C"></span><span class="pin" style="right: -6px; top: 62px; background: #F2D04B"></span><span class="pin" style="right: -6px; top: 84px; background: #B48CFF"></span></div>
+        <div class="node" style="left: 156px; top: 372px"><div class="nh"><span class="dot" style="background: #4ED37A"></span>Audio Output</div><div style="padding: 6px 0"><div class="nr"><span>in · Main</span><span></span></div></div><span class="pin" style="left: -6px; top: 40px; background: #3FC7B4"></span></div>
+
+        <div class="node" style="left: 300px; top: 24px; border-color: {{accent}}; box-shadow: 0 0 0 2px {{accent}}, 0 8px 20px rgba(0,0,0,.4)"><div class="nh"><span class="dot" style="background: #FF9A3C"></span>AM · red</div><div style="padding: 6px 0"><div class="nr"><span>carrier</span><span>out</span></div><div class="nr"><span>modulator</span><span></span></div><div class="nr"><span style="color: #FF9A3C">◆ depth</span><span></span></div></div>
+          <span class="pin" style="left: -6px; top: 40px; background: #FF5D5D; box-shadow: 0 0 0 2px #ECEDEF"></span><span class="pin" style="left: -6px; top: 62px; background: #FF9A3C"></span><span class="pin" style="left: -6px; top: 84px; background: #FF9A3C; border-radius: 2px; transform: rotate(45deg)"></span><span class="pin" style="right: -6px; top: 40px; background: #FF5D5D"></span></div>
+        <div class="node" style="left: 300px; top: 172px"><div class="nh"><span class="dot" style="background: #FF9A3C"></span>AM · green</div><div style="padding: 6px 0"><div class="nr"><span>carrier</span><span>out</span></div><div class="nr"><span>modulator</span><span></span></div><div class="nr"><span>◇ depth</span><span></span></div></div>
+          <span class="pin" style="left: -6px; top: 40px; background: #4ED37A"></span><span class="pin" style="left: -6px; top: 62px; background: #F2D04B"></span><span class="pin" style="left: -6px; top: 84px; background: #3A3C42; border-radius: 2px; transform: rotate(45deg)"></span><span class="pin" style="right: -6px; top: 40px; background: #4ED37A"></span></div>
+        <div class="node" style="left: 300px; top: 320px"><div class="nh"><span class="dot" style="background: #FF9A3C"></span>AM · blue</div><div style="padding: 6px 0"><div class="nr"><span>carrier</span><span>out</span></div><div class="nr"><span>modulator</span><span></span></div><div class="nr"><span>◇ depth</span><span></span></div></div>
+          <span class="pin" style="left: -6px; top: 40px; background: #5B8CFF"></span><span class="pin" style="left: -6px; top: 62px; background: #B48CFF"></span><span class="pin" style="left: -6px; top: 84px; background: #3A3C42; border-radius: 2px; transform: rotate(45deg)"></span><span class="pin" style="right: -6px; top: 40px; background: #5B8CFF"></span></div>
+
+        <div class="node" style="left: 444px; top: 150px"><div class="nh"><span class="dot" style="background: #B48CFF"></span>Combine</div><div style="padding: 6px 0"><div class="nr"><span>R</span><span>out</span></div><div class="nr"><span>G</span><span></span></div><div class="nr"><span>B</span><span></span></div><div class="nr"><span style="color: #6B6F78">A</span><span></span></div></div>
+          <span class="pin" style="left: -6px; top: 40px; background: #FF5D5D"></span><span class="pin" style="left: -6px; top: 62px; background: #4ED37A"></span><span class="pin" style="left: -6px; top: 84px; background: #5B8CFF"></span><span class="pin" style="left: -6px; top: 106px; background: #3A3C42"></span><span class="pin" style="right: -6px; top: 40px; background: #C9CCD3"></span></div>
+        <div class="node" style="left: 588px; top: 150px"><div class="nh"><span class="dot" style="background: #4ED37A"></span>Video Output</div><div style="padding: 6px 0"><div class="nr"><span>in</span><span></span></div></div><span class="pin" style="left: -6px; top: 40px; background: #C9CCD3"></span></div>
+      </div>
+      <div style="position: absolute; right: 10px; bottom: 10px; display: flex; gap: 4px; align-items: center; background: #16171A; border: 1px solid #2A2C31; border-radius: 6px; padding: 2px 8px; font-size: 11px; color: #A1A4AC"><span class="mono">100%</span></div>
+    </div>
+  </section>
+
+  <!-- INSPECTOR: follows the selection -->
+  <aside aria-label="Inspector" style="flex: 1 1 300px; max-width: 340px; height: 484px; background: #16171A; border: 1px solid #24262B; border-radius: 8px; display: flex; flex-direction: column; overflow: hidden">
+    <div style="padding: 12px 14px 10px; border-bottom: 1px solid #202227; display: flex; flex-direction: column; gap: 6px">
+      <div style="display: flex; align-items: center; gap: 8px"><span class="lbl">Node</span><span style="font-size: 11px; color: #FF9A3C; background: rgba(255,154,60,.12); border-radius: 10px; padding: 1px 8px">Effects</span><button class="btn ghost" style="margin-left: auto; height: 24px; font-size: 11.5px">Bypass <span class="kbd">Alt+click</span></button></div>
+      <label style="display: flex; flex-direction: column; gap: 2px"><span style="position: absolute; left: -9999px">Node name</span><input class="field" value="AM · red" style="font-size: 15px; font-weight: 600; height: 32px; background: transparent; border-color: transparent; padding-left: 0"></label>
+      <div style="font-size: 12px; color: #A1A4AC">Amplitude Modulation · <span class="mono">am</span> — scales the carrier by the modulator.</div>
+    </div>
+    <div style="flex: 1; overflow: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 16px">
+      <div style="display: flex; flex-direction: column; gap: 6px">
+        <span class="lbl">Output</span>
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 12px"><span class="mono" style="color: #A1A4AC; width: 34px">out</span><span style="width: 18px; height: 3px; border-radius: 2px; background: #FF5D5D"></span><span>video · red</span><span class="mono" style="color: #868A94; margin-left: auto">320×180 mono</span></div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <span class="lbl">Node settings</span>
+        <div style="display: flex; align-items: center; justify-content: space-between"><span style="color: #C3C6CD">Resampling</span><button class="dd" aria-haspopup="listbox">Hold<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="#A1A4AC" stroke-width="1.4"></path></svg></button></div>
+        <div style="display: flex; align-items: center; justify-content: space-between"><span style="color: #C3C6CD">Grouping</span><button class="dd" aria-haspopup="listbox">Pixels<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="#A1A4AC" stroke-width="1.4"></path></svg></button></div>
+        <div style="display: flex; align-items: center; justify-content: space-between"><span style="color: #C3C6CD">Channels</span><button class="dd" aria-haspopup="listbox">Together<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="#A1A4AC" stroke-width="1.4"></path></svg></button></div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <span class="lbl">Parameters</span>
+        <div style="display: flex; flex-direction: column; gap: 6px; background: #1A1B1F; border: 1px solid #2A2C31; border-radius: 8px; padding: 10px">
+          <div style="display: flex; align-items: center; gap: 8px">
+            <button class="tog" aria-label="Show depth as a pin on the node" aria-pressed="true" style="color: #FF9A3C; border-color: #FF9A3C">◆</button>
+            <span style="font-weight: 500">Depth</span>
+            <button class="tog" aria-pressed="false" style="margin-left: auto">int</button>
+            <input class="field mono" value="1.00" aria-label="Depth value" style="width: 64px; text-align: right">
+            <button class="btn ghost ib" aria-label="Reset depth to 1" style="width: 24px; height: 24px"><svg width="13" height="13" viewBox="0 0 14 14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2.5 7a4.5 4.5 0 1 0 1.3-3.2M2.5 2v2.5H5"></path></svg></button>
+          </div>
+          <div style="position: relative; height: 24px">
+            <div aria-hidden="true" style="position: absolute; left: 7px; right: 7px; top: 10px; height: 4px; border-radius: 2px; background: #2A2C31"></div>
+            <div aria-hidden="true" style="position: absolute; left: 55%; width: 25%; top: 9px; height: 6px; border-radius: 3px; background: rgba(255,154,60,.35); border: 1px solid #FF9A3C; box-sizing: border-box"></div>
+            <div aria-hidden="true" style="position: absolute; left: 70%; top: 5px; width: 14px; height: 14px; border-radius: 50%; background: rgba(255,154,60,.45); border: 1px dashed #FF9A3C; box-sizing: border-box; margin-left: -7px"></div>
+            <input class="rng" type="range" min="-10" max="10" step="0.01" value="1" aria-label="Depth">
+          </div>
+          <div style="display: flex; justify-content: space-between; font-size: 10.5px; color: #868A94" class="mono"><span>−10</span><span>live 4.10</span><span>10</span></div>
+          <div style="border-top: 1px solid #2A2C31; margin-top: 2px; padding-top: 8px; display: flex; flex-direction: column; gap: 8px">
+            <div style="display: flex; align-items: center; gap: 6px; font-size: 12px"><span style="width: 14px; height: 3px; background: #FF9A3C; border-radius: 2px"></span><span style="color: #A1A4AC">from</span><span style="font-weight: 500">Three-Band Split · low</span><button class="btn ghost ib" aria-label="Disconnect modulation" style="margin-left: auto; width: 24px; height: 24px">×</button></div>
+            <div style="display: flex; align-items: center; gap: 8px">
+              <svg width="28" height="28" viewBox="0 0 28 28" role="img" aria-label="Amount knob at 25 percent"><circle cx="14" cy="14" r="11" fill="#0E0F11" stroke="#33353B" stroke-width="2"></circle><path d="M14 3 A11 11 0 0 1 25 14" fill="none" stroke="#FF9A3C" stroke-width="2.5"></path><path d="M14 14 L23 10" stroke="#ECEDEF" stroke-width="2" stroke-linecap="round"></path></svg>
+              <input class="field mono" value="25 %" aria-label="Amount" style="width: 62px; text-align: right">
+              <div class="seg" role="group" aria-label="Direction"><button aria-pressed="true" style="background: #2A2C31; color: #ECEDEF">One way</button><button>Both</button></div>
+            </div>
+            <div style="font-size: 11.5px; color: #A1A4AC">Moves by <span class="mono" style="color: #ECEDEF">5.00</span> · held to the slider range</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<!-- LOWER ROW: resources | timeline -->
+<div style="display: flex; flex-wrap: wrap; gap: 6px; padding: 6px; flex: 1">
+
+  <!-- RESOURCES: media and graphs side by side -->
+  <section aria-label="Resources" style="flex: 1 1 380px; max-width: 420px; min-height: 344px; background: #16171A; border: 1px solid #24262B; border-radius: 8px; display: flex; flex-direction: column; overflow: hidden">
+    <div style="height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 12px; border-bottom: 1px solid #202227">
+      <span style="font-weight: 600">Resources</span>
+      <label style="flex: 1; position: relative"><span style="position: absolute; left: -9999px">Filter resources</span><input class="field" placeholder="Filter" style="width: 100%"></label>
+      <button class="btn">Import…</button>
+    </div>
+    <div style="flex: 1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0">
+      <div style="padding: 10px 8px 10px 12px; border-right: 1px solid #202227; display: flex; flex-direction: column; gap: 4px">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px"><span class="lbl">Media · 4</span></div>
+        <button class="btn ghost" style="height: 44px; justify-content: flex-start; padding: 0 6px; background: #1C1D21"><span style="width: 40px; height: 24px; border-radius: 3px; background: linear-gradient(90deg, #0A0AA8, #8A1A8A); flex: none"></span><span style="display: flex; flex-direction: column; align-items: flex-start; min-width: 0"><span style="font-size: 12.5px">clip.mp4</span><span style="font-size: 10.5px; color: #868A94">video · 320×180 · 30 fps</span></span></button>
+        <button class="btn ghost" style="height: 44px; justify-content: flex-start; padding: 0 6px"><span style="width: 40px; height: 24px; border-radius: 3px; background: #0F2A27; display: flex; align-items: center; justify-content: center; flex: none"><svg width="26" height="12" viewBox="0 0 26 12" aria-hidden="true"><path d="M1 6h2l2-4 2 8 2-6 2 4 2-5 2 6 2-3 2 2 2-1h3" fill="none" stroke="#3FC7B4" stroke-width="1.3"></path></svg></span><span style="display: flex; flex-direction: column; align-items: flex-start"><span style="font-size: 12.5px">clip</span><span style="font-size: 10.5px; color: #868A94">audio · stereo · 48 kHz</span></span></button>
+        <button class="btn ghost" style="height: 44px; justify-content: flex-start; padding: 0 6px"><span style="width: 40px; height: 24px; border-radius: 3px; background: #0F2A27; display: flex; align-items: center; justify-content: center; flex: none"><svg width="26" height="12" viewBox="0 0 26 12" aria-hidden="true"><path d="M1 6h2l2-5 2 10 2-7 2 5 2-6 2 7 2-4 2 3 2-1h3" fill="none" stroke="#3FC7B4" stroke-width="1.3"></path></svg></span><span style="display: flex; flex-direction: column; align-items: flex-start"><span style="font-size: 12.5px">song</span><span style="font-size: 10.5px; color: #868A94">audio · stereo · 44.1 kHz</span></span></button>
+        <div style="display: flex; align-items: center; gap: 6px; height: 44px; padding: 0 6px; border-radius: 6px; border: 1px dashed #6E5420">
+          <span style="width: 40px; height: 24px; border-radius: 3px; background: #2A2110; display: flex; align-items: center; justify-content: center; flex: none"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="none" stroke="#F2B544" stroke-width="1.5" stroke-linecap="round"><path d="M7 2 13 12H1zM7 6v3M7 10.5v.01"></path></svg></span>
+          <span style="display: flex; flex-direction: column; min-width: 0"><span style="font-size: 12.5px; color: #F2B544">drums</span><span style="font-size: 10.5px; color: #A1A4AC">file missing</span></span>
+          <button class="btn" style="margin-left: auto; height: 26px; font-size: 11.5px">Relocate…</button>
+        </div>
+      </div>
+      <div style="padding: 10px 12px 10px 8px; display: flex; flex-direction: column; gap: 4px">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px"><span class="lbl">Graphs · 2</span><button class="btn ghost" style="height: 22px; font-size: 11.5px; padding: 0 6px">+ New</button></div>
+        <button class="btn ghost" style="height: 44px; justify-content: flex-start; padding: 0 6px; background: #1C1D21; border-color: #2A2C31"><span style="width: 24px; height: 24px; border-radius: 5px; background: rgba(156,134,255,.16); display: flex; align-items: center; justify-content: center; flex: none"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="none" stroke="#B9A9FF" stroke-width="1.4"><rect x="1" y="2" width="4" height="4" rx="1"></rect><rect x="9" y="8" width="4" height="4" rx="1"></rect><path d="M5 4h2v6h2"></path></svg></span><span style="display: flex; flex-direction: column; align-items: flex-start"><span style="font-size: 12.5px; font-weight: 600">am_bands</span><span style="font-size: 10.5px; color: #868A94">open · 1 item</span></span></button>
+        <button class="btn ghost" style="height: 44px; justify-content: flex-start; padding: 0 6px"><span style="width: 24px; height: 24px; border-radius: 5px; background: rgba(156,134,255,.16); display: flex; align-items: center; justify-content: center; flex: none"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="none" stroke="#B9A9FF" stroke-width="1.4"><rect x="1" y="2" width="4" height="4" rx="1"></rect><rect x="9" y="8" width="4" height="4" rx="1"></rect><path d="M5 4h2v6h2"></path></svg></span><span style="display: flex; flex-direction: column; align-items: flex-start"><span style="font-size: 12.5px">Sidechain</span><span style="font-size: 10.5px; color: #868A94">1 item</span></span></button>
+        <div style="margin-top: auto; font-size: 11px; color: #868A94; line-height: 1.45">Drag onto the timeline to place. Double-click to open a graph or add media at the playhead.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TIMELINE -->
+  <section aria-label="Timeline" style="flex: 999 1 620px; min-width: 0; min-height: 344px; background: #16171A; border: 1px solid #24262B; border-radius: 8px; display: flex; flex-direction: column; overflow: hidden">
+    <div style="min-height: 40px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 4px 8px 4px 12px; border-bottom: 1px solid #202227; box-sizing: border-box">
+      <span style="font-weight: 600">Timeline</span>
+      <div class="seg" role="group" aria-label="Ruler"><button aria-pressed="true" style="background: #2A2C31; color: #ECEDEF">Time</button><button>Tempo</button></div>
+      <button class="btn" aria-pressed="true" style="color: {{accent}}; border-color: {{accent}}; height: 28px">Snap</button>
+      <span style="font-size: 11.5px; color: #A1A4AC; margin-left: 4px">Loop <span class="mono" style="color: #ECEDEF">0:01.00 – 0:03.00</span></span>
+      <span style="margin-left: auto; font-size: 11.5px; color: #868A94">Ctrl+drag the ruler for a loop region</span>
+      <button class="btn ghost ib" aria-label="Show whole project (F)"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 5V2h3M11 2h3v3M14 11v3h-3M5 14H2v-3"></path></svg></button>
+    </div>
+    <div style="flex: 1; display: flex; min-height: 0">
+      <!-- headers -->
+      <div style="flex: 0 0 212px; border-right: 1px solid #202227; display: flex; flex-direction: column">
+        <div style="height: 28px; border-bottom: 1px solid #202227"></div>
+        <div style="height: 20px; display: flex; align-items: center; padding: 0 10px"><span class="lbl" style="color: #B9A9FF">Graphs</span></div>
+        <div style="height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 10px; border-top: 1px solid #1E2024"><span style="width: 3px; height: 20px; border-radius: 2px; background: #9C86FF"></span><span style="font-size: 12.5px; font-weight: 500; flex: 1">Graph track 2</span><button class="tog" aria-label="Mute Graph track 2">M</button></div>
+        <div style="height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 10px; border-top: 1px solid #1E2024"><span style="width: 3px; height: 20px; border-radius: 2px; background: #9C86FF"></span><span style="font-size: 12.5px; font-weight: 500; flex: 1">Graph track 1</span><button class="tog" aria-label="Mute Graph track 1">M</button></div>
+        <div style="height: 20px; display: flex; align-items: center; padding: 0 10px; border-top: 2px solid #2A2C31"><span class="lbl">Video</span></div>
+        <div style="height: 52px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 10px; border-top: 1px solid #1E2024"><span style="width: 3px; height: 34px; border-radius: 2px; background: #C9CCD3"></span><span style="display: flex; flex-direction: column; flex: 1; min-width: 0"><span style="font-size: 12.5px; font-weight: 500">clip.mp4</span><span style="font-size: 10.5px; color: #868A94">320×180 · 30 fps</span></span><button class="tog" aria-label="Mute clip.mp4">M</button><button class="tog" aria-label="Solo clip.mp4">S</button></div>
+        <div style="height: 20px; display: flex; align-items: center; padding: 0 10px; border-top: 2px solid #2A2C31"><span class="lbl" style="color: #3FC7B4">Audio</span></div>
+        <div style="height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 10px; border-top: 1px solid #1E2024"><span style="width: 3px; height: 28px; border-radius: 2px; background: #3FC7B4"></span><span style="display: flex; flex-direction: column; flex: 1; min-width: 0; gap: 3px"><span style="font-size: 12.5px; font-weight: 500">clip</span><span style="display: flex; align-items: center; gap: 6px"><span style="flex: 1; height: 4px; border-radius: 2px; background: #2A2C31"><span style="display: block; width: 70%; height: 4px; border-radius: 2px; background: #3FC7B4"></span></span><span class="mono" style="font-size: 10px; color: #A1A4AC">0 dB</span></span></span><button class="tog" aria-label="Mute clip audio">M</button><button class="tog" aria-label="Solo clip audio">S</button></div>
+        <div style="height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 10px; border-top: 1px solid #1E2024"><span style="width: 3px; height: 28px; border-radius: 2px; background: #3FC7B4"></span><span style="display: flex; flex-direction: column; flex: 1; min-width: 0; gap: 3px"><span style="font-size: 12.5px; font-weight: 500">song</span><span style="display: flex; align-items: center; gap: 6px"><span style="flex: 1; height: 4px; border-radius: 2px; background: #2A2C31"><span style="display: block; width: 58%; height: 4px; border-radius: 2px; background: #3FC7B4"></span></span><span class="mono" style="font-size: 10px; color: #A1A4AC">−3 dB</span></span></span><button class="tog" aria-label="Mute song">M</button><button class="tog" aria-pressed="true" aria-label="Solo song" style="background: #F2D04B; color: #0E0F11; border-color: #F2D04B">S</button></div>
+      </div>
+      <!-- lanes -->
+      <div style="flex: 1; min-width: 0; position: relative; display: flex; flex-direction: column">
+        <div style="height: 28px; border-bottom: 1px solid #202227; position: relative; background: #131417">
+          <div style="position: absolute; left: 25%; width: 50%; top: 0; height: 10px; background: rgba(143,162,255,.22); border-left: 2px solid {{accent}}; border-right: 2px solid {{accent}}; box-sizing: border-box"></div>
+          <sc-for list="{{ticks}}" as="t" hint-placeholder-count="9"><span class="mono" style="position: absolute; left: {{t.left}}; top: 10px; font-size: 10px; color: #868A94; padding-left: 4px; border-left: 1px solid #33353B; height: 14px; line-height: 14px">{{t.label}}</span></sc-for>
+          <div style="position: absolute; left: 0; width: 55%; bottom: 0; height: 2px; background: #4ED37A"></div>
+        </div>
+        <div style="height: 20px"></div>
+        <div style="height: 34px; position: relative; border-top: 1px solid #1E2024">
+          <div class="item" style="left: 25%; width: 25%; background: #2D2650; border-color: #9C86FF"><div class="ibar" style="background: #3F3570; color: #E4DDFF">Sidechain</div></div>
+        </div>
+        <div style="height: 34px; position: relative; border-top: 1px solid #1E2024">
+          <div class="item" style="left: 0; width: 75%; background: #2D2650; box-shadow: inset 0 0 0 2px {{accent}}"><div class="ibar" style="background: #3F3570; color: #E4DDFF">am_bands<span style="margin-left: auto; font-weight: 500; color: #B9A9FF">pre-roll</span></div></div>
+        </div>
+        <div style="height: 20px; border-top: 2px solid #2A2C31"></div>
+        <div style="height: 52px; position: relative; border-top: 1px solid #1E2024">
+          <div class="item" style="left: 0; width: 100%; background: #1E2433; display: flex; flex-direction: column"><div class="ibar" style="background: #2A3247; color: #D6DBE8">clip.mp4 <svg width="12" height="12" viewBox="0 0 12 12" role="img" aria-label="Grouped" fill="none" stroke="#A1A4AC" stroke-width="1.4" stroke-linecap="round"><path d="M5 7l2-2M4.5 5.5 3 7a1.8 1.8 0 0 0 2.5 2.5L7 8M7.5 6.5 9 5a1.8 1.8 0 0 0-2.5-2.5L5 4"></path></svg></div><div style="flex: 1; display: flex"><sc-for list="{{thumbs}}" as="th" hint-placeholder-count="16"><span style="flex: 1; background: {{th.c}}; border-right: 1px solid #0E0F11"></span></sc-for></div></div>
+        </div>
+        <div style="height: 20px; border-top: 2px solid #2A2C31"></div>
+        <div style="height: 44px; position: relative; border-top: 1px solid #1E2024; opacity: .45">
+          <div class="item" style="left: 0; width: 100%; background: #10302C; display: flex; flex-direction: column"><div class="ibar" style="background: #17423D; color: #C9F1EA">clip</div><div style="flex: 1; display: flex; align-items: center; gap: 1px; padding: 0 2px"><sc-for list="{{wave}}" as="w" hint-placeholder-count="100"><span style="flex: 1; height: {{w.h}}; background: #3FC7B4; border-radius: 1px"></span></sc-for></div></div>
+        </div>
+        <div style="height: 44px; position: relative; border-top: 1px solid #1E2024">
+          <div class="item" style="left: 0; width: 75%; background: #10302C; display: flex; flex-direction: column"><div class="ibar" style="background: #17423D; color: #C9F1EA">song</div><div style="flex: 1; display: flex; align-items: center; gap: 1px; padding: 0 2px"><sc-for list="{{wave2}}" as="w" hint-placeholder-count="80"><span style="flex: 1; height: {{w.h}}; background: #3FC7B4; border-radius: 1px"></span></sc-for></div></div>
+        </div>
+        <div aria-hidden="true" style="position: absolute; left: 31%; top: 0; bottom: 0; width: 2px; background: #ECEDEF; margin-left: -1px"><span style="position: absolute; top: 0; left: -5px; width: 12px; height: 10px; background: #ECEDEF; clip-path: polygon(0 0, 100% 0, 50% 100%)"></span></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- STATUS BAR: state + the gesture you need right now -->
+<footer style="min-height: 26px; display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 2px 12px; border-top: 1px solid #202227; background: #131417; font-size: 11.5px; color: #A1A4AC; box-sizing: border-box">
+  <span style="display: flex; align-items: center; gap: 6px"><span class="dot" style="background: #4ED37A"></span>Graph compiled</span>
+  <span>Hover a wire to inspect · <span class="kbd">Alt</span>+scroll changes the view · hold <span class="kbd">Shift</span> to listen</span>
+  <span class="mono" style="margin-left: auto">cache 412 / 2048 MiB · 320×180 · 30 fps</span>
+</footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#8FA2FF","options":["#8FA2FF","#F2B544","#3FC7B4","#ECEDEF"]},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const ticks = [];
+    for (let i = 0; i < 8; i++) ticks.push({ left: (i * 12.5) + '%', label: '0:0' + Math.floor(i / 2) + (i % 2 ? '.50' : '.00') });
+    const thumbs = [];
+    for (let i = 0; i < 16; i++) {
+      const t = i / 15;
+      const r = Math.round(10 + t * 130), b = Math.round(170 - t * 40);
+      thumbs.push({ c: 'rgb(' + r + ',10,' + b + ')' });
+    }
+    const bars = (n, seed) => {
+      const out = [];
+      for (let i = 0; i < n; i++) {
+        const v = Math.abs(Math.sin(i * 0.9 + seed) * 0.6 + Math.sin(i * 0.23 + seed * 2) * 0.4);
+        out.push({ h: Math.round(18 + v * 70) + '%' });
+      }
+      return out;
+    };
+    return { accent: this.props.accent ?? '#8FA2FF', ticks, thumbs, wave: bars(100, 1), wave2: bars(80, 3) };
+  }
+}
+</script>
+</body>
+</html>
