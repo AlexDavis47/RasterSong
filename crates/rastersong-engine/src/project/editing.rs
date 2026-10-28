@@ -242,8 +242,8 @@ impl Project {
     /// Splits `items`, and the other items of their groups, at timeline time `at`. Items that `at`
     /// doesn't fall inside are left alone. The halves after the split make groups of their own,
     /// so a grouped picture and its sound stay together on both sides. Returns where `items` are
-    /// afterwards: both halves of each split one, so the selection stays on the same stretch of
-    /// timeline.
+    /// afterwards: the first half of each split one, so a selection kept from it moves one side
+    /// of the cut, not both.
     pub fn split_items(
         &mut self,
         items: &[ItemRef],
@@ -281,9 +281,6 @@ impl Project {
                     end: Some(cut),
                     ..item.clone()
                 });
-                if wanted {
-                    result.push(ItemRef::new(name.clone(), kept.len()));
-                }
                 let group = item.group.map(|g| {
                     *after.entry(g).or_insert_with(|| {
                         next += 1;
@@ -541,7 +538,7 @@ mod tests {
     }
 
     #[test]
-    fn splitting_cuts_grouped_items_and_keeps_both_halves_selected() {
+    fn splitting_cuts_grouped_items_and_keeps_the_first_halves_selected() {
         let mut p = project(&[("v", 0.0), ("a", 0.0), ("a", 4.0)]);
         p.group_items(&[ItemRef::new("v", 0), ItemRef::new("a", 0)]);
         let selection = p.split_items(&[ItemRef::new("a", 0), ItemRef::new("a", 1)], 1.5, duration);
@@ -553,14 +550,8 @@ mod tests {
                 (4.0, 0.0, None, 1.0)
             ]
         );
-        assert_eq!(
-            selection,
-            [
-                ItemRef::new("a", 0),
-                ItemRef::new("a", 1),
-                ItemRef::new("a", 2)
-            ]
-        );
+        // Item 1 (at 4.0, not cut) moved to index 2.
+        assert_eq!(selection, [ItemRef::new("a", 0), ItemRef::new("a", 2)]);
         // The grouped video was cut with it, and each side is a group of its own.
         assert_eq!(
             items(&p, "v"),

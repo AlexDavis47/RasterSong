@@ -148,7 +148,7 @@ fn drag(harness: &mut Harness<'_, App>, from: Pos2, to: Pos2) {
 #[test]
 fn shows_the_graph_and_renders() {
     let harness = loaded();
-    assert_eq!(harness.state().editor().node_count(), 9);
+    assert_eq!(harness.state().editor().node_count(), 10);
     assert!(harness.state().editor().canvas_rect().width() > 300.0);
 }
 
@@ -193,7 +193,7 @@ fn dragging_empty_space_box_selects() {
         canvas.min + vec2(4.0, 4.0),
         canvas.max - vec2(4.0, 40.0),
     );
-    assert_eq!(harness.state().editor().selected().len(), 9);
+    assert_eq!(harness.state().editor().selected().len(), 10);
 }
 
 #[test]
@@ -353,10 +353,10 @@ fn undo_and_redo_step_through_edits() {
     assert!(!harness.state().can_undo());
     select(&mut harness, "split");
     shortcut(&mut harness, Modifiers::NONE, egui::Key::Delete);
-    assert_eq!(harness.state().editor().node_count(), 8);
+    assert_eq!(harness.state().editor().node_count(), 9);
 
     shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
-    assert_eq!(harness.state().editor().node_count(), 9);
+    assert_eq!(harness.state().editor().node_count(), 10);
     assert!(!harness.state().is_dirty(), "back to the saved state");
 
     shortcut(
@@ -364,7 +364,7 @@ fn undo_and_redo_step_through_edits() {
         Modifiers::COMMAND | Modifiers::SHIFT,
         egui::Key::Z,
     );
-    assert_eq!(harness.state().editor().node_count(), 8);
+    assert_eq!(harness.state().editor().node_count(), 9);
 }
 
 #[test]
@@ -399,7 +399,7 @@ fn copy_and_paste_adds_the_nodes_at_the_pointer() {
     harness.run_steps(2);
 
     let editor = harness.state().editor();
-    assert_eq!(editor.node_count(), 10);
+    assert_eq!(editor.node_count(), 11);
     let pasted = editor.active().expect("the pasted node is selected");
     assert_eq!(pasted.kind, "split");
     assert_ne!(pasted.id, "split");
@@ -421,7 +421,7 @@ fn new_project_asks_before_dropping_changes() {
     assert!(harness.state().is_confirming());
     assert_eq!(
         harness.state().editor().node_count(),
-        8,
+        9,
         "nothing happens yet"
     );
 
@@ -429,7 +429,7 @@ fn new_project_asks_before_dropping_changes() {
     harness.run_steps(2);
     assert!(!harness.state().is_confirming());
     assert!(!harness.state().is_dirty());
-    assert_eq!(harness.state().editor().node_count(), 9);
+    assert_eq!(harness.state().editor().node_count(), 10);
     assert!(
         !harness.state().can_undo(),
         "a new project starts a new history"
@@ -673,6 +673,52 @@ fn s_splits_under_the_playhead_and_delete_removes_the_selected_items() {
     assert_eq!(project.audios()[0].items[0].end, Some(1.0));
     // The video isn't grouped with it, so it keeps both halves.
     assert_eq!(project.videos()[0].items.len(), 2);
+}
+
+#[test]
+fn the_starter_graph_plays_its_sound() {
+    let graph = GraphDesc::from_json(STARTER_GRAPH).unwrap();
+    let id_of = |kind: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|n| n.kind == kind)
+            .map(|n| n.id.clone())
+            .unwrap_or_else(|| panic!("no {kind}"))
+    };
+    let (input, output) = (id_of("audio_input"), id_of("audio_output"));
+    assert!(
+        graph
+            .connections
+            .iter()
+            .any(|c| c.from == input && c.to == output),
+        "{:?}",
+        graph.connections
+    );
+}
+
+#[test]
+fn after_a_split_the_second_half_drags_alone() {
+    let mut harness = loaded();
+    let first = item_bar_point(&harness, 0.5, 1);
+    click(&mut harness, first, PointerButton::Primary);
+    seek_on_ruler(&mut harness, 1.0);
+    harness.event(Event::PointerMoved(timeline_point(&harness, 1.5, 1)));
+    shortcut(&mut harness, Modifiers::NONE, egui::Key::S);
+    let audio = |harness: &Harness<'_, App>| -> Vec<f64> {
+        harness.state().project().audios()[0]
+            .items
+            .iter()
+            .map(|i| i.position)
+            .collect()
+    };
+    assert_eq!(audio(&harness), [0.0, 1.0]);
+    let from = item_bar_point(&harness, 1.5, 1);
+    let to = pos2(time_x(&harness, 2.5), from.y);
+    drag(&mut harness, from, to);
+    let moved = audio(&harness);
+    assert_eq!(moved[0], 0.0, "the first half stays: {moved:?}");
+    assert!(moved[1] > 1.5, "{moved:?}");
 }
 
 /// The system clipboard as the platform layer (egui-winit) handles it: Ctrl+C and Ctrl+X send
@@ -1109,6 +1155,48 @@ fn the_inspector_keeps_its_width() {
         let width = harness.state().inspector_rect().width();
         assert!(width <= before + 1.0, "grew from {before} to {width}");
     }
+}
+
+#[test]
+fn typing_an_input_port_name_keeps_the_field_and_the_ports_source() {
+    let mut harness = loaded_with(app_with_project(|project| {
+        let track = project.add_graph_track("Effects");
+        project.place_graph(&track, project.graph_id, 0.0, 2.0);
+        project.set_graph_source(&track, 0, "Audio", rastersong_engine::Source::Mix);
+    }));
+    select(&mut harness, "audio");
+    harness.run_steps(3);
+    let field = harness
+        .query_all_by_role(egui::accesskit::Role::TextInput)
+        .find(|n| n.value().as_deref() == Some("Audio"))
+        .expect("the port field")
+        .rect();
+    click(
+        &mut harness,
+        field.right_center() - vec2(4.0, 0.0),
+        PointerButton::Primary,
+    );
+    // A character at a time, with frames between, as a person types.
+    for c in ["S", "i", "d", "e"] {
+        harness.event(Event::Text(c.into()));
+        harness.run_steps(3);
+    }
+    let port = |harness: &Harness<'_, App>| {
+        let editor = harness.state().editor();
+        editor
+            .node(key(harness, "audio"))
+            .and_then(|n| n.params.get("port").cloned())
+    };
+    assert_eq!(
+        port(&harness),
+        Some(rastersong_engine::ParamValue::Text("AudioSide".into()))
+    );
+    // The item placing the graph still reads the mix into the renamed port.
+    let sources = &harness.state().project().graph_tracks[0].items[0].sources;
+    assert_eq!(
+        sources.get("AudioSide"),
+        Some(&rastersong_engine::Source::Mix)
+    );
 }
 
 #[test]
@@ -1716,6 +1804,8 @@ fn a_graph_dropped_on_a_graph_track_lands_on_it_where_its_ghost_was() {
 #[test]
 fn the_item_inspector_picks_each_ports_source() {
     let mut harness = loaded_with(graph_app(|project, _, second| {
+        // A long choice widens the popup past the inspector, over the graph editor.
+        project.add_graph_track("A graph track below with a name long enough to widen the list");
         let track = project.add_graph_track("Effects");
         project.place_graph(&track, second, 0.0, 2.0);
     }));
@@ -1732,10 +1822,17 @@ fn the_item_inspector_picks_each_ports_source() {
         .unwrap();
     click(&mut harness, combo, PointerButton::Primary);
     harness.run_steps(2);
-    harness
+    // A real click on the choice, wherever the popup is drawn.
+    let choice = harness
         .get_by_role_and_label(egui::accesskit::Role::Button, "Track: audio")
-        .click();
+        .rect()
+        .center();
+    click(&mut harness, choice, PointerButton::Primary);
     harness.run_steps(2);
+    assert!(
+        harness.state().selected_graph_item().is_some(),
+        "the item stays selected"
+    );
     let source = |harness: &Harness<'_, App>| {
         harness.state().project().graph_tracks[0].items[0]
             .sources

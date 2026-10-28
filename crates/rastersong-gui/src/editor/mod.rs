@@ -1025,9 +1025,9 @@ mod tests {
         let mut editor = GraphEditor::new(&graph());
         let split = editor.key_of("split").unwrap();
         let red = editor.key_of("am_red").unwrap();
-        let wires_before = editor.wires().len();
+        let (nodes, wires_before) = (editor.node_count(), editor.wires().len());
         editor.duplicate(&BTreeSet::from([split, red]), false);
-        assert_eq!(editor.node_count(), 11);
+        assert_eq!(editor.node_count(), nodes + 2);
         // split.r -> am_red.carrier is duplicated between the copies.
         assert_eq!(editor.wires().len(), wires_before + 1);
 
@@ -1045,13 +1045,13 @@ mod tests {
         let mut editor = GraphEditor::new(&graph());
         let split = editor.key_of("split").unwrap();
         let red = editor.key_of("am_red").unwrap();
-        let wires = editor.wires().len();
+        let (nodes, wires) = (editor.node_count(), editor.wires().len());
         editor.selected = BTreeSet::from([split, red]);
         let text = editor.copy_selection().unwrap();
 
         let target = pos2(1000.0, 500.0);
         assert!(editor.paste(&text, target, false));
-        assert_eq!(editor.node_count(), 11);
+        assert_eq!(editor.node_count(), nodes + 2);
         assert_eq!(
             editor.wires().len(),
             wires + 1,
@@ -1075,7 +1075,7 @@ mod tests {
         assert_eq!(corner, target);
 
         assert!(!editor.paste("not a graph", target, true));
-        assert_eq!(editor.node_count(), 11);
+        assert_eq!(editor.node_count(), nodes + 2);
     }
 
     #[test]
