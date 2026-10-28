@@ -819,8 +819,13 @@ The interface redesign in [UI V2](ui-v2.md). Each stage moves its part of that p
 when it ships, with kittests for every gesture its hints name. Stages 1 and 2 come first; the rest are
 independent of each other.
 
-1. [ ] **feature** Design tokens: the dark palette, type sizes, control heights, radii and spacing in `theme.rs`
-   and `apply_style`. Check Inter and JetBrains Mono against [Licensing](licensing.md) before bundling them.
+1. [x] **feature** Design tokens: the dark palette, type sizes, control heights, radii and spacing in `theme.rs`
+   and `apply_style` ([UI V2](ui-v2.md#design-tokens)).
+   - [ ] **feature** Bundle Inter and JetBrains Mono (OFL 1.1: ship the license text with them), and add them to
+     [Licensing](licensing.md).
+   - [ ] **bug** Two GPU screenshot tests fail on master too: `bypass_screenshots` looks for a "Bypass graph"
+     label (the button says "Bypass graphs"), and `screenshots` times out waiting for the graph to fail
+     (`tests/screenshots.rs:280`). The other eight render.
 2. [ ] **feature** Shell: the top bar with the Export… button, the transport under the preview (two rows, no
    wrapping), Result / Original / Split, and the status bar with pointer hints.
 3. [ ] **feature** Node graph: the category colour strip, wider nodes and larger text, bypassed and warning

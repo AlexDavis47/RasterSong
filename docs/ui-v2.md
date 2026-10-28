@@ -27,34 +27,45 @@ page and a mockup disagree, this page wins; fix the mockup.
 ## Design tokens
 
 The dark theme first. One accent, used for the playhead, the selection, focus and the primary button; colour
-otherwise means a signal or a state, never decoration. All values go in `theme.rs` (the one place colours live).
+otherwise means a signal or a state, never decoration. All values are in `theme.rs` (the one place colours live):
+the surfaces in `Theme::DARK.surfaces`, which `apply_style` gives to egui's panels and widgets, the rest in the
+other `Theme` fields. **These shipped in stage 1** for the dark theme; the light theme keeps egui's own surfaces
+until its pass.
 
-| Token | Value | Now (`Theme::DARK`) | Used for |
+| Token | Value | In `theme.rs` | Used for |
 |---|---|---|---|
-| Ground | `#0E0F11` | egui default | Window background, wells, text fields |
-| Panel | `#16171A` | egui default | Panels, the top bar, the timeline |
-| Raised | `#1C1D21` | egui default | Buttons, dropdowns, nodes |
-| Border | `#2A2C31` | egui default | Panel and control outlines |
-| Divider | `#202227` | | Lines inside a panel |
-| Text | `#ECEDEF` | | Primary text |
-| Text muted | `#A1A4AC` | | Secondary text, units |
-| Text faint | `#868A94` | | Labels, hints, disabled |
-| Accent | `#8FA2FF` | `#6AA8FF` | Playhead, selection, focus, primary button |
-| Audio | `#3FC7B4` | `#3CC4BC` | Audio wires and items |
-| Red / green / blue | `#FF5D5D` / `#4ED37A` / `#5B8CFF` | `#E8554E` / `#4FC45C` / `#4D8EF0` | Channel parts |
-| Low / mid / high | `#FF9A3C` / `#F2D04B` / `#B48CFF` | `#F08A3A` / `#E6CC4A` / `#B07CEC` | Band parts |
-| Graph | `#9C86FF` | `#8E6CC8` | Graph tracks and items |
-| Warning | `#F2B544` | `#F0C040` | Warnings, the first-beat marker |
-| Warning ground | `#26231B`, border `#6E5420`, text `#F4E3BD` | | Warning bars (the odd-size bar in Export) |
+| Ground | `#0E0F11` | `surfaces.ground`, `canvas_bg` | Wells, text fields, the graph canvas |
+| Panel | `#16171A` | `surfaces.panel` | Panels, windows, menus |
+| Raised | `#1C1D21`, hover `#24262B`, pressed `#2A2C31` | `surfaces.raised*`, `lane_bg` | Buttons, dropdowns, checkboxes, timeline lanes |
+| Border | `#2A2C31`, hover `#3A3C42` | `surfaces.border*` | Panel and control outlines |
+| Divider | `#202227` | `surfaces.divider` | Separators and lines inside a panel |
+| Text | `#ECEDEF` | `surfaces.text` | Primary text |
+| Text muted | `#A1A4AC` | `text_dim` | Secondary text, units |
+| Text faint | `#868A94` | `surfaces.text_faint`, `tick_label` | Labels, hints, disabled |
+| Node | body `#1E1F23`, outline `#33353B`, grid `#1E2024` | `node_body`, `node_outline`, `grid_minor` | The graph canvas |
+| Accent | `#8FA2FF` | `accent`, `playhead` | Playhead, selection, focus, links, primary button |
+| Video | `#C9CCD3` | `ports.video` | Video wires |
+| Audio | `#3FC7B4` | `ports.audio` | Audio wires |
+| Red / green / blue | `#FF5D5D` / `#4ED37A` / `#5B8CFF` | `ports.red` … | Channel parts |
+| Low / mid / high | `#FF9A3C` / `#F2D04B` / `#B48CFF` | `ports.low` … | Band parts |
+| Graph | `#9C86FF` | `graph_block` | Graph items |
+| Warning | `#F2B544` | `warning` | Warnings, the first-beat marker |
+| Warning ground | `#26231B`, border `#6E5420`, text `#F4E3BD` | (stage 9) | Warning bars (the odd-size bar in Export) |
 
-Category colours for nodes keep the six in `Theme::categories`; the strip shows them at full strength.
+Category colours for nodes keep the six in `Theme::categories`; the strip shows them at full strength. Video and
+audio items on the timeline keep their colours until the timeline stage. A test holds every text colour to WCAG
+contrast on every surface it can sit on: 4.5 for text and muted text, 3 for faint labels.
 
-**Type.** Inter for text, JetBrains Mono for numbers (both under the SIL Open Font License; check it against
-[Licensing](licensing.md) before bundling). Sizes: body 13 px, node titles 12.5 px, port labels 11 px, section
-labels 10.5 px in capitals with 0.08 em tracking, the large timecode 15 px.
+**Type.** Inter for text, JetBrains Mono for numbers. Both are under the SIL Open Font License 1.1, which allows
+bundling them with any software, paid or not, as long as the license text and copyright notice ship with them and
+the fonts aren't sold on their own; they are not bundled yet, so the app uses egui's default faces. Sizes: body
+and buttons 13 px, monospace 12.5 px, small 10.5 px, headings 16 px (these are egui's text styles, set in
+`apply_style`); node titles 12.5 px, port labels 11 px, section labels 10.5 px in capitals with 0.08 em tracking,
+and the large timecode 15 px come with the stages that draw them.
 
-**Shape.** Controls are 32 px high (26 px inside a segmented control or a dense row), corners 6 px on controls,
-7 to 8 px on nodes and cards, 12 px on windows. Spacing steps are 4, 6, 8, 10, 12, 16 and 20 px.
+**Shape.** Primary controls are 32 px high (`CONTROL_HEIGHT`), every other control 26 px (`DENSE_HEIGHT`,
+egui's interact height). Corners are 6 px on controls, 8 px on nodes, cards and menus, 12 px on windows (the
+`*_RADIUS` constants). Spacing steps are 4, 6, 8, 10, 12, 16 and 20 px.
 
 ## Layout
 

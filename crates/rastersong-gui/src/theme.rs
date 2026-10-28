@@ -79,14 +79,37 @@ pub struct PortColors {
     pub high: Color32,
 }
 
+/// The surfaces and text every panel and widget is drawn with; [`apply_style`] hands them to
+/// egui's widgets. The values are the tokens in `docs/ui-v2.md`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Surfaces {
+    /// Behind everything: wells and text fields.
+    pub ground: Color32,
+    /// Panels, windows and menus.
+    pub panel: Color32,
+    /// Buttons, dropdowns and checkboxes at rest, hovered and pressed.
+    pub raised: Color32,
+    pub raised_hover: Color32,
+    pub raised_active: Color32,
+    /// Outlines of panels and controls, and of a hovered control.
+    pub border: Color32,
+    pub border_hover: Color32,
+    /// Lines inside a panel: separators and indentation.
+    pub divider: Color32,
+    pub text: Color32,
+    /// Labels, hints and disabled text.
+    pub text_faint: Color32,
+}
+
 /// Colours painted by the app.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Theme {
+    pub surfaces: Surfaces,
     pub accent: Color32,
     pub error: Color32,
     /// Playback slower than real time.
     pub warning: Color32,
-    /// Hints over the preview ("Open a video to start").
+    /// Secondary text: units, hints over the preview ("Open a video to start").
     pub text_dim: Color32,
 
     pub canvas_bg: Color32,
@@ -128,16 +151,28 @@ pub struct Theme {
 
 impl Theme {
     pub const DARK: Theme = Theme {
-        accent: Color32::from_rgb(0x6a, 0xa8, 0xff),
+        surfaces: Surfaces {
+            ground: Color32::from_rgb(0x0e, 0x0f, 0x11),
+            panel: Color32::from_rgb(0x16, 0x17, 0x1a),
+            raised: Color32::from_rgb(0x1c, 0x1d, 0x21),
+            raised_hover: Color32::from_rgb(0x24, 0x26, 0x2b),
+            raised_active: Color32::from_rgb(0x2a, 0x2c, 0x31),
+            border: Color32::from_rgb(0x2a, 0x2c, 0x31),
+            border_hover: Color32::from_rgb(0x3a, 0x3c, 0x42),
+            divider: Color32::from_rgb(0x20, 0x22, 0x27),
+            text: Color32::from_rgb(0xec, 0xed, 0xef),
+            text_faint: Color32::from_rgb(0x86, 0x8a, 0x94),
+        },
+        accent: Color32::from_rgb(0x8f, 0xa2, 0xff),
         error: Color32::from_rgb(0xff, 0x6b, 0x6b),
-        warning: Color32::from_rgb(0xf0, 0xc0, 0x40),
-        text_dim: Color32::from_gray(160),
+        warning: Color32::from_rgb(0xf2, 0xb5, 0x44),
+        text_dim: Color32::from_rgb(0xa1, 0xa4, 0xac),
 
-        canvas_bg: Color32::from_gray(14),
-        grid_minor: Color32::from_gray(48),
-        node_body: Color32::from_gray(38),
-        node_shadow: Color32::from_black_alpha(70),
-        node_outline: Color32::from_gray(60),
+        canvas_bg: Color32::from_rgb(0x0e, 0x0f, 0x11),
+        grid_minor: Color32::from_rgb(0x1e, 0x20, 0x24),
+        node_body: Color32::from_rgb(0x1e, 0x1f, 0x23),
+        node_shadow: Color32::from_black_alpha(90),
+        node_outline: Color32::from_rgb(0x33, 0x35, 0x3b),
         pin_required: Color32::from_gray(225),
         pin_optional: Color32::from_gray(120),
         pin_outline: Color32::from_gray(25),
@@ -154,35 +189,48 @@ impl Theme {
         error_bar_hover: Color32::from_rgb(0x6e, 0x24, 0x24),
         error_bar_text: Color32::from_rgb(0xff, 0xd0, 0xd0),
         ports: PortColors {
-            video: Color32::from_gray(205),
-            audio: Color32::from_rgb(0x3c, 0xc4, 0xbc),
-            red: Color32::from_rgb(0xe8, 0x55, 0x4e),
-            green: Color32::from_rgb(0x4f, 0xc4, 0x5c),
-            blue: Color32::from_rgb(0x4d, 0x8e, 0xf0),
+            video: Color32::from_rgb(0xc9, 0xcc, 0xd3),
+            audio: Color32::from_rgb(0x3f, 0xc7, 0xb4),
+            red: Color32::from_rgb(0xff, 0x5d, 0x5d),
+            green: Color32::from_rgb(0x4e, 0xd3, 0x7a),
+            blue: Color32::from_rgb(0x5b, 0x8c, 0xff),
             left: Color32::from_rgb(0x5c, 0xc8, 0xf0),
             right: Color32::from_rgb(0xf0, 0x7c, 0xc8),
-            low: Color32::from_rgb(0xf0, 0x8a, 0x3a),
-            mid: Color32::from_rgb(0xe6, 0xcc, 0x4a),
-            high: Color32::from_rgb(0xb0, 0x7c, 0xec),
+            low: Color32::from_rgb(0xff, 0x9a, 0x3c),
+            mid: Color32::from_rgb(0xf2, 0xd0, 0x4b),
+            high: Color32::from_rgb(0xb4, 0x8c, 0xff),
         },
 
         preview_bg: Color32::BLACK,
 
-        lane_bg: Color32::from_gray(30),
-        lane_outline: Color32::from_gray(96),
-        tick: Color32::from_gray(110),
-        tick_label: Color32::from_gray(150),
-        playhead: Color32::WHITE,
+        lane_bg: Color32::from_rgb(0x1c, 0x1d, 0x21),
+        lane_outline: Color32::from_rgb(0x4a, 0x4d, 0x55),
+        tick: Color32::from_rgb(0x5a, 0x5d, 0x66),
+        tick_label: Color32::from_rgb(0x86, 0x8a, 0x94),
+        playhead: Color32::from_rgb(0x8f, 0xa2, 0xff),
         video_block: Color32::from_rgb(0x2d, 0x4f, 0x7a),
         audio_block: Color32::from_rgb(0xa8, 0x6a, 0x26),
-        graph_block: Color32::from_rgb(0x8e, 0x6c, 0xc8),
+        graph_block: Color32::from_rgb(0x9c, 0x86, 0xff),
         block_text: Color32::from_gray(20),
-        cached: Color32::from_rgb(0x5c, 0xd6, 0x6a),
+        cached: Color32::from_rgb(0x4e, 0xd3, 0x7a),
         bubble: Color32::from_rgb(0x3a, 0x6f, 0xc4),
         bubble_text: Color32::from_gray(250),
     };
 
+    /// Light keeps egui's own light surfaces until it gets its UI V2 pass.
     pub const LIGHT: Theme = Theme {
+        surfaces: Surfaces {
+            ground: Color32::from_gray(255),
+            panel: Color32::from_gray(248),
+            raised: Color32::from_gray(230),
+            raised_hover: Color32::from_gray(220),
+            raised_active: Color32::from_gray(165),
+            border: Color32::from_gray(190),
+            border_hover: Color32::from_gray(105),
+            divider: Color32::from_gray(190),
+            text: Color32::from_gray(60),
+            text_faint: Color32::from_gray(140),
+        },
         accent: Color32::from_rgb(0x2a, 0x6c, 0xd8),
         error: Color32::from_rgb(0xc8, 0x30, 0x30),
         warning: Color32::from_rgb(0xa8, 0x70, 0x00),
@@ -298,12 +346,35 @@ impl Theme {
 /// Seconds the pointer rests on a widget before its tooltip shows.
 const TOOLTIP_DELAY: f32 = 0.1;
 
+/// Height of a primary control: a dialog's main buttons and fields.
+pub const CONTROL_HEIGHT: f32 = 32.0;
+/// Height of every other control, including one inside a segmented control or a dense row.
+pub const DENSE_HEIGHT: f32 = 26.0;
+/// Corner radii of controls, of nodes and cards, of menus and of windows.
+pub const CONTROL_RADIUS: u8 = 6;
+pub const CARD_RADIUS: u8 = 8;
+pub const MENU_RADIUS: u8 = 8;
+pub const WINDOW_RADIUS: u8 = 12;
+/// Text sizes that differ from egui's (body and buttons stay at its 13).
+const SMALL_SIZE: f32 = 10.5;
+const MONO_SIZE: f32 = 12.5;
+const HEADING_SIZE: f32 = 16.0;
+
 /// Spacing and widget visuals shared by the whole app, for both themes.
 pub fn apply_style(ctx: &egui::Context) {
     ctx.all_styles_mut(|style| {
         style.spacing.item_spacing = egui::vec2(8.0, 6.0);
-        style.spacing.button_padding = egui::vec2(8.0, 3.0);
-        style.spacing.interact_size.y = 22.0;
+        style.spacing.button_padding = egui::vec2(10.0, 4.0);
+        style.spacing.interact_size.y = DENSE_HEIGHT;
+        for (text_style, size) in [
+            (egui::TextStyle::Small, SMALL_SIZE),
+            (egui::TextStyle::Monospace, MONO_SIZE),
+            (egui::TextStyle::Heading, HEADING_SIZE),
+        ] {
+            if let Some(font) = style.text_styles.get_mut(&text_style) {
+                font.size = size;
+            }
+        }
         // Tooltips appear almost at once: they carry most of the help text.
         style.interaction.tooltip_delay = TOOLTIP_DELAY;
         style.spacing.combo_width = 120.0;
@@ -312,9 +383,12 @@ pub fn apply_style(ctx: &egui::Context) {
             &mut style.visuals.widgets.inactive,
             &mut style.visuals.widgets.hovered,
             &mut style.visuals.widgets.active,
+            &mut style.visuals.widgets.open,
         ] {
-            widgets.corner_radius = CornerRadius::same(4);
+            widgets.corner_radius = CornerRadius::same(CONTROL_RADIUS);
         }
+        style.visuals.menu_corner_radius = CornerRadius::same(MENU_RADIUS);
+        style.visuals.window_corner_radius = CornerRadius::same(WINDOW_RADIUS);
     });
     for (egui_theme, theme) in [
         (egui::Theme::Dark, &Theme::DARK),
@@ -322,6 +396,7 @@ pub fn apply_style(ctx: &egui::Context) {
     ] {
         ctx.style_mut_of(egui_theme, |style| {
             let visuals = &mut style.visuals;
+            apply_surfaces(visuals, &theme.surfaces);
             visuals.selection.bg_fill = theme.accent.gamma_multiply(0.6);
             visuals.hyperlink_color = theme.accent;
             visuals.error_fg_color = theme.error;
@@ -333,6 +408,33 @@ pub fn apply_style(ctx: &egui::Context) {
         style.visuals.selection.bg_fill = Theme::LIGHT.accent.gamma_multiply(0.35);
         style.visuals.selection.stroke.color = Color32::from_gray(10);
     });
+}
+
+/// Gives egui's panels and widgets a theme's surfaces.
+fn apply_surfaces(visuals: &mut egui::Visuals, s: &Surfaces) {
+    visuals.panel_fill = s.panel;
+    visuals.window_fill = s.panel;
+    visuals.window_stroke.color = s.border;
+    visuals.extreme_bg_color = s.ground;
+    visuals.code_bg_color = s.ground;
+    visuals.faint_bg_color = s.raised;
+    visuals.weak_text_color = Some(s.text_faint);
+    let w = &mut visuals.widgets;
+    w.noninteractive.bg_fill = s.panel;
+    w.noninteractive.weak_bg_fill = s.panel;
+    w.noninteractive.bg_stroke.color = s.divider;
+    w.noninteractive.fg_stroke.color = s.text;
+    for (widget, fill, stroke) in [
+        (&mut w.inactive, s.raised, s.border),
+        (&mut w.hovered, s.raised_hover, s.border_hover),
+        (&mut w.active, s.raised_active, s.border_hover),
+        (&mut w.open, s.raised_hover, s.border),
+    ] {
+        widget.bg_fill = fill;
+        widget.weak_bg_fill = fill;
+        widget.bg_stroke.color = stroke;
+        widget.fg_stroke.color = s.text;
+    }
 }
 
 #[cfg(test)]
@@ -350,6 +452,51 @@ mod tests {
         for theme in [&Theme::DARK, &Theme::LIGHT] {
             let gap = |a: Color32, b: Color32| a.r().abs_diff(b.r());
             assert!(gap(theme.lane_outline, theme.lane_bg) >= 40);
+        }
+    }
+
+    #[test]
+    fn dark_widgets_use_the_ui_v2_tokens() {
+        let ctx = egui::Context::default();
+        apply_style(&ctx);
+        ctx.set_theme(egui::Theme::Dark);
+        let style = ctx.global_style();
+        let v = &style.visuals;
+        let s = &Theme::DARK.surfaces;
+        assert_eq!(v.panel_fill, s.panel);
+        assert_eq!(v.extreme_bg_color, s.ground);
+        assert_eq!(v.widgets.inactive.weak_bg_fill, s.raised);
+        assert_eq!(v.widgets.inactive.bg_stroke.color, s.border);
+        assert_eq!(v.widgets.noninteractive.fg_stroke.color, s.text);
+        assert_eq!(v.hyperlink_color, Theme::DARK.accent);
+        assert_eq!(style.spacing.interact_size.y, DENSE_HEIGHT);
+        assert_eq!(v.window_corner_radius, CornerRadius::same(WINDOW_RADIUS));
+        assert_eq!(style.text_styles[&egui::TextStyle::Small].size, SMALL_SIZE);
+    }
+
+    /// WCAG contrast: at least 4.5 for text and secondary text, 3 for faint labels.
+    #[test]
+    fn dark_text_reads_on_every_surface() {
+        fn luminance(c: Color32) -> f32 {
+            let linear = |v: u8| {
+                let v = f32::from(v) / 255.0;
+                if v <= 0.04045 {
+                    v / 12.92
+                } else {
+                    ((v + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * linear(c.r()) + 0.7152 * linear(c.g()) + 0.0722 * linear(c.b())
+        }
+        fn contrast(a: Color32, b: Color32) -> f32 {
+            let (a, b) = (luminance(a), luminance(b));
+            (a.max(b) + 0.05) / (a.min(b) + 0.05)
+        }
+        let s = &Theme::DARK.surfaces;
+        for bg in [s.ground, s.panel, s.raised, s.raised_hover, s.raised_active] {
+            assert!(contrast(s.text, bg) >= 4.5);
+            assert!(contrast(Theme::DARK.text_dim, bg) >= 4.5);
+            assert!(contrast(s.text_faint, bg) >= 3.0);
         }
     }
 
