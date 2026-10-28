@@ -643,7 +643,13 @@ fn param_row(row: ParamRow) -> bool {
                 }
             }
             None => {
-                let field = ui.add(egui::TextEdit::singleline(s).desired_width(150.0));
+                // Named, so it keeps focus while typing changes the lines above it (a renamed
+                // port's signals), which would shift an automatic id.
+                let field = ui.add(
+                    egui::TextEdit::singleline(s)
+                        .id_salt(spec.name)
+                        .desired_width(150.0),
+                );
                 if reset_gesture(ui, &field, value_differs) {
                     reset = true;
                 }

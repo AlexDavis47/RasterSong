@@ -8,7 +8,7 @@ use rastersong_graph::GraphDesc;
 use serde::{Deserialize, Serialize};
 
 use super::{Edge, MIN_ITEM_LENGTH, Project};
-use crate::composition::{ComposedGraphTrack, Composition, MediaTrack, extra_ports};
+use crate::composition::{ComposedGraphTrack, Composition, MediaTrack, extra_ports, port_of};
 use crate::timeline::{GraphItem, Source};
 
 /// A track of graph items.
@@ -249,6 +249,27 @@ impl Project {
         }
     }
 
+    /// Replaces the open graph with `graph`, its edited version. An input node whose port was
+    /// renamed takes the items' sources with it, unless another node still reads the old name
+    /// or one already read the new one.
+    pub fn set_open_graph(&mut self, graph: GraphDesc) {
+        let renamed = renamed_ports(&self.graph, &graph);
+        self.graph = graph;
+        let id = self.graph_id;
+        for (old, new) in renamed {
+            for item in self
+                .graph_tracks
+                .iter_mut()
+                .flat_map(|t| &mut t.items)
+                .filter(|i| i.graph == id)
+            {
+                if let Some(source) = item.sources.remove(&old) {
+                    item.sources.insert(new.clone(), source);
+                }
+            }
+        }
+    }
+
     /// Removes every item that places graph `graph`; used when the graph is deleted.
     pub fn remove_graph_items(&mut self, graph: u32) {
         for track in &mut self.graph_tracks {
@@ -384,8 +405,38 @@ pub(super) fn sanitize(tracks: &mut [GraphTrack]) {
     }
 }
 
+/// The ports renamed from `old` to `new`, (old name, new name): an input node kept its id but
+/// reads another port, no node of `new` reads the old name, and none of `old` read the new one.
+fn renamed_ports(old: &GraphDesc, new: &GraphDesc) -> Vec<(String, String)> {
+    let ports = |desc: &GraphDesc| -> Vec<(String, String)> {
+        desc.nodes
+            .iter()
+            .filter_map(|n| port_of(&n.kind, &n.params).map(|(p, _)| (n.id.clone(), p.to_owned())))
+            .collect()
+    };
+    let (before, after) = (ports(old), ports(new));
+    let mut renamed: Vec<(String, String)> = Vec::new();
+    for (id, from) in &before {
+        let Some((_, to)) = after.iter().find(|(other, _)| other == id) else {
+            continue;
+        };
+        if from == to
+            || after.iter().any(|(_, p)| p == from)
+            || before.iter().any(|(_, p)| p == to)
+            || renamed.iter().any(|(f, _)| f == from)
+        {
+            continue;
+        }
+        renamed.push((from.clone(), to.clone()));
+    }
+    renamed
+}
+
 #[cfg(test)]
 mod tests {
+    use rastersong_graph::ParamValue;
+    use rastersong_graph::nodes::PORT_PARAM;
+
     use super::*;
     use crate::project::ResourceKind;
     use crate::timeline::TrackKind;
@@ -536,6 +587,42 @@ mod tests {
         let items = &project.graph_tracks[0].items;
         assert_eq!((items[0].length, items[second].start), (1.0, 1.0));
         assert_eq!(items[second].sources, items[0].sources);
+    }
+
+    #[test]
+    fn renaming_a_port_keeps_its_sources() {
+        let mut project = project();
+        let id = project.graph_id;
+        project.add_track(TrackKind::Audio, "kick", "kick.wav");
+        project.place_graph("Graphs", id, 0.0, 1.0);
+        project.set_graph_source("Graphs", 0, "Kick", Source::Track("kick".into()));
+        let with_port = |project: &Project, port: &str| {
+            let mut graph = project.graph.clone();
+            let k = graph.nodes.iter_mut().find(|n| n.id == "k").unwrap();
+            k.params
+                .insert(PORT_PARAM.to_owned(), ParamValue::Text(port.to_owned()));
+            graph
+        };
+        // Typed a character at a time.
+        for port in ["Kic", "Kick drum"] {
+            let graph = with_port(&project, port);
+            project.set_open_graph(graph);
+        }
+        let sources = &project.graph_tracks[0].items[0].sources;
+        assert_eq!(
+            sources.get("Kick drum"),
+            Some(&Source::Track("kick".into()))
+        );
+        assert!(!sources.contains_key("Kick"));
+        // Renamed to a port another node reads, it takes that port's source.
+        let graph = with_port(&project, "Audio");
+        project.set_open_graph(graph);
+        let sources = &project.graph_tracks[0].items[0].sources;
+        assert_eq!(
+            sources.get("Kick drum"),
+            Some(&Source::Track("kick".into()))
+        );
+        assert!(!sources.contains_key("Audio"));
     }
 
     #[test]

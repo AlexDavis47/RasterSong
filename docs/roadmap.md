@@ -867,6 +867,13 @@ The aim: one implementation per idea, so fixes and features land in one place. K
 - [x] Preview pane controls jump to the top while the loading spinner shows
 - [x] The node search popup shrinks in height over a long session
 - [x] Rarely, dragging a slider resizes it instead of changing the value
+- [x] **bug** Picking a graph item's port source from a list wide enough to cover the graph editor deselected the
+  item instead ([Graph tracks](app.md#graph-tracks))
+- [x] **bug** Renaming an input port lost the sources its items had picked for it
+  ([Graph tracks](app.md#graph-tracks))
+- [x] **bug** Typing an input node's port name lost the field's focus after each character
+- [x] **bug** The starter graph had no Audio Output, so it was silent ([Graph tracks](app.md#graph-tracks))
+- [x] **bug** Splitting kept both halves selected, so dragging one moved both ([Timeline](app.md#timeline))
 
 ---
 

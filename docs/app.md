@@ -185,8 +185,8 @@ audio's waveform, and behaves like empty lane space. Items can't start before th
 - Drag an item's left or right edge (over its whole height) to **trim** it over its file; it stops at the file's
   ends. **Alt+drag** an edge to change the item's **rate** instead, keeping its in and out points: longer plays
   slower and lower, like tape (from 0.05× to 20×).
-- **S** splits at the playhead: the selected items, or with none selected every item under it. Both halves stay
-  selected.
+- **S** splits at the playhead: the selected items, or with none selected every item under it. The first half of
+  each split item stays selected, so the second half can be dragged on its own.
 - **Ctrl+A** selects every item in every section, graph items too, while the pointer is over the timeline.
   Clicking in the graph editor deselects the timeline's items, so the inspector shows the clicked node again.
 - **Delete** (or Backspace) removes the selected items. **Ctrl+C**, **Ctrl+X** and **Ctrl+V** copy, cut and paste
@@ -247,9 +247,11 @@ like an adjustment layer in a video editor. How they render is described in
   muted kick can still drive an effect), **Graph track: name** (an output of a graph track below this one), or
   **Nothing** (zeros). Other ports start on the track of the same name, if one exists. A source that has gone
   (a removed track, a graph track no longer below) says so and reads nothing until another is picked. Renaming a
-  track updates the sources that read it. Sources only point down, so graphs can't loop.
+  track updates the sources that read it, and renaming a port (an input node's *Port*) keeps the sources its items
+  picked for it. Sources only point down, so graphs can't loop.
 - A new graph starts as a visible template (`In: Video` into Video Output, `In: Audio` into Audio Output), so a
-  fresh graph item changes nothing. A graph placed over graphs below it chains them unless a source is changed.
+  fresh graph item changes nothing. The starter graph of a new project (`am_bands`) also wires `In: Audio` to an
+  Audio Output, so its sound plays. A graph placed over graphs below it chains them unless a source is changed.
 
 ## Preview audio
 

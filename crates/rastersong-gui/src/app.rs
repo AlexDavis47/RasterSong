@@ -626,7 +626,7 @@ impl App {
 
     /// Adds a passthrough graph and opens it. Returns its id.
     pub fn new_graph(&mut self) -> u32 {
-        self.project.graph = self.editor.to_desc();
+        self.project.set_open_graph(self.editor.to_desc());
         let id = self.project.add_graph("Graph", None);
         self.open_graph(id);
         id
@@ -635,7 +635,7 @@ impl App {
     /// Opens a graph from the Resources panel in the editor. It is the graph rendered, too:
     /// there is one at a time until graph layers can place several.
     pub fn open_graph(&mut self, id: u32) {
-        self.project.graph = self.editor.to_desc();
+        self.project.set_open_graph(self.editor.to_desc());
         if !self.project.open_graph(id) {
             return;
         }
@@ -705,7 +705,7 @@ impl App {
             }
             ResourceAction::DuplicateGraph(id) => {
                 // The open graph is copied as it is in the editor now.
-                self.project.graph = self.editor.to_desc();
+                self.project.set_open_graph(self.editor.to_desc());
                 self.project.duplicate_graph(id);
             }
             ResourceAction::RemoveGraph(id) => {
@@ -1076,12 +1076,15 @@ impl App {
             },
         );
         // A click in the graph editor leaves the timeline's items: they share the inspector, so
-        // a selected item would otherwise hide the properties of the nodes clicked.
-        let clicked_here = ui.input(|i| {
-            i.pointer.primary_pressed()
-                && i.pointer
-                    .interact_pos()
-                    .is_some_and(|p| canvas.rect.contains(p))
+        // a selected item would otherwise hide the properties of the nodes clicked. A popup drawn
+        // over the editor (the inspector's source list) takes its own clicks.
+        let pressed_at = ui.input(|i| {
+            i.pointer
+                .interact_pos()
+                .filter(|_| i.pointer.primary_pressed())
+        });
+        let clicked_here = pressed_at.is_some_and(|p| {
+            canvas.rect.contains(p) && ui.ctx().layer_id_at(p) == Some(ui.layer_id())
         });
         if clicked_here {
             self.selected_items.clear();
@@ -1245,7 +1248,8 @@ impl App {
             self.engine.set_graph(semantic.clone());
             self.sent_graph = semantic;
         }
-        self.project.graph = graph;
+        // An input port renamed in the editor keeps its items' sources.
+        self.project.set_open_graph(graph);
         self.refresh_missing(false);
         self.engine.set_timeline(self.timeline_of(&self.project));
         self.engine
