@@ -15,8 +15,8 @@ This describes the app as it is. Changes planned from hands-on testing are in th
 
 ## Preview
 
-The header chooses what the picture shows: **Result** (the processed video), **Original** (the video before the
-graph; processing carries on) or **Split**, both side by side with the original on the left and a draggable
+The header chooses what the picture shows: **Result** (the processed video), **Original** (the video mix before the
+graphs: the top video track playing at each frame, as the Video section mixes it; processing carries on) or **Split**, both side by side with the original on the left and a draggable
 divider; clicking Split again swaps the sides. **Fit** (or F) fits the picture again after the scroll wheel zooms
 it or middle-drag pans it. The size the preview renders at, out of the project's, sits in the picture's corner.
 With no video loaded, the preview offers an Open Video button.

@@ -2775,6 +2775,25 @@ fn original_shows_the_video_before_the_graph() {
 }
 
 #[test]
+fn original_shows_the_video_mix_not_just_the_top_track() {
+    // An empty top track over a full one: the mix is the second track's picture.
+    let app = app_with_project(|project| {
+        project.add_track(TrackKind::Video, "video 2", "other");
+        project.tracks[0].items.clear();
+        project.bypass_graph = true;
+    });
+    let mut harness = loaded_with(app);
+    harness.get_by_label("Original").click();
+    step_until(&mut harness, "the original frame", |app| {
+        app.source_engine().frame(5).is_some()
+    });
+    let original = harness.state().source_engine().frame(5).unwrap();
+    let result = harness.state().engine().frame(5).unwrap();
+    assert!(original.rgb.iter().any(|&v| v != 0), "a picture, not black");
+    assert_eq!(original.rgb, result.rgb);
+}
+
+#[test]
 fn go_to_start_moves_the_playhead_to_the_first_frame() {
     let mut harness = loaded();
     harness.key_press(egui::Key::ArrowRight);

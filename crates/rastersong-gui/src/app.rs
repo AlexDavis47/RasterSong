@@ -18,8 +18,7 @@ use rastersong_engine::{
     AudioSink, BackendInfo, CompileOptions, Engine, EngineConfig, EngineStatus, Frame, Graph,
     GraphDesc, GraphItem, Item, ItemRef, MediaBackend, NodeStats, PROJECT_EXTENSION, PlaybackClock,
     PreviewScale, Project, ProjectTrack, Registry, RenderInfo, ResourceId, ResourceKind,
-    Thumbnails, Timeline, TimelineMode, TrackKind, TrackSpec, VIDEO_SOURCE, VideoInfo, VideoKey,
-    resource_name_for,
+    Thumbnails, Timeline, TimelineMode, TrackKind, VideoInfo, VideoKey, resource_name_for,
 };
 use rastersong_lang::{tr, tr_args};
 
@@ -327,6 +326,11 @@ impl App {
 
     pub fn engine(&self) -> &Engine {
         &self.engine
+    }
+
+    /// The engine rendering the original video, for the preview's Original feed.
+    pub fn source_engine(&self) -> &Engine {
+        &self.source_engine
     }
 
     pub fn project(&self) -> &Project {
@@ -1459,25 +1463,21 @@ impl App {
 
     /// Gives the source engine the video while the preview shows it, and takes it away after.
     fn sync_source_engine(&mut self) {
-        // The video alone, as the track the source graph reads.
+        // The video tracks with no graph tracks: the video mix, as the result shows it with
+        // graphs bypassed.
         let video = self
             .wants_source()
-            .then(|| self.project.video())
-            .flatten()
-            .map(|video| Timeline {
-                timebase: self.project.timebase,
-                tracks: vec![TrackSpec {
-                    items: video.items.clone(),
-                    stream: self.project.track_resource(video).and_then(|r| r.stream),
-                    ..TrackSpec::new(
-                        VIDEO_SOURCE,
-                        TrackKind::Video,
-                        self.project.track_path(video).unwrap_or(Path::new("")),
-                    )
-                }],
-                ..Timeline::default()
-            });
+            .then(|| {
+                let mut timeline = self.timeline_of(&self.project);
+                timeline.tracks.retain(|t| t.kind == TrackKind::Video);
+                timeline
+            })
+            .filter(|timeline| !timeline.tracks.is_empty());
         if self.source_video_sent != video {
+            let mut composition = self.project.composition().without_graphs();
+            composition.tracks.retain(|t| t.kind == TrackKind::Video);
+            composition.graphs.clear();
+            self.source_engine.set_composition(Some(composition));
             self.source_engine
                 .set_timeline(video.clone().unwrap_or_default());
             self.source_video_sent = video;

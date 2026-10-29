@@ -926,6 +926,8 @@ The aim: one implementation per idea, so fixes and features land in one place. K
 - [x] **bug** Splitting kept both halves selected, so dragging one moved both ([Timeline](app.md#timeline))
 - [x] **bug** Opening another graph invalidated the cache though nothing that renders changed
   ([Engine](engine.md#composition))
+- [x] **bug** The preview's Original showed only the first video track, not the video mix
+  ([Preview](app.md#preview))
 
 ---
 
