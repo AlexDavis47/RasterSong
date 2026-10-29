@@ -746,6 +746,9 @@ and a regenerated `nodes.md`.
   - [x] **feature** *Division* defaults to an integer (and is an integer parameter). Slower than the period is the bar period; old fractional divisions are raised to 1.
   - [x] **feature** *Steps* shows only when the mode is Step (conditional parameter).
   - [x] **feature** *Width* is conditional on the modes that use it.
+  - [x] **feature** The length is a time signature, *Numerator* / *Denominator* (1/4 a beat, 16/4 sixteen beats,
+    1/16 a sixteenth), replacing *Period* and *Division*, so it can repeat slower than a bar
+    ([Nodes](nodes.md))
 - **Constant**
   - [x] **feature** *Value*'s modulation toggle is off by default (no pin exposed): nobody modulates a constant.
 - **Noise**

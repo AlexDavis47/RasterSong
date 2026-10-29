@@ -29,12 +29,12 @@ node.audio_output.param.bus.help = The output bus this sound goes to, from the b
 node.audio_output.param.volume.help = Louder or quieter, in decibels, before the sound is clipped to -1 to 1. 0 changes nothing; the meter shows the peak after the volume, so a peak above 0 dB will clip.
 
 node.beat.label = Beat
-node.beat.description = A 0 to 1 signal locked to the project's beats or bars: phase, decay, pulse or steps
+node.beat.description = A 0 to 1 signal locked to the project's beats, restarting every note length: phase, decay, pulse or steps
 node.beat.output.out = The beat-locked signal
-node.beat.param.period.label = Period
-node.beat.param.period.help = beat restarts the shape on every beat, bar on every bar
-node.beat.param.division.label = Division
-node.beat.param.division.help = Cycles per period: 2 restarts twice as often (half beats). Use the bar period for slower
+node.beat.param.numerator.label = Numerator
+node.beat.param.numerator.help = How many notes of the denominator's length each cycle lasts, as in a time signature: 1/4 is a beat, 4/4 four beats, 16/4 sixteen
+node.beat.param.denominator.label = Denominator
+node.beat.param.denominator.help = The note the numerator counts, as a fraction of a whole note: 4 is a quarter note (a beat), 8 an eighth, 16 a sixteenth
 node.beat.param.shape.label = Shape
 node.beat.param.shape.help = phase rises 0 to 1, decay falls 1 to 0, pulse is on for the width, step climbs in stairs
 node.beat.param.width.label = Width

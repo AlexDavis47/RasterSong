@@ -151,9 +151,9 @@ How each previously locked parameter is modulated: times (Envelope attack and re
 release) recompute their coefficient per sample; Three-Band crossovers retune their filters per sample, keeping the
 filter's state; Reverb size and damping are the comb filters' feedback and damping, and the pre-delay reads its
 delay line at a moving position; Chorus voices (up to four) and spread and Phaser stages (up to twelve) allocate the
-most and use as many per sample as the value says; Beat's division, width and steps and Oscillator's phase and pulse
-width read their value at each pixel (Beat and the unmodulated oscillator are functions of position, so seeking
-stays exact; a changing division moves the shape against the beat grid instead of restarting it); a Noise seed
+most and use as many per sample as the value says; Beat's numerator, denominator, width and steps and Oscillator's
+phase and pulse width read their value at each pixel (Beat and the unmodulated oscillator are functions of position,
+so seeking stays exact; a changing length moves the shape against the beat grid instead of restarting it); a Noise seed
 picks a different noise at every sample; Sample & Hold's period reads the hold grid with each sample's own length.
 
 Nodes only have their own inputs for signals that are part of what they do: for example the modulator of Amplitude

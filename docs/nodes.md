@@ -41,14 +41,14 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 
 | Node | What it does |
 |---|---|
-| [Beat](#beat) | A 0 to 1 signal locked to the project's beats or bars: phase, decay, pulse or steps |
+| [Beat](#beat) | A 0 to 1 signal locked to the project's beats, restarting every note length: phase, decay, pulse or steps |
 | [Constant](#constant) | The same value in every sample: a flat colour, or silence |
 | [Noise](#noise) | Random values in a chosen colour: grain in video, hiss in audio |
 | [Oscillator](#oscillator) | A sine, triangle, square or saw wave: stripes in video, a tone in audio |
 
 ### `beat`
 
-**Beat**: A 0 to 1 signal locked to the project's beats or bars: phase, decay, pulse or steps
+**Beat**: A 0 to 1 signal locked to the project's beats, restarting every note length: phase, decay, pulse or steps
 
 **Outputs**
 
@@ -58,8 +58,8 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `period` (Period) | `beat` | `beat`, `bar` | no | beat restarts the shape on every beat, bar on every bar |
-| `division` (Division) | 1 | 1 to 16 (up to 1 to 1000) | yes | Cycles per period: 2 restarts twice as often (half beats). Use the bar period for slower |
+| `numerator` (Numerator) | 1 | 1 to 32 (up to 1 to 1024) | yes | How many notes of the denominator's length each cycle lasts, as in a time signature: 1/4 is a beat, 4/4 four beats, 16/4 sixteen |
+| `denominator` (Denominator) | 4 | 1 to 32 (up to 1 to 1024) | yes | The note the numerator counts, as a fraction of a whole note: 4 is a quarter note (a beat), 8 an eighth, 16 a sixteenth |
 | `shape` (Shape) | `decay` | `phase`, `decay`, `pulse`, `step` | no | phase rises 0 to 1, decay falls 1 to 0, pulse is on for the width, step climbs in stairs |
 | `width` (Width) | 0.25 | 0 to 1 | yes | For the pulse shape, the fraction of each cycle it stays on. Used when `shape` is `pulse`. |
 | `steps` (Steps) | 4 | 1 to 32 (up to 1 to 1024) | yes | For the step shape, how many stairs each cycle climbs. Used when `shape` is `step`. |

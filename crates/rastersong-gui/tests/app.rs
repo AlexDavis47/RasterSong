@@ -1527,7 +1527,7 @@ fn whole_number_parameters_round_what_is_typed() {
     select(&mut harness, "beat");
     harness.run_steps(3);
     let panel = harness.state().inspector_rect();
-    // The first number in a Beat's settings is its division, which only makes sense whole.
+    // The first number in a Beat's settings is its numerator, which only makes sense whole.
     let center = harness
         .query_all_by_role(egui::accesskit::Role::SpinButton)
         .map(|n| n.rect())
@@ -1541,7 +1541,7 @@ fn whole_number_parameters_round_what_is_typed() {
     harness.key_press(egui::Key::Enter);
     harness.run_steps(3);
     let node = key(&harness, "beat");
-    let value = harness.state().editor().node(node).unwrap().params["division"].clone();
+    let value = harness.state().editor().node(node).unwrap().params["numerator"].clone();
     assert_eq!(value, ParamValue::Number(3.0));
 }
 
@@ -1566,7 +1566,7 @@ fn parameters_a_setting_leaves_unused_are_hidden() {
     harness.run_steps(3);
     select(&mut harness, "beat");
     harness.run_steps(3);
-    harness.get_by_label("Division");
+    harness.get_by_label("Numerator");
     assert!(harness.query_by_label("Width").is_none());
     assert!(harness.query_by_label("Steps").is_none());
 }
