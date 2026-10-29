@@ -360,8 +360,43 @@ const SMALL_SIZE: f32 = 10.5;
 const MONO_SIZE: f32 = 12.5;
 const HEADING_SIZE: f32 = 16.0;
 
-/// Spacing and widget visuals shared by the whole app, for both themes.
+/// The bundled faces: Inter for text, JetBrains Mono (without ligatures) for numbers. Both are
+/// under the SIL Open Font License; the license texts sit beside them and ship in every package.
+const TEXT_FONT: &str = "Inter";
+const MONO_FONT: &str = "JetBrains Mono";
+
+/// egui's fonts with the bundled faces put first, so egui's own still cover the symbols and
+/// emoji the bundled faces lack.
+pub fn font_definitions() -> egui::FontDefinitions {
+    let mut fonts = egui::FontDefinitions::default();
+    for (name, data, family) in [
+        (
+            TEXT_FONT,
+            &include_bytes!("../assets/fonts/Inter-Regular.ttf")[..],
+            egui::FontFamily::Proportional,
+        ),
+        (
+            MONO_FONT,
+            &include_bytes!("../assets/fonts/JetBrainsMonoNL-Regular.ttf")[..],
+            egui::FontFamily::Monospace,
+        ),
+    ] {
+        fonts.font_data.insert(
+            name.to_owned(),
+            std::sync::Arc::new(egui::FontData::from_static(data)),
+        );
+        fonts
+            .families
+            .entry(family)
+            .or_default()
+            .insert(0, name.to_owned());
+    }
+    fonts
+}
+
+/// Fonts, spacing and widget visuals shared by the whole app, for both themes.
 pub fn apply_style(ctx: &egui::Context) {
+    ctx.set_fonts(font_definitions());
     ctx.all_styles_mut(|style| {
         style.spacing.item_spacing = egui::vec2(8.0, 6.0);
         style.spacing.button_padding = egui::vec2(10.0, 4.0);
@@ -497,6 +532,20 @@ mod tests {
             assert!(contrast(s.text, bg) >= 4.5);
             assert!(contrast(Theme::DARK.text_dim, bg) >= 4.5);
             assert!(contrast(s.text_faint, bg) >= 3.0);
+        }
+    }
+
+    #[test]
+    fn bundled_faces_come_first_and_egui_fills_in() {
+        let fonts = font_definitions();
+        let proportional = &fonts.families[&egui::FontFamily::Proportional];
+        let monospace = &fonts.families[&egui::FontFamily::Monospace];
+        assert_eq!(proportional[0], TEXT_FONT);
+        assert_eq!(monospace[0], MONO_FONT);
+        // egui's own faces stay behind them for symbols (♪, ▣) and emoji.
+        assert!(proportional.len() > 1 && monospace.len() > 1);
+        for face in [TEXT_FONT, MONO_FONT] {
+            assert!(fonts.font_data.contains_key(face));
         }
     }
 

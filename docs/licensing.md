@@ -35,6 +35,17 @@ encoders load the graphics driver at runtime. AMD's notice says it grants no lic
 royalties due for them are the user's, so whether H.264 export through GPU encoders needs a patent license of
 RasterSong's own is to be checked before a paid release (see [Open Questions](decisions.md#open-questions)).
 
+## Fonts
+
+The app bundles **Inter** and **JetBrains Mono** (`crates/rastersong-gui/assets/fonts/`), both under the SIL Open
+Font License 1.1. It allows bundling and embedding them in any software, paid or not. What it asks, and what we
+do:
+
+- Ship the copyright notice and license text with the fonts: `Inter-LICENSE.txt` and `JetBrainsMono-LICENSE.txt`
+  sit beside the font files and `cargo xtask dist` copies them into every package.
+- Don't sell the fonts on their own (we don't), and don't publish a modified font under its reserved name (we use
+  them unmodified).
+
 ## Other Dependencies
 
 All Rust dependencies must have permissive licenses (MIT, Apache-2.0, BSD, Zlib, MPL-2.0 or similar).

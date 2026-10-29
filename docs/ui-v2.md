@@ -56,9 +56,10 @@ Category colours for nodes keep the six in `Theme::categories`; the strip shows 
 audio items on the timeline keep their colours until the timeline stage. A test holds every text colour to WCAG
 contrast on every surface it can sit on: 4.5 for text and muted text, 3 for faint labels.
 
-**Type.** Inter for text, JetBrains Mono for numbers. Both are under the SIL Open Font License 1.1, which allows
-bundling them with any software, paid or not, as long as the license text and copyright notice ship with them and
-the fonts aren't sold on their own; they are not bundled yet, so the app uses egui's default faces. Sizes: body
+**Type.** Inter 4.1 for text, JetBrains Mono 2.304 (the NL build, without ligatures) for numbers, bundled in
+`crates/rastersong-gui/assets/fonts/` and put ahead of egui's own faces, which still cover the symbols and emoji
+they lack (see [Licensing](licensing.md#fonts)). Only the regular weights are bundled; the stages that need
+semibold titles add it. Sizes: body
 and buttons 13 px, monospace 12.5 px, small 10.5 px, headings 16 px (these are egui's text styles, set in
 `apply_style`); node titles 12.5 px, port labels 11 px, section labels 10.5 px in capitals with 0.08 em tracking,
 and the large timecode 15 px come with the stages that draw them.

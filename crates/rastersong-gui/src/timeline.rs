@@ -1381,7 +1381,9 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
             ),
         );
     }
-    // An empty section names what to drop in it.
+    // An empty section names what to drop in it, across its empty lane too, so the hint isn't cut at
+    // the header's edge.
+    let hint_painter = ui.painter_at(header_clip.union(body_lanes));
     for section in Section::ALL {
         let empty = match section {
             Section::Graphs => model.graph_tracks.is_empty(),
@@ -1396,7 +1398,7 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
             Section::Video => tr("timeline.section.video.empty"),
             Section::Audio => tr("timeline.section.audio.empty"),
         };
-        header_painter.text(
+        hint_painter.text(
             pos2(tail.left() + 6.0, tail.center().y),
             Align2::LEFT_CENTER,
             text,

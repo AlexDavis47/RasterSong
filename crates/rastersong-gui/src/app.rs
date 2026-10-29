@@ -1161,6 +1161,7 @@ impl App {
             .fixed_pos(canvas.right_top() + egui::vec2(-8.0, 8.0))
             .pivot(egui::Align2::RIGHT_TOP)
             .show(ui.ctx(), |ui| {
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                 let on = self.project.bypass_graph;
                 let response = ui
                     .selectable_label(on, tr("editor.bypass_graph"))

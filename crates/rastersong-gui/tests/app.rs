@@ -153,6 +153,18 @@ fn shows_the_graph_and_renders() {
 }
 
 #[test]
+fn bypass_graphs_button_stays_on_one_line() {
+    // Inter is wider than egui's own face; the corner button used to wrap to two lines.
+    let mut harness = loaded();
+    harness.run_steps(2);
+    let button = harness.get_by_label("Bypass graphs").rect();
+    assert!(
+        button.height() <= rastersong_gui::theme::DENSE_HEIGHT,
+        "{button:?}"
+    );
+}
+
+#[test]
 fn play_button_and_space_bar_control_playback() {
     let mut harness = harness(app());
     step_until(&mut harness, "the project to load", |app| {

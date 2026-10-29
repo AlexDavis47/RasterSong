@@ -821,8 +821,7 @@ independent of each other.
 
 1. [x] **feature** Design tokens: the dark palette, type sizes, control heights, radii and spacing in `theme.rs`
    and `apply_style` ([UI V2](ui-v2.md#design-tokens)).
-   - [ ] **feature** Bundle Inter and JetBrains Mono (OFL 1.1: ship the license text with them), and add them to
-     [Licensing](licensing.md).
+   - [x] **feature** Bundle Inter and JetBrains Mono ([Licensing](licensing.md#fonts)).
    - [ ] **bug** Two GPU screenshot tests fail on master too: `bypass_screenshots` looks for a "Bypass graph"
      label (the button says "Bypass graphs"), and `screenshots` times out waiting for the graph to fail
      (`tests/screenshots.rs:280`). The other eight render.
