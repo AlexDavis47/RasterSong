@@ -119,6 +119,8 @@ pub struct Theme {
     pub warning: Color32,
     /// A soloed track's S button.
     pub solo: Color32,
+    /// The beat: the first-beat marker on the tempo ruler and the metronome's beat lights.
+    pub beat: Color32,
     /// Secondary text: units, hints over the preview ("Open a video to start").
     pub text_dim: Color32,
 
@@ -189,6 +191,7 @@ impl Theme {
         error: Color32::from_rgb(0xff, 0x6b, 0x6b),
         warning: Color32::from_rgb(0xf2, 0xb5, 0x44),
         solo: Color32::from_rgb(0xf2, 0xd0, 0x4b),
+        beat: Color32::from_rgb(0xf2, 0xb5, 0x44),
         text_dim: Color32::from_rgb(0xa1, 0xa4, 0xac),
 
         canvas_bg: Color32::from_rgb(0x12, 0x13, 0x15),
@@ -268,6 +271,7 @@ impl Theme {
         error: Color32::from_rgb(0xc8, 0x30, 0x30),
         warning: Color32::from_rgb(0xa8, 0x70, 0x00),
         solo: Color32::from_rgb(0xd8, 0xb0, 0x20),
+        beat: Color32::from_rgb(0xa8, 0x70, 0x00),
         text_dim: Color32::from_gray(120),
 
         canvas_bg: Color32::from_gray(236),

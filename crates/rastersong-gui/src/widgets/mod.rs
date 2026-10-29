@@ -1,6 +1,7 @@
 //! Reusable widgets, built once and used wherever they apply. Wherever they can they take plain
 //! data (samples, pixels, levels), so any part of the interface can use them.
 
+mod beat_lights;
 mod card;
 mod channels;
 mod drag_bubble;
@@ -14,6 +15,7 @@ mod scope;
 mod segmented;
 mod spectrum;
 
+pub use beat_lights::beat_lights;
 pub use card::{
     CARD_GAP, CARD_HEADER_HEIGHT, HALF_GAP, card, card_body, card_header, card_panel, card_space,
     card_title,

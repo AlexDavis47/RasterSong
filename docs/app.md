@@ -24,7 +24,9 @@ With no video loaded, the preview offers an Open Video button.
 The transport sits under the picture in two rows that don't wrap:
 
 1. Go to start, play/pause (the accent button), **Loop** (lit while the loop region repeats), and the timecode:
-   the position large, the length small and the frame number at the right.
+   the position large, the length small and the frame number at the right. In Tempo mode it reads the position
+   as **bar.beat.sixteenth** ("3.3.1"), then a beat light with a segment for each beat of the bar (up to eight),
+   the playhead's lit in amber, and the time at the right.
 2. **Ahead**: how far ahead of the playhead is rendered, as seconds over a bar that fills toward the render-ahead
    setting ("to the end" or "whole loop" once there's nothing left to render). It turns amber and names the speed
    when rendering can't keep up and playback slows, and shows the warm-up's progress after a seek. Then the
@@ -177,11 +179,17 @@ write a graph as its own file.
 
 The timeline has three **sections** under a ruler, divided by a thick line: **Graphs** on top, then **Video**, then
 **Audio**. Tracks stay in their section and reorder within it. The timeline's title row is the same in both
-modes, so switching moves nothing: the **Time** / **Tempo** switch (a ruler of minutes and seconds, or of bars and
-beats), the tempo (bpm, beats per bar, first beat; beat and bar units in nodes follow it in either mode), the
-**Metronome** toggle, which plays only in Tempo mode, and at the right the **loop region** ("Loop 0:01.00 –
-0:03.00", bright while looping; click it to turn looping on or off, like R) and **Snap**. Without a loop region it
-says how to make one. The timeline shows from launch, over a default ten seconds, with each empty section naming what to drop
+modes, so switching moves nothing: one group holds the **Time** / **Tempo** switch (a ruler of minutes and seconds,
+or of bars and beats), the tempo (bpm, beats per bar, first beat; beat and bar units in nodes follow it in either
+mode) and the **Metronome** toggle, which plays only in Tempo mode, amber while on, with a light for each beat of
+the bar. At the right are the **loop region** ("Loop 0:01.00 – 0:03.00", or in bars, "2.1 – 4.1", in Tempo mode;
+bright while looping; click it to turn looping on or off, like R) and **Snap** ("Snap · beats" in Tempo mode).
+Without a loop region it says how to make one.
+
+In Tempo mode the ruler has **two tiers**: bar numbers bold along the top, beats small under them ("2.2", "2.3", …,
+labelled where they have room), with a *bar / beat* key over the headers. Every other bar is shaded down through
+the lanes, beat lines are fainter than bar lines, and an **amber marker** between the tiers shows the first beat
+(hover it for its time). The timeline shows from launch, over a default ten seconds, with each empty section naming what to drop
 in it. Each track is a lane of **items**, the stretches of its file (or, in the Graphs section, graphs) placed on
 the timeline.
 

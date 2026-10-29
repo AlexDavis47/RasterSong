@@ -675,7 +675,16 @@ fn item_screenshots() {
 #[ignore = "needs a GPU; run explicitly to look at the UI"]
 fn tempo_bar_with_metronome() {
     for (theme, name) in [(ThemeChoice::Dark, "dark"), (ThemeChoice::Light, "light")] {
-        let mut app = app_in_mode(theme, 1, TimelineMode::Tempo);
+        // The board's tempo, with a loop over bars 2 and 3.
+        let mut app = app_edited(theme, 1, TimelineMode::Tempo, |project| {
+            project.tempo.bpm = 128.0;
+            project.tempo.offset_secs = 0.12;
+            project.loop_region = Some(rastersong_engine::LoopRegion {
+                start: 0.12 + 4.0 * 60.0 / 128.0,
+                end: 0.12 + 12.0 * 60.0 / 128.0,
+                enabled: true,
+            });
+        });
         let mut settings = app.settings().clone();
         settings.metronome = true;
         app.set_settings(settings);

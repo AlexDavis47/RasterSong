@@ -51,12 +51,12 @@ use crate::theme::{
 use crate::timeline::{
     DropGhost, GhostItem, GhostRow, GraphAction, GraphDrop, GraphItemView, GraphTrackView,
     LANE_HEIGHT, Thumbnail, TimelineLayout, TimelineModel, TimelineView, TrackAction,
-    TrackThumbnails, TrackView, timecode, timeline,
+    TrackThumbnails, TrackView, bar_beat, bar_beat_tick, beats_at, timecode, timeline,
 };
 use crate::track_inspector::track_inspector;
 use crate::widgets::{
-    CARD_GAP, HALF_GAP, Icon, IconButton, KeyButton, card, card_body, card_header, card_panel,
-    card_space, card_title, paint_icon, segmented,
+    CARD_GAP, HALF_GAP, Icon, IconButton, KeyButton, beat_lights, card, card_body, card_header,
+    card_panel, card_space, card_title, paint_icon, segmented,
 };
 
 /// The graph a new project starts with: the basic workflow from docs/concepts.md.
@@ -2441,18 +2441,30 @@ impl App {
     }
 
     /// The playhead's time large and the length small in a sunken box, the frame number at its
-    /// right.
+    /// right. In tempo mode the large reading is bar.beat.sixteenth, the beat light follows it
+    /// with a segment for each beat of the bar, and the time takes the frame number's place.
     fn timecode_box(&self, ui: &mut Ui, info: Option<RenderInfo>) {
         let theme = Theme::of(ui.ctx());
         let frame = self.clock.frame();
-        let (position, length) = info.map_or((0.0, 0.0), |info| {
+        let (seconds, length) = info.map_or((0.0, 0.0), |info| {
             let fps = info.frame_rate.as_f64();
             (frame as f64 / fps, info.frames as f64 / fps)
         });
         let size = vec2(ui.available_width(), CONTROL_HEIGHT);
         let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
-        let (position, length) = (timecode(position), format!("/ {}", timecode(length)));
-        let frame = tr_args("controls.frame", &[("frame", &frame.to_string())]);
+        let (position, length, frame) = if self.project.timeline_mode == TimelineMode::Tempo {
+            (
+                bar_beat_tick(&self.project.tempo, seconds),
+                tr("controls.bar_beat").to_owned(),
+                timecode(seconds),
+            )
+        } else {
+            (
+                timecode(seconds),
+                format!("/ {}", timecode(length)),
+                tr_args("controls.frame", &[("frame", &frame.to_string())]),
+            )
+        };
         response.widget_info(|| {
             WidgetInfo::labeled(
                 WidgetType::Label,
@@ -2481,6 +2493,7 @@ impl App {
         let bottom = top + large.size().y;
         let left = rect.left() + 12.0;
         let length_left = left + large.size().x + 8.0;
+        let lights_left = length_left + length.size().x + 14.0;
         painter.galley(egui::pos2(left, top), large, theme.surfaces.text);
         painter.galley(
             egui::pos2(length_left, bottom - length.size().y),
@@ -2492,6 +2505,17 @@ impl App {
             bottom - frame.size().y,
         );
         painter.galley(frame_pos, frame, theme.text_dim);
+        if self.project.timeline_mode == TimelineMode::Tempo {
+            let beats = self.project.tempo.sanitized().beats_per_bar;
+            let lights = egui::Rect::from_min_max(
+                egui::pos2(lights_left, rect.center().y - 3.0),
+                egui::pos2(frame_pos.x - 10.0, rect.center().y + 3.0),
+            );
+            let lit = self.beat_in_bar();
+            ui.place(lights, |ui: &mut Ui| {
+                beat_lights(ui, beats, lit, vec2(14.0, 5.0), 3.0)
+            });
+        }
     }
 
     /// How far ahead of the playhead frames are rendered, as a label over a bar: green while
@@ -2989,39 +3013,93 @@ impl App {
         }
     }
 
-    /// The timeline's title row: the Time / Tempo switch, the tempo that beat and bar units
-    /// follow, the metronome (heard in tempo mode), and at the right Snap and the loop region. It
+    /// The timeline's title row: the tempo group, then at the right Snap and the loop region. It
     /// holds the same things in both modes, so switching moves nothing.
     fn timeline_header(&mut self, ui: &mut Ui) {
         card_header(ui, |ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             card_title(ui, tr("timeline.title"));
             ui.add_space(4.0);
-            let modes = [
-                (tr("timeline.mode.time"), tr("timeline.mode.time.help")),
-                (tr("timeline.mode.tempo"), tr("timeline.mode.tempo.help")),
-            ];
+            self.tempo_group(ui);
             let tempo_mode = self.project.timeline_mode == TimelineMode::Tempo;
-            if let Some(choice) = segmented(ui, &modes, usize::from(tempo_mode)) {
-                self.project.timeline_mode = if choice == 0 {
-                    TimelineMode::Time
-                } else {
-                    TimelineMode::Tempo
-                };
-            }
-            ui.separator();
-            settings_window::tempo_fields(ui, &mut self.project.tempo);
-            ui.add_enabled_ui(tempo_mode, |ui| {
-                ui.toggle_value(&mut self.settings.metronome, tr("tempo.metronome"))
-                    .on_hover_text(tr("tempo.metronome.help"))
-                    .on_disabled_hover_text(tr("tempo.metronome.time_mode"));
-            });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.toggle_value(&mut self.settings.snap, tr("timeline.snap"))
+                let snap = if tempo_mode {
+                    tr("timeline.snap.beats")
+                } else {
+                    tr("timeline.snap")
+                };
+                ui.toggle_value(&mut self.settings.snap, snap)
                     .on_hover_text(tr("timeline.snap.help"));
                 self.loop_readout(ui);
             });
         });
+    }
+
+    /// The Time / Tempo switch with the tempo attached to it in one group: bpm, beats per bar and
+    /// first beat, which beat and bar units follow in either mode, and the metronome (heard in
+    /// tempo mode) with a light for each beat of the bar.
+    fn tempo_group(&mut self, ui: &mut Ui) {
+        let theme = Theme::of(ui.ctx());
+        let tempo_mode = self.project.timeline_mode == TimelineMode::Tempo;
+        egui::Frame::new()
+            .fill(theme.surfaces.inner_card)
+            .stroke(Stroke::new(1.0, theme.surfaces.border))
+            .corner_radius(9)
+            .inner_margin(Margin {
+                left: 3,
+                right: 6,
+                top: 2,
+                bottom: 2,
+            })
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                let modes = [
+                    (tr("timeline.mode.time"), tr("timeline.mode.time.help")),
+                    (tr("timeline.mode.tempo"), tr("timeline.mode.tempo.help")),
+                ];
+                if let Some(choice) = segmented(ui, &modes, usize::from(tempo_mode)) {
+                    self.project.timeline_mode = if choice == 0 {
+                        TimelineMode::Time
+                    } else {
+                        TimelineMode::Tempo
+                    };
+                }
+                settings_window::tempo_fields(ui, &mut self.project.tempo);
+                ui.add_enabled_ui(tempo_mode, |ui| {
+                    ui.scope(|ui| {
+                        // Amber while on, like the beat it clicks along with.
+                        let selection = &mut ui.visuals_mut().selection;
+                        selection.bg_fill = theme.beat.gamma_multiply(0.16);
+                        selection.stroke = Stroke::new(1.0, theme.beat);
+                        ui.toggle_value(&mut self.settings.metronome, tr("tempo.metronome"))
+                            .on_hover_text(tr("tempo.metronome.help"))
+                            .on_disabled_hover_text(tr("tempo.metronome.time_mode"));
+                    });
+                    let lit = (self.settings.metronome && tempo_mode)
+                        .then(|| self.beat_in_bar())
+                        .flatten();
+                    beat_lights(
+                        ui,
+                        self.project.tempo.sanitized().beats_per_bar,
+                        lit,
+                        Vec2::splat(6.0),
+                        3.0,
+                    );
+                });
+            });
+    }
+
+    /// The playhead's time in seconds, once a video is open.
+    fn playhead_secs(&self) -> Option<f64> {
+        let info = self.engine.info()?;
+        Some(self.clock.frame() as f64 / info.frame_rate.as_f64())
+    }
+
+    /// The beat of the bar the playhead is in, from 0, once a video is open.
+    fn beat_in_bar(&self) -> Option<u32> {
+        let tempo = self.project.tempo.sanitized();
+        let beat = beats_at(&tempo, self.playhead_secs()?).floor() as i64;
+        Some(beat.rem_euclid(i64::from(tempo.beats_per_bar)) as u32)
     }
 
     /// The loop region the ruler holds, as a button that turns looping on and off; without one,
@@ -3039,7 +3117,16 @@ impl App {
             );
             return;
         };
-        let range = format!("{} – {}", timecode(region.start), timecode(region.end));
+        let range = if self.project.timeline_mode == TimelineMode::Tempo {
+            let tempo = &self.project.tempo;
+            format!(
+                "{} – {}",
+                bar_beat(tempo, region.start),
+                bar_beat(tempo, region.end)
+            )
+        } else {
+            format!("{} – {}", timecode(region.start), timecode(region.end))
+        };
         let ink = if region.enabled {
             theme.surfaces.text
         } else {

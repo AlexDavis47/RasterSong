@@ -2221,6 +2221,33 @@ fn the_toolbar_holds_snapping_and_the_metronome_plays_only_in_tempo_mode() {
     assert!(harness.state().settings().metronome);
 }
 
+#[test]
+fn tempo_mode_reads_bars_and_beats_in_the_timeline_and_the_transport() {
+    // 120 bpm in 4/4: the loop from 0.5 s to 1 s is beats 2 to 3 of bar 1.
+    let mut harness = loaded_with(app_with_project(with_loop));
+    let ruler = harness.state().timeline_layout().ruler;
+    harness.get_by_label_contains("frame 0");
+    assert!(harness.query_by_label("First beat").is_none());
+    harness.get_by_label("Tempo").click();
+    harness.run_steps(2);
+
+    harness.get_by_label("Loop 1.2 – 1.3");
+    harness.get_by_label("Snap · beats");
+    harness.get_by_label("First beat");
+    harness.get_by_label("1.1.1 bar.beat 0:00.00");
+    // The beat light by the timecode, on the first beat; the metronome's are off with it.
+    harness.get_by_label("Beat 1 of 4");
+    harness.get_by_label("4 beats to the bar");
+    // The ruler grows a tier for the beats.
+    let tempo_ruler = harness.state().timeline_layout().ruler;
+    assert_eq!(tempo_ruler.top(), ruler.top());
+    assert!(tempo_ruler.height() > ruler.height());
+
+    harness.get_by_label("Metronome").click();
+    harness.run_steps(2);
+    assert_eq!(harness.get_all_by_label("Beat 1 of 4").count(), 2);
+}
+
 /// A primary click with `modifiers` held.
 fn modifier_click(harness: &mut Harness<'_, App>, modifiers: Modifiers, pos: Pos2) {
     harness.event(Event::ModifiersChanged(modifiers));

@@ -51,8 +51,9 @@ until its pass.
 | Red / green / blue | `#FF5D5D` / `#4ED37A` / `#5B8CFF` | `ports.red` … | Channel parts |
 | Low / mid / high | `#FF9A3C` / `#F2D04B` / `#B48CFF` | `ports.low` … | Band parts |
 | Graph | `#9C86FF` | `graph_block` | Graph items |
-| Warning | `#F2B544` | `warning` | Warnings, the first-beat marker |
+| Warning | `#F2B544` | `warning` | Warnings |
 | Solo | `#F2D04B` | `solo` | A soloed track's S button |
+| Beat | `#F2B544` | `beat` | The first-beat marker, the metronome and its beat lights |
 | Warning ground | `#26231B`, border `#6E5420`, text `#F4E3BD` | (stage 9) | Warning bars (the odd-size bar in Export) |
 
 Category colours for nodes keep the six in `Theme::categories`; the strip shows them at full strength. Video and
@@ -78,7 +79,7 @@ egui's interact height). Corners are 6 px on controls, 8 px on nodes, cards and 
 
 The window keeps the two rows from [Desktop app](app.md): preview, graph and inspector on top; Resources and the
 timeline below. Board: [Main](design/ui-v2/Main.dc.html). **The top bar, status bar, panel cards, preview header
-and transport shipped in stage 2**, apart from what Tempo mode adds to the transport (stage 8).
+and transport shipped in stage 2**; what Tempo mode adds to the transport shipped in stage 8.
 
 - **Panels are cards** (`widgets::card`): rounded 8 px, outlined, on the window's ground, 6 px apart and 6 px from
   the window's edge. A card's title row (`card_header`) is 40 px with a divider under it. The preview and the graph
@@ -104,8 +105,10 @@ The **transport sits under the picture**, in two rows that never wrap:
 2. **Ahead** (how far is rendered, as a bar with seconds; it names the playback speed when rendering can't keep
    up), the preview resolution, and the volume.
 
-In Tempo mode the timecode box reads **bar.beat.tick** large and seconds small, with a four-segment beat light
-under it ([Tempo mode](#timeline-in-tempo-mode)).
+In Tempo mode the timecode box reads **bar.beat.tick** large and seconds small, with a beat light of a segment per
+beat ([Tempo mode](#timeline-in-tempo-mode)). Unlike the board, the light sits in the box between the reading and
+the seconds, and the row under it keeps Ahead, resolution and volume without the board's "128 bpm · 4/4" (the
+tempo group shows it), so the narrow preview card doesn't crowd.
 
 ## Node graph
 
@@ -195,10 +198,13 @@ The three sections, items, trimming and graph items work as in [Timeline](app.md
 
 ### Timeline in Tempo mode
 
-Board: [Tempo](design/ui-v2/Tempo.dc.html).
+Board: [Tempo](design/ui-v2/Tempo.dc.html). **Shipped in stage 8.** Where it differs from the board: the bpm
+field types on a click like every value box, not a double-click; there is one beat light per beat of the bar, up to
+eight; the transport's beat light and tempo are placed as described [above](#preview-and-transport); beat-grid
+snapping and loop edges already followed the grid before this stage, and Shift already dragged freely.
 
-- **The tempo fields live in one group attached to the Time/Tempo switch**: bpm (drag to scrub, double-click to
-  type), beats per bar, first beat, and the **Metronome** toggle with four beat lights showing the current beat.
+- **The tempo fields live in one group attached to the Time/Tempo switch**: bpm (drag to scrub, click to
+  type), beats per bar, first beat, and the **Metronome** toggle with a beat light per beat showing the current one.
   Unlike the board, the group stays in Time mode (the Metronome greyed out), so switching modes moves nothing
   on the toolbar. File → Settings → Project still edits the same fields.
 - **The ruler has two tiers**: bar numbers bold on top, beats small below (2.2, 2.3, …).

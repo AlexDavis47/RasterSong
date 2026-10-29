@@ -55,6 +55,14 @@ const NAME_ROWS_HEIGHT: f32 = 40.0;
 /// Width of a header's M and S buttons.
 const TOGGLE_WIDTH: f32 = 22.0;
 const RULER_HEIGHT: f32 = 22.0;
+/// The ruler in tempo mode, in two tiers: bars along the top, beats under them.
+const TEMPO_RULER_HEIGHT: f32 = 38.0;
+/// Where the tempo ruler's beat tier starts, below its top.
+const BEAT_TIER: f32 = 23.0;
+/// Smallest spacing (pixels) between beat labels on the tempo ruler.
+const MIN_BEAT_LABEL_SPACING: f32 = 34.0;
+/// Narrowest a bar can be drawn (pixels) and still be shaded.
+const MIN_SHADED_BAR: f32 = 8.0;
 /// A track's height until the user changes it: tall enough for a header's two rows of widgets.
 pub const LANE_HEIGHT: f32 = 58.0;
 /// A graph track's height.
@@ -642,6 +650,14 @@ impl RulerGrid {
         }
     }
 
+    /// Whether tick `k` starts a bar (always false in time mode).
+    fn on_bar(&self, k: i64) -> bool {
+        self.bars.is_some_and(|(minor_beats, per_bar)| {
+            let bars = k as f64 * minor_beats / f64::from(per_bar);
+            (bars - bars.round()).abs() < 1e-6
+        })
+    }
+
     /// `seconds` moved to the nearest tick (in tempo mode) or frame (in time mode).
     fn snap(&self, seconds: f64, frame_rate: f64) -> f64 {
         match self.bars {
@@ -649,6 +665,50 @@ impl RulerGrid {
             None => (seconds * frame_rate).round() / frame_rate,
         }
     }
+}
+
+/// The ruler's height in `mode`.
+fn ruler_height(mode: TimelineMode) -> f32 {
+    match mode {
+        TimelineMode::Time => RULER_HEIGHT,
+        TimelineMode::Tempo => TEMPO_RULER_HEIGHT,
+    }
+}
+
+/// Beats from `tempo`'s first beat to `seconds` (negative before it).
+pub fn beats_at(tempo: &Tempo, seconds: f64) -> f64 {
+    let tempo = tempo.sanitized();
+    (seconds - tempo.offset_secs) / tempo.seconds_per_beat()
+}
+
+/// The bar, beat and sixteenth `beats` falls in, each counting from 1.
+fn bar_beat_parts(beats: f64, beats_per_bar: u32) -> (i64, i64, i64) {
+    let sixteenths = (beats * 4.0 + 1e-6).floor() as i64;
+    let per_bar = i64::from(beats_per_bar.max(1)) * 4;
+    let in_bar = sixteenths.rem_euclid(per_bar);
+    (
+        sixteenths.div_euclid(per_bar) + 1,
+        in_bar / 4 + 1,
+        in_bar % 4 + 1,
+    )
+}
+
+/// `seconds` as `bar.beat` at `tempo`, or `bar.beat.sixteenth` when it falls between beats: a
+/// point on the beat grid, like a loop edge.
+pub fn bar_beat(tempo: &Tempo, seconds: f64) -> String {
+    let beats = (beats_at(tempo, seconds) * 4.0).round() / 4.0;
+    match bar_beat_parts(beats, tempo.sanitized().beats_per_bar) {
+        (bar, beat, 1) => format!("{bar}.{beat}"),
+        (bar, beat, sixteenth) => format!("{bar}.{beat}.{sixteenth}"),
+    }
+}
+
+/// `seconds` as `bar.beat.sixteenth` at `tempo`, counting the sixteenth it is in: where the
+/// playhead is.
+pub fn bar_beat_tick(tempo: &Tempo, seconds: f64) -> String {
+    let (bar, beat, sixteenth) =
+        bar_beat_parts(beats_at(tempo, seconds), tempo.sanitized().beats_per_bar);
+    format!("{bar}.{beat}.{sixteenth}")
 }
 
 /// `seconds` as `m:ss.cc`.
@@ -739,13 +799,13 @@ struct Areas {
 }
 
 impl Areas {
-    fn new(area: Rect, graph_tracks: usize, tracks: &[TrackView]) -> Self {
+    fn new(area: Rect, ruler_height: f32, graph_tracks: usize, tracks: &[TrackView]) -> Self {
         let headers = Rect::from_min_max(
-            pos2(area.left(), area.top() + RULER_HEIGHT),
+            pos2(area.left(), area.top() + ruler_height),
             pos2(area.left() + HEADER_WIDTH, area.bottom()),
         );
         let lanes = Rect::from_min_max(pos2(headers.right() + GAP, area.top()), area.max);
-        let ruler = Rect::from_min_max(lanes.min, pos2(lanes.right(), area.top() + RULER_HEIGHT));
+        let ruler = Rect::from_min_max(lanes.min, pos2(lanes.right(), area.top() + ruler_height));
         let body = Rect::from_min_max(pos2(area.left(), ruler.bottom()), area.max);
         let videos = tracks
             .iter()
@@ -933,7 +993,12 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
     let theme = Theme::of(ui.ctx());
     let area = ui.available_rect_before_wrap();
     let background = ui.allocate_rect(area, Sense::click_and_drag());
-    let areas = Areas::new(area, model.graph_tracks.len(), &model.tracks);
+    let areas = Areas::new(
+        area,
+        ruler_height(model.mode),
+        model.graph_tracks.len(),
+        &model.tracks,
+    );
     let lanes_left = areas.lanes.left();
     response.lanes_left = lanes_left;
     let width = areas.lanes.width().max(1.0);
@@ -1082,11 +1147,32 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         None => model.loop_region,
     };
     if let Some(region) = shown_loop {
-        paint_loop(&painter, region, x, areas.ruler, body_lanes, theme);
+        // In tempo mode the band keeps to the bar tier, leaving the beats readable.
+        let band = match model.mode {
+            TimelineMode::Time => areas.ruler,
+            TimelineMode::Tempo => areas.ruler.with_max_y(areas.ruler.top() + BEAT_TIER - 4.0),
+        };
+        paint_loop(&painter, region, x, band, body_lanes, theme);
     }
     let first = grid.tick_at_or_before(view.left);
     let last = grid.tick_at_or_before(view.seconds(lanes_left, areas.lanes.right())) + 1;
-    for k in first..=last {
+    if model.mode == TimelineMode::Tempo {
+        let corner = Rect::from_min_max(
+            pos2(area.left(), areas.ruler.top()),
+            pos2(areas.headers.right(), areas.ruler.bottom()),
+        );
+        tempo_ruler(
+            ui,
+            &grid,
+            first..=last,
+            x,
+            (corner, areas.ruler),
+            body_lanes,
+        );
+        let first_beat = model.tempo.sanitized().offset_secs;
+        first_beat_marker(ui, x(first_beat), first_beat, areas.ruler);
+    }
+    for k in (first..=last).filter(|_| model.mode == TimelineMode::Time) {
         let t = grid.time(k);
         let tx = x(t);
         let is_major = k.rem_euclid(i64::from(grid.divisions)) == 0;
@@ -1542,6 +1628,133 @@ fn items_in(
         }
     }
     found
+}
+
+/// The ruler in tempo mode, in two tiers: bar numbers bold along the top and beats small under
+/// them, labelled where they have room, with a "bar / beat" key in the `corner` over the
+/// headers. Every other bar is shaded down through the `lanes`, and beat lines are fainter than
+/// bar lines.
+fn tempo_ruler(
+    ui: &Ui,
+    grid: &RulerGrid,
+    ticks: std::ops::RangeInclusive<i64>,
+    x: impl Fn(f64) -> f32,
+    (corner, ruler): (Rect, Rect),
+    lanes: Rect,
+) {
+    let theme = Theme::of(ui.ctx());
+    let Some((minor_beats, per_bar)) = grid.bars else {
+        return;
+    };
+    let painter = ui.painter_at(ruler.union(lanes));
+    let (first, last) = (*ticks.start(), *ticks.end());
+
+    let bar_secs = grid.minor / minor_beats * f64::from(per_bar);
+    let bar_px = x(grid.origin + bar_secs) - x(grid.origin);
+    if bar_px >= MIN_SHADED_BAR {
+        let shade = theme.surfaces.text.gamma_multiply(0.022);
+        let bar_of = |t: f64| ((t - grid.origin) / bar_secs).floor() as i64;
+        for bar in bar_of(grid.time(first))..=bar_of(grid.time(last)) {
+            if bar.rem_euclid(2) == 1 {
+                let start = grid.origin + bar as f64 * bar_secs;
+                let band = Rect::from_x_y_ranges(
+                    x(start)..=x(start + bar_secs),
+                    lanes.top()..=lanes.bottom(),
+                );
+                painter.rect_filled(band, CornerRadius::ZERO, shade);
+            }
+        }
+    }
+
+    let minor_px = x(grid.time(1)) - x(grid.time(0));
+    for k in ticks {
+        let t = grid.time(k);
+        let tx = x(t);
+        let is_major = k.rem_euclid(i64::from(grid.divisions)) == 0;
+        let labelled = t >= -1e-9;
+        if grid.on_bar(k) {
+            painter.line_segment(
+                [
+                    pos2(tx, ruler.top()),
+                    pos2(tx, ruler.top() + BEAT_TIER - 1.0),
+                ],
+                Stroke::new(1.0, theme.tick),
+            );
+            painter.line_segment(
+                [pos2(tx, lanes.top()), pos2(tx, lanes.bottom())],
+                Stroke::new(1.0, theme.tick.gamma_multiply(0.3)),
+            );
+            if is_major && labelled {
+                painter.text(
+                    pos2(tx + 5.0, ruler.top() + 3.0),
+                    Align2::LEFT_TOP,
+                    grid.label(k),
+                    crate::theme::semibold(12.0),
+                    theme.surfaces.text,
+                );
+            }
+        } else {
+            painter.line_segment(
+                [pos2(tx, ruler.top() + BEAT_TIER), pos2(tx, ruler.bottom())],
+                Stroke::new(1.0, theme.tick.gamma_multiply(0.7)),
+            );
+            painter.line_segment(
+                [pos2(tx, lanes.top()), pos2(tx, lanes.bottom())],
+                Stroke::new(1.0, theme.tick.gamma_multiply(0.1)),
+            );
+            if (is_major || minor_px >= MIN_BEAT_LABEL_SPACING) && labelled {
+                painter.text(
+                    pos2(tx + 3.0, ruler.top() + BEAT_TIER),
+                    Align2::LEFT_TOP,
+                    grid.label(k),
+                    FontId::monospace(9.5),
+                    theme.tick_label,
+                );
+            }
+        }
+    }
+
+    let key = ui.painter_at(corner);
+    for (text, y, color) in [
+        (tr("timeline.ruler.bar"), 4.0, theme.tick_label),
+        (
+            tr("timeline.ruler.beat"),
+            BEAT_TIER,
+            theme.surfaces.text_faint,
+        ),
+    ] {
+        key.text(
+            pos2(corner.left() + 10.0, corner.top() + y),
+            Align2::LEFT_TOP,
+            text.to_uppercase(),
+            crate::theme::semibold(9.5),
+            color,
+        );
+    }
+}
+
+/// The first beat on the tempo ruler: an amber marker at `x`, between the bar and beat tiers,
+/// that names its time on hover.
+fn first_beat_marker(ui: &mut Ui, x: f32, seconds: f64, ruler: Rect) {
+    if !ruler.x_range().contains(x) {
+        return;
+    }
+    let theme = Theme::of(ui.ctx());
+    let top = ruler.top() + BEAT_TIER - 6.0;
+    ui.painter_at(ruler).add(egui::Shape::convex_polygon(
+        vec![pos2(x - 5.0, top), pos2(x + 5.0, top), pos2(x, top + 7.0)],
+        theme.beat,
+        Stroke::NONE,
+    ));
+    let zone = Rect::from_center_size(pos2(x, top + 3.5), vec2(12.0, 10.0));
+    let response = ui.interact(zone, ui.id().with("first-beat"), Sense::hover());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Label, true, tr("timeline.first_beat"))
+    });
+    response.on_hover_text(tr_args(
+        "timeline.first_beat.help",
+        &[("time", &timecode(seconds))],
+    ));
 }
 
 /// The ruler's own clicks and drags: a click or drag moves the playhead, Ctrl+drag makes a loop
@@ -3054,6 +3267,7 @@ mod tests {
         let tracks = [TrackView::new("a", TrackKind::Video), tall];
         let areas = Areas::new(
             Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 400.0)),
+            RULER_HEIGHT,
             1,
             &tracks,
         );
@@ -3182,10 +3396,31 @@ mod tests {
         assert_eq!(grid.label(0), "1");
         assert_eq!(grid.label(4), "1.2");
         assert_eq!(grid.label(16), "2");
+        // Bar ticks are told from beat ticks, either side of the first beat.
+        assert!(grid.on_bar(0) && grid.on_bar(16) && grid.on_bar(-16));
+        assert!(!grid.on_bar(4));
         // Snapping lands on ticks; in time mode, on frames.
         assert!((grid.snap(0.77, 30.0) - 0.75).abs() < 1e-12);
         let time = RulerGrid::new(&model(TimelineMode::Time), 360.0);
         assert!((time.snap(0.77, 30.0) - 23.0 / 30.0).abs() < 1e-12);
+        assert!(!time.on_bar(0));
+    }
+
+    #[test]
+    fn positions_read_as_bars_and_beats() {
+        // 120 bpm in 4/4 with the first beat at 0.25 s: a beat is half a second.
+        let tempo = Tempo {
+            offset_secs: 0.25,
+            ..Tempo::default()
+        };
+        assert_eq!(bar_beat(&tempo, 0.25), "1.1");
+        assert_eq!(bar_beat(&tempo, 2.25), "2.1");
+        assert_eq!(bar_beat(&tempo, 3.25), "2.3");
+        assert_eq!(bar_beat(&tempo, 3.375), "2.3.2");
+        assert_eq!(bar_beat(&tempo, 0.0), "0.4.3", "before the first beat");
+        assert_eq!(bar_beat_tick(&tempo, 0.25), "1.1.1");
+        assert_eq!(bar_beat_tick(&tempo, 3.74), "2.3.4");
+        assert_eq!(beats_at(&tempo, 1.25), 2.0);
     }
 
     #[test]
