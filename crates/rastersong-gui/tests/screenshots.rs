@@ -242,50 +242,40 @@ fn capture(theme: ThemeChoice, theme_name: &str) {
     harness.key_press(egui::Key::Escape);
     harness.run_steps(2);
 
-    // Break the graph: pull the wire off the output and drop it on empty space.
-    let out = harness.state().editor().key_of("out").unwrap();
-    let pin = harness
-        .state()
-        .editor()
-        .pin_screen_pos(out, true, 0)
-        .unwrap();
-    let canvas = harness.state().editor().canvas_rect();
-    let drop = canvas.left_top() + egui::vec2(30.0, 30.0);
-    harness.event(egui::Event::PointerMoved(pin));
-    harness.run_steps(1);
-    harness.event(egui::Event::PointerButton {
-        pos: pin,
-        button: egui::PointerButton::Primary,
-        pressed: true,
-        modifiers: egui::Modifiers::NONE,
+    // A graph that can't render: Combine Channels swapped for a Pack of seven channels, which
+    // no picture has.
+    let failing = app_edited(theme, 1, TimelineMode::Time, |project| {
+        let node = project
+            .graph
+            .nodes
+            .iter_mut()
+            .find(|n| n.id == "combine")
+            .unwrap();
+        node.kind = "pack".into();
+        node.params.insert(
+            "channels".into(),
+            rastersong_engine::ParamValue::Number(7.0),
+        );
+        // Only a placed graph renders, so only a placed graph can fail.
+        let graph = project.graph_id;
+        let track = project.add_graph_track("Graphs");
+        project.place_graph(&track, graph, 0.0, 4.0);
     });
-    harness.run_steps(1);
-    for t in [0.3, 0.6, 1.0] {
-        harness.event(egui::Event::PointerMoved(pin + (drop - pin) * t));
-        harness.run_steps(1);
-    }
-    harness.event(egui::Event::PointerButton {
-        pos: drop,
-        button: egui::PointerButton::Primary,
-        pressed: false,
-        modifiers: egui::Modifiers::NONE,
-    });
-    harness.run_steps(2);
-    harness.key_press(egui::Key::Escape);
+    let mut failed = gpu_harness(failing);
     let deadline = Instant::now() + Duration::from_secs(20);
     while !matches!(
-        harness.state().engine().status(),
+        failed.state().engine().status(),
         rastersong_engine::EngineStatus::Failed(_)
     ) {
         assert!(
             Instant::now() < deadline,
             "timed out waiting for the failure"
         );
-        harness.step();
+        failed.step();
         std::thread::sleep(Duration::from_millis(5));
     }
-    harness.run_steps(3);
-    save(&mut harness, &format!("{theme_name}-4-error"));
+    failed.run_steps(3);
+    save(&mut failed, &format!("{theme_name}-4-error"));
 
     // A delay whose time and feedback are modulated by the audio, selected.
     let graph = GraphDesc::from_json(
