@@ -855,7 +855,7 @@ independent of each other.
 7. [x] **feature** Timeline: calmer headers with remove in the menu, the toolbar's Loop readout.
 8. [x] **feature** Tempo mode: the tempo group by the Time/Tempo switch, the two-tier ruler, bar shading, the
    first-beat marker, beat-grid snap and loop, bar.beat in the transport with the beat light.
-9. [ ] **feature** Export window: two columns, the latest rendered frame, the summary and progress beside the
+9. [x] **feature** Export window: two columns, the latest rendered frame, the summary and progress beside the
    settings.
 10. [ ] **feature** The light theme with the same tokens. *After 1.*
 

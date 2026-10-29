@@ -96,7 +96,7 @@ const FRAME_RATES: [Rational; 8] = [
 const PICTURE_SIZE_RANGE: std::ops::RangeInclusive<f64> = 16.0..=8192.0;
 
 /// "29.97 fps", "25 fps": the rate to at most three decimals.
-fn frame_rate_label(rate: Rational) -> String {
+pub(super) fn frame_rate_label(rate: Rational) -> String {
     let fps = format!("{:.3}", rate.as_f64());
     let fps = fps.trim_end_matches('0').trim_end_matches('.');
     tr_args("settings.frame_rate.value", &[("fps", fps)])

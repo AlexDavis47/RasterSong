@@ -54,7 +54,7 @@ until its pass.
 | Warning | `#F2B544` | `warning` | Warnings |
 | Solo | `#F2D04B` | `solo` | A soloed track's S button |
 | Beat | `#F2B544` | `beat` | The first-beat marker, the metronome and its beat lights |
-| Warning ground | `#26231B`, border `#6E5420`, text `#F4E3BD` | (stage 9) | Warning bars (the odd-size bar in Export) |
+| Warning ground | `#26231B`, border `#6E5420`, text `#F4E3BD` | `warning_note`, `warning_note_border`, `warning_note_text` | A node's warning note, the odd-size bar in Export |
 
 Category colours for nodes keep the six in `Theme::categories`; the strip shows them at full strength. Video and
 audio items on the timeline keep their colours until the timeline stage. A test holds every text colour to WCAG
@@ -216,7 +216,11 @@ snapping and loop edges already followed the grid before this stage, and Shift a
 
 ## Export
 
-Board: [Export](design/ui-v2/Export.dc.html). The window is two columns.
+Board: [Export](design/ui-v2/Export.dc.html). The window is two columns. **Shipped in stage 9.** Where it differs
+from the board: the window is 720 px tall, not 760; the encoder is named as FFmpeg calls it (`h264_nvenc`); the
+fix button reads *Use 1282×720*, both sides; the card at the bottom right is titled *Progress* and says "Not
+started yet." before the first export, then where the file went; while an export runs the settings are locked; and
+an odd side is outlined in the warning colour only while the size is custom.
 
 - **Left, the settings**: format as three cards (name, what it is for, the sound it carries, the encoder in use),
   quality or profile as a segmented control, sound (bus) and range side by side, size with Project / Custom. An

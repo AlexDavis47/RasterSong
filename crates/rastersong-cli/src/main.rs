@@ -220,6 +220,7 @@ fn render(args: RenderArgs) -> Result<()> {
                 bus,
             },
             out,
+            None,
             &mut |_, _| true,
         )?,
         None => {

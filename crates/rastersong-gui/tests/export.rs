@@ -78,12 +78,15 @@ fn the_file_menu_opens_the_export_window() {
     // The menu's item, not the top bar's button beside it.
     harness.get_all_by_label("Export…").last().unwrap().click();
     harness.run_steps(2);
-    assert!(harness.query_by_label("Format").is_some());
-    assert!(harness.query_by_label("Sound").is_some());
-    assert!(
-        harness.query_by_label("64×36").is_some(),
-        "the project's size"
-    );
+    assert!(harness.query_by_label("FORMAT").is_some());
+    assert!(harness.query_by_label("SOUND").is_some());
+    // The project's size, in the Size row and the summary.
+    assert_eq!(harness.get_all_by_label("64×36").count(), 2);
+    // Nothing rendered yet, and the summary of what will be.
+    assert!(harness.query_by_label("Not started yet.").is_some());
+    harness.get_by_label("0:00.00 – 0:02.00 · 60 frames");
+    harness.get_by_label("30 fps");
+    harness.get_by_label("none");
     // Only formats that work here are offered; ProRes always does.
     assert!(
         rastersong_engine::export_formats()
@@ -98,7 +101,11 @@ fn the_top_bar_export_button_opens_the_export_window() {
     harness.run_steps(2);
     harness.get_by_label("Export…").click();
     harness.run_steps(2);
-    assert!(harness.query_by_label("Format").is_some());
+    assert!(harness.query_by_label("FORMAT").is_some());
+    // Close hides the window.
+    harness.get_by_label("Close").click();
+    harness.run_steps(2);
+    assert!(harness.query_by_label("FORMAT").is_none());
 }
 
 #[test]
@@ -122,6 +129,11 @@ fn an_export_writes_the_whole_project() {
         harness.query_by_label_contains("Exported").is_some(),
         "the window says where the file went"
     );
+    // The latest frame written stays in the preview, labelled with its frame and time.
+    let frame = harness.state().export_frame().expect("a frame was shown");
+    assert!(frame < 60);
+    harness.get_by_label_contains(&format!("frame {frame} · 0:"));
+    harness.get_by_label(&format!("whole_project.{}", kind.extension()));
 
     let backend = FfmpegBackend::new().unwrap();
     let mut video = backend.open_video(&path).unwrap();
@@ -172,21 +184,11 @@ fn the_loop_region_can_be_exported_alone() {
     }));
     harness.state_mut().open_export();
     harness.run_steps(2);
-    // The combo box on the Range line.
-    let range = harness.get_by_label("Range").rect().center();
-    harness
-        .get_all_by_role(egui::accesskit::Role::ComboBox)
-        .min_by(|a, b| {
-            (a.rect().center().y - range.y)
-                .abs()
-                .total_cmp(&(b.rect().center().y - range.y).abs())
-        })
-        .unwrap()
-        .click();
+    harness.get_by_label("0:00.00 – 0:02.00 · 60 frames");
+    harness.get_by_label("Loop region").click();
     harness.run_steps(2);
-    assert!(harness.query_by_label_contains("Whole project").is_some());
-    harness.get_by_label_contains("Loop region").click();
-    harness.run_steps(2);
+    harness.get_by_label("0:00.50 – 0:01.00 · 15 frames");
+    harness.get_by_label("0:00.50");
 
     let path = temp_file("region.mkv");
     harness.state_mut().start_export(path.clone());
@@ -211,17 +213,10 @@ fn an_odd_size_says_which_side_and_offers_the_nearest_even_size() {
     }));
     harness.state_mut().open_export();
     harness.run_steps(2);
-    assert!(
-        harness
-            .query_by_label_contains("has an odd width")
-            .is_some()
-    );
+    harness.get_by_label("H.264 needs an even width; 63 is odd.");
+    assert!(harness.query_by_label("Export… (fix size first)").is_some());
     harness.get_by_label("Use 64×36").click();
     harness.run_steps(2);
-    assert!(
-        harness
-            .query_by_label_contains("has an odd width")
-            .is_none()
-    );
+    assert!(harness.query_by_label_contains("needs an even").is_none());
     assert!(harness.query_by_label("Use 64×36").is_none());
 }

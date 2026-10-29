@@ -694,6 +694,56 @@ fn tempo_bar_with_metronome() {
     }
 }
 
+/// The Export window as the board shows it: an odd width with its warning over a loop region,
+/// then an export under way with its latest frame.
+#[test]
+#[ignore = "needs a GPU; run explicitly to look at the UI"]
+fn export_screenshots() {
+    for (theme, name) in [(ThemeChoice::Dark, "dark"), (ThemeChoice::Light, "light")] {
+        for width in [1281, 1280] {
+            let app = app_edited(theme, 1, TimelineMode::Time, |project| {
+                project.timebase = Some(rastersong_engine::Timebase {
+                    width,
+                    height: 720,
+                    frame_rate: Rational::new(30, 1),
+                });
+                project.loop_region = Some(rastersong_engine::LoopRegion {
+                    start: 1.0,
+                    end: 3.0,
+                    enabled: false,
+                });
+            });
+            let mut harness = gpu_harness(app);
+            harness.state_mut().open_export();
+            harness.run_steps(4);
+            if width % 2 == 1 {
+                harness.get_by_label("Loop region").click();
+                harness.run_steps(4);
+                save(&mut harness, &format!("{name}-export-odd"));
+                continue;
+            }
+            let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("screenshot-export.mkv");
+            harness.state_mut().start_export(path);
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while harness.state().export_frame().is_none_or(|f| f < 20) {
+                assert!(Instant::now() < deadline, "the export showed no frame");
+                std::thread::sleep(Duration::from_millis(20));
+                harness.run_steps(1);
+            }
+            harness.run_steps(2);
+            save(&mut harness, &format!("{name}-export-running"));
+            harness.state_mut().cancel_export();
+            while matches!(
+                harness.state().export_state(),
+                rastersong_gui::ExportState::Running { .. }
+            ) {
+                std::thread::sleep(Duration::from_millis(20));
+                harness.run_steps(1);
+            }
+        }
+    }
+}
+
 /// The graph statistics card, with each node's latency and warmup and its time under it.
 #[test]
 #[ignore = "needs a GPU; run explicitly to look at the UI"]

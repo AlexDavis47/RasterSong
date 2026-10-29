@@ -352,24 +352,28 @@ in red in the inspector) and aren't rendered until set to another.
 ## Export
 
 **Export…** in the top bar (or **File → Export…**) opens the Export window. It renders the project at full resolution on its own thread, while
-the app stays usable.
+the app stays usable. The settings are on the left; on the right are the latest rendered frame, a summary, the
+progress and the Export… button.
 
-- **Format**: *H.264 (MP4)* with AAC sound, *ProRes (MOV)* with 24-bit PCM, or *FFV1 lossless (MKV)* with 16-bit
-  PCM. Only formats whose encoder works on this machine are listed; H.264 needs a GPU or OS encoder (NVENC, AMF,
-  VideoToolbox or Media Foundation), and the line under the settings names the one in use.
+- **Format**, one card each: *H.264 · MP4* with AAC sound, *ProRes · MOV* with 24-bit PCM, or *FFV1 lossless · MKV*
+  with 16-bit PCM. Only formats whose encoder works on this machine are listed; H.264 needs a GPU or OS encoder
+  (NVENC, AMF, VideoToolbox or Media Foundation), and the chosen card names the one in use.
 - **Quality** (H.264: low, medium or high) or **Profile** (ProRes: Proxy, LT, Standard or HQ).
 - **Sound**: the bus written, the master by default. Its sound is the graph's Audio Output for it, or else the mix
   of the tracks routed to it.
-- **Range**: the whole project, or only the [loop region](#timeline) when there is one (Ctrl+drag along the ruler
-  to make it). The region is rendered exactly: the frames before it are rendered first, without being written, as
-  far as the graph needs history, or from the start when it has feedback.
-- **Size**: the project's, or *Custom*. H.264 and ProRes can only encode even widths and heights; for an odd size
-  the window says which side is odd, offers a button for the nearest even size (one pixel more), and won't start
-  until the size is even.
+- **Range**: *Whole project*, or *Loop region* when there is one (Ctrl+drag along the ruler to make it), with the
+  span and the number of frames under it. The region is rendered exactly: the frames before it are rendered first,
+  without being written, as far as the graph needs history, or from the start when it has feedback.
+- **Size**: *Project* or *Custom*. H.264 and ProRes can only encode even widths and heights; for an odd size a bar
+  says which side is odd, with a button for the nearest even size (one pixel more), and Export… says to fix the
+  size first.
 
-*Export…* asks where to save, next to the project and named after it. While it runs the window shows the progress,
-the frame and the time left, and *Cancel*, which stops it and removes the unfinished file. Closing the window
-doesn't stop an export; opening it again shows the progress. When it ends the window says where the file went, or
+The **summary** lists the file, the picture size, the rate, the length written and the **warm-up**: none, the
+frames rendered first before the loop region, or *from start* when the graph has feedback, with the reason under
+it. *Export…* asks where to save, next to the project and named after it. While it runs the settings are locked,
+the **latest frame** written shows above the summary with its frame number and time, and the progress card shows
+the frames done, the time left and *Cancel*, which stops it and removes the unfinished file. Closing the window
+doesn't stop an export; opening it again shows the progress. When it ends the card says where the file went, or
 why it failed. Tracks whose files are missing are left out, as in the preview.
 
 ## Keys

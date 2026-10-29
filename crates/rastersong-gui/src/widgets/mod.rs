@@ -4,6 +4,7 @@
 mod beat_lights;
 mod card;
 mod channels;
+mod choice_card;
 mod drag_bubble;
 mod drum;
 mod icons;
@@ -21,6 +22,7 @@ pub use card::{
     card_title,
 };
 pub use channels::channels_label;
+pub use choice_card::choice_card;
 pub use drag_bubble::{Phase, bloop, bubble_phase, drag_bubble, drop_scale, paint_bubble};
 pub use drum::{DRUM_HEIGHT, DRUM_WIDTH, DrumResponse, drum, scroll_steps, wheel_events};
 pub use icons::{Icon, IconButton, icon_list, paint as paint_icon};
