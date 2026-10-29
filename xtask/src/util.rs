@@ -23,6 +23,18 @@ pub fn run(cmd: &mut Command) -> Result<()> {
     Ok(())
 }
 
+/// How [`download`] runs curl, before the output path and URL.
+const CURL_ARGS: [&str; 6] = [
+    "--fail",
+    "--location",
+    "--retry",
+    "3",
+    // Also retry a dropped connection (curl error 35 failed a release build), which `--retry`
+    // alone gives up on.
+    "--retry-all-errors",
+    "--progress-bar",
+];
+
 /// Downloads `url` to `dest` and checks its SHA-256.
 pub fn download(url: &str, dest: &Path, sha256: &str) -> Result<()> {
     // Windows ships curl.exe in System32. Name it explicitly so a different curl earlier in PATH
@@ -34,14 +46,8 @@ pub fn download(url: &str, dest: &Path, sha256: &str) -> Result<()> {
     };
     println!("Downloading {url}");
     run(Command::new(curl)
-        .args([
-            "--fail",
-            "--location",
-            "--retry",
-            "3",
-            "--progress-bar",
-            "--output",
-        ])
+        .args(CURL_ARGS)
+        .arg("--output")
         .arg(dest)
         .arg(url))?;
 
@@ -133,6 +139,11 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn downloads_retry_dropped_connections() {
+        assert!(CURL_ARGS.contains(&"--retry-all-errors"));
     }
 
     #[test]
