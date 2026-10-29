@@ -53,9 +53,10 @@ use crate::timeline::{
     LANE_HEIGHT, Thumbnail, TimelineLayout, TimelineModel, TimelineView, TrackAction,
     TrackThumbnails, TrackView, timecode, timeline,
 };
+use crate::track_inspector::track_inspector;
 use crate::widgets::{
-    CARD_GAP, HALF_GAP, Icon, IconButton, card, card_body, card_header, card_panel, card_space,
-    card_title, key_button, paint_icon, segmented,
+    CARD_GAP, HALF_GAP, Icon, IconButton, KeyButton, card, card_body, card_header, card_panel,
+    card_space, card_title, paint_icon, segmented,
 };
 
 /// The graph a new project starts with: the basic workflow from docs/concepts.md.
@@ -159,6 +160,9 @@ pub struct App {
     applied_theme: Option<ThemeChoice>,
     /// The selected track, by name.
     selected_track: Option<String>,
+    /// Whether the inspector shows the selected track: set when a track's header or item is
+    /// clicked, cleared when a graph item or a node is.
+    inspect_track: bool,
     /// The selected timeline items.
     selected_items: Vec<ItemRef>,
     /// The selected graph item: its graph track's name and its place on it. Its inspector
@@ -259,6 +263,7 @@ impl App {
             inspect_scroll: 0.0,
             waiting_since: None,
             selected_track: None,
+            inspect_track: false,
             selected_items: Vec::new(),
             selected_graph_items: Vec::new(),
             hovered_row: None,
@@ -1057,6 +1062,7 @@ impl App {
             card(ui, |ui| self.preview_column(ui));
         });
         let mut item_edits = Vec::new();
+        let mut track_actions = Vec::new();
         let inspector = egui::Panel::right("inspector")
             .default_size(340.0)
             .min_size(300.0);
@@ -1069,37 +1075,46 @@ impl App {
             },
             |ui| {
                 card(ui, |ui| {
-                    card_body(ui, 10, |ui| {
-                        // A selected graph item shows its own inspector instead of the node's.
-                        if let [(track, item)] = &self.selected_graph_items[..]
-                            && self.project.graph_item(track, *item).is_some()
-                        {
-                            egui::ScrollArea::vertical().show(ui, |ui| {
-                                item_edits = graph_item_inspector(ui, &self.project, track, *item);
-                            });
-                            return;
-                        }
+                    // The inspector shows the track whose header or item was clicked last, else
+                    // a selected graph item, else the active node.
+                    let track = self
+                        .selected_track
+                        .as_deref()
+                        .filter(|_| self.inspect_track)
+                        .and_then(|name| self.project.tracks().position(|t| t.name == name));
+                    if let Some(row) = track {
                         let buses: Vec<String> =
                             self.project.buses.iter().map(|b| b.name.clone()).collect();
-                        let frame = self.engine.frame(self.clock.frame());
-                        let params = frame.as_ref().map_or(&[][..], |f| &f.params[..]);
-                        let meters = frame.as_ref().map_or(&[][..], |f| &f.meters[..]);
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            self.editor.show_inspector(
-                                ui,
-                                &InspectorContext {
-                                    buses: &buses,
-                                    params,
-                                    meters,
-                                },
-                            );
-                        });
-                    })
+                        track_actions = track_inspector(ui, &self.project, &buses, row);
+                        return;
+                    }
+                    if let [(track, item)] = &self.selected_graph_items[..]
+                        && self.project.graph_item(track, *item).is_some()
+                    {
+                        item_edits = graph_item_inspector(ui, &self.project, track, *item);
+                        return;
+                    }
+                    let buses: Vec<String> =
+                        self.project.buses.iter().map(|b| b.name.clone()).collect();
+                    let frame = self.engine.frame(self.clock.frame());
+                    let params = frame.as_ref().map_or(&[][..], |f| &f.params[..]);
+                    let meters = frame.as_ref().map_or(&[][..], |f| &f.meters[..]);
+                    self.editor.show_inspector(
+                        ui,
+                        &InspectorContext {
+                            buses: &buses,
+                            params,
+                            meters,
+                        },
+                    );
                 })
             },
         )
         .response
         .rect;
+        for action in track_actions {
+            self.track_action(ui.ctx(), action);
+        }
         for edit in item_edits {
             self.graph_item_edit(edit);
         }
@@ -1180,6 +1195,7 @@ impl App {
         if clicked_here {
             self.selected_items.clear();
             self.selected_graph_items.clear();
+            self.inspect_track = false;
         }
         self.canvas_rect = canvas.rect;
         self.update_listening(ui);
@@ -1279,15 +1295,14 @@ impl App {
         {
             self.project.bypass_graph = !on;
         }
-        if key_button(
-            ui,
-            Icon::Plus,
-            tr("editor.header.add_node"),
-            tr("editor.key.tab"),
-            height,
-        )
-        .on_hover_text(tr("editor.header.add_node.help"))
-        .clicked()
+        if ui
+            .add(
+                KeyButton::new(tr("editor.header.add_node"), tr("editor.key.tab"))
+                    .icon(Icon::Plus)
+                    .height(height),
+            )
+            .on_hover_text(tr("editor.header.add_node.help"))
+            .clicked()
         {
             self.editor.open_search();
         }
@@ -2858,6 +2873,7 @@ impl App {
 
     fn select_graph_item(&mut self, track: String, item: usize) {
         self.selected_items.clear();
+        self.inspect_track = false;
         self.selected_graph_items = vec![(track, item)];
     }
 
@@ -3093,10 +3109,14 @@ impl App {
     fn track_action(&mut self, ctx: &egui::Context, action: TrackAction) {
         let name = |app: &mut Self, row: usize| app.track_at(row).map(|t| t.name.clone());
         match action {
-            TrackAction::Select(row) => self.selected_track = name(self, row),
+            TrackAction::Select(row) => {
+                self.selected_track = name(self, row);
+                self.inspect_track = true;
+            }
             TrackAction::SelectItem { row, item, toggle } => {
                 let Some(track) = name(self, row) else { return };
                 self.selected_track = Some(track.clone());
+                self.inspect_track = true;
                 self.selected_graph_items.clear();
                 let at = ItemRef::new(track, item);
                 if !toggle {

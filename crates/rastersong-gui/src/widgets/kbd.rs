@@ -37,55 +37,112 @@ pub fn kbd_text(ui: &mut Ui, text: &str, key: &str, size: f32, color: egui::Colo
     });
 }
 
-/// A button `height` high: `icon`, `label`, and the key that does the same as a key cap after
-/// it ("+ Add node [Tab]"). Named `label` for screen readers (and tests).
-pub fn key_button(ui: &mut Ui, icon: Icon, label: &str, key: &str, height: f32) -> Response {
-    const ICON: f32 = 18.0;
-    const GAP: f32 = 6.0;
-    let font = egui::TextStyle::Button.resolve(ui.style());
-    let text = ui
-        .painter()
-        .layout_no_wrap(label.to_owned(), font, egui::Color32::PLACEHOLDER);
-    let key_width = text_width(ui.painter(), key) + 2.0 * PAD;
-    let pad = ui.spacing().button_padding.x;
-    let width = pad + ICON + GAP + text.size().x + GAP + key_width + pad * 0.6;
-    let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
-    let enabled = ui.is_enabled();
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, label));
-    if !ui.is_rect_visible(rect) {
-        return response;
+/// A button: an optional icon, `label`, and the key or gesture that does the same as a key cap
+/// after it ("+ Add node [Tab]", "Bypass [Alt+click]"). Named `label` for screen readers (and
+/// tests).
+#[derive(Debug)]
+pub struct KeyButton<'a> {
+    label: &'a str,
+    key: &'a str,
+    icon: Option<Icon>,
+    height: f32,
+    ghost: bool,
+}
+
+impl<'a> KeyButton<'a> {
+    pub fn new(label: &'a str, key: &'a str) -> Self {
+        Self {
+            label,
+            key,
+            icon: None,
+            height: crate::theme::DENSE_HEIGHT,
+            ghost: false,
+        }
     }
-    let theme = Theme::of(ui.ctx());
-    let visuals = ui.style().interact(&response);
-    let painter = ui.painter();
-    painter.rect(
-        rect,
-        CONTROL_RADIUS,
-        visuals.weak_bg_fill,
-        visuals.bg_stroke,
-        egui::StrokeKind::Inside,
-    );
-    let color = visuals.text_color();
-    let icon_rect = Rect::from_center_size(
-        egui::pos2(rect.left() + pad + ICON / 2.0, rect.center().y),
-        egui::Vec2::splat(ICON),
-    );
-    paint_icon(painter, icon_rect, icon, color);
-    painter.galley(
-        egui::pos2(
-            icon_rect.right() + GAP,
-            rect.center().y - text.size().y / 2.0,
-        ),
-        text,
-        color,
-    );
-    paint_kbd(
-        painter,
-        theme,
-        egui::pos2(rect.right() - pad * 0.6, rect.center().y),
-        key,
-    );
-    response
+
+    pub fn icon(mut self, icon: Icon) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+
+    pub fn height(mut self, height: f32) -> Self {
+        self.height = height;
+        self
+    }
+
+    /// Drawn only while hovered, in smaller, quieter text: an action in a header.
+    pub fn ghost(mut self) -> Self {
+        self.ghost = true;
+        self
+    }
+}
+
+impl egui::Widget for KeyButton<'_> {
+    fn ui(self, ui: &mut Ui) -> Response {
+        const ICON: f32 = 18.0;
+        const GAP: f32 = 6.0;
+        let font = if self.ghost {
+            crate::theme::medium(11.5)
+        } else {
+            egui::TextStyle::Button.resolve(ui.style())
+        };
+        let text =
+            ui.painter()
+                .layout_no_wrap(self.label.to_owned(), font, egui::Color32::PLACEHOLDER);
+        let key_width = text_width(ui.painter(), self.key) + 2.0 * PAD;
+        let pad = ui.spacing().button_padding.x;
+        let icon = if self.icon.is_some() { ICON + GAP } else { 0.0 };
+        let width = pad + icon + text.size().x + GAP + key_width + pad * 0.6;
+        let (rect, response) = ui.allocate_exact_size(vec2(width, self.height), Sense::click());
+        let enabled = ui.is_enabled();
+        response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, self.label));
+        if !ui.is_rect_visible(rect) {
+            return response;
+        }
+        let theme = Theme::of(ui.ctx());
+        let visuals = ui.style().interact(&response);
+        let painter = ui.painter();
+        let quiet = self.ghost && !response.hovered() && !response.has_focus();
+        if !quiet {
+            painter.rect(
+                rect,
+                CONTROL_RADIUS,
+                visuals.weak_bg_fill,
+                if self.ghost {
+                    Stroke::NONE
+                } else {
+                    visuals.bg_stroke
+                },
+                egui::StrokeKind::Inside,
+            );
+        }
+        let color = if self.ghost {
+            theme.surfaces.text_soft
+        } else {
+            visuals.text_color()
+        };
+        let mut x = rect.left() + pad;
+        if let Some(icon) = self.icon {
+            let icon_rect = Rect::from_center_size(
+                egui::pos2(x + ICON / 2.0, rect.center().y),
+                egui::Vec2::splat(ICON),
+            );
+            paint_icon(painter, icon_rect, icon, color);
+            x = icon_rect.right() + GAP;
+        }
+        painter.galley(
+            egui::pos2(x, rect.center().y - text.size().y / 2.0),
+            text,
+            color,
+        );
+        paint_kbd(
+            painter,
+            theme,
+            egui::pos2(rect.right() - pad * 0.6, rect.center().y),
+            self.key,
+        );
+        response
+    }
 }
 
 /// Draws `key` as a key cap ending at `right_center`, and returns where it went.

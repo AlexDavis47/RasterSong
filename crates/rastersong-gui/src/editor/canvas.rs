@@ -1121,7 +1121,7 @@ impl GraphEditor {
     }
 
     /// The name a node shows in its title bar: its label, the port it stands for, or its kind.
-    fn node_title(&self, node: &super::EditorNode) -> String {
+    pub(super) fn node_title(&self, node: &super::EditorNode) -> String {
         node.label
             .clone()
             .or_else(|| self.port_title(node))

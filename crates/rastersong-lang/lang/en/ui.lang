@@ -189,7 +189,9 @@ timeline.item.group.help = Grouped items move, trim, split, copy and delete toge
 
 # --- Graph item inspector ---
 item.header = Graph item
-item.graph = Graph:
+item.graph = Graph
+item.about = On {track}
+item.playing = Playing
 item.graph_gone = (the graph is gone)
 item.pre_roll = Pre-roll
 item.pre_roll.help = Warm the graph up as if it had been running before the item starts, so trimming its left edge never changes what follows. Off, it starts cold at the edge.
@@ -288,11 +290,27 @@ editor.port.video_title = ▣ In: {port}
 editor.port.audio_title = ♪ In: {port}
 
 # --- Inspector ---
+inspector.kind.node = Node
+inspector.kind.track = Track
+inspector.track.about = Plays {resource} · {items} items
+inspector.track.about_one = Plays {resource} · 1 item
+inspector.track.empty = Empty: drag a resource onto the track
+inspector.track.mix = Mix
+inspector.track.volume = Volume
+inspector.track.mute = Mute
+inspector.track.solo = Solo
+inspector.track.bus = Bus
+inspector.bypass = Bypass
+inspector.restore = Restore
+inspector.bypass.help = Skip this node: its first input passes straight through. Alt+click a node in the graph does the same.
+inspector.node.about = {kind} · {id} — {description}
+inspector.source = {node} · {port}
+inspector.output = Output
+inspector.outputs = Outputs
 editor.inspector.empty_select = Click a node to edit it.
 editor.inspector.empty_add = Right-click the graph to add nodes.
 editor.inspector.unknown_kind = Unknown node type `{kind}`
 editor.inspector.name_help = Name shown on the node
-editor.inspector.separator = ·
 editor.inspector.note_line = ℹ {message}
 editor.inspector.warning_line = ⚠ {message}
 editor.inspector.node_settings = Node settings
@@ -300,8 +318,6 @@ editor.inspector.parameters = Parameters
 editor.inspector.no_settings = No settings.
 editor.inspector.unused_reason = Unused: only applies when {param} is {values}.
 editor.inspector.or = or
-editor.inspector.output_line = {port}: {layout}, {tag}
-editor.inspector.output_single = Output: {layout}, {tag}
 editor.inspector.signal_help = What the signal is said to be. Advisory: it colours wires and drives warnings, and never changes processing. Relabel changes it.
 
 editor.setting.resampling = Resampling
@@ -335,6 +351,7 @@ editor.param.pin_hide = Hide this parameter's modulation pin (disconnects it)
 editor.param.pin_show = Show a pin on the node to modulate this parameter with a signal
 editor.param.locked = This parameter can't be modulated. {reason}.
 editor.param.reset = Reset to default
+editor.param.reset_named = Reset {param} to {value}
 editor.param.int = int
 editor.param.int.help = Round to whole numbers: the value, and, when a signal modulates it, the result at every sample
 editor.param.no_such_bus = {track} (no such bus: not rendered)
@@ -347,20 +364,20 @@ editor.param.reset_range = Reset range
 editor.param.value_help = Drag, or click to type. Values beyond the slider are allowed.
   Alt+click or right-click to reset.
 
-editor.modulation.title = Modulation
-editor.modulation.knob_help = Modulation {amount} of the range, about {effect}. Drag to change, double-click or Alt+click to reset, right-click for options.
+editor.modulation.knob_help = Modulation {amount} of the range, about {effect}. Drag to change, double-click or Alt+click to reset.
 editor.modulation.both_ways = Both ways
 editor.modulation.both_ways.help = The signal moves the value up and down around it
 editor.modulation.one_way = One way
 editor.modulation.one_way.help = The signal's strength moves the value one way; a negative amount turns it down
-editor.modulation.amount = Amount
 editor.modulation.amount.help = How far a full signal moves the value, as a percentage of the slider's range.
 editor.modulation.either_side = Either side
 editor.modulation.moves_by = Moves by
 editor.modulation.sweep.help = The same amount in the parameter's own unit: how far a full signal moves
   the value (either side of it, both ways).
-editor.modulation.reset_amount = Reset amount
 editor.modulation.disconnect = Disconnect signal
+editor.modulation.from = from
+editor.modulation.live = live {value}
+editor.modulation.held = · held to the slider range
 
 # --- Settings ---
 settings.title = Settings

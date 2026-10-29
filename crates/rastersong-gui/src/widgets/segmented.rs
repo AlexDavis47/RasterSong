@@ -25,6 +25,8 @@ pub fn segmented(ui: &mut Ui, options: &[(&str, &str)], selected: usize) -> Opti
         widths.iter().sum::<f32>() + INSET * (options.len() as f32 + 1.0),
         DENSE_HEIGHT,
     );
+    // Each switch has its own ids, so two with the same options don't clash.
+    let id = ui.next_auto_id();
     let (track, _) = ui.allocate_exact_size(total, Sense::hover());
     ui.painter().rect(
         track,
@@ -40,7 +42,7 @@ pub fn segmented(ui: &mut Ui, options: &[(&str, &str)], selected: usize) -> Opti
     {
         let rect = Rect::from_min_size(egui::pos2(x, track.top() + INSET), vec2(width, height));
         x += width + INSET;
-        let response = ui.interact(rect, ui.id().with(("segment", *name)), Sense::click());
+        let response = ui.interact(rect, id.with(("segment", i)), Sense::click());
         let on = i == selected;
         response
             .widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, enabled, on, *name));

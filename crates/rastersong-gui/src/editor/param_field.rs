@@ -5,19 +5,22 @@
 //! boxed in, Substance Designer style. The range can be set, or reset to the usual one, from the
 //! track's right-click menu.
 //!
-//! A modulated parameter also shows the span its signal covers (outlined over the track), a
-//! ghost handle at its live value, and a knob for the modulation amount. The knob sits in the
-//! gutter left of the track, under the parameter's expose toggle; unmodulated fields keep the
-//! gutter empty, so every track and value box lines up whatever is connected.
+//! A modulated parameter is set in a card: the span its signal covers is outlined over the track,
+//! a ghost handle shows its live value, and under the track sit where the signal comes from, a
+//! knob and a box for the amount, the direction, and how far the signal moves the value.
 //!
 //! Every control can be reset to its default with Alt+click or from its right-click menu.
 
-use eframe::egui::{self, Color32, CornerRadius, Rect, Response, Sense, Stroke, Ui, pos2, vec2};
+use eframe::egui::{
+    self, Align2, Color32, CornerRadius, Rect, Response, RichText, Sense, Stroke, Ui, Vec2, pos2,
+    vec2,
+};
 use rastersong_engine::{MODULATION_AMOUNT_LIMITS, ModMode, Modulation, ParamSpec, range_span};
 use rastersong_lang::{tr, tr_args};
 
-use crate::theme::Theme;
+use crate::theme::{CARD_RADIUS, SMALL_SIZE, Theme};
 use crate::value_box::ValueBox;
+use crate::widgets::{Icon, IconButton, rule, segmented, swatch};
 
 /// A number parameter as the field shows it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -74,20 +77,35 @@ pub struct Modulated<'a> {
     pub color: Color32,
     /// The value at the playhead, from the last rendered frame.
     pub live: Option<f64>,
+    /// Where the signal comes from: "Three-Band Split · low".
+    pub source: &'a str,
 }
 
-/// What the user did with a field.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+/// What the user did with a field, and where its parts went.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FieldResponse {
     /// The value or the modulation changed.
     pub changed: bool,
     /// The user asked to disconnect the modulating signal.
     pub disconnect: bool,
+    pub track: Rect,
+    pub value_box: Rect,
+    /// The amount knob of a modulated parameter.
+    pub knob: Option<Rect>,
 }
 
-/// Width of the gutter left of the controls: the amount knob of a modulated parameter, or the
-/// space kept for one, and the parameter's expose toggle above it.
-pub const GUTTER_WIDTH: f32 = 22.0;
+/// Width of the value box, so it doesn't resize as the digits change.
+pub const VALUE_WIDTH: f32 = 64.0;
+/// Height of the slider track.
+const TRACK_HEIGHT: f32 = 24.0;
+/// How far the rail is inset from each end of the track: half the handle.
+pub const RAIL_INSET: f32 = 7.0;
+/// Size of the amount knob.
+const KNOB_SIZE: f32 = 28.0;
+/// Width of the amount box.
+const AMOUNT_WIDTH: f32 = 62.0;
+/// Side of the small buttons in a parameter's rows: reset and disconnect.
+pub const SMALL_BUTTON: f32 = 24.0;
 
 /// Whether the user asked to reset a control: Alt+click on it.
 pub fn alt_clicked(ui: &Ui, response: &Response) -> bool {
@@ -118,18 +136,85 @@ pub fn reset_gesture(ui: &Ui, response: &Response, differs: bool) -> bool {
     alt_clicked(ui, response) | reset_menu(response, differs)
 }
 
-/// Shows the field: the gutter (holding the amount knob of a modulated parameter), a slider
-/// track and a value box. Every part has a fixed width, so the field is always
-/// `GUTTER_WIDTH + track_width + value_width` plus spacing wide, whatever it shows; a field that
-/// grew with its text would widen the panel holding it, which widens the field again.
+/// The button that resets parameter `name` to `default` (as text), greyed out when it's there
+/// already. Returns true when clicked.
+pub fn reset_button(ui: &mut Ui, name: &str, default: &str, differs: bool) -> bool {
+    let label = tr_args(
+        "editor.param.reset_named",
+        &[("param", name), ("value", default)],
+    );
+    ui.add_enabled(
+        differs,
+        IconButton::new(Icon::Reset, &label).size(Vec2::splat(SMALL_BUTTON)),
+    )
+    .on_hover_text(&label)
+    .clicked()
+}
+
+/// A number as the slider's ends show it: up to two decimals, without trailing zeros.
+pub fn short_number(value: f64) -> String {
+    let text = format!("{value:.2}");
+    text.trim_end_matches('0').trim_end_matches('.').to_owned()
+}
+
+/// Shows the field, top-down: `leading` (the pin toggle and name) with `trailing` (the int
+/// toggle), the value box and the reset button on its right; then the slider track across. A
+/// modulated parameter is set in a card, and goes on with the slider's ends and the live value,
+/// where the signal comes from, the amount knob and box with the direction, and how far the
+/// signal moves the value. `name` names the reset button. Every part has a fixed size or takes
+/// the width it is given, so nothing it shows can widen the panel holding it.
+#[allow(clippy::too_many_arguments)]
 pub fn param_field(
     ui: &mut Ui,
     id_salt: &str,
+    name: &str,
     value: &mut f64,
     range: NumberRange,
-    (track_width, value_width): (f32, f32),
     mut modulated: Option<Modulated>,
     custom: &mut Option<(f64, f64)>,
+    leading: impl FnOnce(&mut Ui),
+    trailing: impl FnOnce(&mut Ui),
+) -> FieldResponse {
+    let theme = Theme::of(ui.ctx());
+    let frame = if modulated.is_some() {
+        egui::Frame::new()
+            .fill(theme.surfaces.inner_card)
+            .stroke(Stroke::new(1.0, theme.surfaces.border))
+            .corner_radius(CARD_RADIUS)
+            .inner_margin(10)
+    } else {
+        egui::Frame::NONE
+    };
+    frame
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 6.0;
+            field(
+                ui,
+                id_salt,
+                name,
+                value,
+                range,
+                modulated.as_mut(),
+                custom,
+                leading,
+                trailing,
+            )
+        })
+        .inner
+}
+
+#[allow(clippy::too_many_arguments)]
+fn field(
+    ui: &mut Ui,
+    id_salt: &str,
+    name: &str,
+    value: &mut f64,
+    range: NumberRange,
+    mut modulated: Option<&mut Modulated>,
+    custom: &mut Option<(f64, f64)>,
+    leading: impl FnOnce(&mut Ui),
+    trailing: impl FnOnce(&mut Ui),
 ) -> FieldResponse {
     let id = ui.make_persistent_id(id_salt);
     // The track's range is the node's to keep (`custom`, saved in the graph, where modulation
@@ -142,21 +227,39 @@ pub fn param_field(
         *custom = Some(shown);
     }
     let before = (*value, modulated.as_ref().map(|m| *m.modulation));
-    let mut response = FieldResponse::default();
-
-    match modulated.as_mut() {
-        Some(m) => {
-            let knob = amount_knob(ui, m, shown);
-            response.disconnect = knob.disconnect;
-        }
-        None => {
-            // Allocated, not just added as space, so it's followed by the same item spacing.
-            ui.allocate_space(vec2(GUTTER_WIDTH, ui.spacing().interact_size.y));
-        }
-    }
-
     let height = ui.spacing().interact_size.y;
-    let (rect, track) = ui.allocate_exact_size(vec2(track_width, height), Sense::click_and_drag());
+
+    let mut value_box = Rect::NOTHING;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        leading(ui);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let default = short_number(range.default);
+            if reset_button(ui, name, &default, *value != range.default) {
+                *value = range.default;
+            }
+            let speed = (shown.1 - shown.0) / 300.0;
+            let response = ui
+                .add(
+                    ValueBox::new(value)
+                        .range(range.limits.0..=range.limits.1)
+                        .speed(speed)
+                        .max_decimals(if range.whole { 0 } else { 3 })
+                        .whole(range.whole)
+                        .size(vec2(VALUE_WIDTH, height)),
+                )
+                .on_hover_text(tr("editor.param.value_help"));
+            if reset_gesture(ui, &response, *value != range.default) {
+                *value = range.default;
+                response.surrender_focus();
+            }
+            value_box = response.rect;
+            trailing(ui);
+        });
+    });
+
+    let size = vec2(ui.available_width(), TRACK_HEIGHT);
+    let (rect, track) = ui.allocate_exact_size(size, Sense::click_and_drag());
     let track = track.on_hover_text(tr("editor.param.track_help"));
     if alt_clicked(ui, &track) {
         *value = range.default;
@@ -217,7 +320,7 @@ pub fn param_field(
     }
     // The handle runs along the rail, inset from the track's ends; the value under the pointer is
     // the one whose handle is drawn there.
-    let rail = Rect::from_center_size(rect.center(), vec2(rect.width() - 8.0, 4.0));
+    let rail = Rect::from_center_size(rect.center(), vec2(rect.width() - 2.0 * RAIL_INSET, 4.0));
     if (track.clicked() || track.dragged())
         && !ui.input(|i| i.modifiers.alt)
         && let Some(p) = track.interact_pointer_pos()
@@ -231,49 +334,181 @@ pub fn param_field(
 
     let fraction = |v: f64| to_fraction(v, shown) as f32;
     let x = |v: f64| rail.left() + rail.width() * fraction(v);
-    paint_rail(ui, rail, x(*value));
-    if let Some(m) = &modulated {
-        let (lo, hi) = m.spec.modulated_range(*value, *m.modulation, shown);
-        paint_range(ui, rail, x(lo), x(hi), m.color);
+    let mut response = FieldResponse {
+        changed: false,
+        disconnect: false,
+        track: rect,
+        value_box,
+        knob: None,
+    };
+    match &modulated {
+        Some(m) => {
+            paint_rail(ui, rail, None);
+            let (lo, hi) = m.spec.modulated_range(*value, *m.modulation, shown);
+            paint_range(ui, rail, x(lo), x(hi), m.color);
+        }
+        None => paint_rail(ui, rail, Some(x(*value))),
     }
-    paint_handle(ui, &track, pos2(x(*value), rect.center().y), rect.height());
-    if let Some(live) = modulated
+    paint_handle(ui, &track, pos2(x(*value), rect.center().y));
+    if let Some((live, color)) = modulated
         .as_ref()
         .and_then(|m| m.live.map(|v| (v, m.color)))
     {
         // Fading copies behind it, filled in between frames so a jump reads as a smear.
         // Positions are tracked as fractions of the rail, so the smear is even on screen.
         let gap = f64::from(SMEAR_PX / rail.width().max(1.0));
-        let at = fraction(live.0);
+        let at = fraction(live);
         for (f, visibility) in crate::effects::trail(ui, id.with("ghost"), f64::from(at), gap) {
             let gx = rail.left() + rail.width() * f as f32;
             paint_ghost(
                 ui,
                 pos2(gx, rect.center().y),
-                rect.height(),
-                live.1.gamma_multiply(visibility * 0.1),
+                color.gamma_multiply(visibility * 0.1),
             );
         }
-        paint_ghost(ui, pos2(x(live.0), rect.center().y), rect.height(), live.1);
+        paint_ghost(ui, pos2(x(live), rect.center().y), color);
     }
 
-    let speed = (shown.1 - shown.0) / 300.0;
-    let value_box = ui
-        .add(
-            ValueBox::new(value)
-                .range(range.limits.0..=range.limits.1)
-                .speed(speed)
-                .max_decimals(if range.whole { 0 } else { 3 })
-                .whole(range.whole)
-                .size(vec2(value_width, height)),
-        )
-        .on_hover_text(tr("editor.param.value_help"));
-    if reset_gesture(ui, &value_box, *value != range.default) {
-        *value = range.default;
-        value_box.surrender_focus();
+    if let Some(m) = modulated.as_mut() {
+        modulation_rows(ui, m, shown, &mut response);
     }
     response.changed = before != (*value, modulated.as_ref().map(|m| *m.modulation));
     response
+}
+
+/// Under a modulated parameter's slider: its ends and the live value, then, past a rule, where
+/// the signal comes from, the amount knob and box with the direction, and how far a full signal
+/// moves the value.
+fn modulation_rows(
+    ui: &mut Ui,
+    m: &mut Modulated,
+    range: (f64, f64),
+    response: &mut FieldResponse,
+) {
+    let theme = Theme::of(ui.ctx());
+    let (ends, _) = ui.allocate_exact_size(vec2(ui.available_width(), 14.0), Sense::hover());
+    let font = egui::FontId::monospace(SMALL_SIZE);
+    let color = theme.surfaces.text_faint;
+    let painter = ui.painter();
+    let left = ends.left_center() + vec2(RAIL_INSET, 0.0);
+    let right = ends.right_center() - vec2(RAIL_INSET, 0.0);
+    painter.text(
+        left,
+        Align2::LEFT_CENTER,
+        short_number(range.0),
+        font.clone(),
+        color,
+    );
+    painter.text(
+        right,
+        Align2::RIGHT_CENTER,
+        short_number(range.1),
+        font.clone(),
+        color,
+    );
+    if let Some(live) = m.live {
+        let text = tr_args(
+            "editor.modulation.live",
+            &[("value", &format!("{live:.2}"))],
+        );
+        painter.text(ends.center(), Align2::CENTER_CENTER, text, font, color);
+    }
+    rule(ui, theme.surfaces.border);
+    // The board pads the rows under the rule by 8, a little more than the card's spacing.
+    ui.add_space(3.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        swatch(ui, 14.0, m.color);
+        ui.label(
+            RichText::new(tr("editor.modulation.from"))
+                .size(12.0)
+                .color(theme.text_dim),
+        );
+        ui.label(RichText::new(m.source).font(crate::theme::medium(12.0)));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let label = tr("editor.modulation.disconnect");
+            if ui
+                .add(IconButton::new(Icon::Close, label).size(Vec2::splat(SMALL_BUTTON)))
+                .on_hover_text(label)
+                .clicked()
+            {
+                response.disconnect = true;
+            }
+        });
+    });
+
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        response.knob = Some(amount_knob(ui, m, range));
+        let default_amount = m.spec.default_modulation_amount();
+        let amount = ui
+            .add(
+                ValueBox::new(&mut m.modulation.amount)
+                    .range(AMOUNT_LIMITS.0..=AMOUNT_LIMITS.1)
+                    .speed(0.3)
+                    .suffix(" %")
+                    .max_decimals(1)
+                    .size(vec2(AMOUNT_WIDTH, ui.spacing().interact_size.y)),
+            )
+            .on_hover_text(tr("editor.modulation.amount.help"));
+        if reset_gesture(ui, &amount, m.modulation.amount != default_amount) {
+            m.modulation.amount = default_amount;
+            amount.surrender_focus();
+        }
+        let modes = [
+            (
+                tr("editor.modulation.one_way"),
+                tr("editor.modulation.one_way.help"),
+            ),
+            (
+                tr("editor.modulation.both_ways"),
+                tr("editor.modulation.both_ways.help"),
+            ),
+        ];
+        let on = usize::from(m.modulation.mode == ModMode::Bipolar);
+        match segmented(ui, &modes, on) {
+            Some(0) => m.modulation.mode = ModMode::Unipolar,
+            Some(_) => m.modulation.mode = ModMode::Bipolar,
+            None => {}
+        }
+    });
+
+    // The same amount in the parameter's own terms, for when you know the distance you want.
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        let words = |text: &str, color| RichText::new(text).size(11.5).color(color);
+        ui.label(words(
+            match m.modulation.mode {
+                ModMode::Bipolar => tr("editor.modulation.either_side"),
+                ModMode::Unipolar => tr("editor.modulation.moves_by"),
+            },
+            theme.text_dim,
+        ));
+        let unit = if m.spec.unit.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", m.spec.unit)
+        };
+        let mut sweep = m.spec.modulation_sweep(*m.modulation, range);
+        let span = range_span(range);
+        if ui
+            .add(
+                ValueBox::new(&mut sweep)
+                    .range(-span..=span)
+                    .speed(span / 300.0)
+                    .suffix(&unit)
+                    .max_decimals(3),
+            )
+            .on_hover_text(tr("editor.modulation.sweep.help"))
+            .changed()
+        {
+            m.modulation.amount = m.spec.modulation_amount_for_sweep(sweep, range);
+        }
+        ui.label(words(
+            tr("editor.modulation.held"),
+            theme.surfaces.text_faint,
+        ));
+    });
 }
 
 /// The amounts the knob and both boxes accept, in percent of the slider's range.
@@ -314,17 +549,10 @@ pub fn amount_effect(spec: &ParamSpec, modulation: Modulation, range: (f64, f64)
     format!("{sign}{value}{space}{unit}")
 }
 
-#[derive(Debug, Default)]
-struct KnobResponse {
-    disconnect: bool,
-}
-
 /// The amount knob: an arc showing the amount in the wire's colour. Drag to change it,
-/// double-click to reset it, right-click for the modulator's settings.
-fn amount_knob(ui: &mut Ui, m: &mut Modulated, range: (f64, f64)) -> KnobResponse {
-    let mut result = KnobResponse::default();
-    let size = vec2(GUTTER_WIDTH, ui.spacing().interact_size.y);
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
+/// double-click or Alt+click to reset it. Returns where it went.
+fn amount_knob(ui: &mut Ui, m: &mut Modulated, range: (f64, f64)) -> Rect {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(KNOB_SIZE), Sense::click_and_drag());
     let modulation = &mut *m.modulation;
     if response.dragged_by(egui::PointerButton::Primary) {
         // Right and up turn it up. Shift for fine control.
@@ -346,20 +574,26 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated, range: (f64, f64)) -> KnobRespons
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
     }
 
-    // The knob: a ring, and an arc from the top for the amount (both sides when bipolar).
+    // The knob: a well with a ring, an arc from the top for the amount (both sides when
+    // bipolar), and a pointer.
+    let theme = Theme::of(ui.ctx());
     let painter = ui.painter();
     let center = rect.center();
-    let radius = (rect.height().min(rect.width()) / 2.0 - 2.0).max(4.0);
-    let visuals = ui.style().interact(&response);
+    let radius = KNOB_SIZE / 2.0 - 3.0;
+    let ring = if response.hovered() || response.dragged() {
+        theme.surfaces.border_hover
+    } else {
+        theme.node_outline
+    };
     painter.circle(
         center,
         radius,
-        ui.visuals().widgets.inactive.bg_fill,
-        Stroke::new(1.0, visuals.bg_stroke.color),
+        theme.surfaces.ground,
+        Stroke::new(2.0, ring),
     );
     let turn = (modulation.amount / KNOB_PERCENT).clamp(-1.0, 1.0) as f32 * KNOB_SWEEP;
     let arc = |from: f32, to: f32| {
-        let steps = 16;
+        let steps = 24;
         (0..=steps)
             .map(|k| {
                 let a = from + (to - from) * k as f32 / steps as f32;
@@ -377,96 +611,19 @@ fn amount_knob(ui: &mut Ui, m: &mut Modulated, range: (f64, f64)) -> KnobRespons
     painter.line_segment(
         [
             center,
-            center + radius * 0.6 * vec2(turn.sin(), -turn.cos()),
+            center + (radius - 1.0) * vec2(turn.sin(), -turn.cos()),
         ],
-        Stroke::new(1.5, visuals.fg_stroke.color),
+        Stroke::new(2.0, theme.surfaces.text),
     );
 
-    let response = response.on_hover_text(tr_args(
+    response.on_hover_text(tr_args(
         "editor.modulation.knob_help",
         &[
             ("amount", &amount_text(*modulation)),
             ("effect", &amount_effect(m.spec, *modulation, range)),
         ],
     ));
-    // Clicks inside don't close it, so its fields can be typed into.
-    let menu = egui::Popup::context_menu(&response)
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
-    menu.show(|ui| {
-        ui.set_min_width(190.0);
-        ui.label(egui::RichText::new(tr("editor.modulation.title")).strong());
-        ui.separator();
-        let both = modulation.mode == ModMode::Bipolar;
-        if ui
-            .radio(both, tr("editor.modulation.both_ways"))
-            .on_hover_text(tr("editor.modulation.both_ways.help"))
-            .clicked()
-        {
-            modulation.mode = ModMode::Bipolar;
-        }
-        if ui
-            .radio(!both, tr("editor.modulation.one_way"))
-            .on_hover_text(tr("editor.modulation.one_way.help"))
-            .clicked()
-        {
-            modulation.mode = ModMode::Unipolar;
-        }
-        ui.horizontal(|ui| {
-            ui.label(tr("editor.modulation.amount"));
-            ui.add(
-                ValueBox::new(&mut modulation.amount)
-                    .range(AMOUNT_LIMITS.0..=AMOUNT_LIMITS.1)
-                    .speed(0.3)
-                    .suffix("%")
-                    .max_decimals(1),
-            )
-            .on_hover_text(tr("editor.modulation.amount.help"));
-        });
-        // The same amount in the parameter's own terms, for when you know the distance you want.
-        ui.horizontal(|ui| {
-            ui.label(match modulation.mode {
-                ModMode::Bipolar => tr("editor.modulation.either_side"),
-                ModMode::Unipolar => tr("editor.modulation.moves_by"),
-            });
-            let unit = if m.spec.unit.is_empty() {
-                String::new()
-            } else {
-                format!(" {}", m.spec.unit)
-            };
-            let mut sweep = m.spec.modulation_sweep(*modulation, range);
-            let span = range_span(range);
-            if ui
-                .add(
-                    ValueBox::new(&mut sweep)
-                        .range(-span..=span)
-                        .speed(span / 300.0)
-                        .suffix(&unit)
-                        .max_decimals(3),
-                )
-                .on_hover_text(tr("editor.modulation.sweep.help"))
-                .changed()
-            {
-                modulation.amount = m.spec.modulation_amount_for_sweep(sweep, range);
-            }
-        });
-        if ui
-            .add_enabled(
-                modulation.amount != default_amount,
-                egui::Button::new(tr("editor.modulation.reset_amount"))
-                    .shortcut_text(tr("editor.shortcut.alt_click")),
-            )
-            .clicked()
-        {
-            modulation.amount = default_amount;
-            ui.close();
-        }
-        ui.separator();
-        if ui.button(tr("editor.modulation.disconnect")).clicked() {
-            result.disconnect = true;
-            ui.close();
-        }
-    });
-    result
+    rect
 }
 
 /// Screen distance between the interpolated copies of a ghost handle.
@@ -475,58 +632,60 @@ const SMEAR_PX: f32 = 2.0;
 /// How far the knob's arc turns at full amount, either side of the top (radians).
 const KNOB_SWEEP: f32 = 2.4;
 
-fn paint_rail(ui: &Ui, rail: Rect, value_x: f32) {
+/// Radius of the slider's handle.
+const HANDLE_RADIUS: f32 = 7.0;
+
+/// The rail, filled in the accent up to `value_x` when given.
+fn paint_rail(ui: &Ui, rail: Rect, value_x: Option<f32>) {
     let theme = Theme::of(ui.ctx());
     let painter = ui.painter();
-    painter.rect_filled(
-        rail,
-        CornerRadius::same(2),
-        ui.visuals().widgets.inactive.bg_fill,
-    );
-    painter.rect_filled(
-        Rect::from_min_max(rail.min, pos2(value_x, rail.max.y)),
-        CornerRadius::same(2),
-        theme.accent.gamma_multiply(0.8),
-    );
-}
-
-/// The span a modulating signal covers: outlined over the rail in the wire's colour, with a tick
-/// at each end.
-fn paint_range(ui: &Ui, rail: Rect, lo: f32, hi: f32, color: Color32) {
-    let painter = ui.painter();
-    let band = Rect::from_min_max(pos2(lo, rail.top() - 3.0), pos2(hi, rail.bottom() + 3.0));
-    painter.rect_filled(band, CornerRadius::same(2), color.gamma_multiply(0.18));
-    painter.rect_stroke(
-        band,
-        CornerRadius::same(2),
-        Stroke::new(1.0, color),
-        egui::StrokeKind::Middle,
-    );
-    for x in [lo, hi] {
-        painter.line_segment(
-            [pos2(x, band.top() - 3.0), pos2(x, band.bottom() + 3.0)],
-            Stroke::new(1.5, color),
+    painter.rect_filled(rail, CornerRadius::same(2), theme.surfaces.border);
+    if let Some(x) = value_x {
+        painter.rect_filled(
+            Rect::from_min_max(rail.min, pos2(x, rail.max.y)),
+            CornerRadius::same(2),
+            theme.accent.gamma_multiply(0.8),
         );
     }
 }
 
-fn paint_handle(ui: &Ui, response: &egui::Response, at: egui::Pos2, height: f32) {
-    let visuals = ui.style().interact(response);
-    ui.painter().circle(
+/// The span a modulating signal covers: a band over the rail in the wire's colour.
+fn paint_range(ui: &Ui, rail: Rect, lo: f32, hi: f32, color: Color32) {
+    let band = Rect::from_min_max(pos2(lo, rail.top() - 1.0), pos2(hi, rail.bottom() + 1.0));
+    ui.painter().rect(
+        band,
+        CornerRadius::same(3),
+        color.gamma_multiply(0.35),
+        Stroke::new(1.0, color),
+        egui::StrokeKind::Inside,
+    );
+}
+
+/// The handle: light, with a dark edge and a thin ring that turns the accent under the pointer.
+fn paint_handle(ui: &Ui, response: &egui::Response, at: egui::Pos2) {
+    let theme = Theme::of(ui.ctx());
+    let ring = if response.hovered() || response.dragged() {
+        theme.accent
+    } else {
+        theme.tick
+    };
+    let painter = ui.painter();
+    painter.circle_filled(at, HANDLE_RADIUS + 1.0, ring);
+    painter.circle(
         at,
-        height * 0.32,
-        visuals.bg_fill,
-        Stroke::new(1.0, visuals.fg_stroke.color),
+        HANDLE_RADIUS,
+        theme.surfaces.text,
+        Stroke::new(2.0, theme.surfaces.ground),
     );
 }
 
 /// The live value: a see-through handle in the wire's colour, over the real one.
-fn paint_ghost(ui: &Ui, at: egui::Pos2, height: f32, color: Color32) {
+fn paint_ghost(ui: &Ui, at: egui::Pos2, color: Color32) {
     ui.painter().circle(
         at,
-        height * 0.32,
+        HANDLE_RADIUS,
         color.gamma_multiply(0.45),
-        Stroke::new(1.5, color),
+        Stroke::new(1.0, color),
     );
 }
 
@@ -606,8 +765,15 @@ mod tests {
             },
             None::<(f64, f64)>,
         );
+        let knob = std::rc::Rc::new(std::cell::Cell::new(Rect::NOTHING));
+        let seen = knob.clone();
         let mut harness = Harness::new_ui_state(
-            |ui, (value, modulation, custom)| {
+            move |ui, (value, modulation, custom)| {
+                // The app's fonts are only there from the frame after they're set.
+                if ui.ctx().cumulative_frame_nr() == 0 {
+                    crate::theme::apply_style(ui.ctx());
+                    return;
+                }
                 let range = NumberRange {
                     default: 1.0,
                     soft: (0.0, 10.0),
@@ -619,25 +785,25 @@ mod tests {
                     modulation,
                     color: Color32::LIGHT_BLUE,
                     live: None,
+                    source: "LFO · out",
                 };
-                ui.horizontal(|ui| {
-                    param_field(
-                        ui,
-                        "t",
-                        value,
-                        range,
-                        (100.0, 40.0),
-                        Some(modulated),
-                        custom,
-                    );
-                });
+                let field = param_field(
+                    ui,
+                    "t",
+                    "time",
+                    value,
+                    range,
+                    Some(modulated),
+                    custom,
+                    |_| {},
+                    |_| {},
+                );
+                seen.set(field.knob.unwrap());
             },
             state,
         );
         harness.run();
-        // The knob is the first thing in the row.
-        let top = harness.ctx.content_rect().left_top();
-        let knob = top + vec2(GUTTER_WIDTH / 2.0 + 8.0, 20.0);
+        let knob = knob.get().center();
         let drag = |harness: &mut Harness<'_, _>, dy: f32| {
             harness.event(Event::PointerMoved(knob));
             harness.run_steps(1);

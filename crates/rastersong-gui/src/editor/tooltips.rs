@@ -7,8 +7,8 @@ use rastersong_lang::{tr, tr_args};
 use super::canvas::{Geometry, Pin, wire_points};
 use super::inspect::{InspectContext, InspectMode, Visual, show_view};
 use super::{GraphEditor, NodeKey, Wire, modulation};
-use crate::theme::{self, SMALL_SIZE, Theme};
-use crate::widgets::{DRUM_WIDTH, drum, kbd_text, signal_meter};
+use crate::theme::{self, Theme};
+use crate::widgets::{DRUM_WIDTH, drum, kbd_text, section_label, signal_meter};
 
 /// How close (in screen pixels) the pointer must be to a wire for its tooltip.
 const WIRE_GRAB: f32 = 6.0;
@@ -528,12 +528,7 @@ impl Tip {
                     ui.allocate_ui_with_layout(vec2(width, 0.0), column, |ui| {
                         ui.set_width(width);
                         ui.spacing_mut().item_spacing.y = 2.0;
-                        ui.label(
-                            egui::RichText::new(tr(name).to_uppercase())
-                                .font(theme::semibold(SMALL_SIZE))
-                                .extra_letter_spacing(0.8)
-                                .color(theme.surfaces.text_faint),
-                        );
+                        section_label(ui, tr(name));
                         ui.label(
                             egui::RichText::new(format!("{value:+.3}"))
                                 .monospace()

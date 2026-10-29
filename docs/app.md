@@ -102,20 +102,33 @@ no further than 85%: a graph wider than that starts from its inputs on the left,
 
 ## Inspector
 
-The node's name (shown on the node instead of its type), its shared settings (Resampling, Grouping, Channels, and
+The inspector follows the selection: the track whose header or item was clicked last, else a selected graph item,
+else the active node. Clicking a node or a graph item takes it back from a track. Every kind uses one layout: a
+header with the kind (NODE, GRAPH ITEM, TRACK) and a tag in its colour (the node's category, the track's kind),
+the actions that apply (a node's **Bypass**, Alt+click on the canvas does the same), the name in large type, and
+a line about it; then sections under capital labels.
+
+A **track** shows its name (renamed as in its header), what it plays and how many items, and a **Mix** section:
+an audio track's Volume (a slider and box like a parameter's), Mute, Solo, and an audio track's Bus.
+
+A **node** shows its name (shown on the node instead of its type; it changes on Enter or clicking away, and the type's own name unnames it), "Kind · id — description", its notes and
+warnings, what each output carries (port, colour, tag, size) with its meters, its shared settings (Resampling, Grouping, Channels, and
 Layout for generators; see
 [Node behavior](node-behavior.md#shared-node-settings)) and its parameters, with units, sliders (always linear) reset-to-default buttons, and an `int` toggle on numbers that are not whole-only (which rounds the value and, when a signal modulates it, every sample). Parameters that only make sense whole (Beat division and steps, Pack channels, Chorus voices, Phaser stages, Noise seed, Sample & Hold levels, Resample width and height) are declared `.integer()` in their spec: the slider handle jumps between whole values, typed numbers round, and they have no toggle. Each slider covers the parameter's
 usual range; typing (or dragging the value box) past it, up to the node's limits, widens the slider to match. Right-click a slider to set its range; the range is saved with the node in the graph (`"ranges"`), and it is also what a modulating signal is held to. Each
-parameter takes two lines: its pin toggle, name and reset button, then the slider and value box. Values left at
-their default aren't written to files.
+parameter takes two lines: its pin toggle, name, `int` toggle, value box and reset button, then the slider across
+the inspector's width. Values left at their default aren't written to files.
 
-A connected (modulated) parameter shows, in the wire's colour:
+A connected (modulated) parameter is set in a card and shows, in the wire's colour:
 
 - the range the signal moves it over, outlined on the slider with a tick at each end;
 - a see-through ghost handle at its live value at the playhead (the middle of the frame, from the last rendered
   frame), while the solid handle stays the base value and can still be dragged;
-- a small knob between the slider and the value box for the amount: drag it (Shift for fine), double-click to
-  reset, right-click for the modulator's settings: both ways or one way, the amount, and disconnecting the signal.
+- the slider's ends and the live value under it, then where the signal comes from ("from Three-Band Split · low")
+  with **×** to disconnect it;
+- a knob and a percentage box for the amount, and **One way** / **Both** beside them: drag the knob (Shift for
+  fine), double-click or Alt+click to reset it;
+- "Moves by" (or "Either side") with the distance in the parameter's unit, which can be typed.
   **One rule:** the amount is a percentage of the slider's range (the one you set, or the node's usual one), and a
   full-scale signal moves the value that far from where it is: up one way (a negative amount turns it down), either
   way for both ways. The value never leaves the slider's range; widen the slider for more room. The knob, the

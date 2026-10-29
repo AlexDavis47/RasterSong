@@ -1242,7 +1242,10 @@ fn typing_a_very_long_number_keeps_the_inspector_width() {
         chars <= rastersong_gui::value_box::MAX_CHARS,
         "{chars} characters"
     );
-    assert!(width <= 60.0, "the box is {width} wide while typing");
+    assert!(
+        width <= rastersong_gui::editor::param_field::VALUE_WIDTH,
+        "the box is {width} wide while typing"
+    );
     for _ in 0..4 {
         harness.run_steps(5);
         let width = harness.state().inspector_rect().width();
@@ -1825,7 +1828,7 @@ fn the_item_inspector_picks_each_ports_source() {
     let bar = pos2(time_x(&harness, 0.5), graph_lane(&harness, 0).top() + 7.0);
     click(&mut harness, bar, PointerButton::Primary);
     harness.run_steps(2);
-    assert!(harness.query_by_label("Graph item").is_some());
+    assert!(harness.query_by_label("GRAPH ITEM").is_some());
     // The combo box on the Side port's line.
     let side = harness.get_by_label("♪ In: Side").rect().center();
     let combo = harness
@@ -1856,7 +1859,9 @@ fn the_item_inspector_picks_each_ports_source() {
     shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
     assert_eq!(source(&harness), None);
     // Pre-roll is switched off here too.
-    harness.get_by_label("Pre-roll").click();
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::CheckBox, "Pre-roll")
+        .click();
     harness.run_steps(2);
     assert!(!harness.state().project().graph_tracks[0].items[0].pre_roll);
 }
@@ -3299,7 +3304,13 @@ fn bypassing_a_node_keeps_its_size() {
     let bands = key(&harness, "bands");
     let before = harness.state().editor().node_screen_rect(bands).unwrap();
     right_click(&mut harness, before.center_top() + vec2(0.0, 12.0));
-    harness.get_by_label("Bypass").click();
+    // The node's menu, not the inspector's Bypass button.
+    let panel = harness.state().inspector_rect();
+    harness
+        .query_all_by_label("Bypass")
+        .find(|n| !panel.contains(n.rect().center()))
+        .expect("the node menu's Bypass")
+        .click();
     harness.run_steps(2);
     let editor = harness.state().editor();
     assert!(editor.node(bands).unwrap().bypass);
@@ -3396,4 +3407,72 @@ fn a_graph_too_wide_for_the_canvas_starts_from_its_inputs() {
     assert!(out.right() > canvas.right(), "{out:?} in {canvas:?}");
     assert!(video.left() > canvas.left() && video.left() < canvas.left() + 50.0);
     assert!(editor.view().zoom >= 0.85);
+}
+
+#[test]
+fn the_inspectors_bypass_button_bypasses_the_node() {
+    let mut harness = loaded();
+    select(&mut harness, "bands");
+    let bands = key(&harness, "bands");
+    assert!(harness.query_by_label("NODE").is_some());
+    harness.get_by_label("Bypass").click();
+    harness.run_steps(2);
+    assert!(harness.state().editor().node(bands).unwrap().bypass);
+    harness.get_by_label("Restore").click();
+    harness.run_steps(2);
+    assert!(!harness.state().editor().node(bands).unwrap().bypass);
+}
+
+#[test]
+fn clicking_a_track_shows_its_inspector_until_a_node_is_clicked() {
+    let mut harness = loaded();
+    let bar = pos2(time_x(&harness, 0.5), lane(&harness, 1).top() + 7.0);
+    click(&mut harness, bar, PointerButton::Primary);
+    harness.run_steps(2);
+    assert!(harness.query_by_label("TRACK").is_some());
+    assert!(harness.query_by_label("MIX").is_some());
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::CheckBox, "Mute")
+        .click();
+    harness.run_steps(2);
+    assert!(harness.state().project().audios()[0].muted);
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::CheckBox, "Solo")
+        .click();
+    harness.run_steps(2);
+    assert!(harness.state().project().audios()[0].solo);
+    let volume = harness.state().project().audios()[0].volume;
+    let rect = harness
+        .query_all_by_role(egui::accesskit::Role::SpinButton)
+        .map(|n| n.rect())
+        .find(|r| harness.state().inspector_rect().contains(r.center()))
+        .expect("the volume box");
+    drag(&mut harness, rect.center(), rect.center() - vec2(40.0, 0.0));
+    assert!(harness.state().project().audios()[0].volume < volume);
+
+    select(&mut harness, "bands");
+    assert!(harness.query_by_label("TRACK").is_none());
+    assert!(harness.query_by_label("NODE").is_some());
+}
+
+#[test]
+fn the_inspector_renames_a_node_when_the_name_is_committed() {
+    let mut harness = loaded();
+    select(&mut harness, "bands");
+    let bands = key(&harness, "bands");
+    let panel = harness.state().inspector_rect();
+    let field = harness
+        .query_all_by_role(egui::accesskit::Role::TextInput)
+        .map(|n| n.rect())
+        .find(|r| panel.contains(r.center()))
+        .expect("the name field");
+    click(&mut harness, field.center(), PointerButton::Primary);
+    harness.key_press_modifiers(Modifiers::COMMAND, egui::Key::A);
+    harness.event(Event::Text("Lows".into()));
+    harness.run_steps(2);
+    assert_eq!(harness.state().editor().node(bands).unwrap().label, None);
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(2);
+    let label = harness.state().editor().node(bands).unwrap().label.clone();
+    assert_eq!(label.as_deref(), Some("Lows"));
 }

@@ -27,6 +27,10 @@ pub enum Icon {
     Settings,
     /// Add something: a node.
     Plus,
+    /// Back to the default.
+    Reset,
+    /// Remove or disconnect.
+    Close,
 }
 
 /// The size of one icon cell in a list.
@@ -165,6 +169,26 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
         Icon::Plus => {
             painter.line_segment([at(0.5, 0.05), at(0.5, 0.95)], stroke);
             painter.line_segment([at(0.05, 0.5), at(0.95, 0.5)], stroke);
+        }
+        Icon::Reset => {
+            // Most of a turn, ending in an arrowhead at the top left.
+            let centre = rect.center();
+            let r = rect.width() * 0.45;
+            let points = (0..=14)
+                .map(|i| {
+                    let a = std::f32::consts::PI * (1.0 + 1.6 * i as f32 / 14.0) + 0.45;
+                    centre - r * vec2(a.cos(), a.sin())
+                })
+                .collect();
+            painter.add(egui::Shape::line(points, stroke));
+            painter.add(egui::Shape::line(
+                vec![at(0.05, 0.0), at(0.05, 0.35), at(0.4, 0.35)],
+                stroke,
+            ));
+        }
+        Icon::Close => {
+            painter.line_segment([at(0.15, 0.15), at(0.85, 0.85)], stroke);
+            painter.line_segment([at(0.85, 0.15), at(0.15, 0.85)], stroke);
         }
         Icon::Settings => {
             let centre = rect.center();

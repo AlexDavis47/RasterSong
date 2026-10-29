@@ -39,8 +39,10 @@ until its pass.
 | Raised | `#1C1D21`, hover `#24262B`, pressed `#2A2C31` | `surfaces.raised*`, `lane_bg` | Buttons, dropdowns, checkboxes, timeline lanes |
 | Border | `#2A2C31`, hover `#3A3C42` | `surfaces.border*` | Panel and control outlines |
 | Divider | `#202227` | `surfaces.divider` | Separators and lines inside a panel |
+| Inner card | `#1A1B1F` | `surfaces.inner_card` | A card inside a panel: the modulated parameter |
 | Text | `#ECEDEF` | `surfaces.text` | Primary text |
 | Text muted | `#A1A4AC` | `text_dim` | Secondary text, units |
+| Text soft | `#C3C6CD` | `surfaces.text_soft` | Setting names, ghost buttons |
 | Text faint | `#868A94` | `surfaces.text_faint`, `tick_label` | Labels, hints, disabled |
 | Node | body `#1E1F23`, outline `#33353B`, grid `#1E2024` | `node_body`, `node_outline`, `grid_minor` | The graph canvas |
 | Accent | `#8FA2FF` | `accent`, `playhead` | Playhead, selection, focus, links, primary button |
@@ -147,6 +149,12 @@ value in a box, until the inspector's stage restyles it everywhere. The line und
 layout and tag, sample count included. *Readings* shows no box, since the numbers are right under it.
 
 ## Inspector
+
+Board: [Main](design/ui-v2/Main.dc.html). **Shipped in stage 5**; the layout is `widgets/inspector.rs`, shared by
+the node, graph item and track inspectors. Where it differs from the board: a graph item's name is its graph's,
+shown but not edited there (graphs are renamed in the Graphs tab); graph tracks aren't selectable, so only video
+and audio tracks have a track inspector; the meters under the outputs are still the shared ones. The knob's
+right-click menu is gone, since everything it held is now in the card.
 
 Follows the selection, and every kind of selection uses one layout: a header with the kind ("Node", "Graph item",
 "Track"), the name (editable through `name_edit`) and the actions that apply to it (Bypass with its Alt+click hint

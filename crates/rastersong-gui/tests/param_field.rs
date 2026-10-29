@@ -1,16 +1,13 @@
 //! The node parameter field on its own, driven with real pointer events: every interaction its
-//! hints promise (the slider track, the value box and the modulation amount knob).
+//! hints promise (the slider track, the value box, the reset button, and the modulation card's
+//! knob, direction and disconnect button).
 
-use eframe::egui::{self, Color32, Event, Modifiers, PointerButton, Pos2, pos2, vec2};
+use eframe::egui::{self, Color32, Event, Modifiers, PointerButton, Pos2, Rect, pos2, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use rastersong_engine::{ModMode, Modulation, ParamSpec};
-use rastersong_gui::editor::param_field::{
-    FieldResponse, GUTTER_WIDTH, Modulated, NumberRange, param_field,
-};
+use rastersong_gui::editor::param_field::{Modulated, NumberRange, RAIL_INSET, param_field};
 
-const TRACK: f32 = 120.0;
-const VALUE: f32 = 60.0;
 const SPEC: ParamSpec = ParamSpec::number("amount", 0.5, 0.0, 1.0);
 const RANGE: NumberRange = NumberRange {
     default: 0.5,
@@ -23,11 +20,11 @@ struct State {
     value: f64,
     custom: Option<(f64, f64)>,
     modulation: Option<Modulation>,
-    /// Where the field's row starts, and the spacing between its parts.
-    left: Pos2,
-    spacing: f32,
-    height: f32,
-    response: FieldResponse,
+    /// Where the field's parts were last drawn.
+    track: Rect,
+    value_box: Rect,
+    knob: Option<Rect>,
+    disconnect: bool,
 }
 
 fn harness(modulation: Option<Modulation>) -> Harness<'static, State> {
@@ -35,39 +32,45 @@ fn harness(modulation: Option<Modulation>) -> Harness<'static, State> {
         value: 0.25,
         custom: None,
         modulation,
-        left: Pos2::ZERO,
-        spacing: 0.0,
-        height: 0.0,
-        response: FieldResponse::default(),
+        track: Rect::NOTHING,
+        value_box: Rect::NOTHING,
+        knob: None,
+        disconnect: false,
     };
     let mut harness = Harness::builder()
-        .with_size(vec2(400.0, 300.0))
+        .with_size(vec2(320.0, 300.0))
         .with_step_dt(0.02)
         .build_ui_state(
             |ui, state: &mut State| {
-                ui.horizontal(|ui| {
-                    state.left = ui.cursor().min;
-                    state.spacing = ui.spacing().item_spacing.x;
-                    state.height = ui.spacing().interact_size.y;
-                    let modulated = state.modulation.as_mut().map(|modulation| Modulated {
-                        spec: &SPEC,
-                        modulation,
-                        color: Color32::LIGHT_BLUE,
-                        live: None,
-                    });
-                    let response = param_field(
-                        ui,
-                        "field",
-                        &mut state.value,
-                        RANGE,
-                        (TRACK, VALUE),
-                        modulated,
-                        &mut state.custom,
-                    );
-                    if response.disconnect {
-                        state.response.disconnect = true;
-                    }
+                // The app's fonts are only there from the frame after they're set.
+                if ui.ctx().cumulative_frame_nr() == 0 {
+                    rastersong_gui::theme::apply_style(ui.ctx());
+                    return;
+                }
+                let modulated = state.modulation.as_mut().map(|modulation| Modulated {
+                    spec: &SPEC,
+                    modulation,
+                    color: Color32::LIGHT_BLUE,
+                    live: None,
+                    source: "LFO · out",
                 });
+                let response = param_field(
+                    ui,
+                    "field",
+                    "amount",
+                    &mut state.value,
+                    RANGE,
+                    modulated,
+                    &mut state.custom,
+                    |ui| {
+                        ui.label("amount");
+                    },
+                    |_| {},
+                );
+                state.track = response.track;
+                state.value_box = response.value_box;
+                state.knob = response.knob;
+                state.disconnect |= response.disconnect;
             },
             state,
         );
@@ -75,28 +78,27 @@ fn harness(modulation: Option<Modulation>) -> Harness<'static, State> {
     harness
 }
 
-fn height(harness: &Harness<'_, State>) -> f32 {
-    harness.state().height
-}
-
-/// The knob, in the gutter.
+/// The amount knob's centre.
 fn knob(harness: &Harness<'_, State>) -> Pos2 {
-    let s = harness.state();
-    s.left + vec2(GUTTER_WIDTH / 2.0, height(harness) / 2.0)
+    harness
+        .state()
+        .knob
+        .expect("a modulated field has a knob")
+        .center()
 }
 
-/// The point at `t` (`0..=1`) along the slider track.
+/// The point at `t` (`0..=1`) along the slider's rail.
 fn track(harness: &Harness<'_, State>, t: f32) -> Pos2 {
-    let s = harness.state();
-    // The handle's rail is inset 4 px from each end.
-    let left = s.left.x + GUTTER_WIDTH + s.spacing + 4.0;
-    pos2(left + (TRACK - 8.0) * t, s.left.y + height(harness) / 2.0)
+    let rect = harness.state().track;
+    let left = rect.left() + RAIL_INSET;
+    pos2(
+        left + (rect.width() - 2.0 * RAIL_INSET) * t,
+        rect.center().y,
+    )
 }
 
 fn value_box(harness: &Harness<'_, State>) -> Pos2 {
-    let s = harness.state();
-    let left = s.left.x + GUTTER_WIDTH + s.spacing + TRACK + s.spacing;
-    pos2(left + VALUE / 2.0, s.left.y + height(harness) / 2.0)
+    harness.state().value_box.center()
 }
 
 fn button(
@@ -255,14 +257,23 @@ fn double_click_or_alt_click_resets_the_knob() {
 }
 
 #[test]
-fn right_clicking_the_knob_offers_its_options() {
+fn the_direction_and_disconnect_sit_under_the_track() {
     let mut harness = harness(modulated());
-    let at = knob(&harness);
-    right_click(&mut harness, at);
     harness.get_by_label("One way").click();
     harness.run_steps(2);
     assert_eq!(harness.state().modulation.unwrap().mode, ModMode::Unipolar);
+    harness.get_by_label("Both ways").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().modulation.unwrap().mode, ModMode::Bipolar);
     harness.get_by_label("Disconnect signal").click();
     harness.run_steps(2);
-    assert!(harness.state().response.disconnect);
+    assert!(harness.state().disconnect);
+}
+
+#[test]
+fn the_reset_button_restores_the_default() {
+    let mut harness = harness(None);
+    harness.get_by_label_contains("Reset amount").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().value, 0.5);
 }

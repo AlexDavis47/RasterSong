@@ -842,7 +842,7 @@ independent of each other.
    - [x] **bug** A node's colour strip poked out past its rounded corners: as a rect only 5 px tall, its corners
      were clamped to 2.5 px. It is now the node's own shape cut to the strip.
 4. [x] **feature** Wire probe drum: wrap-around view wheel turned by Alt+scroll, clicks and ↑/↓.
-5. [ ] **feature** Inspector: one layout for node, graph item and track selections; the modulation card.
+5. [x] **feature** Inspector: one layout for node, graph item and track selections; the modulation card.
 6. [ ] **feature** Resources: Media and Graphs together with counts and one filter field.
 7. [ ] **feature** Timeline: calmer headers with remove in the menu, the toolbar's Loop readout.
 8. [ ] **feature** Tempo mode: the tempo group by the Time/Tempo switch, the two-tier ruler, bar shading, the

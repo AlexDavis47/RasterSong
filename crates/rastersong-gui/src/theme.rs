@@ -91,6 +91,8 @@ pub struct Surfaces {
     pub panel: Color32,
     /// The outline of a panel's card.
     pub card_border: Color32,
+    /// A card inside a panel (a modulated parameter's), a step above it.
+    pub inner_card: Color32,
     /// Buttons, dropdowns and checkboxes at rest, hovered and pressed.
     pub raised: Color32,
     pub raised_hover: Color32,
@@ -101,6 +103,8 @@ pub struct Surfaces {
     /// Lines inside a panel: separators and indentation.
     pub divider: Color32,
     pub text: Color32,
+    /// Text a step quieter than `text`: setting names, ghost buttons.
+    pub text_soft: Color32,
     /// Labels, hints and disabled text.
     pub text_faint: Color32,
 }
@@ -168,6 +172,7 @@ impl Theme {
             bar: Color32::from_rgb(0x13, 0x14, 0x17),
             panel: Color32::from_rgb(0x16, 0x17, 0x1a),
             card_border: Color32::from_rgb(0x24, 0x26, 0x2b),
+            inner_card: Color32::from_rgb(0x1a, 0x1b, 0x1f),
             raised: Color32::from_rgb(0x1c, 0x1d, 0x21),
             raised_hover: Color32::from_rgb(0x24, 0x26, 0x2b),
             raised_active: Color32::from_rgb(0x2a, 0x2c, 0x31),
@@ -175,6 +180,7 @@ impl Theme {
             border_hover: Color32::from_rgb(0x3a, 0x3c, 0x42),
             divider: Color32::from_rgb(0x20, 0x22, 0x27),
             text: Color32::from_rgb(0xec, 0xed, 0xef),
+            text_soft: Color32::from_rgb(0xc3, 0xc6, 0xcd),
             text_faint: Color32::from_rgb(0x86, 0x8a, 0x94),
         },
         accent: Color32::from_rgb(0x8f, 0xa2, 0xff),
@@ -244,6 +250,7 @@ impl Theme {
             bar: Color32::from_gray(242),
             panel: Color32::from_gray(248),
             card_border: Color32::from_gray(212),
+            inner_card: Color32::from_gray(242),
             raised: Color32::from_gray(230),
             raised_hover: Color32::from_gray(220),
             raised_active: Color32::from_gray(165),
@@ -251,6 +258,7 @@ impl Theme {
             border_hover: Color32::from_gray(105),
             divider: Color32::from_gray(190),
             text: Color32::from_gray(60),
+            text_soft: Color32::from_gray(80),
             text_faint: Color32::from_gray(140),
         },
         accent: Color32::from_rgb(0x2a, 0x6c, 0xd8),
@@ -606,8 +614,16 @@ mod tests {
             (a.max(b) + 0.05) / (a.min(b) + 0.05)
         }
         let s = &Theme::DARK.surfaces;
-        for bg in [s.ground, s.panel, s.raised, s.raised_hover, s.raised_active] {
+        for bg in [
+            s.ground,
+            s.panel,
+            s.inner_card,
+            s.raised,
+            s.raised_hover,
+            s.raised_active,
+        ] {
             assert!(contrast(s.text, bg) >= 4.5);
+            assert!(contrast(s.text_soft, bg) >= 4.5);
             assert!(contrast(Theme::DARK.text_dim, bg) >= 4.5);
             assert!(contrast(s.text_faint, bg) >= 3.0);
         }

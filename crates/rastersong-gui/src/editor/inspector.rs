@@ -1,8 +1,10 @@
-//! The inspector: name, shared node settings and parameters of the active node.
+//! The inspector of the active node, in the inspector's one layout: the kind with the node's
+//! category and Bypass, its name and what it is, then what its outputs carry, its shared settings
+//! and its parameters.
 
 use std::collections::BTreeMap;
 
-use eframe::egui::{self, RichText, Ui};
+use eframe::egui::{self, Color32, RichText, Ui};
 use rastersong_engine::{AUDIO_OUTPUT, BUS_PARAM};
 use rastersong_engine::{
     Channels, GeneratorLayout, Grouping, Interpolation, MeterKind, Modulation, NodeMeters,
@@ -10,9 +12,16 @@ use rastersong_engine::{
 };
 use rastersong_lang::{tr, tr_args};
 
-use super::param_field::{GUTTER_WIDTH, Modulated, NumberRange, param_field, reset_gesture};
-use super::{GraphEditor, param_port};
+use super::param_field::{
+    Modulated, NumberRange, SMALL_BUTTON, param_field, reset_button, reset_gesture,
+};
+use super::{GraphEditor, NodeKey, param_port};
+use crate::name_edit::name_edit;
 use crate::theme::Theme;
+use crate::widgets::{
+    CHOICE_WIDTH, KeyButton, about, inspector, inspector_body, inspector_header, kind_row,
+    name_style, section, setting_row, swatch, toggle_box,
+};
 
 /// What the inspector needs from outside the editor.
 #[derive(Debug, Default)]
@@ -25,297 +34,224 @@ pub struct InspectorContext<'a> {
     pub meters: &'a [NodeMeters],
 }
 
+/// What the inspector knows of a parameter's pin before borrowing the node to edit it.
+#[derive(Debug, Clone)]
+struct Pin {
+    /// Whether the pin shows on the node.
+    exposed: bool,
+    /// The wire modulating it: its colour, and where it comes from ("Split · low").
+    wire: Option<(Color32, String)>,
+}
+
+/// Width of the column naming each output.
+const PORT_WIDTH: f32 = 34.0;
+
 impl GraphEditor {
     pub fn show_inspector(&mut self, ui: &mut Ui, ctx: &InspectorContext) {
         let Some(key) = self.active.filter(|&k| self.node(k).is_some()) else {
-            ui.add_space(8.0);
-            ui.weak(tr("editor.inspector.empty_select"));
-            ui.add_space(4.0);
-            ui.weak(tr("editor.inspector.empty_add"));
+            inspector(
+                ui,
+                |ui| {
+                    kind_row(ui, tr("inspector.kind.node"), None, |_| {});
+                    about(ui, tr("editor.inspector.empty_select"));
+                    about(ui, tr("editor.inspector.empty_add"));
+                },
+                |_| {},
+            );
             return;
         };
         let kind = self
             .node(key)
             .and_then(|n| self.registry.get(&n.kind))
             .cloned();
-        // Per parameter: whether its pin shows, and the colour of the wire modulating it, if any.
-        let theme = Theme::of(ui.ctx());
-        let pins: Vec<(bool, Option<egui::Color32>)> = {
-            let node = self.node(key).unwrap();
-            let count = kind.as_ref().map_or(0, |k| k.spec.params.len());
-            (0..count)
-                .map(|i| {
-                    let wire = self.wires.iter().find(|w| w.to == (key, param_port(i)));
-                    let color = wire.map(|w| self.output_color(w.from.0, w.from.1, theme).solid());
-                    (self.param_exposed(node, i), color)
-                })
-                .collect()
+        let Some(kind) = kind else {
+            let theme = Theme::of(ui.ctx());
+            let missing = self.node(key).map(|n| n.kind.clone()).unwrap_or_default();
+            inspector(
+                ui,
+                |ui| {
+                    kind_row(ui, tr("inspector.kind.node"), None, |_| {});
+                    ui.colored_label(
+                        theme.error,
+                        tr_args("editor.inspector.unknown_kind", &[("kind", &missing)]),
+                    );
+                },
+                |_| {},
+            );
+            return;
         };
+        let theme = Theme::of(ui.ctx());
+        let pins = self.pins(key, &kind, theme);
+        let outputs: Vec<Color32> = (0..kind.spec.outputs.len())
+            .map(|i| self.output_color(key, i, theme).solid())
+            .collect();
         // What the last compile found: the node's signals and warnings.
         let compiled = self.compiled(key).cloned();
         let mut toggled: Option<(usize, bool)> = None;
         let mut disconnect: Option<usize> = None;
+        let mut bypass = false;
         let node = self.nodes.iter_mut().find(|n| n.key == key).unwrap();
-        let Some(kind) = kind else {
-            ui.colored_label(
-                Theme::of(ui.ctx()).error,
-                tr_args("editor.inspector.unknown_kind", &[("kind", &node.kind)]),
+
+        inspector_header(ui, |ui| {
+            let category = kind.spec.category;
+            let action = if node.bypass {
+                tr("inspector.restore")
+            } else {
+                tr("inspector.bypass")
+            };
+            kind_row(
+                ui,
+                tr("inspector.kind.node"),
+                Some((category.label(), theme.category(Some(category)))),
+                |ui| {
+                    let button = KeyButton::new(action, tr("editor.shortcut.alt_click"))
+                        .height(SMALL_BUTTON)
+                        .ghost();
+                    if ui
+                        .add(button)
+                        .on_hover_text(tr("inspector.bypass.help"))
+                        .clicked()
+                    {
+                        bypass = true;
+                    }
+                },
             );
-            return;
-        };
-
-        // Name: shown on the node instead of the type.
-        {
-            let mut name = node.label.clone().unwrap_or_default();
-            let edit = egui::TextEdit::singleline(&mut name)
-                .hint_text(kind.label())
-                .font(egui::TextStyle::Heading)
-                .desired_width(f32::INFINITY);
-            if ui
-                .add(edit)
-                .on_hover_text(tr("editor.inspector.name_help"))
-                .changed()
-            {
-                let name = name.trim();
-                node.label = (!name.is_empty()).then(|| name.to_owned());
+            // Name: shown on the node instead of the type. Unnamed, the node is titled with its
+            // type, so the field shows that; committing the type's name (or nothing) unnames it.
+            let current = node.label.as_deref().unwrap_or(kind.label()).to_owned();
+            let edit = name_edit(ui, egui::Id::new("node-name"), &current, name_style);
+            edit.response
+                .on_hover_text(tr("editor.inspector.name_help"));
+            if let Some(name) = edit.committed {
+                node.label = (name != kind.label()).then_some(name);
             }
-        }
-        ui.horizontal(|ui| {
-            ui.weak(kind.label());
-            ui.weak(tr("editor.inspector.separator"));
-            ui.weak(&node.id);
+            about(
+                ui,
+                &tr_args(
+                    "inspector.node.about",
+                    &[
+                        ("kind", kind.label()),
+                        ("id", &node.id),
+                        ("description", kind.description()),
+                    ],
+                ),
+            );
+            if let Some(compiled) = &compiled {
+                diagnostics(ui, compiled, theme);
+            }
         });
-        ui.add_space(2.0);
-        ui.label(RichText::new(kind.description()).small());
-        if let Some(compiled) = &compiled {
-            for diagnostic in &compiled.diagnostics {
-                ui.add_space(4.0);
-                match diagnostic.severity {
-                    Severity::Note => ui.label(
-                        RichText::new(tr_args(
-                            "editor.inspector.note_line",
-                            &[("message", &diagnostic.message)],
-                        ))
-                        .small()
-                        .color(theme.text_dim),
-                    ),
-                    Severity::Warning => ui.colored_label(
-                        theme.warning,
-                        tr_args(
-                            "editor.inspector.warning_line",
-                            &[("message", &diagnostic.message)],
-                        ),
-                    ),
-                };
+        inspector_body(ui, |ui| {
+            if let Some(compiled) = &compiled {
+                signals(ui, &kind, compiled, &outputs, ctx.meters, &node.id);
             }
-            signals(ui, &kind, compiled);
-            node_meters(ui, &kind, ctx.meters, &node.id);
-        }
-
-        let shared_settings =
-            kind.spec.inputs.len() > 1 || kind.spec.per_channel || kind.spec.takes_layout;
-        if shared_settings {
-            section(ui, tr("editor.inspector.node_settings"));
-            egui::Grid::new("node-settings")
-                .num_columns(2)
-                .spacing([10.0, 8.0])
-                .show(ui, |ui| {
-                    if kind.spec.inputs.len() > 1 {
-                        ui.label(tr("editor.setting.resampling"))
-                            .on_hover_text(tr("editor.setting.resampling.help"));
-                        choice(
-                            ui,
-                            "resampling",
-                            &mut node.interpolation,
-                            Interpolation::default(),
-                            &[
-                                (
-                                    Interpolation::Hold,
-                                    tr("editor.setting.resampling.hold"),
-                                    tr("editor.setting.resampling.hold.help"),
-                                ),
-                                (
-                                    Interpolation::Linear,
-                                    tr("editor.setting.resampling.linear"),
-                                    tr("editor.setting.resampling.linear.help"),
-                                ),
-                            ],
-                        );
-                        ui.end_row();
-                        ui.label(tr("editor.setting.grouping"))
-                            .on_hover_text(tr("editor.setting.grouping.help"));
-                        choice(
-                            ui,
-                            "grouping",
-                            &mut node.grouping,
-                            Grouping::default(),
-                            &[
-                                (
-                                    Grouping::Pixels,
-                                    tr("editor.setting.grouping.pixels"),
-                                    tr("editor.setting.grouping.pixels.help"),
-                                ),
-                                (
-                                    Grouping::Samples,
-                                    tr("editor.setting.grouping.samples"),
-                                    tr("editor.setting.grouping.samples.help"),
-                                ),
-                            ],
-                        );
-                        ui.end_row();
-                    }
-                    if kind.spec.takes_layout {
-                        ui.label(tr("editor.setting.layout"))
-                            .on_hover_text(tr("editor.setting.layout.help"));
-                        choice(
-                            ui,
-                            "layout",
-                            &mut node.layout,
-                            GeneratorLayout::default(),
-                            &[
-                                (
-                                    GeneratorLayout::Video,
-                                    tr("editor.setting.layout.video"),
-                                    tr("editor.setting.layout.video.help"),
-                                ),
-                                (
-                                    GeneratorLayout::Audio,
-                                    tr("editor.setting.layout.audio"),
-                                    tr("editor.setting.layout.audio.help"),
-                                ),
-                            ],
-                        );
-                        ui.end_row();
-                    }
-                    if kind.spec.per_channel {
-                        ui.label(tr("editor.setting.channels"))
-                            .on_hover_text(tr("editor.setting.channels.help"));
-                        choice(
-                            ui,
-                            "channels",
-                            &mut node.channels,
-                            Channels::default(),
-                            &[
-                                (
-                                    Channels::Together,
-                                    tr("editor.setting.channels.together"),
-                                    tr("editor.setting.channels.together.help"),
-                                ),
-                                (
-                                    Channels::Separate,
-                                    tr("editor.setting.channels.separate"),
-                                    tr("editor.setting.channels.separate.help"),
-                                ),
-                            ],
-                        );
-                        ui.end_row();
+            let shared_settings =
+                kind.spec.inputs.len() > 1 || kind.spec.per_channel || kind.spec.takes_layout;
+            if shared_settings {
+                section(ui, tr("editor.inspector.node_settings"), |ui| {
+                    node_settings(ui, &kind, node);
+                });
+            }
+            if !kind.spec.params.is_empty() {
+                section(ui, tr("editor.inspector.parameters"), |ui| {
+                    ui.spacing_mut().item_spacing.y = 12.0;
+                    for (index, spec) in kind.spec.params.iter().enumerate() {
+                        let tracks = (node.kind == AUDIO_OUTPUT && spec.name == BUS_PARAM)
+                            .then_some(Names {
+                                names: ctx.buses,
+                                missing: "editor.param.no_such_bus",
+                                empty: "editor.param.no_buses",
+                            });
+                        let Pin { exposed, wire } = pins[index].clone();
+                        // A parameter the node's settings leave unused is hidden, unless a
+                        // signal is wired to it (or its pin shown): that stays in view,
+                        // greyed, with the reason.
+                        let used =
+                            spec.is_used(|name| choice_value(kind.spec.params, &node.params, name));
+                        if !used && !exposed && wire.is_none() {
+                            continue;
+                        }
+                        let mut modulation = wire.map(|(color, source)| {
+                            let current = node.modulation.get(spec.name).copied();
+                            let value = current.unwrap_or_else(|| spec.default_modulation());
+                            (value, current, color, source)
+                        });
+                        let mut expose = spec.modulatable.then_some(exposed);
+                        // Whole-only parameters are always whole, so they have no toggle.
+                        let mut integer = (matches!(spec.kind, ParamKind::Number { .. })
+                            && !spec.integer)
+                            .then(|| node.integer.contains(spec.name));
+                        let live = ctx
+                            .params
+                            .iter()
+                            .find(|p| *p.node == node.id && p.index == index)
+                            .map(|p| f64::from(p.value));
+                        // Scoped to the node, so same-named parameters of different nodes
+                        // (and their stored slider ranges and open menus) never share ids.
+                        let node_id = node.id.clone();
+                        let mut slider = node.ranges.get(spec.name).map(|r| (r[0], r[1]));
+                        let disconnected = ui
+                            .push_id(node_id, |ui| {
+                                if !used {
+                                    ui.set_opacity(0.5);
+                                }
+                                ui.vertical(|ui| {
+                                    ui.spacing_mut().item_spacing.y = 4.0;
+                                    let disconnected = param_row(ParamRow {
+                                        ui,
+                                        kind: &kind,
+                                        spec,
+                                        params: &mut node.params,
+                                        tracks,
+                                        integer: integer.as_mut(),
+                                        expose: expose.as_mut(),
+                                        modulation: modulation
+                                            .as_mut()
+                                            .map(|(m, _, c, s)| (m, *c, s.as_str())),
+                                        live,
+                                        slider: &mut slider,
+                                    });
+                                    if !used && let Some(when) = spec.when {
+                                        ui.weak(unused_reason(&kind, &when));
+                                    }
+                                    disconnected
+                                })
+                                .inner
+                            })
+                            .inner;
+                        if disconnected {
+                            disconnect = Some(index);
+                        }
+                        match slider {
+                            Some((lo, hi)) => {
+                                node.ranges.insert(spec.name.to_owned(), [lo, hi]);
+                            }
+                            None => {
+                                node.ranges.remove(spec.name);
+                            }
+                        }
+                        if let Some(on) = integer {
+                            if on {
+                                node.integer.insert(spec.name.to_owned());
+                            } else {
+                                node.integer.remove(spec.name);
+                            }
+                        }
+                        if expose.is_some_and(|e| e != exposed) {
+                            toggled = Some((index, !exposed));
+                        }
+                        if let Some((value, current, _, _)) = modulation
+                            && Some(value) != current
+                        {
+                            node.modulation.insert(spec.name.to_owned(), value);
+                        }
                     }
                 });
-        }
-
-        if !kind.spec.params.is_empty() {
-            section(ui, tr("editor.inspector.parameters"));
-            // Sized from the panel once: sizing from the row's own contents would feed back
-            // through the layout and make sliders change size while dragged.
-            let track_width = (ui.available_width() - CONTROL_ROOM).max(MIN_TRACK);
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 4.0;
-                for (index, spec) in kind.spec.params.iter().enumerate() {
-                    let tracks = if node.kind == AUDIO_OUTPUT && spec.name == BUS_PARAM {
-                        Some(Names {
-                            names: ctx.buses,
-                            missing: "editor.param.no_such_bus",
-                            empty: "editor.param.no_buses",
-                        })
-                    } else {
-                        None
-                    };
-                    let (exposed, wire) = pins[index];
-                    // A parameter the node's settings leave unused is hidden, unless a signal is
-                    // wired to it (or its pin shown): that stays in view, greyed, with the reason.
-                    let used =
-                        spec.is_used(|name| choice_value(kind.spec.params, &node.params, name));
-                    if !used && !exposed && wire.is_none() {
-                        continue;
-                    }
-                    let mut modulation = wire.map(|color| {
-                        let current = node.modulation.get(spec.name).copied();
-                        let value = current.unwrap_or_else(|| spec.default_modulation());
-                        (value, current, color)
-                    });
-                    let mut expose = spec.modulatable.then_some(exposed);
-                    // Whole-only parameters are always whole, so they have no toggle.
-                    let mut integer = (matches!(spec.kind, ParamKind::Number { .. })
-                        && !spec.integer)
-                        .then(|| node.integer.contains(spec.name));
-                    let live = ctx
-                        .params
-                        .iter()
-                        .find(|p| *p.node == node.id && p.index == index)
-                        .map(|p| f64::from(p.value));
-                    // Scoped to the node, so same-named parameters of different nodes (and their
-                    // stored slider ranges and open menus) never share ids.
-                    let node_id = node.id.clone();
-                    let mut slider = node.ranges.get(spec.name).map(|r| (r[0], r[1]));
-                    let disconnected = ui
-                        .push_id(node_id, |ui| {
-                            if !used {
-                                ui.set_opacity(0.5);
-                            }
-                            let disconnected = param_row(ParamRow {
-                                ui,
-                                kind: &kind,
-                                spec,
-                                params: &mut node.params,
-                                tracks,
-                                track_width,
-                                integer: integer.as_mut(),
-                                expose: expose.as_mut(),
-                                modulation: modulation.as_mut().map(|(m, _, c)| (m, *c)),
-                                live,
-                                slider: &mut slider,
-                            });
-                            if !used && let Some(when) = spec.when {
-                                ui.horizontal(|ui| {
-                                    ui.add_space(GUTTER_WIDTH + ui.spacing().item_spacing.x);
-                                    ui.weak(unused_reason(&kind, &when));
-                                });
-                            }
-                            disconnected
-                        })
-                        .inner;
-                    ui.add_space(PARAM_GAP);
-                    if disconnected {
-                        disconnect = Some(index);
-                    }
-                    match slider {
-                        Some((lo, hi)) => {
-                            node.ranges.insert(spec.name.to_owned(), [lo, hi]);
-                        }
-                        None => {
-                            node.ranges.remove(spec.name);
-                        }
-                    }
-                    if let Some(on) = integer {
-                        if on {
-                            node.integer.insert(spec.name.to_owned());
-                        } else {
-                            node.integer.remove(spec.name);
-                        }
-                    }
-                    if expose.is_some_and(|e| e != exposed) {
-                        toggled = Some((index, !exposed));
-                    }
-                    if let Some((value, current, _)) = modulation
-                        && Some(value) != current
-                    {
-                        node.modulation.insert(spec.name.to_owned(), value);
-                    }
-                }
-            });
-        } else if !shared_settings {
-            ui.add_space(8.0);
-            ui.weak(tr("editor.inspector.no_settings"));
+            } else if !shared_settings {
+                ui.weak(tr("editor.inspector.no_settings"));
+            }
+        });
+        if bypass {
+            self.toggle_bypass(&[key].into());
         }
         if let Some((index, exposed)) = toggled {
             self.set_param_exposed(key, index, exposed);
@@ -323,6 +259,160 @@ impl GraphEditor {
         if let Some(index) = disconnect {
             self.disconnect_input((key, param_port(index)));
         }
+    }
+
+    /// Per parameter of node `key`: whether its pin shows, and the wire modulating it, if any.
+    fn pins(&self, key: NodeKey, kind: &NodeType, theme: &Theme) -> Vec<Pin> {
+        let Some(node) = self.node(key) else {
+            return Vec::new();
+        };
+        (0..kind.spec.params.len())
+            .map(|i| {
+                let wire = self.wires.iter().find(|w| w.to == (key, param_port(i)));
+                let wire = wire.map(|w| {
+                    let (from, port) = w.from;
+                    let color = self.output_color(from, port, theme).solid();
+                    let name = self.node(from).map(|n| self.node_title(n));
+                    let port = self
+                        .node(from)
+                        .and_then(|n| self.registry.get(&n.kind))
+                        .and_then(|k| k.spec.outputs.get(port))
+                        .map_or("", |o| o.name);
+                    let source = tr_args(
+                        "inspector.source",
+                        &[("node", &name.unwrap_or_default()), ("port", port)],
+                    );
+                    (color, source)
+                });
+                Pin {
+                    exposed: self.param_exposed(node, i),
+                    wire,
+                }
+            })
+            .collect()
+    }
+}
+
+/// The notes and warnings the last compile left on the node.
+fn diagnostics(ui: &mut Ui, compiled: &NodeStats, theme: &Theme) {
+    for diagnostic in &compiled.diagnostics {
+        match diagnostic.severity {
+            Severity::Note => ui.label(
+                RichText::new(tr_args(
+                    "editor.inspector.note_line",
+                    &[("message", &diagnostic.message)],
+                ))
+                .size(12.0)
+                .color(theme.text_dim),
+            ),
+            Severity::Warning => ui.label(
+                RichText::new(tr_args(
+                    "editor.inspector.warning_line",
+                    &[("message", &diagnostic.message)],
+                ))
+                .size(12.0)
+                .color(theme.warning),
+            ),
+        };
+    }
+}
+
+/// The node's shared settings, a row each: Resampling and Grouping for nodes that mix inputs,
+/// Layout for generators, Channels for effects that can work channel by channel.
+fn node_settings(ui: &mut Ui, kind: &NodeType, node: &mut super::EditorNode) {
+    if kind.spec.inputs.len() > 1 {
+        choice(
+            ui,
+            (
+                "resampling",
+                "editor.setting.resampling",
+                "editor.setting.resampling.help",
+            ),
+            &mut node.interpolation,
+            Interpolation::default(),
+            &[
+                (
+                    Interpolation::Hold,
+                    tr("editor.setting.resampling.hold"),
+                    tr("editor.setting.resampling.hold.help"),
+                ),
+                (
+                    Interpolation::Linear,
+                    tr("editor.setting.resampling.linear"),
+                    tr("editor.setting.resampling.linear.help"),
+                ),
+            ],
+        );
+        choice(
+            ui,
+            (
+                "grouping",
+                "editor.setting.grouping",
+                "editor.setting.grouping.help",
+            ),
+            &mut node.grouping,
+            Grouping::default(),
+            &[
+                (
+                    Grouping::Pixels,
+                    tr("editor.setting.grouping.pixels"),
+                    tr("editor.setting.grouping.pixels.help"),
+                ),
+                (
+                    Grouping::Samples,
+                    tr("editor.setting.grouping.samples"),
+                    tr("editor.setting.grouping.samples.help"),
+                ),
+            ],
+        );
+    }
+    if kind.spec.takes_layout {
+        choice(
+            ui,
+            (
+                "layout",
+                "editor.setting.layout",
+                "editor.setting.layout.help",
+            ),
+            &mut node.layout,
+            GeneratorLayout::default(),
+            &[
+                (
+                    GeneratorLayout::Video,
+                    tr("editor.setting.layout.video"),
+                    tr("editor.setting.layout.video.help"),
+                ),
+                (
+                    GeneratorLayout::Audio,
+                    tr("editor.setting.layout.audio"),
+                    tr("editor.setting.layout.audio.help"),
+                ),
+            ],
+        );
+    }
+    if kind.spec.per_channel {
+        choice(
+            ui,
+            (
+                "channels",
+                "editor.setting.channels",
+                "editor.setting.channels.help",
+            ),
+            &mut node.channels,
+            Channels::default(),
+            &[
+                (
+                    Channels::Together,
+                    tr("editor.setting.channels.together"),
+                    tr("editor.setting.channels.together.help"),
+                ),
+                (
+                    Channels::Separate,
+                    tr("editor.setting.channels.separate"),
+                    tr("editor.setting.channels.separate.help"),
+                ),
+            ],
+        );
     }
 }
 
@@ -380,100 +470,111 @@ struct ParamRow<'a, 'u> {
     params: &'a mut BTreeMap<String, ParamValue>,
     /// For an audio output's bus: the names to pick from.
     tracks: Option<Names<'a>>,
-    track_width: f32,
     /// Whether the number is rounded to whole numbers.
     integer: Option<&'a mut bool>,
     /// Whether the parameter's pin shows on the node, for parameters that can be modulated.
     expose: Option<&'a mut bool>,
-    /// The modulation of a connected parameter, and the wire's colour.
-    modulation: Option<(&'a mut Modulation, egui::Color32)>,
+    /// The modulation of a connected parameter, the wire's colour and where it comes from.
+    modulation: Option<(&'a mut Modulation, Color32, &'a str)>,
     /// A modulated parameter's value at the playhead.
     live: Option<f64>,
     /// The slider range the user set, if any.
     slider: &'a mut Option<(f64, f64)>,
 }
 
-/// Width a parameter's control line needs besides the slider: the gutter (under the expose
-/// toggle, holding the amount knob), the value box and the spacing between them.
-const CONTROL_ROOM: f32 = GUTTER_WIDTH + VALUE_WIDTH + 24.0;
-/// The narrowest a slider gets in a narrow inspector.
-const MIN_TRACK: f32 = 60.0;
-/// Minimum width of a slider's value box, so it doesn't resize as the digits change.
-const VALUE_WIDTH: f32 = 58.0;
-/// Space between parameters.
-const PARAM_GAP: f32 = 6.0;
-
-/// What each output carries, as the last compile worked it out: its size and tag.
-fn signals(ui: &mut Ui, kind: &NodeType, compiled: &NodeStats) {
-    if compiled.outputs.is_empty() {
+/// What each output carries, as the last compile worked it out: its colour, tag and size; then
+/// the node's meters.
+fn signals(
+    ui: &mut Ui,
+    kind: &NodeType,
+    compiled: &NodeStats,
+    colors: &[Color32],
+    meters: &[NodeMeters],
+    id: &str,
+) {
+    if compiled.outputs.is_empty() && kind.spec.meters.is_empty() {
         return;
     }
-    ui.add_space(4.0);
-    let output = |i: usize| kind.spec.outputs.get(i).map_or("?", |o| o.name);
-    // Split's unused channels are silence; listing them adds nothing.
-    let shown = match compiled.inputs.first() {
-        Some(input) if kind.kind == rastersong_engine::SPLIT => {
-            (input.samples_per_pixel as usize).clamp(1, compiled.outputs.len())
-        }
-        _ => compiled.outputs.len(),
+    let theme = Theme::of(ui.ctx());
+    let title = if compiled.outputs.len() > 1 {
+        tr("inspector.outputs")
+    } else {
+        tr("inspector.output")
     };
-    for (i, layout) in compiled.outputs.iter().take(shown).enumerate() {
-        let text = if compiled.outputs.len() > 1 {
-            tr_args(
-                "editor.inspector.output_line",
-                &[
-                    ("port", output(i)),
-                    ("layout", &layout.to_string()),
-                    ("tag", &layout.tag.to_string()),
-                ],
-            )
-        } else {
-            tr_args(
-                "editor.inspector.output_single",
-                &[
-                    ("layout", &layout.to_string()),
-                    ("tag", &layout.tag.to_string()),
-                ],
-            )
+    section(ui, title, |ui| {
+        ui.spacing_mut().item_spacing.y = 6.0;
+        let output = |i: usize| kind.spec.outputs.get(i).map_or("?", |o| o.name);
+        // Split's unused channels are silence; listing them adds nothing.
+        let shown = match compiled.inputs.first() {
+            Some(input) if kind.kind == rastersong_engine::SPLIT => {
+                (input.samples_per_pixel as usize).clamp(1, compiled.outputs.len())
+            }
+            _ => compiled.outputs.len(),
         };
-        ui.label(RichText::new(text).small().weak())
-            .on_hover_text(tr("editor.inspector.signal_help"));
-    }
+        for (i, layout) in compiled.outputs.iter().take(shown).enumerate() {
+            // A line of text, not a row of controls: only as tall as its text.
+            let size = egui::vec2(ui.available_width(), 16.0);
+            let row = egui::Layout::left_to_right(egui::Align::Center);
+            ui.allocate_ui_with_layout(size, row, |ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(PORT_WIDTH, 16.0), egui::Sense::hover());
+                ui.painter().text(
+                    rect.left_center(),
+                    egui::Align2::LEFT_CENTER,
+                    output(i),
+                    egui::FontId::monospace(12.0),
+                    theme.text_dim,
+                );
+                swatch(ui, 18.0, colors.get(i).copied().unwrap_or(theme.text_dim));
+                ui.label(RichText::new(layout.tag.to_string()).size(12.0))
+                    .on_hover_text(tr("editor.inspector.signal_help"));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(layout.to_string())
+                            .monospace()
+                            .size(12.0)
+                            .color(theme.surfaces.text_faint),
+                    );
+                });
+            });
+        }
+        node_meters(ui, kind, meters, id);
+    });
 }
 
-fn section(ui: &mut Ui, title: &str) {
-    ui.add_space(12.0);
-    ui.label(RichText::new(title).strong());
-    ui.separator();
-}
-
-/// A drop-down of `options` (value, label, help). Alt+click or right-click resets it to `default`.
+/// A setting's row with a drop-down of `options` (value, label, help). Alt+click or right-click
+/// resets it to `default`. `id` is the drop-down's id; `name` and `help` are the lang keys of the
+/// setting's name and help.
 fn choice<T: PartialEq + Copy>(
     ui: &mut Ui,
-    id: &str,
+    (id, name, help): (&str, &str, &str),
     value: &mut T,
     default: T,
     options: &[(T, &str, &str)],
 ) {
-    let current = options.iter().find(|o| o.0 == *value).map_or("", |o| o.1);
-    let combo = egui::ComboBox::from_id_salt(id)
-        .selected_text(current)
-        .width(150.0)
-        .show_ui(ui, |ui| {
-            for &(option, label, help) in options {
-                ui.selectable_value(value, option, label)
-                    .on_hover_text(help);
-            }
-        })
-        .response;
-    if reset_gesture(ui, &combo, *value != default) {
-        *value = default;
-        egui::Popup::close_all(ui.ctx());
-    }
+    setting_row(ui, tr(name), tr(help), |ui| {
+        let current = options.iter().find(|o| o.0 == *value).map_or("", |o| o.1);
+        let combo = egui::ComboBox::from_id_salt(id)
+            .selected_text(current)
+            .width(CHOICE_WIDTH)
+            .show_ui(ui, |ui| {
+                for &(option, label, help) in options {
+                    ui.selectable_value(value, option, label)
+                        .on_hover_text(help);
+                }
+            })
+            .response;
+        if reset_gesture(ui, &combo, *value != default) {
+            *value = default;
+            egui::Popup::close_all(ui.ctx());
+        }
+    });
 }
 
-/// One parameter, on two lines: the expose toggle, label and reset button; then its editor (with
-/// the modulation of a connected parameter). Values equal to the default are not stored, which
+/// One parameter: its pin toggle and name over its control. A number's row carries the int
+/// toggle, the value box and the reset button, and a modulated number is set in a card with the
+/// modulation's controls (see [`param_field`]). Values equal to the default are not stored, which
 /// keeps graph files short. Returns true if the user asked to disconnect the modulating signal.
 fn param_row(row: ParamRow) -> bool {
     let ParamRow {
@@ -482,10 +583,9 @@ fn param_row(row: ParamRow) -> bool {
         spec,
         params,
         tracks,
-        track_width,
         integer,
         expose,
-        mut modulation,
+        modulation,
         live,
         slider,
     } = row;
@@ -498,23 +598,24 @@ fn param_row(row: ParamRow) -> bool {
         .unwrap_or_else(|| default.clone());
     let mut reset = false;
     let value_differs = value != default;
-    ui.horizontal(|ui| {
+    let label = kind.param_label(spec.name);
+    let pin_color = modulation.as_ref().map(|m| m.1);
+    // The pin toggle (or the reason there is none) and the name, first on the row.
+    let leading = |ui: &mut Ui| {
+        let theme = Theme::of(ui.ctx());
         match expose {
             Some(exposed) => {
-                let theme = Theme::of(ui.ctx());
-                let color = if *exposed {
-                    theme.accent
-                } else {
-                    ui.visuals().weak_text_color()
-                };
                 let hover = if *exposed {
                     tr("editor.param.pin_hide")
                 } else {
                     tr("editor.param.pin_show")
                 };
-                if diamond_toggle(ui, *exposed, color)
-                    .on_hover_text(hover)
-                    .clicked()
+                let color = pin_color.unwrap_or(theme.accent);
+                if toggle_box(ui, *exposed, color, hover, |painter, rect, color, on| {
+                    diamond(painter, rect, color, on);
+                })
+                .on_hover_text(hover)
+                .clicked()
                 {
                     *exposed = !*exposed;
                 }
@@ -525,31 +626,14 @@ fn param_row(row: ParamRow) -> bool {
                     &[("reason", kind.param_locked(spec).trim_end_matches('.'))],
                 ));
             }
-            None => {
-                ui.allocate_space(egui::vec2(GUTTER_WIDTH, 14.0));
-            }
+            None => {}
         }
-        ui.label(kind.param_label(spec.name))
+        ui.label(RichText::new(label).font(crate::theme::medium(13.0)))
             .on_hover_text(kind.param_help(spec.name));
         if !spec.unit.is_empty() {
-            ui.weak(spec.unit);
+            ui.label(RichText::new(spec.unit).size(12.0).color(theme.text_dim));
         }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let reset_button = ui
-                .add_enabled(
-                    value != default,
-                    egui::Button::new("↺").small().frame(false),
-                )
-                .on_hover_text(tr("editor.param.reset"));
-            reset = reset_button.clicked();
-            if let Some(integer) = integer {
-                ui.toggle_value(integer, tr("editor.param.int"))
-                    .on_hover_text(tr("editor.param.int.help"));
-            }
-        });
-    });
-    // Controls other than numbers start where a number's track does, past the gutter.
-    let indent = GUTTER_WIDTH + ui.spacing().item_spacing.x;
+    };
     match (spec.kind, &mut value) {
         (
             ParamKind::Number {
@@ -571,93 +655,60 @@ fn param_row(row: ParamRow) -> bool {
                 whole: integer_on || spec.integer,
             };
             let rounded = range.whole;
+            let modulated = modulation.map(|(m, color, source)| Modulated {
+                spec,
+                modulation: m,
+                color,
+                live,
+                source,
+            });
+            let trailing = |ui: &mut Ui| {
+                if let Some(integer) = integer {
+                    let theme = Theme::of(ui.ctx());
+                    let text = tr("editor.param.int");
+                    if toggle_box(
+                        ui,
+                        *integer,
+                        theme.accent,
+                        text,
+                        |painter, rect, color, _| {
+                            painter.text(
+                                rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                text,
+                                egui::FontId::monospace(11.0),
+                                color,
+                            );
+                        },
+                    )
+                    .on_hover_text(tr("editor.param.int.help"))
+                    .clicked()
+                    {
+                        *integer = !*integer;
+                    }
+                }
+            };
+            let response = param_field(
+                ui, spec.name, label, n, range, modulated, slider, leading, trailing,
+            );
+            disconnect = response.disconnect;
+            if rounded {
+                *n = n.round();
+            }
+        }
+        (kind_of, _) => {
             ui.horizontal(|ui| {
-                let modulated = modulation.as_mut().map(|(m, color)| Modulated {
-                    spec,
-                    modulation: m,
-                    color: *color,
-                    live,
+                ui.spacing_mut().item_spacing.x = 8.0;
+                leading(ui);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let shown = match &default {
+                        ParamValue::Text(s) => s.clone(),
+                        other => format!("{other:?}"),
+                    };
+                    reset = reset_button(ui, label, &shown, value_differs);
                 });
-                let response = param_field(
-                    ui,
-                    spec.name,
-                    n,
-                    range,
-                    (track_width, VALUE_WIDTH),
-                    modulated,
-                    slider,
-                );
-                disconnect = response.disconnect;
-                if rounded {
-                    *n = n.round();
-                }
             });
-        }
-        (ParamKind::Choice { options, .. }, ParamValue::Text(s)) => {
-            ui.horizontal(|ui| {
-                ui.add_space(indent);
-                let combo = egui::ComboBox::from_id_salt(spec.name)
-                    .selected_text(s.as_str())
-                    .width(150.0)
-                    .show_ui(ui, |ui| {
-                        for &option in options {
-                            ui.selectable_value(s, option.to_owned(), option);
-                        }
-                    })
-                    .response;
-                if reset_gesture(ui, &combo, value_differs) {
-                    reset = true;
-                    egui::Popup::close_all(ui.ctx());
-                }
-            });
-        }
-        (ParamKind::Text { .. }, ParamValue::Text(s)) => match tracks {
-            // Audio inputs pick one of the project's tracks, audio outputs one of its buses.
-            Some(names) => {
-                let tracks = names.names;
-                let missing = !tracks.contains(s);
-                let shown = if missing {
-                    tr_args(names.missing, &[("track", s)])
-                } else {
-                    s.clone()
-                };
-                let combo = egui::ComboBox::from_id_salt(spec.name)
-                    .selected_text(RichText::new(shown).color(if missing {
-                        Theme::of(ui.ctx()).error
-                    } else {
-                        ui.visuals().text_color()
-                    }))
-                    .width(150.0)
-                    .show_ui(ui, |ui| {
-                        if tracks.is_empty() {
-                            ui.weak(tr(names.empty));
-                        }
-                        for track in tracks {
-                            ui.selectable_value(s, track.clone(), track);
-                        }
-                    })
-                    .response;
-                if reset_gesture(ui, &combo, value_differs) {
-                    reset = true;
-                    egui::Popup::close_all(ui.ctx());
-                }
-            }
-            None => {
-                // Named, so it keeps focus while typing changes the lines above it (a renamed
-                // port's signals), which would shift an automatic id.
-                let field = ui.add(
-                    egui::TextEdit::singleline(s)
-                        .id_salt(spec.name)
-                        .desired_width(150.0),
-                );
-                if reset_gesture(ui, &field, value_differs) {
-                    reset = true;
-                }
-            }
-        },
-        // A value of the wrong type (from a hand-edited file): offer to reset it.
-        _ => {
-            ui.colored_label(Theme::of(ui.ctx()).error, format!("{value:?}"));
+            reset |= other_control(ui, kind_of, spec, &mut value, tracks, value_differs);
         }
     }
     if reset {
@@ -671,53 +722,112 @@ fn param_row(row: ParamRow) -> bool {
     disconnect
 }
 
-/// The mark in place of the expose toggle on a parameter that can't be modulated: the diamond
-/// crossed out and dim, with the reason on hover.
-fn locked_diamond(ui: &mut Ui) -> egui::Response {
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(GUTTER_WIDTH, 14.0), egui::Sense::hover());
-    let c = rect.center();
-    let r = 4.5;
-    let color = ui.visuals().weak_text_color().gamma_multiply(0.6);
-    let stroke = egui::Stroke::new(1.0, color);
-    ui.painter().add(egui::Shape::convex_polygon(
-        vec![
-            c + egui::vec2(0.0, -r),
-            c + egui::vec2(r, 0.0),
-            c + egui::vec2(0.0, r),
-            c + egui::vec2(-r, 0.0),
-        ],
-        egui::Color32::TRANSPARENT,
-        stroke,
-    ));
-    ui.painter()
-        .line_segment([c + egui::vec2(-r, r), c + egui::vec2(r, -r)], stroke);
-    response
+/// The control of a parameter that isn't a number: a drop-down of its choices, of the project's
+/// buses, or a text field. Returns true if the user reset it.
+fn other_control(
+    ui: &mut Ui,
+    kind: ParamKind,
+    spec: &ParamSpec,
+    value: &mut ParamValue,
+    tracks: Option<Names>,
+    differs: bool,
+) -> bool {
+    let width = ui.available_width();
+    match (kind, value) {
+        (ParamKind::Choice { options, .. }, ParamValue::Text(s)) => {
+            let combo = egui::ComboBox::from_id_salt(spec.name)
+                .selected_text(s.as_str())
+                .width(width)
+                .show_ui(ui, |ui| {
+                    for &option in options {
+                        ui.selectable_value(s, option.to_owned(), option);
+                    }
+                })
+                .response;
+            let reset = reset_gesture(ui, &combo, differs);
+            if reset {
+                egui::Popup::close_all(ui.ctx());
+            }
+            reset
+        }
+        // Audio outputs pick one of the project's buses.
+        (ParamKind::Text { .. }, ParamValue::Text(s)) if tracks.is_some() => {
+            let names = tracks.unwrap();
+            let missing = !names.names.contains(s);
+            let shown = if missing {
+                tr_args(names.missing, &[("track", s)])
+            } else {
+                s.clone()
+            };
+            let combo = egui::ComboBox::from_id_salt(spec.name)
+                .selected_text(RichText::new(shown).color(if missing {
+                    Theme::of(ui.ctx()).error
+                } else {
+                    ui.visuals().text_color()
+                }))
+                .width(width)
+                .show_ui(ui, |ui| {
+                    if names.names.is_empty() {
+                        ui.weak(tr(names.empty));
+                    }
+                    for name in names.names {
+                        ui.selectable_value(s, name.clone(), name);
+                    }
+                })
+                .response;
+            let reset = reset_gesture(ui, &combo, differs);
+            if reset {
+                egui::Popup::close_all(ui.ctx());
+            }
+            reset
+        }
+        (ParamKind::Text { .. }, ParamValue::Text(s)) => {
+            // Named, so it keeps focus while typing changes the lines above it (a renamed
+            // port's signals), which would shift an automatic id.
+            let field = ui.add(
+                egui::TextEdit::singleline(s)
+                    .id_salt(spec.name)
+                    .desired_width(width),
+            );
+            reset_gesture(ui, &field, differs)
+        }
+        // A value of the wrong type (from a hand-edited file): the reset button above fixes it.
+        (_, value) => {
+            ui.colored_label(Theme::of(ui.ctx()).error, format!("{value:?}"));
+            false
+        }
+    }
 }
 
-/// The expose toggle: a diamond like the parameter pins, filled when the pin is shown. It
-/// takes the width of the gutter, so the label after it lines up with the controls below.
-fn diamond_toggle(ui: &mut Ui, on: bool, color: egui::Color32) -> egui::Response {
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(GUTTER_WIDTH, 14.0), egui::Sense::click());
+/// A diamond like the parameter pins in `rect`, filled when `on`.
+fn diamond(painter: &egui::Painter, rect: egui::Rect, color: Color32, on: bool) {
     let c = rect.center();
-    let r = if response.hovered() { 5.5 } else { 4.5 };
+    let r = 4.5;
     let points = vec![
         c + egui::vec2(0.0, -r),
         c + egui::vec2(r, 0.0),
         c + egui::vec2(0.0, r),
         c + egui::vec2(-r, 0.0),
     ];
-    let fill = if on {
-        color
-    } else {
-        egui::Color32::TRANSPARENT
-    };
-    ui.painter().add(egui::Shape::convex_polygon(
+    let fill = if on { color } else { Color32::TRANSPARENT };
+    painter.add(egui::Shape::convex_polygon(
         points,
         fill,
         egui::Stroke::new(1.2, color),
     ));
+}
+
+/// The mark in place of the pin toggle on a parameter that can't be modulated: the diamond
+/// crossed out and dim, with the reason on hover.
+fn locked_diamond(ui: &mut Ui) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
+    let color = ui.visuals().weak_text_color().gamma_multiply(0.6);
+    diamond(ui.painter(), rect, color, false);
+    let c = rect.center();
+    ui.painter().line_segment(
+        [c + egui::vec2(-4.5, 4.5), c + egui::vec2(4.5, -4.5)],
+        egui::Stroke::new(1.0, color),
+    );
     response
 }
 
@@ -730,7 +840,6 @@ fn node_meters(ui: &mut Ui, kind: &NodeType, meters: &[NodeMeters], id: &str) {
     // The meters are always drawn: while a frame is rendering after an edit there are no
     // readings, and the last ones are shown so the inspector does not change height.
     let values = meters.iter().find(|m| &*m.node == id);
-    ui.add_space(6.0);
     for (i, meter) in spec.iter().enumerate() {
         let label = crate::widgets::meter_label(meter.kind);
         let key = egui::Id::new(("meter", id, meter.id));
