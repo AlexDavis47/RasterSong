@@ -37,9 +37,9 @@ RasterSong's own is to be checked before a paid release (see [Open Questions](de
 
 ## Fonts
 
-The app bundles **Inter** and **JetBrains Mono** (`crates/rastersong-gui/assets/fonts/`), both under the SIL Open
-Font License 1.1. It allows bundling and embedding them in any software, paid or not. What it asks, and what we
-do:
+The app bundles **Inter** (regular, medium and semibold) and **JetBrains Mono**
+(`crates/rastersong-gui/assets/fonts/`), both under the SIL Open Font License 1.1. It allows bundling and embedding
+them in any software, paid or not. What it asks, and what we do:
 
 - Ship the copyright notice and license text with the fonts: `Inter-LICENSE.txt` and `JetBrainsMono-LICENSE.txt`
   sit beside the font files and `cargo xtask dist` copies them into every package.

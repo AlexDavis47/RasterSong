@@ -829,6 +829,18 @@ independent of each other.
    wrapping), Result / Original / Split, and the status bar with pointer hints.
 3. [x] **feature** Node graph: the category colour strip, wider nodes and larger text, bypassed and warning
    styles, the error count in the canvas header, the wire legend, the node search palette.
+   - [x] **bug** Stages 2 and 3 didn't match the boards' renders: the panels were flat and joined instead of
+     rounded cards with gaps, every label was in Inter Regular (the boards use medium buttons and semibold
+     titles), buttons had no outline, the canvas header lacked the pill, the + icon and Frame graph, and the graph
+     was framed at 65%, too small to read. The wire legend became a hover icon.
+   - [x] **bug** A missing file's Relocate… button sat beside its resource card instead of under it, doubling the
+     card's width and pushing its neighbour out of the panel.
+   - [x] **bug** Text still looked tall and narrow next to the boards: hinting rounded Inter's lowercase height up
+     a pixel. The bundled faces are now unhinted, as browsers draw them.
+   - [x] **bug** The panels' resize lines were drawn against one card's edge instead of in the gap between the
+     cards; they are now invisible, the handle centred in the gap.
+   - [x] **bug** A node's colour strip poked out past its rounded corners: as a rect only 5 px tall, its corners
+     were clamped to 2.5 px. It is now the node's own shape cut to the strip.
 4. [ ] **feature** Wire probe drum: wrap-around view wheel turned by Alt+scroll, clicks and ↑/↓.
 5. [ ] **feature** Inspector: one layout for node, graph item and track selections; the modulation card.
 6. [ ] **feature** Resources: Media and Graphs together with counts and one filter field.

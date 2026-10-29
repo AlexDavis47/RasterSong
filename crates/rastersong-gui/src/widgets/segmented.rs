@@ -1,6 +1,6 @@
 //! A row of choices of which one is on, set in a sunken track.
 
-use eframe::egui::{self, Align2, FontId, Rect, Sense, Stroke, Ui, WidgetInfo, WidgetType, vec2};
+use eframe::egui::{self, Align2, Rect, Sense, Stroke, Ui, WidgetInfo, WidgetType, vec2};
 
 use crate::theme::{DENSE_HEIGHT, Theme};
 
@@ -11,7 +11,7 @@ const INSET: f32 = 2.0;
 /// index clicked, if any; clicking the one that is on returns it too.
 pub fn segmented(ui: &mut Ui, options: &[(&str, &str)], selected: usize) -> Option<usize> {
     let theme = Theme::of(ui.ctx());
-    let font = FontId::proportional(12.0);
+    let font = crate::theme::medium(12.0);
     let galleys: Vec<_> = options
         .iter()
         .map(|(name, _)| {

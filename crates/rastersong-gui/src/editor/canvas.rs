@@ -25,13 +25,13 @@ use super::{GraphEditor, NodeKey};
 use rastersong_lang::{tr, tr_args};
 
 use crate::effects::Glow;
-use crate::theme::{CARD_RADIUS, SMALL_SIZE, Theme, WireStyle};
+use crate::theme::{CARD_RADIUS, SMALL_SIZE, Theme, WireStyle, semibold};
 
 /// The category colour strip along a node's top edge, and the header it starts (strip and
 /// title row).
 const STRIP: f32 = 5.0;
-const HEADER: f32 = 30.0;
-const ROW: f32 = 24.0;
+const HEADER: f32 = 28.0;
+const ROW: f32 = 22.0;
 /// Space above the first port row and below the last.
 const BODY_PAD: f32 = 6.0;
 const PIN_RADIUS: f32 = 4.5;
@@ -39,8 +39,8 @@ const PIN_RADIUS: f32 = 4.5;
 const PIN_GRAB: f32 = 10.0;
 const MIN_WIDTH: f32 = 116.0;
 const PAD: f32 = 10.0;
-const FONT: f32 = 13.0;
-const LABEL_FONT: f32 = 11.5;
+const FONT: f32 = 12.0;
+const LABEL_FONT: f32 = 11.0;
 /// BYPASSED in a bypassed node's title row.
 const TAG_FONT: f32 = 10.0;
 /// The badge on a node's top-right corner.
@@ -50,6 +50,9 @@ const NOTE_WIDTH: f32 = 230.0;
 /// Height of the error bar along the bottom of the canvas.
 const ERROR_BAR: f32 = 30.0;
 const MIN_ZOOM: f32 = 0.2;
+/// Fitting the graph zooms out no further than this, so its text stays as readable as the
+/// rest of the window; what doesn't fit is a pan away.
+const MIN_FIT_ZOOM: f32 = 0.85;
 const MAX_ZOOM: f32 = 3.0;
 /// Pointer movement (screen pixels) that turns a right-click into a pan.
 const DRAG_THRESHOLD: f32 = 4.0;
@@ -70,8 +73,6 @@ pub struct CanvasContext<'a> {
     pub costs: &'a [NodeCost],
     /// Whether to show node processing times and tint the slow nodes.
     pub show_performance: bool,
-    /// Whether to show the key to the wire colours.
-    pub show_legend: bool,
     /// How inspecting a connection works; none in tests that have no engine.
     pub inspect: Option<super::inspect::InspectContext<'a>>,
 }
@@ -142,13 +143,9 @@ pub fn wire_width(rms: Option<f32>) -> f32 {
 impl GraphEditor {
     /// Lays out every node (graph space). Sizes follow the text they hold.
     pub(super) fn geometry(&self, ui: &Ui) -> Vec<Geometry> {
-        let measure = |text: &str, size: f32| {
+        let measure = |text: &str, font: FontId| {
             ui.painter()
-                .layout_no_wrap(
-                    text.to_owned(),
-                    FontId::proportional(size),
-                    Color32::PLACEHOLDER,
-                )
+                .layout_no_wrap(text.to_owned(), font, Color32::PLACEHOLDER)
                 .size()
                 .x
         };
@@ -194,7 +191,9 @@ impl GraphEditor {
                 let labelled_outputs = outputs.len() > 1;
 
                 let widest = |names: &mut dyn Iterator<Item = &str>| {
-                    names.map(|n| measure(n, LABEL_FONT)).fold(0.0, f32::max)
+                    names
+                        .map(|n| measure(n, FontId::proportional(LABEL_FONT)))
+                        .fold(0.0, f32::max)
                 };
                 let in_width = widest(&mut inputs.iter().map(|i| i.0));
                 let out_width = if labelled_outputs {
@@ -203,7 +202,7 @@ impl GraphEditor {
                     0.0
                 };
                 // Bypassing doesn't widen the node: BYPASSED shortens the title instead.
-                let width = (measure(&title, FONT) + 2.0 * PAD)
+                let width = (measure(&title, semibold(FONT)) + 2.0 * PAD)
                     .max(in_width + out_width + 4.0 * PAD + 12.0)
                     .max(MIN_WIDTH);
                 let rows = inputs.len().max(outputs.len()).max(1);
@@ -501,7 +500,7 @@ impl GraphEditor {
             );
         }
 
-        if ctx.show_legend {
+        {
             // Above the error bar when there is one.
             let bottom = if ctx.failure.is_some() {
                 ERROR_BAR
@@ -828,15 +827,28 @@ impl GraphEditor {
             return;
         };
         let margin = 40.0;
-        let zoom = ((rect.width() - 2.0 * margin) / bounds.width())
-            .min((rect.height() - 2.0 * margin) / bounds.height())
-            .clamp(0.65, 1.0);
+        let room = rect.size() - egui::Vec2::splat(2.0 * margin);
+        let zoom = (room.x / bounds.width())
+            .min(room.y / bounds.height())
+            .clamp(MIN_FIT_ZOOM, 1.0);
         self.view.zoom = zoom;
-        self.view.offset = rect.size() / 2.0 - bounds.center().to_vec2() * zoom;
+        // Centred when it fits; a graph too big for the canvas starts from its top left, where
+        // the inputs are, and the rest is a pan away.
+        let place = |room: f32, size: f32, centre: f32, start: f32, min: f32| {
+            if size * zoom <= room {
+                centre / 2.0 - (min + size / 2.0) * zoom
+            } else {
+                start - min * zoom
+            }
+        };
+        self.view.offset = vec2(
+            place(room.x, bounds.width(), rect.width(), margin, bounds.left()),
+            place(room.y, bounds.height(), rect.height(), margin, bounds.top()),
+        );
     }
 
     fn draw_grid(&self, painter: &egui::Painter, rect: Rect, theme: &Theme) {
-        let spacing = 24.0 * self.view.zoom;
+        let spacing = 20.0 * self.view.zoom;
         if spacing < 8.0 {
             return;
         }
@@ -885,17 +897,13 @@ impl GraphEditor {
             draw_hatch(painter, rect, radius, theme.node_hatch, zoom);
         }
         // The category colour strip, then the title row under it, so colour and text don't
-        // compete.
-        painter.rect_filled(
-            Rect::from_min_size(rect.min, vec2(rect.width(), STRIP * zoom)),
-            CornerRadius {
-                nw: rounding.nw,
-                ne: rounding.ne,
-                sw: 0,
-                se: 0,
-            },
-            color,
-        );
+        // compete. The strip is the node's own rounded shape cut to its top, so it keeps to the
+        // outline's corners: a rect as short as the strip would have its corners clamped to
+        // half its height, and poke out past the outline.
+        let strip = Rect::from_min_size(rect.min, vec2(rect.width(), STRIP * zoom));
+        painter
+            .with_clip_rect(strip.intersect(painter.clip_rect()))
+            .rect_filled(rect, rounding, color);
         let header = Rect::from_min_size(rect.min, vec2(rect.width(), HEADER * zoom));
         let title_row = Rect::from_min_max(header.min + vec2(0.0, STRIP * zoom), header.max);
         painter.hline(
@@ -946,7 +954,7 @@ impl GraphEditor {
             let color = if bypassed { theme.text_dim } else { text };
             let mut title = egui::text::LayoutJob::simple_singleline(
                 g.title.clone(),
-                FontId::proportional(FONT * zoom),
+                semibold(FONT * zoom),
                 color,
             );
             title.wrap = egui::text::TextWrapping::truncate_at_width(room.max(0.0));
@@ -1273,9 +1281,45 @@ fn draw_hatch(painter: &egui::Painter, rect: Rect, radius: f32, color: Color32, 
 /// what each colour carries and that thickness is level. Left out when the canvas is too small
 /// to spare the room.
 fn draw_legend(ui: &Ui, canvas: Rect, bottom: f32, theme: &Theme) {
-    if canvas.width() < 420.0 || canvas.height() < 240.0 {
-        return;
+    let p = &theme.ports;
+    let icon = Rect::from_min_size(
+        canvas.right_bottom() - vec2(10.0, 10.0 + bottom) - egui::Vec2::splat(LEGEND_ICON),
+        egui::Vec2::splat(LEGEND_ICON),
+    );
+    let response = ui.interact(icon, ui.id().with("wire-legend"), Sense::hover());
+    let title = tr("editor.legend.title");
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, title));
+    let painter = ui.painter_at(canvas);
+    let visuals = ui.style().interact(&response);
+    painter.rect(
+        icon,
+        CornerRadius::same(crate::theme::CONTROL_RADIUS),
+        visuals.weak_bg_fill,
+        visuals.bg_stroke,
+        StrokeKind::Inside,
+    );
+    // The icon: three wires, video, audio and a split one in R G B.
+    let left = icon.left() + 7.0;
+    let width = icon.width() - 14.0;
+    for (i, colors) in [&[p.video][..], &[p.audio], &[p.red, p.green, p.blue]]
+        .into_iter()
+        .enumerate()
+    {
+        let y = icon.top() + 8.5 + 4.5 * i as f32;
+        let part = (width - 2.0 * (colors.len() - 1) as f32) / colors.len() as f32;
+        for (j, &color) in colors.iter().enumerate() {
+            let x = left + j as f32 * (part + 2.0);
+            painter.line_segment([pos2(x, y), pos2(x + part, y)], Stroke::new(2.0, color));
+        }
     }
+    response.on_hover_ui(|ui| legend_key(ui, theme));
+}
+
+/// Side of the wire legend's icon.
+const LEGEND_ICON: f32 = 26.0;
+
+/// The key the legend's icon opens: what each wire colour carries, and that thickness is level.
+fn legend_key(ui: &mut Ui, theme: &Theme) {
     let p = &theme.ports;
     // Each row: its swatches (one long one, or a short one per part) and its words.
     let rows: [(&[Color32], &str); 5] = [
@@ -1285,60 +1329,32 @@ fn draw_legend(ui: &Ui, canvas: Rect, bottom: f32, theme: &Theme) {
         (&[p.left, p.right], "editor.legend.stereo"),
         (&[p.low, p.mid, p.high], "editor.legend.bands"),
     ];
-    let line = 16.0;
-    let pad = vec2(10.0, 8.0);
-    let size = vec2(124.0, 2.0 * pad.y + line * (rows.len() as f32 + 2.0));
-    let rect = Rect::from_min_size(
-        canvas.right_bottom() - vec2(14.0, 14.0 + bottom) - size,
-        size,
+    ui.spacing_mut().item_spacing.y = 2.0;
+    ui.label(
+        egui::RichText::new(tr("editor.legend.title").to_uppercase())
+            .size(SMALL_SIZE)
+            .color(theme.surfaces.text_faint),
     );
-    let response = ui.interact(rect, ui.id().with("wire-legend"), Sense::hover());
-    let title = tr("editor.legend.title");
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, title));
-    let painter = ui.painter_at(canvas);
-    painter.rect(
-        rect,
-        CornerRadius::same(CARD_RADIUS),
-        theme.surfaces.panel.gamma_multiply(0.92),
-        Stroke::new(1.0, theme.surfaces.border),
-        StrokeKind::Inside,
-    );
-    let font = FontId::proportional(11.0);
-    let left = rect.left() + pad.x;
-    let row_center = |i: usize| rect.top() + pad.y + line * (i as f32 + 0.5);
-    painter.text(
-        pos2(left, row_center(0)),
-        Align2::LEFT_CENTER,
-        title.to_uppercase(),
-        FontId::proportional(SMALL_SIZE),
-        theme.surfaces.text_faint,
-    );
-    for (i, (swatches, words)) in rows.iter().enumerate() {
-        let y = row_center(i + 1);
-        let width = if swatches.len() == 1 { 16.0 } else { 8.0 };
-        let mut x = left;
-        for &color in *swatches {
-            painter.rect_filled(
-                Rect::from_min_size(pos2(x, y - 1.5), vec2(width, 3.0)),
-                CornerRadius::same(1),
-                color,
-            );
-            x += width + 2.0;
-        }
-        painter.text(
-            pos2(x + 4.0, y),
-            Align2::LEFT_CENTER,
-            tr(words),
-            font.clone(),
-            theme.surfaces.text,
-        );
+    for (swatches, words) in rows {
+        ui.horizontal(|ui| {
+            let width = if swatches.len() == 1 { 16.0 } else { 8.0 };
+            let size = vec2(swatches.len() as f32 * (width + 2.0) + 2.0, 14.0);
+            let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+            for (i, &color) in swatches.iter().enumerate() {
+                let x = rect.left() + i as f32 * (width + 2.0);
+                ui.painter().rect_filled(
+                    Rect::from_min_size(pos2(x, rect.center().y - 1.5), vec2(width, 3.0)),
+                    CornerRadius::same(1),
+                    color,
+                );
+            }
+            ui.label(egui::RichText::new(tr(words)).size(11.0));
+        });
     }
-    painter.text(
-        pos2(left, row_center(rows.len() + 1)),
-        Align2::LEFT_CENTER,
-        tr("editor.legend.thickness"),
-        font,
-        theme.surfaces.text_faint,
+    ui.label(
+        egui::RichText::new(tr("editor.legend.thickness"))
+            .size(11.0)
+            .color(theme.surfaces.text_faint),
     );
 }
 

@@ -167,6 +167,11 @@ impl GraphEditor {
         editor
     }
 
+    /// Fits the whole graph in the canvas on the next frame, as F does.
+    pub fn frame_graph(&mut self) {
+        self.fit_pending = true;
+    }
+
     /// Replaces the edited graph.
     pub fn load(&mut self, graph: &GraphDesc) {
         self.selected.clear();
@@ -851,7 +856,7 @@ fn auto_layout(graph: &GraphDesc) -> Vec<Pos2> {
         .map(|&d| {
             let row = rows.entry(d).or_insert(0usize);
             *row += 1;
-            pos2(d as f32 * 190.0, (*row - 1) as f32 * 140.0)
+            pos2(d as f32 * 175.0, (*row - 1) as f32 * 130.0)
         })
         .collect()
 }

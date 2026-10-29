@@ -83,10 +83,14 @@ pub struct PortColors {
 /// egui's widgets. The values are the tokens in `docs/ui-v2.md`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Surfaces {
-    /// Behind everything: wells and text fields.
+    /// Behind everything: the window between the panels, wells and text fields.
     pub ground: Color32,
+    /// The top bar and the status bar.
+    pub bar: Color32,
     /// Panels, windows and menus.
     pub panel: Color32,
+    /// The outline of a panel's card.
+    pub card_border: Color32,
     /// Buttons, dropdowns and checkboxes at rest, hovered and pressed.
     pub raised: Color32,
     pub raised_hover: Color32,
@@ -161,7 +165,9 @@ impl Theme {
     pub const DARK: Theme = Theme {
         surfaces: Surfaces {
             ground: Color32::from_rgb(0x0e, 0x0f, 0x11),
+            bar: Color32::from_rgb(0x13, 0x14, 0x17),
             panel: Color32::from_rgb(0x16, 0x17, 0x1a),
+            card_border: Color32::from_rgb(0x24, 0x26, 0x2b),
             raised: Color32::from_rgb(0x1c, 0x1d, 0x21),
             raised_hover: Color32::from_rgb(0x24, 0x26, 0x2b),
             raised_active: Color32::from_rgb(0x2a, 0x2c, 0x31),
@@ -176,8 +182,8 @@ impl Theme {
         warning: Color32::from_rgb(0xf2, 0xb5, 0x44),
         text_dim: Color32::from_rgb(0xa1, 0xa4, 0xac),
 
-        canvas_bg: Color32::from_rgb(0x0e, 0x0f, 0x11),
-        grid_minor: Color32::from_rgb(0x1e, 0x20, 0x24),
+        canvas_bg: Color32::from_rgb(0x12, 0x13, 0x15),
+        grid_minor: Color32::from_rgb(0x26, 0x28, 0x2d),
         node_body: Color32::from_rgb(0x1e, 0x1f, 0x23),
         node_shadow: Color32::from_black_alpha(90),
         node_outline: Color32::from_rgb(0x33, 0x35, 0x3b),
@@ -235,7 +241,9 @@ impl Theme {
     pub const LIGHT: Theme = Theme {
         surfaces: Surfaces {
             ground: Color32::from_gray(255),
+            bar: Color32::from_gray(242),
             panel: Color32::from_gray(248),
+            card_border: Color32::from_gray(212),
             raised: Color32::from_gray(230),
             raised_hover: Color32::from_gray(220),
             raised_active: Color32::from_gray(165),
@@ -375,22 +383,44 @@ pub const CONTROL_RADIUS: u8 = 6;
 pub const CARD_RADIUS: u8 = 8;
 pub const MENU_RADIUS: u8 = 8;
 pub const WINDOW_RADIUS: u8 = 12;
-/// Text sizes that differ from egui's (body and buttons stay at its 13).
+/// Text sizes that differ from egui's (body stays at its 13).
 pub const SMALL_SIZE: f32 = 10.5;
+const BUTTON_SIZE: f32 = 12.5;
+/// Panel titles ("Preview", the open graph's name), in semibold.
+pub const TITLE_SIZE: f32 = 13.0;
 const MONO_SIZE: f32 = 12.5;
 const HEADING_SIZE: f32 = 16.0;
 /// The large timecode under the preview.
 pub const TIMECODE_SIZE: f32 = 15.0;
 
-/// The bundled faces: Inter for text, JetBrains Mono (without ligatures) for numbers. Both are
-/// under the SIL Open Font License; the license texts sit beside them and ship in every package.
+/// The bundled faces: Inter for text (regular; medium for buttons; semibold for titles),
+/// JetBrains Mono (without ligatures) for numbers. All are under the SIL Open Font License; the
+/// license texts sit beside them and ship in every package.
 const TEXT_FONT: &str = "Inter";
+const MEDIUM_FONT: &str = "Inter Medium";
+const SEMIBOLD_FONT: &str = "Inter SemiBold";
 const MONO_FONT: &str = "JetBrains Mono";
+
+/// Inter Medium: buttons, menus and tabs (egui's button text style).
+pub fn medium(size: f32) -> egui::FontId {
+    egui::FontId::new(size, egui::FontFamily::Name(MEDIUM_FONT.into()))
+}
+
+/// Inter SemiBold: panel titles, node titles, the open graph's name.
+pub fn semibold(size: f32) -> egui::FontId {
+    egui::FontId::new(size, egui::FontFamily::Name(SEMIBOLD_FONT.into()))
+}
 
 /// egui's fonts with the bundled faces put first, so egui's own still cover the symbols and
 /// emoji the bundled faces lack.
 pub fn font_definitions() -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
+    let fallback = fonts.families[&egui::FontFamily::Proportional].clone();
+    for weight in [MEDIUM_FONT, SEMIBOLD_FONT] {
+        fonts
+            .families
+            .insert(egui::FontFamily::Name(weight.into()), fallback.clone());
+    }
     for (name, data, family) in [
         (
             TEXT_FONT,
@@ -398,14 +428,30 @@ pub fn font_definitions() -> egui::FontDefinitions {
             egui::FontFamily::Proportional,
         ),
         (
+            MEDIUM_FONT,
+            &include_bytes!("../assets/fonts/Inter-Medium.ttf")[..],
+            egui::FontFamily::Name(MEDIUM_FONT.into()),
+        ),
+        (
+            SEMIBOLD_FONT,
+            &include_bytes!("../assets/fonts/Inter-SemiBold.ttf")[..],
+            egui::FontFamily::Name(SEMIBOLD_FONT.into()),
+        ),
+        (
             MONO_FONT,
             &include_bytes!("../assets/fonts/JetBrainsMonoNL-Regular.ttf")[..],
             egui::FontFamily::Monospace,
         ),
     ] {
+        // Unhinted, as browsers draw Inter on the boards: hinting rounds the lowercase height up
+        // a whole pixel at these sizes, which makes the text look tall and narrow.
+        let tweak = egui::FontTweak {
+            hinting: Some(false),
+            ..Default::default()
+        };
         fonts.font_data.insert(
             name.to_owned(),
-            std::sync::Arc::new(egui::FontData::from_static(data)),
+            std::sync::Arc::new(egui::FontData::from_static(data).tweak(tweak)),
         );
         fonts
             .families
@@ -432,6 +478,10 @@ pub fn apply_style(ctx: &egui::Context) {
                 font.size = size;
             }
         }
+        // Buttons, menus and tabs in Inter Medium, as on the boards.
+        style
+            .text_styles
+            .insert(egui::TextStyle::Button, medium(BUTTON_SIZE));
         // Tooltips appear almost at once: they carry most of the help text.
         style.interaction.tooltip_delay = TOOLTIP_DELAY;
         style.spacing.combo_width = 120.0;
@@ -444,6 +494,8 @@ pub fn apply_style(ctx: &egui::Context) {
         ] {
             widgets.corner_radius = CornerRadius::same(CONTROL_RADIUS);
         }
+        // Controls are outlined at rest too, as on the boards.
+        style.visuals.widgets.inactive.bg_stroke.width = 1.0;
         style.visuals.menu_corner_radius = CornerRadius::same(MENU_RADIUS);
         style.visuals.window_corner_radius = CornerRadius::same(WINDOW_RADIUS);
     });
@@ -529,6 +581,10 @@ mod tests {
         assert_eq!(style.spacing.interact_size.y, DENSE_HEIGHT);
         assert_eq!(v.window_corner_radius, CornerRadius::same(WINDOW_RADIUS));
         assert_eq!(style.text_styles[&egui::TextStyle::Small].size, SMALL_SIZE);
+        assert_eq!(
+            style.text_styles[&egui::TextStyle::Button],
+            medium(BUTTON_SIZE)
+        );
     }
 
     /// WCAG contrast: at least 4.5 for text and secondary text, 3 for faint labels.
@@ -566,8 +622,15 @@ mod tests {
         assert_eq!(monospace[0], MONO_FONT);
         // egui's own faces stay behind them for symbols (♪, ▣) and emoji.
         assert!(proportional.len() > 1 && monospace.len() > 1);
-        for face in [TEXT_FONT, MONO_FONT] {
-            assert!(fonts.font_data.contains_key(face));
+        for face in [TEXT_FONT, MEDIUM_FONT, SEMIBOLD_FONT, MONO_FONT] {
+            // Unhinted, as the boards draw them: hinting makes Inter look tall and narrow.
+            assert_eq!(fonts.font_data[face].tweak.hinting, Some(false));
+        }
+        // The heavier weights fall back to the same faces as regular text.
+        for weight in [MEDIUM_FONT, SEMIBOLD_FONT] {
+            let family = &fonts.families[&egui::FontFamily::Name(weight.into())];
+            assert_eq!(family[0], weight);
+            assert_eq!(family[1..], proportional[1..]);
         }
     }
 

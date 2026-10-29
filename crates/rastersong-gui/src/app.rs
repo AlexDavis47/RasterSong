@@ -53,7 +53,10 @@ use crate::timeline::{
     LANE_HEIGHT, Thumbnail, TimelineLayout, TimelineModel, TimelineView, TrackAction,
     TrackThumbnails, TrackView, timecode, timeline,
 };
-use crate::widgets::{Icon, IconButton, paint_icon, segmented};
+use crate::widgets::{
+    CARD_GAP, HALF_GAP, Icon, IconButton, card, card_body, card_header, card_panel, card_space,
+    card_title, key_button, paint_icon, segmented,
+};
 
 /// The graph a new project starts with: the basic workflow from docs/concepts.md.
 pub const STARTER_GRAPH: &str = include_str!("../../../examples/graphs/am_bands.json");
@@ -953,6 +956,10 @@ impl App {
             });
             apply_style(ui.ctx());
             self.initialized = true;
+            // egui loads the bundled faces at the start of the next frame, and the styles
+            // already name them: draw from then on.
+            ui.ctx().request_repaint();
+            return;
         }
         if self.applied_theme != Some(self.settings.theme) {
             ui.ctx().set_theme(self.settings.theme.preference());
@@ -973,89 +980,132 @@ impl App {
             self.editor.search_on_tab(ui, p);
         }
 
-        let fill = ui.visuals().panel_fill;
-        let panel = move |margin: i8| {
+        // The top bar and the status bar run the window's width; every other panel is a card
+        // on the ground, CARD_GAP from its neighbours and the window's edge. Between two cards
+        // each side takes half the gap, so the resize handle on the edge sits in its middle.
+        let bar = |ui: &Ui, margin: Margin| {
             egui::Frame::new()
-                .fill(fill)
-                .inner_margin(Margin::same(margin))
+                .fill(Theme::of(ui.ctx()).surfaces.bar)
+                .inner_margin(margin)
         };
-        egui::Panel::top("menu")
-            .frame(panel(4))
-            .show(ui, |ui| self.top_bar(ui));
-        egui::Panel::bottom("status")
-            .frame(
-                egui::Frame::new()
-                    .fill(fill)
-                    .inner_margin(Margin::symmetric(12, 2)),
-            )
-            .show(ui, |ui| self.status_bar(ui));
-        egui::Panel::bottom("timeline")
-            .resizable(true)
-            .default_size(300.0)
-            .min_size(130.0)
-            .frame(panel(8))
-            .show(ui, |ui| {
-                egui::Panel::left("resources")
-                    .resizable(true)
-                    .default_size(200.0)
-                    .min_size(140.0)
-                    .frame(egui::Frame::new().inner_margin(Margin {
-                        right: 8,
-                        ..Margin::ZERO
-                    }))
-                    .show(ui, |ui| {
-                        for action in resources_panel(ui, &self.project, &self.missing) {
-                            self.resource_action(action);
-                        }
-                    });
-                self.timeline(ui);
-            });
-        egui::Panel::left("preview")
-            .resizable(true)
-            .default_size(ui.available_width() * 0.33)
-            .min_size(280.0)
-            .frame(panel(8))
-            .show(ui, |ui| self.preview_column(ui));
-        let mut item_edits = Vec::new();
-        self.inspector_rect = egui::Panel::right("inspector")
-            .resizable(true)
-            .default_size(340.0)
-            .min_size(300.0)
-            .frame(panel(10))
-            .show(ui, |ui| {
-                // A selected graph item shows its own inspector instead of the node's.
-                if let [(track, item)] = &self.selected_graph_items[..]
-                    && self.project.graph_item(track, *item).is_some()
-                {
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        item_edits = graph_item_inspector(ui, &self.project, track, *item);
-                    });
-                    return;
-                }
-                let buses: Vec<String> =
-                    self.project.buses.iter().map(|b| b.name.clone()).collect();
-                let frame = self.engine.frame(self.clock.frame());
-                let params = frame.as_ref().map_or(&[][..], |f| &f.params[..]);
-                let meters = frame.as_ref().map_or(&[][..], |f| &f.meters[..]);
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    self.editor.show_inspector(
-                        ui,
-                        &InspectorContext {
-                            buses: &buses,
-                            params,
-                            meters,
-                        },
-                    );
-                });
-            })
+        let divider = Stroke::new(1.0, Theme::of(ui.ctx()).surfaces.divider);
+        let gap = CARD_GAP;
+        let top_bar = egui::Panel::top("menu")
+            .frame(bar(ui, Margin::symmetric(8, 6)))
+            .show(ui, |ui| self.top_bar(ui))
             .response
             .rect;
+        ui.painter()
+            .hline(top_bar.x_range(), top_bar.bottom() - 0.5, divider);
+        let status_bar = egui::Panel::bottom("status")
+            .frame(bar(ui, Margin::symmetric(12, 2)))
+            .show(ui, |ui| self.status_bar(ui))
+            .response
+            .rect;
+        ui.painter()
+            .hline(status_bar.x_range(), status_bar.top() + 0.5, divider);
+        let half = HALF_GAP;
+        let timeline = egui::Panel::bottom("timeline")
+            .default_size(300.0)
+            .min_size(130.0);
+        card_panel(
+            ui,
+            timeline,
+            Margin {
+                top: half,
+                ..Margin::same(gap)
+            },
+            |ui| {
+                let resources = egui::Panel::left("resources")
+                    .default_size(230.0)
+                    .min_size(160.0);
+                let gaps = Margin {
+                    right: half,
+                    ..Margin::ZERO
+                };
+                card_panel(ui, resources, gaps, |ui| {
+                    card(ui, |ui| {
+                        card_body(ui, 8, |ui| {
+                            for action in resources_panel(ui, &self.project, &self.missing) {
+                                self.resource_action(action);
+                            }
+                        })
+                    })
+                });
+                card_space(
+                    ui,
+                    Margin {
+                        left: half,
+                        ..Margin::ZERO
+                    },
+                )
+                .show(ui, |ui| {
+                    card(ui, |ui| card_body(ui, 8, |ui| self.timeline(ui)));
+                });
+            },
+        );
+        let upper = Margin {
+            top: gap,
+            bottom: half,
+            left: half,
+            right: half,
+        };
+        let preview = egui::Panel::left("preview")
+            .default_size(ui.available_width() * 0.33)
+            .min_size(280.0);
+        card_panel(ui, preview, Margin { left: gap, ..upper }, |ui| {
+            card(ui, |ui| self.preview_column(ui));
+        });
+        let mut item_edits = Vec::new();
+        let inspector = egui::Panel::right("inspector")
+            .default_size(340.0)
+            .min_size(300.0);
+        self.inspector_rect = card_panel(
+            ui,
+            inspector,
+            Margin {
+                right: gap,
+                ..upper
+            },
+            |ui| {
+                card(ui, |ui| {
+                    card_body(ui, 10, |ui| {
+                        // A selected graph item shows its own inspector instead of the node's.
+                        if let [(track, item)] = &self.selected_graph_items[..]
+                            && self.project.graph_item(track, *item).is_some()
+                        {
+                            egui::ScrollArea::vertical().show(ui, |ui| {
+                                item_edits = graph_item_inspector(ui, &self.project, track, *item);
+                            });
+                            return;
+                        }
+                        let buses: Vec<String> =
+                            self.project.buses.iter().map(|b| b.name.clone()).collect();
+                        let frame = self.engine.frame(self.clock.frame());
+                        let params = frame.as_ref().map_or(&[][..], |f| &f.params[..]);
+                        let meters = frame.as_ref().map_or(&[][..], |f| &f.meters[..]);
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            self.editor.show_inspector(
+                                ui,
+                                &InspectorContext {
+                                    buses: &buses,
+                                    params,
+                                    meters,
+                                },
+                            );
+                        });
+                    })
+                })
+            },
+        )
+        .response
+        .rect;
         for edit in item_edits {
             self.graph_item_edit(edit);
         }
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().inner_margin(Margin::ZERO))
-            .show(ui, |ui| self.graph(ui));
+            .frame(card_space(ui, upper))
+            .show(ui, |ui| card(ui, |ui| self.graph(ui)));
 
         self.sync();
         self.record_history(ui);
@@ -1108,7 +1158,6 @@ impl App {
                 show_stats: self.settings.node_stats,
                 costs,
                 show_performance: self.settings.show_performance,
-                show_legend: self.settings.wire_legend,
                 inspect: Some(crate::editor::InspectContext {
                     frame: self.clock.frame(),
                     tap: &tap,
@@ -1196,70 +1245,132 @@ impl App {
     }
 
     /// The row over the canvas: the open graph's name, where it plays on the timeline, how many
-    /// errors and warnings it has, and Add node and Bypass graphs.
+    /// errors and warnings it has, and Add node, Bypass graphs and Frame graph.
     fn graph_header(&mut self, ui: &mut Ui, failure: Option<&rastersong_engine::Failure>) {
         let theme = Theme::of(ui.ctx());
-        let size = egui::vec2(ui.available_width(), GRAPH_HEADER_HEIGHT);
-        let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-        ui.painter().hline(
-            rect.x_range(),
-            rect.bottom() - 0.5,
-            egui::Stroke::new(1.0, theme.surfaces.divider),
-        );
-        let inner = rect.shrink2(egui::vec2(12.0, 0.0));
-        let mut ui = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(inner)
-                .layout(egui::Layout::right_to_left(egui::Align::Center)),
-        );
-        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-        // The buttons first, so the name and the chip take what's left.
+        card_header(ui, |ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                self.graph_header_buttons(ui);
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    self.graph_header_title(ui, failure, theme);
+                });
+            });
+        });
+    }
+
+    /// The canvas header's buttons, from the right: Frame graph, Bypass graphs, Add node.
+    fn graph_header_buttons(&mut self, ui: &mut Ui) {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        let height = HEADER_BUTTON_HEIGHT;
+        if ui
+            .add(IconButton::new(Icon::Fit, tr("editor.header.frame")).size(vec2(height, height)))
+            .on_hover_text(tr("editor.header.frame.help"))
+            .clicked()
+        {
+            self.editor.frame_graph();
+        }
         let on = self.project.bypass_graph;
         if ui
-            .selectable_label(on, tr("editor.bypass_graph"))
+            .add(
+                egui::Button::new(tr("editor.bypass_graph"))
+                    .selected(on)
+                    .min_size(vec2(0.0, height)),
+            )
             .on_hover_text(tr("editor.bypass_graph.help"))
             .clicked()
         {
             self.project.bypass_graph = !on;
         }
-        let tab = egui::RichText::new(tr("editor.key.tab"))
-            .monospace()
-            .size(SMALL_SIZE)
-            .color(theme.text_dim);
-        if ui
-            .add(egui::Button::new(tr("editor.header.add_node")).right_text(tab))
-            .on_hover_text(tr("editor.header.add_node.help"))
-            .clicked()
+        if key_button(
+            ui,
+            Icon::Plus,
+            tr("editor.header.add_node"),
+            tr("editor.key.tab"),
+            height,
+        )
+        .on_hover_text(tr("editor.header.add_node.help"))
+        .clicked()
         {
             self.editor.open_search();
         }
-        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+    }
+
+    /// "Graph › name", where it plays, and how many errors and warnings it has.
+    fn graph_header_title(
+        &self,
+        ui: &mut Ui,
+        failure: Option<&rastersong_engine::Failure>,
+        theme: &Theme,
+    ) {
+        {
             ui.label(
                 egui::RichText::new(tr("editor.header.kind")).color(theme.surfaces.text_faint),
             );
-            ui.label(egui::RichText::new(tr("editor.header.separator")).color(theme.tick));
-            ui.label(egui::RichText::new(&self.project.graph_name).strong());
-            let (chip, help) = self.graph_placement();
-            egui::Frame::new()
-                .fill(theme.surfaces.raised)
-                .stroke(egui::Stroke::new(1.0, theme.surfaces.border))
-                .corner_radius(10)
-                .inner_margin(egui::Margin::symmetric(8, 1))
-                .show(ui, |ui| {
-                    ui.label(egui::RichText::new(chip).size(11.5).color(theme.text_dim))
-                })
-                .response
-                .on_hover_text(help);
+            // The chevron between the kind and the name.
+            let (r, _) = ui.allocate_exact_size(vec2(8.0, 10.0), egui::Sense::hover());
+            ui.painter().add(egui::Shape::line(
+                vec![
+                    r.left_top() + vec2(2.0, 1.0),
+                    r.left_top() + vec2(6.0, 5.0),
+                    r.left_top() + vec2(2.0, 9.0),
+                ],
+                Stroke::new(1.4, theme.tick),
+            ));
+            card_title(ui, &self.project.graph_name);
             let errors = usize::from(
                 failure.is_some_and(|f| f.graph.is_none_or(|g| g == self.project.graph_id)),
             );
-            if let Some((text, color)) = problem_count(errors, self.editor.warning_count(), theme) {
+            let count =
+                problem_count(errors, self.editor.warning_count(), theme).map(|(text, color)| {
+                    let galley =
+                        ui.painter()
+                            .layout_no_wrap(text, egui::FontId::proportional(12.0), color);
+                    (galley, color)
+                });
+            // The count always shows; the chip gets what's left of the row, shortened to fit.
+            let spacing = ui.spacing().item_spacing.x;
+            let count_width = count
+                .as_ref()
+                .map_or(0.0, |(g, _)| 6.0 + 8.0 + 2.0 * spacing + g.size().x);
+            let room = ui.available_width() - count_width - spacing - 16.0;
+            if room >= MIN_CHIP_TEXT {
+                self.placement_chip(ui, theme, room);
+            }
+            if let Some((galley, color)) = count {
                 ui.add_space(6.0);
                 let (dot, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
                 ui.painter().circle_filled(dot.center(), 4.0, color);
-                ui.label(egui::RichText::new(text).size(12.0).color(color));
+                ui.label(galley);
             }
-        });
+        }
+    }
+
+    /// The pill that says where the open graph plays, its text cut short to `room` if it must
+    /// be.
+    fn placement_chip(&self, ui: &mut Ui, theme: &Theme, room: f32) {
+        let (chip, help) = self.graph_placement();
+        let mut job = egui::text::LayoutJob::simple_singleline(
+            chip.clone(),
+            egui::FontId::proportional(11.5),
+            theme.text_dim,
+        );
+        job.wrap = egui::text::TextWrapping::truncate_at_width(room);
+        let text = ui.painter().layout_job(job);
+        let (pill, response) = ui.allocate_exact_size(
+            vec2(text.size().x + 16.0, text.size().y + 4.0),
+            egui::Sense::hover(),
+        );
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &chip));
+        ui.painter().rect(
+            pill,
+            pill.height() / 2.0,
+            theme.surfaces.raised,
+            Stroke::new(1.0, theme.surfaces.border),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter()
+            .galley(pill.center() - text.size() / 2.0, text, theme.text_dim);
+        response.on_hover_text(help);
     }
 
     /// Where the open graph plays, as the canvas header's chip says it, and the chip's hover
@@ -1748,7 +1859,6 @@ impl App {
                     &mut self.settings.show_performance,
                     tr("menu.view.performance"),
                 );
-                ui.checkbox(&mut self.settings.wire_legend, tr("menu.view.wire_legend"));
             });
             ui.menu_button(tr("menu.help"), |ui| {
                 if ui.button(tr("menu.help.about")).clicked() {
@@ -1758,9 +1868,9 @@ impl App {
             });
             // The project's name after the menus, in the bar so the bar doesn't push it aside.
             ui.separator();
-            ui.strong(self.project_name());
+            card_title(ui, &self.project_name());
             if self.is_dirty() {
-                ui.weak(tr("project.edited"));
+                ui.label(RichText::new(tr("project.edited")).size(12.0).weak());
             }
         });
     }
@@ -1891,7 +2001,11 @@ impl App {
 
     fn preview_column(&mut self, ui: &mut Ui) {
         self.preview_header(ui);
-        ui.add_space(6.0);
+        card_body(ui, 8, |ui| self.preview_body(ui));
+    }
+
+    /// The picture and the transport under it.
+    fn preview_body(&mut self, ui: &mut Ui) {
         // The transport's two rows and the space around them.
         let controls_height =
             CONTROL_HEIGHT + DENSE_HEIGHT + 2.0 * ui.spacing().item_spacing.y + 6.0;
@@ -1916,9 +2030,8 @@ impl App {
 
     /// The preview's header: whether it shows the result, the original or both split, and Fit.
     fn preview_header(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
-            ui.set_min_height(DENSE_HEIGHT);
-            ui.strong(tr("preview.title"));
+        card_header(ui, |ui| {
+            card_title(ui, tr("preview.title"));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .add(IconButton::new(Icon::Fit, tr("preview.fit")))
@@ -3305,8 +3418,10 @@ impl App {
     }
 }
 
-/// Height of the row over the graph canvas.
-const GRAPH_HEADER_HEIGHT: f32 = 40.0;
+/// Height of the buttons in the row over the graph canvas.
+const HEADER_BUTTON_HEIGHT: f32 = 30.0;
+/// The narrowest the placement chip's text is cut to before the chip is left out.
+const MIN_CHIP_TEXT: f32 = 40.0;
 
 /// The canvas header's count of problems ("1 error · 1 warning") in the colour of the worst,
 /// or `None` with none.

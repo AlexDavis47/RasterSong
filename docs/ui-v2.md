@@ -58,8 +58,11 @@ contrast on every surface it can sit on: 4.5 for text and muted text, 3 for fain
 
 **Type.** Inter 4.1 for text, JetBrains Mono 2.304 (the NL build, without ligatures) for numbers, bundled in
 `crates/rastersong-gui/assets/fonts/` and put ahead of egui's own faces, which still cover the symbols and emoji
-they lack (see [Licensing](licensing.md#fonts)). Only the regular weights are bundled; the stages that need
-semibold titles add it. Sizes: body
+they lack (see [Licensing](licensing.md#fonts)). Inter comes in three weights, as on the boards: regular for text,
+medium for buttons, menus and tabs (egui's button style, 12.5 px), and semibold for titles (panel titles, node
+titles, the project and graph names; `theme::semibold`). The faces are drawn unhinted, as browsers draw them on
+the boards: hinting rounds the lowercase height up a whole pixel at these sizes, and the text looks tall and
+narrow. Sizes: body
 and buttons 13 px, monospace 12.5 px, small 10.5 px, headings 16 px (these are egui's text styles, set in
 `apply_style`); node titles 12.5 px, port labels 11 px, section labels 10.5 px in capitals with 0.08 em tracking,
 and the large timecode 15 px come with the stages that draw them.
@@ -71,8 +74,15 @@ egui's interact height). Corners are 6 px on controls, 8 px on nodes, cards and 
 ## Layout
 
 The window keeps the two rows from [Desktop app](app.md): preview, graph and inspector on top; Resources and the
-timeline below. Board: [Main](design/ui-v2/Main.dc.html). **The top bar, status bar, preview header and transport
-shipped in stage 2**, apart from what Tempo mode adds to the transport (stage 8).
+timeline below. Board: [Main](design/ui-v2/Main.dc.html). **The top bar, status bar, panel cards, preview header
+and transport shipped in stage 2**, apart from what Tempo mode adds to the transport (stage 8).
+
+- **Panels are cards** (`widgets::card`): rounded 8 px, outlined, on the window's ground, 6 px apart and 6 px from
+  the window's edge. A card's title row (`card_header`) is 40 px with a divider under it. The preview and the graph
+  have theirs; the inspector, Resources and the timeline get theirs with their own stages (5, 6 and 7).
+- The gap between two cards is the resize handle (`card_panel`): each card keeps half the gap, so the panel's edge
+  runs down the middle, and no line is drawn there, even while hovered; the cursor shows it.
+- Controls are outlined at rest, as the boards' buttons are.
 
 - **Top bar**: the menus, the project name with an "edited" mark, a Settings button, and an **Export…** button on
   the right. No transport here.
@@ -97,9 +107,9 @@ under it ([Tempo mode](#timeline-in-tempo-mode)).
 ## Node graph
 
 Board: [GraphDetail](design/ui-v2/GraphDetail.dc.html). **Shipped in stage 3** except the wire probe drum (stage
-4). Where it differs from the board: the legend sits in the bottom-right corner (above the error bar), so it
-doesn't cover the Output that the graph ends at top-right, and View → Show wire legend hides it; it also names
-stereo's L R. The error bar is as before: a full-width strip that shows the node when clicked, without the
+4). Where it differs from the board: the legend is a small icon in the bottom-right corner (above the error bar)
+that shows the key while hovered, so it never covers a node; the key also names stereo's L R. Fitting the graph
+stops at 85% so its text stays readable; a graph too wide for that starts from its inputs. The error bar is as before: a full-width strip that shows the node when clicked, without the
 board's *Show node* button or its line about the last good frame.
 
 - Each node has a **5 px colour strip** along its top edge in its category colour; the title sits below it, so

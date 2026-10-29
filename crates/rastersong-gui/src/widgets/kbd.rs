@@ -1,9 +1,13 @@
 //! A key cap: the name of a key in a small raised box, for the shortcuts a footer or a button
 //! names.
 
-use eframe::egui::{self, Align2, FontId, Painter, Pos2, Rect, Response, Sense, Stroke, Ui, vec2};
+use eframe::egui::{
+    self, Align2, FontId, Painter, Pos2, Rect, Response, Sense, Stroke, Ui, WidgetInfo, WidgetType,
+    vec2,
+};
 
-use crate::theme::{SMALL_SIZE, Theme};
+use super::{Icon, paint_icon};
+use crate::theme::{CONTROL_RADIUS, SMALL_SIZE, Theme};
 
 const HEIGHT: f32 = 17.0;
 const PAD: f32 = 4.0;
@@ -13,6 +17,57 @@ pub fn kbd(ui: &mut Ui, key: &str) -> Response {
     let size = vec2(text_width(ui.painter(), key) + 2.0 * PAD, HEIGHT);
     let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
     paint_cap(ui.painter(), Theme::of(ui.ctx()), rect, key);
+    response
+}
+
+/// A button `height` high: `icon`, `label`, and the key that does the same as a key cap after
+/// it ("+ Add node [Tab]"). Named `label` for screen readers (and tests).
+pub fn key_button(ui: &mut Ui, icon: Icon, label: &str, key: &str, height: f32) -> Response {
+    const ICON: f32 = 18.0;
+    const GAP: f32 = 6.0;
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let text = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font, egui::Color32::PLACEHOLDER);
+    let key_width = text_width(ui.painter(), key) + 2.0 * PAD;
+    let pad = ui.spacing().button_padding.x;
+    let width = pad + ICON + GAP + text.size().x + GAP + key_width + pad * 0.6;
+    let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
+    let enabled = ui.is_enabled();
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, label));
+    if !ui.is_rect_visible(rect) {
+        return response;
+    }
+    let theme = Theme::of(ui.ctx());
+    let visuals = ui.style().interact(&response);
+    let painter = ui.painter();
+    painter.rect(
+        rect,
+        CONTROL_RADIUS,
+        visuals.weak_bg_fill,
+        visuals.bg_stroke,
+        egui::StrokeKind::Inside,
+    );
+    let color = visuals.text_color();
+    let icon_rect = Rect::from_center_size(
+        egui::pos2(rect.left() + pad + ICON / 2.0, rect.center().y),
+        egui::Vec2::splat(ICON),
+    );
+    paint_icon(painter, icon_rect, icon, color);
+    painter.galley(
+        egui::pos2(
+            icon_rect.right() + GAP,
+            rect.center().y - text.size().y / 2.0,
+        ),
+        text,
+        color,
+    );
+    paint_kbd(
+        painter,
+        theme,
+        egui::pos2(rect.right() - pad * 0.6, rect.center().y),
+        key,
+    );
     response
 }
 

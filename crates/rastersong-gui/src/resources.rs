@@ -210,50 +210,54 @@ pub fn resource_card<P: std::any::Any + Send + Sync>(
         .fill(fill)
         .corner_radius(4)
         .inner_margin(4);
+    // Top to bottom whatever row the card sits in, so a missing file's fix button goes under
+    // the card's name rather than widening the card beside it.
     frame.show(ui, |ui| {
         ui.set_width(CARD_WIDTH - 10.0);
         ui.set_min_height(CARD_HEIGHT - 10.0);
-        let label = if card.drag_count > 1 {
-            tr_args(
-                "resources.drag.more",
-                &[
-                    ("name", card.name),
-                    ("count", &(card.drag_count - 1).to_string()),
-                ],
-            )
-        } else {
-            card.name.to_owned()
-        };
-        let body = drag_source(ui, card.id, payload, (card.glyph, &label), |ui| {
-            ui.vertical_centered(|ui| {
-                ui.label(RichText::new(card.glyph).size(18.0))
-                    .on_hover_text(card.glyph_help);
-                let mut text = RichText::new(card.name);
-                if card.missing {
-                    text = text.color(ui.visuals().error_fg_color);
-                } else if card.highlighted {
-                    text = text.strong();
-                }
-                ui.add(egui::Label::new(text).truncate().sense(Sense::hover()));
-            });
-        });
-        let body = body.on_hover_text(&card.hover);
-        // Clicking the rename field must not close the menu, so only clicks outside do; the
-        // menu's buttons close it themselves.
-        egui::Popup::context_menu(&body)
-            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-            .show(|ui| {
-                let rename = name_edit(ui, card.id.with("name"), card.name, |t| {
-                    t.desired_width(180.0)
+        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+            let label = if card.drag_count > 1 {
+                tr_args(
+                    "resources.drag.more",
+                    &[
+                        ("name", card.name),
+                        ("count", &(card.drag_count - 1).to_string()),
+                    ],
+                )
+            } else {
+                card.name.to_owned()
+            };
+            let body = drag_source(ui, card.id, payload, (card.glyph, &label), |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.label(RichText::new(card.glyph).size(18.0))
+                        .on_hover_text(card.glyph_help);
+                    let mut text = RichText::new(card.name);
+                    if card.missing {
+                        text = text.color(ui.visuals().error_fg_color);
+                    } else if card.highlighted {
+                        text = text.strong();
+                    }
+                    ui.add(egui::Label::new(text).truncate().sense(Sense::hover()));
                 });
-                out.renamed = rename.committed;
-                menu(ui);
             });
-        out.double_clicked = body.double_clicked();
-        out.clicked = body.clicked();
-        if let Some((label, help)) = card.fix_button {
-            out.fixed = ui.small_button(label).on_hover_text(help).clicked();
-        }
+            let body = body.on_hover_text(&card.hover);
+            // Clicking the rename field must not close the menu, so only clicks outside do; the
+            // menu's buttons close it themselves.
+            egui::Popup::context_menu(&body)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .show(|ui| {
+                    let rename = name_edit(ui, card.id.with("name"), card.name, |t| {
+                        t.desired_width(180.0)
+                    });
+                    out.renamed = rename.committed;
+                    menu(ui);
+                });
+            out.double_clicked = body.double_clicked();
+            out.clicked = body.clicked();
+            if let Some((label, help)) = card.fix_button {
+                out.fixed = ui.small_button(label).on_hover_text(help).clicked();
+            }
+        });
     });
     out
 }

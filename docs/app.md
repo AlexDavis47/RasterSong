@@ -1,8 +1,9 @@
 # Desktop app
 
 Two rows: along the bottom, the **Resources** panel and the **timeline** beside it; above them three columns: the
-**preview** with its playback controls underneath, the **node graph**, and the **inspector**. The app only holds UI
-state; everything is decoded, rendered and cached by the [engine](engine.md) on its render thread.
+**preview** with its playback controls underneath, the **node graph**, and the **inspector**. Each panel is a
+rounded card, set 6 px apart on the window's darker ground; the preview and the graph have a title row across the
+top. Drag the gap between two cards to resize them. The app only holds UI state; everything is decoded, rendered and cached by the [engine](engine.md) on its render thread.
 
 The **top bar** holds the menus, the project's name (with "edited" while there are unsaved changes), a Settings
 button and **Export…**. The **status bar** along the bottom says whether the graph compiled (or why it didn't, in the words of the graph's error bar), names
@@ -34,9 +35,10 @@ The transport sits under the picture in two rows that don't wrap:
 Our own editor, drawn on a pannable, zoomable canvas (see [Decisions](decisions.md#own-node-graph)).
 
 A header over the canvas names the open graph and where it plays on the timeline ("on Graphs · 0:00–0:04", with
-how many more places it plays, or "not on the timeline"), counts its problems ("1 error · 1 warning"), and holds
-**+ Add node** and **Bypass graphs**. Each node has a strip in its category's colour along its top edge, with its
-title under it.
+how many more places it plays, or "not on the timeline", cut short when the row is narrow), counts its problems
+("1 error · 1 warning"), and holds **+ Add node**, **Bypass graphs** and **Frame graph** (as F). Each node has a
+strip in its category's colour along its top edge, with its title under it. Opening a graph frames it, zooming out
+no further than 85%: a graph wider than that starts from its inputs on the left, and the rest is a pan away.
 
 - Scroll wheel zooms around the pointer; middle- or right-drag pans; F frames the whole graph.
 - Left-drag on empty space box-selects (Shift adds). Click a node to select it and show it in the inspector;
@@ -84,8 +86,8 @@ title under it.
   channel is still red video; Video to Audio turns it into red audio. **Wires** in File → Settings → Application
   picks how the two show: solid (the part's colour, or the kind's), outlined (the kind's colour outlined in the
   part's), gradient (the part's colour down the centre, fading to the kind's at the edges) or glow (the kind's
-  colour as a crisp line, glowing in the part's). A key in the canvas's bottom-right corner names the colours and
-  says that thickness is RMS; View → Show wire legend hides it.
+  colour as a crisp line, glowing in the part's). Hovering the small wires icon in the canvas's bottom-right
+  corner shows the key: what each colour carries, and that thickness is RMS.
 - Compile notes and warnings show as a badge on the node's corner, with the message in its tooltip and in the
   inspector, which also lists what each output carries. Notes (a signal whose tag doesn't suit the node, say) get
   a quiet "i" badge; warnings (something lost or ignored) a yellow "!", an amber outline, and the message in a

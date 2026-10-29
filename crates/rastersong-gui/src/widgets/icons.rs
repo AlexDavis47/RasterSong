@@ -25,6 +25,8 @@ pub enum Icon {
     Fit,
     Volume,
     Settings,
+    /// Add something: a node.
+    Plus,
 }
 
 /// The size of one icon cell in a list.
@@ -159,6 +161,10 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
                 })
                 .collect();
             painter.add(egui::Shape::line(wave, stroke));
+        }
+        Icon::Plus => {
+            painter.line_segment([at(0.5, 0.05), at(0.5, 0.95)], stroke);
+            painter.line_segment([at(0.05, 0.5), at(0.95, 0.5)], stroke);
         }
         Icon::Settings => {
             let centre = rect.center();

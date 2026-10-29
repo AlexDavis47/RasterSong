@@ -159,7 +159,7 @@ fn bypass_graphs_button_stays_on_one_line() {
     harness.run_steps(2);
     let button = harness.get_by_label("Bypass graphs").rect();
     assert!(
-        button.height() <= rastersong_gui::theme::DENSE_HEIGHT,
+        button.height() <= rastersong_gui::theme::CONTROL_HEIGHT,
         "{button:?}"
     );
 }
@@ -199,6 +199,11 @@ fn clicking_a_node_makes_it_active() {
 #[test]
 fn dragging_empty_space_box_selects() {
     let mut harness = loaded();
+    // Wide enough for the whole graph to fit at the zoom it is framed at.
+    harness.set_size(egui::vec2(1900.0, 1000.0));
+    harness.run_steps(2);
+    harness.get_by_label("Frame graph").click();
+    harness.run_steps(2);
     let canvas = harness.state().editor().canvas_rect();
     drag(
         &mut harness,
@@ -534,6 +539,7 @@ fn the_selection_box_is_drawn_over_the_items() {
     let mut harness = loaded();
     let from = timeline_point(&harness, 0.2, 1);
     let to = timeline_point(&harness, 1.5, 0);
+    let selection = egui::Rect::from_two_pos(from, to);
     harness.event(Event::PointerMoved(from));
     harness.run_steps(1);
     press(&mut harness, from, PointerButton::Primary, true);
@@ -541,13 +547,17 @@ fn the_selection_box_is_drawn_over_the_items() {
         harness.event(Event::PointerMoved(from + (to - from) * t));
         harness.run_steps(1);
     }
-    let selection = egui::Rect::from_two_pos(from, to);
+    // An outline around the whole box (the timeline card's) isn't drawn over it.
     let rects: Vec<egui::Rect> = harness
         .output()
         .shapes
         .iter()
         .filter_map(|clipped| match &clipped.shape {
-            egui::Shape::Rect(r) => Some(r.rect),
+            egui::Shape::Rect(r)
+                if !(r.fill == egui::Color32::TRANSPARENT && r.rect.contains_rect(selection)) =>
+            {
+                Some(r.rect)
+            }
             _ => None,
         })
         .collect();
@@ -3118,9 +3128,42 @@ fn a_dropped_wire_names_what_the_new_node_connects_to() {
 }
 
 #[test]
-fn the_canvas_has_a_key_to_the_wire_colours() {
+fn a_nodes_colour_strip_keeps_to_its_rounded_corners() {
+    // Drawn as the node's own rounded rect cut to the strip, not as a short rect whose corners
+    // epaint would clamp to half its height.
     let harness = loaded();
-    assert!(harness.query_by_label("Wires").is_some());
+    let node = harness
+        .state()
+        .editor()
+        .node_screen_rect(key(&harness, "video"))
+        .unwrap();
+    let strip = harness
+        .output()
+        .shapes
+        .iter()
+        .find_map(|clipped| match &clipped.shape {
+            egui::Shape::Rect(r)
+                if (clipped.clip_rect.top() - node.top()).abs() < 0.5
+                    && clipped.clip_rect.height() < 10.0 =>
+            {
+                Some(r.clone())
+            }
+            _ => None,
+        });
+    let strip = strip.expect("the video node's strip is drawn clipped to the node's top");
+    assert!((strip.rect.min - node.min).length() < 0.5);
+    assert!((strip.rect.max - node.max).length() < 0.5);
+}
+
+#[test]
+fn the_wire_legend_icon_opens_the_key_when_hovered() {
+    let mut harness = loaded();
+    let icon = harness.get_by_label("Wires").rect().center();
+    assert!(harness.query_by_label("Thickness = RMS").is_none());
+    harness.event(Event::PointerMoved(icon));
+    harness.run_steps(30);
+    assert!(harness.query_by_label("Thickness = RMS").is_some());
+    assert!(harness.query_by_label("low mid high").is_some());
 }
 
 #[test]
@@ -3138,13 +3181,93 @@ fn bypassing_a_node_keeps_its_size() {
 }
 
 #[test]
-fn the_wire_legend_can_be_hidden_from_the_view_menu() {
+fn the_canvas_header_never_runs_into_its_buttons() {
+    // With a warning to count, the row is too narrow for the whole chip: it is cut short.
+    let mut harness = harness_for_warning();
+    step_until(&mut harness, "the warning", |app| {
+        app.editor().warning_count() > 0
+    });
+    harness.run_steps(2);
+    let add = harness.get_by_label_contains("Add node").rect();
+    let count = harness.get_by_label("1 warning").rect();
+    assert!(count.right() < add.left(), "{count:?} runs into {add:?}");
+}
+
+#[test]
+fn the_panels_are_cards_set_apart_on_the_window() {
+    let harness = loaded();
+    let gap = f32::from(rastersong_gui::widgets::CARD_GAP);
+    let app = harness.state();
+    let canvas = app.editor().canvas_rect();
+    assert!(canvas.left() - app.preview_rect().right() >= gap);
+    // The inspector's panel starts mid-gap; its card, half a gap further in.
+    let half = f32::from(rastersong_gui::widgets::HALF_GAP);
+    assert!(app.inspector_rect().left() + half - canvas.right() >= gap);
+    assert!(app.timeline_area().top() - canvas.bottom() >= gap);
+}
+
+#[test]
+fn the_gap_between_cards_resizes_them_without_drawing_a_line() {
     let mut harness = loaded();
-    assert!(harness.query_by_label("Wires").is_some());
-    harness.get_by_label("View").click();
+    let gap = f32::from(rastersong_gui::widgets::CARD_GAP);
+    // The middle of the gap left of the graph's card (the canvas is 1 px in from its outline).
+    let canvas = harness.state().editor().canvas_rect();
+    let middle = pos2(canvas.left() - 1.0 - gap / 2.0, canvas.center().y);
+    harness.event(Event::PointerMoved(middle));
     harness.run_steps(2);
-    harness.get_by_label("Show wire legend").click();
+    assert_eq!(
+        harness.output().platform_output.cursor_icon,
+        egui::CursorIcon::ResizeHorizontal
+    );
+    let column = egui::Rangef::new(middle.x - gap / 2.0, middle.x + gap / 2.0);
+    let line_in_gap = harness.output().shapes.iter().any(|clipped| {
+        matches!(&clipped.shape, egui::Shape::LineSegment { points, stroke }
+            if stroke.width > 0.0
+                && points.iter().all(|p| column.contains(p.x))
+                && (points[1].y - points[0].y).abs() > 100.0)
+    });
+    assert!(!line_in_gap, "a resize line is drawn in the gap");
+    drag(&mut harness, middle, middle + vec2(60.0, 0.0));
     harness.run_steps(2);
-    assert!(!harness.state().settings().wire_legend);
-    assert!(harness.query_by_label("Wires").is_none());
+    let moved = harness.state().editor().canvas_rect().left() - canvas.left();
+    assert!((moved - 60.0).abs() < 2.0, "the graph moved {moved} px");
+}
+
+#[test]
+fn frame_graph_fits_the_graph_again() {
+    let mut harness = loaded();
+    let video = key(&harness, "video");
+    let framed = harness.state().editor().node_screen_rect(video).unwrap();
+    harness.event(Event::PointerMoved(framed.center()));
+    harness.event(Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: vec2(0.0, 120.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: Modifiers::NONE,
+    });
+    harness.run_steps(20);
+    assert_ne!(
+        harness.state().editor().node_screen_rect(video).unwrap(),
+        framed
+    );
+    harness.get_by_label("Frame graph").click();
+    harness.run_steps(3);
+    assert_eq!(
+        harness.state().editor().node_screen_rect(video).unwrap(),
+        framed
+    );
+}
+
+#[test]
+fn a_graph_too_wide_for_the_canvas_starts_from_its_inputs() {
+    // At 1400 px the starter graph is wider than the canvas: rather than shrink its text, the
+    // view starts from the inputs on the left and the rest is a pan away.
+    let harness = loaded();
+    let editor = harness.state().editor();
+    let canvas = editor.canvas_rect();
+    let video = editor.node_screen_rect(key(&harness, "video")).unwrap();
+    let out = editor.node_screen_rect(key(&harness, "out")).unwrap();
+    assert!(out.right() > canvas.right(), "{out:?} in {canvas:?}");
+    assert!(video.left() > canvas.left() && video.left() < canvas.left() + 50.0);
+    assert!(editor.view().zoom >= 0.85);
 }
