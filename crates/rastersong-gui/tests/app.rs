@@ -2599,6 +2599,38 @@ fn the_status_bar_names_the_gestures_under_the_pointer() {
 }
 
 #[test]
+fn the_status_bar_names_the_failing_node_as_the_error_bar_does() {
+    let app = app_with_project(|project| {
+        project.graph = GraphDesc::from_json(
+            r#"{ "version": 0, "nodes": [ { "id": "v", "type": "video_input" },
+                { "id": "c", "type": "pack", "params": { "channels": 7 } },
+                { "id": "o", "type": "output" } ],
+              "connections": [ { "from": "v", "to": "c" }, { "from": "c", "to": "o" } ] }"#,
+        )
+        .unwrap();
+        let graph = project.graph_id;
+        let track = project.add_graph_track("Graphs");
+        project.place_graph(&track, graph, 0.0, 2.0);
+    });
+    let mut harness = harness(app);
+    step_until(&mut harness, "the failure", |app| {
+        matches!(
+            app.engine().status(),
+            rastersong_engine::EngineStatus::Failed(_)
+        )
+    });
+    harness.run_steps(2);
+    let rastersong_engine::EngineStatus::Failed(failure) = harness.state().engine().status() else {
+        unreachable!()
+    };
+    let message = harness.state().editor().failure_message(&failure);
+    assert!(message.starts_with("Pack: "), "{message}");
+    // The error bar puts a warning sign before it; the status bar shows it as it is.
+    assert!(harness.query_by_label(&message).is_some());
+    assert!(harness.query_by_label_contains("node `c`").is_none());
+}
+
+#[test]
 fn clicking_the_error_bar_shows_the_node_at_fault() {
     let app = app_with_project(|project| {
         project.graph = GraphDesc::from_json(

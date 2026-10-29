@@ -142,16 +142,7 @@ impl GraphEditor {
             .map(|i| {
                 let node = &self.nodes[i];
                 let kind = self.registry.get(&node.kind);
-                let title = node
-                    .label
-                    .clone()
-                    .or_else(|| self.port_title(node))
-                    .unwrap_or_else(|| {
-                        kind.map_or_else(
-                            || tr_args("editor.node.unknown_kind", &[("kind", &node.kind)]),
-                            |k| k.label().to_owned(),
-                        )
-                    });
+                let title = self.node_title(node);
                 // (name, required, port, parameter): inputs, then exposed parameters.
                 let mut inputs: Vec<(&'static str, bool, usize, bool)> = kind
                     .map(|k| {
@@ -1000,6 +991,39 @@ impl GraphEditor {
         );
     }
 
+    /// The name a node shows in its title bar: its label, the port it stands for, or its kind.
+    fn node_title(&self, node: &super::EditorNode) -> String {
+        node.label
+            .clone()
+            .or_else(|| self.port_title(node))
+            .unwrap_or_else(|| {
+                self.registry.get(&node.kind).map_or_else(
+                    || tr_args("editor.node.unknown_kind", &[("kind", &node.kind)]),
+                    |k| k.label().to_owned(),
+                )
+            })
+    }
+
+    /// Why the graph can't render, naming the node at fault as the user sees it ("Pack: …")
+    /// rather than by its id. A failure with no node of this graph keeps the engine's message.
+    pub fn failure_message(&self, failure: &Failure) -> String {
+        match failure
+            .node
+            .as_deref()
+            .and_then(|id| self.key_of(id))
+            .and_then(|key| self.node(key))
+        {
+            Some(node) => tr_args(
+                "editor.error_bar.node_message",
+                &[
+                    ("node", &self.node_title(node)),
+                    ("detail", &failure.detail),
+                ],
+            ),
+            None => failure.message.clone(),
+        }
+    }
+
     fn error_bar(
         &mut self,
         ui: &mut Ui,
@@ -1018,17 +1042,7 @@ impl GraphEditor {
         };
         ui.painter().rect_filled(bar, CornerRadius::ZERO, fill);
         let node = failure.node.as_deref().and_then(|id| self.key_of(id));
-        // Name the node as the user sees it rather than by its id.
-        let message = match (
-            failure.node.as_deref(),
-            node.and_then(|k| geometry.iter().find(|g| g.key == k)),
-        ) {
-            (Some(_), Some(g)) => tr_args(
-                "editor.error_bar.node_message",
-                &[("node", &g.title), ("detail", &failure.detail)],
-            ),
-            _ => failure.message.clone(),
-        };
+        let message = self.failure_message(failure);
         let text = egui::RichText::new(tr_args("editor.error_bar", &[("message", &message)]))
             .color(theme.error_bar_text);
         // Not selectable, so a click on the message reaches the bar under it.

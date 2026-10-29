@@ -1067,20 +1067,23 @@ impl App {
         crate::widgets::paint_bubble(ui.ctx());
     }
 
+    /// Why the project can't render, if it can't. The editor shows the open graph, so a node of
+    /// another graph isn't one it can point at, and is left out.
+    fn failure(&self) -> Option<rastersong_engine::Failure> {
+        let EngineStatus::Failed(mut failure) = self.engine.status() else {
+            return None;
+        };
+        if failure.graph.is_some_and(|g| g != self.project.graph_id) {
+            failure.node = None;
+        }
+        Some(failure)
+    }
+
     fn graph(&mut self, ui: &mut Ui) {
         self.editor.keep_connections = self.settings.keep_connections;
         self.editor.max_warmup_frames = self.project.max_warmup_frames;
         let frame = self.engine.frame(self.clock.frame());
-        let failure = match self.engine.status() {
-            // The editor shows the open graph: a node of another graph isn't one it can point at.
-            EngineStatus::Failed(mut failure) => {
-                if failure.graph.is_some_and(|g| g != self.project.graph_id) {
-                    failure.node = None;
-                }
-                Some(failure)
-            }
-            _ => None,
-        };
+        let failure = self.failure();
         let levels = frame.as_ref().map_or(&[][..], |f| &f.levels[..]);
         let params = frame.as_ref().map_or(&[][..], |f| &f.params[..]);
         let costs = frame.as_ref().map_or(&[][..], |f| &f.costs[..]);
@@ -1529,6 +1532,13 @@ impl App {
                 .on_hover_text(tr("status.cache.help"));
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     let (dot, state, failed) = match self.engine.status() {
+                        EngineStatus::Failed(_) => (
+                            theme.error,
+                            self.failure()
+                                .map(|f| self.editor.failure_message(&f))
+                                .unwrap_or_default(),
+                            true,
+                        ),
                         EngineStatus::Idle => (
                             theme.surfaces.text_faint,
                             tr("status.idle").to_owned(),
@@ -1538,7 +1548,6 @@ impl App {
                             (theme.warning, tr("status.loading").to_owned(), false)
                         }
                         EngineStatus::Ready => (theme.cached, tr("status.ready").to_owned(), false),
-                        EngineStatus::Failed(failure) => (theme.error, failure.message, true),
                     };
                     let (rect, _) = ui.allocate_exact_size(Vec2::splat(8.0), Sense::hover());
                     ui.painter().circle_filled(rect.center(), 3.5, dot);

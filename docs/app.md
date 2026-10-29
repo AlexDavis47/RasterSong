@@ -5,7 +5,7 @@ Two rows: along the bottom, the **Resources** panel and the **timeline** beside 
 state; everything is decoded, rendered and cached by the [engine](engine.md) on its render thread.
 
 The **top bar** holds the menus, the project's name (with "edited" while there are unsaved changes), a Settings
-button and **Export…**. The **status bar** along the bottom says whether the graph compiled (or why it didn't), names
+button and **Export…**. The **status bar** along the bottom says whether the graph compiled (or why it didn't, in the words of the graph's error bar), names
 the gestures for what is under the pointer (a wire, the graph, the preview, the ruler or the lanes), and shows the
 cache's memory use out of its budget and the project's picture size and frame rate.
 
