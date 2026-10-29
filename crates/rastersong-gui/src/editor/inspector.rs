@@ -527,8 +527,7 @@ fn signals(
                     theme.text_dim,
                 );
                 swatch(ui, 18.0, colors.get(i).copied().unwrap_or(theme.text_dim));
-                ui.label(RichText::new(layout.tag.to_string()).size(12.0))
-                    .on_hover_text(tr("editor.inspector.signal_help"));
+                // The layout on the right first, so the signal's name is cut short before it.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(
                         RichText::new(layout.to_string())
@@ -536,6 +535,14 @@ fn signals(
                             .size(12.0)
                             .color(theme.surfaces.text_faint),
                     );
+                    let rest = egui::vec2(ui.available_width(), 16.0);
+                    ui.allocate_ui_with_layout(rest, row, |ui| {
+                        ui.add(
+                            egui::Label::new(RichText::new(layout.tag.to_string()).size(12.0))
+                                .truncate(),
+                        )
+                        .on_hover_text(tr("editor.inspector.signal_help"));
+                    });
                 });
             });
         }

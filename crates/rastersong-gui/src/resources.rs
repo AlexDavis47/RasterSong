@@ -224,7 +224,7 @@ fn paint_thumb(painter: &Painter, rect: Rect, thumb: Thumb, missing: bool, theme
     }
     match thumb {
         Thumb::Video => {
-            painter.rect_filled(rect, 3, theme.video_block);
+            painter.rect_filled(rect, 3, theme.video_item.fill);
             crate::widgets::paint_icon(painter, square, Icon::Picture, theme.surfaces.text_soft);
         }
         Thumb::Audio => {

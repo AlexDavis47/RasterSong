@@ -28,7 +28,8 @@ pub use drum::{DRUM_HEIGHT, DRUM_WIDTH, DrumResponse, drum, scroll_steps, wheel_
 pub use icons::{Icon, IconButton, icon_list, paint as paint_icon};
 pub use inspector::{
     CHOICE_WIDTH, about, inspector, inspector_body, inspector_header, kind_row, name_style, pill,
-    rule, section, section_label, setting_row, setting_toggle, swatch, toggle_box,
+    rule, section, section_label, section_label_in, setting_row, setting_toggle, swatch,
+    toggle_box,
 };
 pub use kbd::{KeyButton, kbd, kbd_text, paint_kbd};
 pub use meter::{Scale, gain_reduction_meter, level_meter, meter_label, signal_meter};

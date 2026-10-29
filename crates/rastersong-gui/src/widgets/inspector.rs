@@ -133,11 +133,17 @@ pub fn section<R>(ui: &mut Ui, title: &str, add: impl FnOnce(&mut Ui) -> R) -> R
 
 /// A label in small semibold capitals, spaced out: a section's title, a reading's name.
 pub fn section_label(ui: &mut Ui, text: &str) -> egui::Response {
+    let color = Theme::of(ui.ctx()).surfaces.text_faint;
+    section_label_in(ui, text, color)
+}
+
+/// A [`section_label`] in `color`: the timeline's section names take their kind's colour.
+pub fn section_label_in(ui: &mut Ui, text: &str, color: Color32) -> egui::Response {
     ui.label(
         RichText::new(text.to_uppercase())
             .font(theme::semibold(SMALL_SIZE))
             .extra_letter_spacing(SMALL_SIZE * 0.08)
-            .color(Theme::of(ui.ctx()).surfaces.text_faint),
+            .color(color),
     )
 }
 

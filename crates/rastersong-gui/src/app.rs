@@ -50,8 +50,8 @@ use crate::theme::{
 };
 use crate::timeline::{
     DropGhost, GhostItem, GhostRow, GraphAction, GraphDrop, GraphItemView, GraphTrackView,
-    LANE_HEIGHT, Thumbnail, TimelineLayout, TimelineModel, TimelineView, TrackAction,
-    TrackThumbnails, TrackView, bar_beat, bar_beat_tick, beats_at, timecode, timeline,
+    Thumbnail, TimelineLayout, TimelineModel, TimelineView, TrackAction, TrackThumbnails,
+    TrackView, bar_beat, bar_beat_tick, beats_at, lane_height, timecode, timeline,
 };
 use crate::track_inspector::track_inspector;
 use crate::widgets::{
@@ -2710,7 +2710,7 @@ impl App {
             solo: t.solo,
             silenced: !self.project.in_mix(i),
             volume: t.volume,
-            height: t.height.unwrap_or(LANE_HEIGHT),
+            height: t.height.unwrap_or(lane_height(t.kind)),
             bus: t.bus.clone(),
             missing: t.resource.is_some_and(|r| self.missing.contains(&r)),
             selected_items: self
@@ -3497,7 +3497,7 @@ impl App {
             }
             TrackAction::SetHeight(row, height) => {
                 if let Some(track) = self.track_at(row) {
-                    track.height = (height != LANE_HEIGHT).then_some(height);
+                    track.height = (height != lane_height(track.kind)).then_some(height);
                 }
             }
             TrackAction::SetBus(row, bus) => {

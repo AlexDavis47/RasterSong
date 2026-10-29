@@ -177,8 +177,8 @@ write a graph as its own file.
 
 ## Timeline
 
-The timeline has three **sections** under a ruler, divided by a thick line: **Graphs** on top, then **Video**, then
-**Audio**. Tracks stay in their section and reorder within it. The timeline's title row is the same in both
+The timeline has three **sections** under a ruler, each named in a label above its tracks and divided by a thick
+line: **Graphs** on top, then **Video**, then **Audio**. Tracks stay in their section and reorder within it. The timeline's title row is the same in both
 modes, so switching moves nothing: one group holds the **Time** / **Tempo** switch (a ruler of minutes and seconds,
 or of bars and beats), the tempo (bpm, beats per bar, first beat; beat and bar units in nodes follow it in either
 mode) and the **Metronome** toggle, which plays only in Tempo mode, amber while on, with a light for each beat of

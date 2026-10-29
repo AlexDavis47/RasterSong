@@ -109,6 +109,14 @@ pub struct Surfaces {
     pub text_faint: Color32,
 }
 
+/// How an item on the timeline is drawn: its body, the bar along its top, and the bar's text.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ItemColors {
+    pub fill: Color32,
+    pub bar: Color32,
+    pub text: Color32,
+}
+
 /// Colours painted by the app.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Theme {
@@ -158,11 +166,13 @@ pub struct Theme {
     pub tick: Color32,
     pub tick_label: Color32,
     pub playhead: Color32,
-    pub video_block: Color32,
-    pub audio_block: Color32,
-    /// Graph items on the graph layers.
+    pub video_item: ItemColors,
+    pub audio_item: ItemColors,
+    pub graph_item: ItemColors,
+    /// Graph tracks' kind: the bar in their headers, a graph item's outline.
     pub graph_block: Color32,
-    pub block_text: Color32,
+    /// Text in the graph kind's colour: the GRAPHS section label.
+    pub graph_text: Color32,
     pub cached: Color32,
     /// The drag bubble that follows the pointer during a drag, and its text.
     pub bubble: Color32,
@@ -240,54 +250,68 @@ impl Theme {
         tick: Color32::from_rgb(0x5a, 0x5d, 0x66),
         tick_label: Color32::from_rgb(0x86, 0x8a, 0x94),
         playhead: Color32::from_rgb(0x8f, 0xa2, 0xff),
-        video_block: Color32::from_rgb(0x2d, 0x4f, 0x7a),
-        audio_block: Color32::from_rgb(0xa8, 0x6a, 0x26),
+        video_item: ItemColors {
+            fill: Color32::from_rgb(0x1e, 0x24, 0x33),
+            bar: Color32::from_rgb(0x2a, 0x32, 0x47),
+            text: Color32::from_rgb(0xd6, 0xdb, 0xe8),
+        },
+        audio_item: ItemColors {
+            fill: Color32::from_rgb(0x10, 0x30, 0x2c),
+            bar: Color32::from_rgb(0x17, 0x42, 0x3d),
+            text: Color32::from_rgb(0xc9, 0xf1, 0xea),
+        },
+        graph_item: ItemColors {
+            fill: Color32::from_rgb(0x2d, 0x26, 0x50),
+            bar: Color32::from_rgb(0x3f, 0x35, 0x70),
+            text: Color32::from_rgb(0xe4, 0xdd, 0xff),
+        },
         graph_block: Color32::from_rgb(0x9c, 0x86, 0xff),
-        block_text: Color32::from_gray(20),
+        graph_text: Color32::from_rgb(0xb9, 0xa9, 0xff),
         cached: Color32::from_rgb(0x4e, 0xd3, 0x7a),
         bubble: Color32::from_rgb(0x3a, 0x6f, 0xc4),
         bubble_text: Color32::from_gray(250),
     };
 
-    /// Light keeps egui's own light surfaces until it gets its UI V2 pass.
+    /// The same tokens on white: panels lift off a cool grey ground, wells and fields sink into
+    /// it, and the accent darkens to read on white.
     pub const LIGHT: Theme = Theme {
         surfaces: Surfaces {
-            ground: Color32::from_gray(255),
-            bar: Color32::from_gray(242),
-            panel: Color32::from_gray(248),
-            card_border: Color32::from_gray(212),
-            inner_card: Color32::from_gray(242),
-            raised: Color32::from_gray(230),
-            raised_hover: Color32::from_gray(220),
-            raised_active: Color32::from_gray(165),
-            border: Color32::from_gray(190),
-            border_hover: Color32::from_gray(105),
-            divider: Color32::from_gray(190),
-            text: Color32::from_gray(60),
-            text_soft: Color32::from_gray(80),
-            text_faint: Color32::from_gray(140),
+            ground: Color32::from_rgb(0xee, 0xef, 0xf2),
+            bar: Color32::from_rgb(0xf6, 0xf7, 0xf9),
+            panel: Color32::from_rgb(0xff, 0xff, 0xff),
+            card_border: Color32::from_rgb(0xdf, 0xe1, 0xe6),
+            inner_card: Color32::from_rgb(0xf7, 0xf8, 0xfa),
+            raised: Color32::from_rgb(0xf4, 0xf5, 0xf7),
+            raised_hover: Color32::from_rgb(0xec, 0xed, 0xf1),
+            raised_active: Color32::from_rgb(0xe2, 0xe4, 0xe9),
+            border: Color32::from_rgb(0xd5, 0xd8, 0xde),
+            border_hover: Color32::from_rgb(0xb9, 0xbd, 0xc6),
+            divider: Color32::from_rgb(0xe6, 0xe8, 0xec),
+            text: Color32::from_rgb(0x17, 0x18, 0x1b),
+            text_soft: Color32::from_rgb(0x3d, 0x40, 0x48),
+            text_faint: Color32::from_rgb(0x6b, 0x6f, 0x7a),
         },
-        accent: Color32::from_rgb(0x2a, 0x6c, 0xd8),
+        accent: Color32::from_rgb(0x4a, 0x5f, 0xd9),
         error: Color32::from_rgb(0xc8, 0x30, 0x30),
         warning: Color32::from_rgb(0xa8, 0x70, 0x00),
-        solo: Color32::from_rgb(0xd8, 0xb0, 0x20),
-        beat: Color32::from_rgb(0xa8, 0x70, 0x00),
-        text_dim: Color32::from_gray(120),
+        solo: Color32::from_rgb(0xe0, 0xb4, 0x1c),
+        beat: Color32::from_rgb(0xc2, 0x80, 0x00),
+        text_dim: Color32::from_rgb(0x55, 0x5a, 0x64),
 
-        canvas_bg: Color32::from_gray(236),
-        grid_minor: Color32::from_gray(196),
-        node_body: Color32::from_gray(252),
-        node_shadow: Color32::from_black_alpha(30),
-        node_outline: Color32::from_gray(178),
-        node_hatch: Color32::from_gray(238),
+        canvas_bg: Color32::from_rgb(0xf3, 0xf4, 0xf6),
+        grid_minor: Color32::from_rgb(0xdc, 0xdf, 0xe4),
+        node_body: Color32::from_rgb(0xff, 0xff, 0xff),
+        node_shadow: Color32::from_black_alpha(28),
+        node_outline: Color32::from_rgb(0xcd, 0xd0, 0xd7),
+        node_hatch: Color32::from_rgb(0xee, 0xef, 0xf2),
         bypassed: Color32::from_rgb(0x9a, 0x78, 0x00),
-        warning_outline: Color32::from_rgb(0xc8, 0x96, 0x30),
-        warning_note: Color32::from_rgb(0xfd, 0xf3, 0xdc),
-        warning_note_border: Color32::from_rgb(0xd8, 0xb4, 0x68),
+        warning_outline: Color32::from_rgb(0xd0, 0x9c, 0x34),
+        warning_note: Color32::from_rgb(0xfd, 0xf5, 0xe1),
+        warning_note_border: Color32::from_rgb(0xe3, 0xc0, 0x74),
         warning_note_text: Color32::from_rgb(0x5a, 0x42, 0x10),
-        pin_required: Color32::from_gray(70),
-        pin_optional: Color32::from_gray(165),
-        pin_outline: Color32::from_gray(250),
+        pin_required: Color32::from_rgb(0x3d, 0x40, 0x48),
+        pin_optional: Color32::from_rgb(0xa9, 0xad, 0xb6),
+        pin_outline: Color32::from_rgb(0xff, 0xff, 0xff),
         categories: [
             Color32::from_rgb(0x2f, 0x78, 0xc4),
             Color32::from_rgb(0x1f, 0x9a, 0xaa),
@@ -296,12 +320,12 @@ impl Theme {
             Color32::from_rgb(0xcc, 0x7a, 0x14),
             Color32::from_rgb(0x38, 0x96, 0x38),
         ],
-        unknown_category: Color32::from_gray(140),
+        unknown_category: Color32::from_rgb(0x8a, 0x8e, 0x98),
         error_bar: Color32::from_rgb(0xf6, 0xd4, 0xd4),
         error_bar_hover: Color32::from_rgb(0xf0, 0xc2, 0xc2),
         error_bar_text: Color32::from_rgb(0x7a, 0x10, 0x10),
         ports: PortColors {
-            video: Color32::from_gray(80),
+            video: Color32::from_rgb(0x5a, 0x5f, 0x6b),
             audio: Color32::from_rgb(0x14, 0x9a, 0x92),
             red: Color32::from_rgb(0xd2, 0x3c, 0x34),
             green: Color32::from_rgb(0x2e, 0x9e, 0x3c),
@@ -313,20 +337,33 @@ impl Theme {
             high: Color32::from_rgb(0x8a, 0x52, 0xcc),
         },
 
-        preview_bg: Color32::from_gray(24),
+        preview_bg: Color32::from_rgb(0x18, 0x19, 0x1c),
 
-        lane_bg: Color32::from_gray(222),
-        lane_outline: Color32::from_gray(140),
-        tick: Color32::from_gray(150),
-        tick_label: Color32::from_gray(95),
-        playhead: Color32::from_gray(20),
-        video_block: Color32::from_rgb(0x9c, 0xbc, 0xe8),
-        audio_block: Color32::from_rgb(0xec, 0xb8, 0x78),
-        graph_block: Color32::from_rgb(0xc4, 0xb0, 0xe8),
-        block_text: Color32::from_gray(30),
+        lane_bg: Color32::from_rgb(0xf4, 0xf5, 0xf7),
+        lane_outline: Color32::from_rgb(0xbf, 0xc3, 0xcb),
+        tick: Color32::from_rgb(0xa9, 0xad, 0xb6),
+        tick_label: Color32::from_rgb(0x6b, 0x6f, 0x7a),
+        playhead: Color32::from_rgb(0x4a, 0x5f, 0xd9),
+        video_item: ItemColors {
+            fill: Color32::from_rgb(0xe3, 0xe8, 0xf2),
+            bar: Color32::from_rgb(0xcc, 0xd4, 0xe4),
+            text: Color32::from_rgb(0x2a, 0x32, 0x47),
+        },
+        audio_item: ItemColors {
+            fill: Color32::from_rgb(0xdc, 0xf2, 0xee),
+            bar: Color32::from_rgb(0xbd, 0xe5, 0xde),
+            text: Color32::from_rgb(0x0e, 0x4a, 0x42),
+        },
+        graph_item: ItemColors {
+            fill: Color32::from_rgb(0xec, 0xe8, 0xfc),
+            bar: Color32::from_rgb(0xd8, 0xd0, 0xf8),
+            text: Color32::from_rgb(0x3a, 0x2c, 0x86),
+        },
+        graph_block: Color32::from_rgb(0x7a, 0x62, 0xe6),
+        graph_text: Color32::from_rgb(0x5a, 0x44, 0xc4),
         cached: Color32::from_rgb(0x2c, 0x9e, 0x3c),
-        bubble: Color32::from_rgb(0x2f, 0x6b, 0xd6),
-        bubble_text: Color32::from_gray(255),
+        bubble: Color32::from_rgb(0x4a, 0x5f, 0xd9),
+        bubble_text: Color32::from_rgb(0xff, 0xff, 0xff),
     };
 
     /// The theme egui is currently showing.
@@ -581,19 +618,29 @@ mod tests {
     }
 
     #[test]
-    fn dark_widgets_use_the_ui_v2_tokens() {
+    fn widgets_use_the_ui_v2_tokens() {
+        for (egui_theme, theme) in [
+            (egui::Theme::Dark, &Theme::DARK),
+            (egui::Theme::Light, &Theme::LIGHT),
+        ] {
+            let ctx = egui::Context::default();
+            apply_style(&ctx);
+            ctx.set_theme(egui_theme);
+            let style = ctx.global_style();
+            let v = &style.visuals;
+            let s = &theme.surfaces;
+            assert_eq!(v.panel_fill, s.panel);
+            assert_eq!(v.extreme_bg_color, s.ground);
+            assert_eq!(v.widgets.inactive.weak_bg_fill, s.raised);
+            assert_eq!(v.widgets.inactive.bg_stroke.color, s.border);
+            assert_eq!(v.widgets.noninteractive.fg_stroke.color, s.text);
+            assert_eq!(v.hyperlink_color, theme.accent);
+        }
         let ctx = egui::Context::default();
         apply_style(&ctx);
         ctx.set_theme(egui::Theme::Dark);
         let style = ctx.global_style();
         let v = &style.visuals;
-        let s = &Theme::DARK.surfaces;
-        assert_eq!(v.panel_fill, s.panel);
-        assert_eq!(v.extreme_bg_color, s.ground);
-        assert_eq!(v.widgets.inactive.weak_bg_fill, s.raised);
-        assert_eq!(v.widgets.inactive.bg_stroke.color, s.border);
-        assert_eq!(v.widgets.noninteractive.fg_stroke.color, s.text);
-        assert_eq!(v.hyperlink_color, Theme::DARK.accent);
         assert_eq!(style.spacing.interact_size.y, DENSE_HEIGHT);
         assert_eq!(v.window_corner_radius, CornerRadius::same(WINDOW_RADIUS));
         assert_eq!(style.text_styles[&egui::TextStyle::Small].size, SMALL_SIZE);
@@ -603,9 +650,10 @@ mod tests {
         );
     }
 
-    /// WCAG contrast: at least 4.5 for text and secondary text, 3 for faint labels.
+    /// WCAG contrast, in both themes: at least 4.5 for text and secondary text, 3 for faint
+    /// labels, and 3 for the accent (the playhead, links and the primary button's fill).
     #[test]
-    fn dark_text_reads_on_every_surface() {
+    fn text_reads_on_every_surface() {
         fn luminance(c: Color32) -> f32 {
             let linear = |v: u8| {
                 let v = f32::from(v) / 255.0;
@@ -621,19 +669,26 @@ mod tests {
             let (a, b) = (luminance(a), luminance(b));
             (a.max(b) + 0.05) / (a.min(b) + 0.05)
         }
-        let s = &Theme::DARK.surfaces;
-        for bg in [
-            s.ground,
-            s.panel,
-            s.inner_card,
-            s.raised,
-            s.raised_hover,
-            s.raised_active,
-        ] {
-            assert!(contrast(s.text, bg) >= 4.5);
-            assert!(contrast(s.text_soft, bg) >= 4.5);
-            assert!(contrast(Theme::DARK.text_dim, bg) >= 4.5);
-            assert!(contrast(s.text_faint, bg) >= 3.0);
+        for theme in [&Theme::DARK, &Theme::LIGHT] {
+            let s = &theme.surfaces;
+            for bg in [
+                s.ground,
+                s.panel,
+                s.inner_card,
+                s.raised,
+                s.raised_hover,
+                s.raised_active,
+            ] {
+                assert!(contrast(s.text, bg) >= 4.5);
+                assert!(contrast(s.text_soft, bg) >= 4.5);
+                assert!(contrast(theme.text_dim, bg) >= 4.5);
+                assert!(contrast(s.text_faint, bg) >= 3.0);
+                assert!(contrast(theme.accent, bg) >= 3.0);
+            }
+            // Item names on their bars.
+            for item in [&theme.video_item, &theme.audio_item, &theme.graph_item] {
+                assert!(contrast(item.text, item.bar) >= 4.5);
+            }
         }
     }
 

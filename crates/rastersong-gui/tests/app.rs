@@ -453,7 +453,7 @@ fn new_project_asks_before_dropping_changes() {
     );
 }
 
-use rastersong_gui::timeline::{HEADER_WIDTH, LANE_HEIGHT};
+use rastersong_gui::timeline::{HEADER_WIDTH, VIDEO_LANE_HEIGHT};
 
 /// The lane of video or audio track row `row` (0 is the video), where it was last drawn.
 fn lane(harness: &Harness<'_, App>, row: usize) -> egui::Rect {
@@ -937,7 +937,7 @@ fn dragging_a_headers_bottom_edge_changes_the_track_height() {
     drag(&mut harness, edge, edge + vec2(0.0, 40.0));
     let height = harness.state().project().videos()[0].height.unwrap();
     assert!(
-        (height - (LANE_HEIGHT + 40.0)).abs() < 2.0,
+        (height - (VIDEO_LANE_HEIGHT + 40.0)).abs() < 2.0,
         "height {height}"
     );
 }
@@ -965,7 +965,7 @@ fn double_clicking_a_headers_bottom_edge_resets_the_track_height() {
     double_click(&mut harness, edge + vec2(0.0, 40.0));
     let height = harness.state().project().videos()[0].height;
     assert!(
-        height.is_none_or(|h| (h - LANE_HEIGHT).abs() < 0.5),
+        height.is_none_or(|h| (h - VIDEO_LANE_HEIGHT).abs() < 0.5),
         "height {height:?}"
     );
 }
@@ -2036,7 +2036,7 @@ fn dragging_a_header_moves_the_track_within_its_section() {
         .unwrap()
         .rect()
         .center();
-    let to = second_video - vec2(0.0, LANE_HEIGHT);
+    let to = second_video - vec2(0.0, VIDEO_LANE_HEIGHT);
     drag_to(&mut harness, second_video, to);
     // The drag bubble follows the pointer meanwhile.
     assert!(matches!(
@@ -2060,7 +2060,7 @@ fn dragging_a_header_moves_the_track_within_its_section() {
     drag(
         &mut harness,
         first_video,
-        first_video + vec2(0.0, LANE_HEIGHT * 4.0),
+        first_video + vec2(0.0, VIDEO_LANE_HEIGHT * 4.0),
     );
     assert_eq!(
         track_names(harness.state().project().tracks().collect()),
@@ -2121,6 +2121,17 @@ fn tracks_are_removed_from_their_headers_menu() {
     harness.get_by_label("Remove track").click();
     harness.run_steps(2);
     assert_eq!(track_names(harness.state().project().videos()), ["video"]);
+}
+
+#[test]
+fn each_section_is_named_above_its_tracks() {
+    let harness = loaded_with(four_track_app());
+    let top = |label: &str| harness.get_by_label(label).rect().top();
+    let first_track = |kind: &str| harness.get_all_by_label(kind).next().unwrap().rect().top();
+    assert!(top("GRAPHS") < top("VIDEO"));
+    assert!(top("VIDEO") < first_track("Video track"));
+    // The audio tracks are scrolled out of the harness's short timeline; their label shows.
+    assert!(first_track("Video track") < top("AUDIO"));
 }
 
 // --- Every interaction a hint promises (CONTRIBUTING rule 14) ---

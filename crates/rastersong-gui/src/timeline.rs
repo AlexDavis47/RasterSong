@@ -39,7 +39,7 @@ use rastersong_lang::{tr, tr_args};
 
 use crate::name_edit::name_edit;
 use crate::resources::DraggedGraph;
-use crate::theme::Theme;
+use crate::theme::{ItemColors, SMALL_SIZE, Theme};
 
 /// Width of the track header column.
 pub const HEADER_WIDTH: f32 = 220.0;
@@ -51,7 +51,7 @@ const KIND_INSET: f32 = 18.0;
 const NAME_SIZE: f32 = 12.5;
 /// Height of a header's name, and of the name with the row of details under it.
 const NAME_HEIGHT: f32 = 18.0;
-const NAME_ROWS_HEIGHT: f32 = 40.0;
+const NAME_ROWS_HEIGHT: f32 = 34.0;
 /// Width of a header's M and S buttons.
 const TOGGLE_WIDTH: f32 = 22.0;
 const RULER_HEIGHT: f32 = 22.0;
@@ -63,16 +63,23 @@ const BEAT_TIER: f32 = 23.0;
 const MIN_BEAT_LABEL_SPACING: f32 = 34.0;
 /// Narrowest a bar can be drawn (pixels) and still be shaded.
 const MIN_SHADED_BAR: f32 = 8.0;
-/// A track's height until the user changes it: tall enough for a header's two rows of widgets.
-pub const LANE_HEIGHT: f32 = 58.0;
+/// A video track's height until the user changes it: its name over its size and frame rate.
+pub const VIDEO_LANE_HEIGHT: f32 = 52.0;
+/// An audio track's height until the user changes it: its name over its volume.
+pub const AUDIO_LANE_HEIGHT: f32 = 44.0;
 /// A graph track's height.
-pub const GRAPH_LANE_HEIGHT: f32 = 40.0;
+pub const GRAPH_LANE_HEIGHT: f32 = 34.0;
 /// The shortest and tallest a track can be made.
-pub const LANE_HEIGHT_RANGE: std::ops::RangeInclusive<f32> = 46.0..=320.0;
-/// The space between two sections, with the thick line that divides them in its middle.
-const SECTION_GAP: f32 = 10.0;
+pub const LANE_HEIGHT_RANGE: std::ops::RangeInclusive<f32> = 40.0..=320.0;
+/// Height of the row naming a section (GRAPHS, VIDEO, AUDIO) above its tracks. The thick line
+/// between two sections runs along its top.
+const SECTION_LABEL_HEIGHT: f32 = 20.0;
+/// Width of the thick line between two sections.
+const SECTION_LINE: f32 = 2.0;
 /// Height of the bar along the top of each item, which drags it and holds its mute button.
-const ITEM_BAR: f32 = 14.0;
+const ITEM_BAR: f32 = 16.0;
+/// Corner radius of an item.
+const ITEM_RADIUS: u8 = 5;
 /// How close (pixels) to an item's edge the pointer must be to trim it.
 const EDGE_GRAB: f32 = 5.0;
 /// How close (pixels) a dragged edge must come to a snap target to snap to it.
@@ -140,7 +147,7 @@ impl TrackView {
             solo: false,
             silenced: false,
             volume: 1.0,
-            height: LANE_HEIGHT,
+            height: lane_height(kind),
             waveform: None,
             bus: String::new(),
             details: None,
@@ -776,6 +783,14 @@ impl Section {
     }
 }
 
+/// A track's height until the user changes it.
+pub fn lane_height(kind: TrackKind) -> f32 {
+    match kind {
+        TrackKind::Video => VIDEO_LANE_HEIGHT,
+        TrackKind::Audio => AUDIO_LANE_HEIGHT,
+    }
+}
+
 /// The rectangles a timeline divides into, and where each row starts and ends, measured from
 /// the top of the body before scrolling.
 struct Areas {
@@ -792,6 +807,8 @@ struct Areas {
     sections: [Range<usize>; 3],
     /// The top of the space below each section's tracks.
     tails: [f32; 3],
+    /// The top of each section's label row.
+    labels: [f32; 3],
     /// The thick lines between the sections.
     dividers: [f32; 2],
     /// The bottom of everything.
@@ -825,15 +842,22 @@ impl Areas {
         };
         let mut y = 0.0;
         let mut graph_rows = Vec::with_capacity(graph_tracks);
-        for _ in 0..graph_tracks {
-            graph_rows.push((y, y + GRAPH_LANE_HEIGHT));
-            y += GRAPH_LANE_HEIGHT;
-        }
         let mut tails = [0.0; 3];
+        let mut labels = [0.0; 3];
         let mut dividers = [0.0; 2];
         let mut rows = Vec::with_capacity(tracks.len());
         for section in Section::ALL {
             if section != Section::Graphs {
+                dividers[section.index() - 1] = y;
+            }
+            labels[section.index()] = y;
+            y += SECTION_LABEL_HEIGHT;
+            if section == Section::Graphs {
+                for _ in 0..graph_tracks {
+                    graph_rows.push((y, y + GRAPH_LANE_HEIGHT));
+                    y += GRAPH_LANE_HEIGHT;
+                }
+            } else {
                 for track in &tracks[sections[section.index()].clone()] {
                     rows.push((y, y + track.height));
                     y += track.height;
@@ -841,10 +865,6 @@ impl Areas {
             }
             tails[section.index()] = y;
             y += tail_height(section);
-            if section != Section::Audio {
-                dividers[section.index()] = y + SECTION_GAP / 2.0;
-                y += SECTION_GAP;
-            }
         }
         Self {
             headers,
@@ -855,6 +875,7 @@ impl Areas {
             rows,
             sections,
             tails,
+            labels,
             dividers,
             bottom: y,
         }
@@ -1231,14 +1252,37 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         };
         lane.show(ui, &lane_painter, model, view, theme, &mut response);
     }
-    // The thick lines between the sections, across the headers and the lanes.
+    // The thick lines between the sections, across the headers and the lanes, and the label
+    // under each that names its section.
     let divider_painter = ui.painter_at(areas.body);
     for y in areas.dividers {
-        let y = areas.y(y, view.scroll_y);
+        let y = areas.y(y, view.scroll_y) + SECTION_LINE / 2.0;
         divider_painter.line_segment(
             [pos2(areas.headers.left(), y), pos2(areas.lanes.right(), y)],
-            Stroke::new(3.0, theme.lane_outline),
+            Stroke::new(SECTION_LINE, theme.surfaces.border),
         );
+    }
+    for section in Section::ALL {
+        let top = areas.y(areas.labels[section.index()], view.scroll_y);
+        let row = Rect::from_min_size(
+            pos2(areas.headers.left() + 10.0, top),
+            vec2(HEADER_WIDTH - 10.0, SECTION_LABEL_HEIGHT),
+        );
+        if !row.intersects(areas.headers) {
+            continue;
+        }
+        let (name, color) = match section {
+            Section::Graphs => (tr("timeline.section.graphs"), theme.graph_text),
+            Section::Video => (tr("timeline.section.video"), theme.surfaces.text_faint),
+            Section::Audio => (tr("timeline.section.audio"), theme.ports.audio),
+        };
+        let mut child = ui.new_child(
+            UiBuilder::new()
+                .max_rect(row)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        child.set_clip_rect(areas.headers.intersect(ui.clip_rect()));
+        crate::widgets::section_label_in(&mut child, name, color);
     }
     if let Some(ghost) = &model.drop_ghost
         && let Some(p) = pointer.filter(|p| areas.body.contains(*p))
@@ -1456,7 +1500,7 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         if resize.double_clicked() {
             response
                 .actions
-                .push(TrackAction::SetHeight(row, LANE_HEIGHT));
+                .push(TrackAction::SetHeight(row, lane_height(track.kind)));
         }
         resize.on_hover_text(tr("timeline.track.resize"));
     }
@@ -1552,10 +1596,12 @@ fn track_menu(
     response: &mut TimelineResponse,
 ) {
     let track = &model.tracks[row];
-    if track.height != LANE_HEIGHT && ui.button(tr("timeline.track.reset_height")).clicked() {
+    if track.height != lane_height(track.kind)
+        && ui.button(tr("timeline.track.reset_height")).clicked()
+    {
         response
             .actions
-            .push(TrackAction::SetHeight(row, LANE_HEIGHT));
+            .push(TrackAction::SetHeight(row, lane_height(track.kind)));
         ui.close();
     }
     let section = &areas.sections[Section::of(track.kind).index()];
@@ -2024,20 +2070,12 @@ impl Lane<'_> {
                 });
             },
         );
-        let base = match track.kind {
-            TrackKind::Video => theme.video_block,
-            TrackKind::Audio => theme.audio_block,
-        };
-        let mut fill = if hovered {
-            base.gamma_multiply(1.2)
-        } else {
-            base
+        let colors = match track.kind {
+            TrackKind::Video => &theme.video_item,
+            TrackKind::Audio => &theme.audio_item,
         };
         let dim = item.muted || track.silenced;
-        if dim {
-            fill = fill.gamma_multiply(0.4);
-        }
-        painter.rect_filled(block, CornerRadius::same(3), fill);
+        item_body(painter, block, colors, None, hovered, dim);
         let content = Rect::from_min_max(pos2(block.left(), bar.bottom()), block.max);
         match track.kind {
             TrackKind::Video if track.thumbnails.is_some() => {
@@ -2057,8 +2095,9 @@ impl Lane<'_> {
             TrackKind::Audio => {
                 if let Some(waveform) = &track.waveform {
                     let color = theme
-                        .block_text
-                        .gamma_multiply(if dim { 0.3 } else { 0.55 });
+                        .ports
+                        .audio
+                        .gamma_multiply(if dim { 0.45 } else { 1.0 });
                     draw_waveform(
                         painter,
                         waveform,
@@ -2080,7 +2119,7 @@ impl Lane<'_> {
             ui,
             painter,
             self.clip,
-            theme,
+            (theme, colors),
             bar,
             (visible.left(), &name, item.muted),
             hovered,
@@ -2094,7 +2133,7 @@ impl Lane<'_> {
         if selected {
             painter.rect_stroke(
                 block,
-                CornerRadius::same(3),
+                CornerRadius::same(ITEM_RADIUS),
                 Stroke::new(2.0, theme.accent),
                 egui::StrokeKind::Inside,
             );
@@ -2222,33 +2261,38 @@ fn item_bar(
     ui: &Ui,
     painter: &egui::Painter,
     clip: Rect,
-    theme: &Theme,
+    (theme, colors): (&Theme, &ItemColors),
     bar: Rect,
     (left, name, muted): (f32, &str, bool),
     hovered: bool,
     mute_id: egui::Id,
 ) -> bool {
+    let fill = if hovered {
+        colors.bar.lerp_to_gamma(colors.text, 0.08)
+    } else {
+        colors.bar
+    };
     painter.rect_filled(
-        bar,
+        Rect::from_min_max(bar.min + vec2(1.0, 1.0), bar.max - vec2(1.0, 0.0)),
         CornerRadius {
-            nw: 3,
-            ne: 3,
+            nw: ITEM_RADIUS - 1,
+            ne: ITEM_RADIUS - 1,
             sw: 0,
             se: 0,
         },
-        egui::Color32::from_black_alpha(if hovered { 70 } else { 45 }),
+        fill,
     );
     let text = if muted {
-        theme.block_text.gamma_multiply(0.5)
+        colors.text.gamma_multiply(0.5)
     } else {
-        theme.block_text
+        colors.text
     };
     let painter_bar = painter.with_clip_rect(bar.intersect(clip));
     painter_bar.text(
         pos2(left + 4.0, bar.center().y),
         Align2::LEFT_CENTER,
         name,
-        FontId::proportional(10.0),
+        crate::theme::semibold(SMALL_SIZE),
         text,
     );
     let mute_rect = Rect::from_center_size(
@@ -2273,6 +2317,35 @@ fn item_bar(
         tr("timeline.item.mute")
     });
     clicked
+}
+
+/// An item's body in `block`: its fill, a step lighter while `hovered`, faded while `dim`,
+/// outlined in `edge`, or else in its bar's colour.
+fn item_body(
+    painter: &egui::Painter,
+    block: Rect,
+    colors: &ItemColors,
+    edge: Option<Color32>,
+    hovered: bool,
+    dim: bool,
+) {
+    let mut fill = if hovered {
+        colors.fill.lerp_to_gamma(colors.bar, 0.5)
+    } else {
+        colors.fill
+    };
+    let mut edge = edge.unwrap_or(colors.bar);
+    if dim {
+        fill = fill.gamma_multiply(0.45);
+        edge = edge.gamma_multiply(0.45);
+    }
+    painter.rect(
+        block,
+        CornerRadius::same(ITEM_RADIUS),
+        fill,
+        Stroke::new(1.0, edge),
+        egui::StrokeKind::Inside,
+    );
 }
 
 /// Where a drag of anything can snap when nothing is left out: the timeline's start, the
@@ -2762,7 +2835,7 @@ fn track_header(
     let column = vec2(name_width(ui, 2), NAME_ROWS_HEIGHT);
     ui.allocate_ui_with_layout(column, egui::Layout::top_down(egui::Align::Min), |ui| {
         ui.set_width(column.x);
-        ui.spacing_mut().item_spacing.y = 3.0;
+        ui.spacing_mut().item_spacing.y = 2.0;
         let edit = header_name(ui, ui.id().with(("track-name", row)), &track.name);
         let edit_response = edit.response.on_hover_text(tr("timeline.track.name.help"));
         if edit_response.gained_focus() {
@@ -2853,7 +2926,7 @@ fn audio_controls(
 ) {
     const READOUT: f32 = 32.0;
     const BUS: f32 = 64.0;
-    ui.spacing_mut().interact_size.y = 20.0;
+    ui.spacing_mut().interact_size.y = 14.0;
     let theme = Theme::of(ui.ctx());
     let with_bus = buses.len() > 1 || !buses.contains(&track.bus);
     let gaps = ui.spacing().item_spacing.x * if with_bus { 2.0 } else { 1.0 };
@@ -3036,21 +3109,21 @@ impl GraphLane<'_> {
             None => block,
         };
         let bar = bar_of(shown);
-        let base = theme.graph_block;
-        let mut fill = if hovered {
-            base.gamma_multiply(1.2)
-        } else {
-            base
-        };
-        if item.muted || track.muted {
-            fill = fill.gamma_multiply(0.4);
-        }
-        painter.rect_filled(shown, CornerRadius::same(3), fill);
+        let colors = &theme.graph_item;
+        let edge = (!selected).then_some(theme.graph_block);
+        item_body(
+            painter,
+            shown,
+            colors,
+            edge,
+            hovered,
+            item.muted || track.muted,
+        );
         if item_bar(
             ui,
             painter,
             self.clip,
-            theme,
+            (theme, colors),
             bar,
             (shown.intersect(self.clip).left(), &item.name, item.muted),
             hovered,
@@ -3064,7 +3137,7 @@ impl GraphLane<'_> {
         if selected {
             painter.rect_stroke(
                 shown,
-                CornerRadius::same(3),
+                CornerRadius::same(ITEM_RADIUS),
                 Stroke::new(2.0, theme.accent),
                 egui::StrokeKind::Inside,
             );
@@ -3123,7 +3196,7 @@ fn header(ui: &mut Ui, rect: Rect, clip: Rect, contents: impl FnOnce(&mut Ui)) {
     }
     let top = Rect::from_min_size(
         rect.min,
-        vec2(rect.width(), rect.height().min(LANE_HEIGHT - 4.0)),
+        vec2(rect.width(), rect.height().min(VIDEO_LANE_HEIGHT - 4.0)),
     );
     let inner = Rect::from_min_max(top.min + vec2(KIND_INSET, 3.0), top.max - vec2(8.0, 3.0));
     let mut child = ui.new_child(
@@ -3146,8 +3219,8 @@ fn kind_bar(
     label: &str,
     id: impl std::hash::Hash + std::fmt::Debug,
 ) {
-    let top = rect.height().min(LANE_HEIGHT - 4.0);
-    let height = (top * 0.6).round().clamp(16.0, 34.0);
+    let top = rect.height().min(VIDEO_LANE_HEIGHT - 4.0);
+    let height = (top * 0.7).round().clamp(16.0, 34.0);
     let bar = Rect::from_center_size(
         pos2(rect.left() + 9.5, rect.top() + top / 2.0),
         vec2(3.0, height),
@@ -3272,16 +3345,19 @@ mod tests {
             &tracks,
         );
         let body = RULER_HEIGHT;
-        // The graph track, its "+" row and the gap, then the video track.
-        let video = GRAPH_LANE_HEIGHT + TAIL_HEIGHT + SECTION_GAP;
-        assert_eq!(areas.graph_row_at(0.0, body + 10.0), Some(0));
-        assert_eq!(areas.row_at(0.0, body + 10.0), None);
+        // The graphs' label, the graph track and its "+" row, then the video label and track.
+        let video = SECTION_LABEL_HEIGHT * 2.0 + GRAPH_LANE_HEIGHT + TAIL_HEIGHT;
+        assert_eq!(areas.dividers[0], video - SECTION_LABEL_HEIGHT);
+        assert_eq!(areas.graph_row_at(0.0, body + 10.0), None, "on the label");
+        let graph = body + SECTION_LABEL_HEIGHT;
+        assert_eq!(areas.graph_row_at(0.0, graph + 10.0), Some(0));
+        assert_eq!(areas.row_at(0.0, graph + 10.0), None);
         assert_eq!(areas.row_at(0.0, body + video + 10.0), Some(0));
-        // The audio track comes after the video's "+" row and the second gap.
-        let audio = video + LANE_HEIGHT + TAIL_HEIGHT + SECTION_GAP;
+        // The audio track comes after the video's "+" row and the audio label.
+        let audio = video + VIDEO_LANE_HEIGHT + TAIL_HEIGHT + SECTION_LABEL_HEIGHT;
         assert_eq!(areas.lane(1, 0.0).top(), body + audio + 2.0);
         assert_eq!(areas.lane(1, 0.0).height(), 96.0);
-        assert_eq!(areas.row_at(0.0, body + audio - 5.0), None, "in the gap");
+        assert_eq!(areas.row_at(0.0, body + audio - 5.0), None, "on the label");
         assert_eq!(areas.row_at(0.0, body + audio + 90.0), Some(1));
         assert_eq!(areas.row_at(20.0, body + audio - 10.0), Some(1));
         assert_eq!(areas.sections, [0..0, 0..1, 1..2]);

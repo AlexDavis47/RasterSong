@@ -28,8 +28,8 @@ pub fn track_inspector(
     };
     let theme = Theme::of(ui.ctx());
     let (kind, color) = match track.kind {
-        TrackKind::Video => (tr("resources.kind.video"), theme.video_block),
-        TrackKind::Audio => (tr("resources.kind.audio"), theme.audio_block),
+        TrackKind::Video => (tr("resources.kind.video"), theme.ports.video),
+        TrackKind::Audio => (tr("resources.kind.audio"), theme.ports.audio),
     };
     inspector_header(ui, |ui| {
         kind_row(ui, tr("inspector.kind.track"), Some((kind, color)), |_| {});

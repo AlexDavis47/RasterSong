@@ -532,7 +532,7 @@ fn track_screenshots() {
         .rect()
         .center();
     let x = from.x;
-    let row = rastersong_gui::timeline::LANE_HEIGHT;
+    let row = rastersong_gui::timeline::AUDIO_LANE_HEIGHT;
     harness.event(egui::Event::PointerMoved(from));
     harness.run_steps(1);
     harness.event(egui::Event::PointerButton {

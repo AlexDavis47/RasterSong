@@ -29,8 +29,8 @@ page and a mockup disagree, this page wins; fix the mockup.
 The dark theme first. One accent, used for the playhead, the selection, focus and the primary button; colour
 otherwise means a signal or a state, never decoration. All values are in `theme.rs` (the one place colours live):
 the surfaces in `Theme::DARK.surfaces`, which `apply_style` gives to egui's panels and widgets, the rest in the
-other `Theme` fields. **These shipped in stage 1** for the dark theme; the light theme keeps egui's own surfaces
-until its pass.
+other `Theme` fields. **These shipped in stage 1** for the dark theme; the light theme has the same tokens (stage
+10, [below](#light-theme)).
 
 | Token | Value | In `theme.rs` | Used for |
 |---|---|---|---|
@@ -55,10 +55,23 @@ until its pass.
 | Solo | `#F2D04B` | `solo` | A soloed track's S button |
 | Beat | `#F2B544` | `beat` | The first-beat marker, the metronome and its beat lights |
 | Warning ground | `#26231B`, border `#6E5420`, text `#F4E3BD` | `warning_note`, `warning_note_border`, `warning_note_text` | A node's warning note, the odd-size bar in Export |
+| Graph text | `#B9A9FF` | `graph_text` | The GRAPHS section label |
+| Graph item | body `#2D2650`, bar `#3F3570`, text `#E4DDFF`, outline `#9C86FF` | `graph_item`, `graph_block` | Graph items on the timeline |
+| Video item | body `#1E2433`, bar `#2A3247`, text `#D6DBE8` | `video_item` | Video items |
+| Audio item | body `#10302C`, bar `#17423D`, text `#C9F1EA`, waveform `#3FC7B4` | `audio_item`, `ports.audio` | Audio items |
 
-Category colours for nodes keep the six in `Theme::categories`; the strip shows them at full strength. Video and
-audio items on the timeline keep their colours until the timeline stage. A test holds every text colour to WCAG
-contrast on every surface it can sit on: 4.5 for text and muted text, 3 for faint labels.
+Category colours for nodes keep the six in `Theme::categories`; the strip shows them at full strength. A test holds
+every text colour, in both themes, to WCAG contrast on every surface it can sit on: 4.5 for text and muted text, 3
+for faint labels and the accent, and 4.5 for an item's name on its bar.
+
+### Light theme
+
+**Shipped in stage 10.** The boards are dark only, so the light theme is the same tokens turned over rather than a
+board of its own: panels are white (`#FFFFFF`) on a cool grey ground (`#EEEFF2`), which wells and text fields sink
+into; raised controls step down `#F4F5F7` / `#ECEDF1` / `#E2E4E9`, outlined `#D5D8DE` (hover `#B9BDC6`); text is
+`#17181B`, soft `#3D4048`, muted `#555A64`, faint `#6B6F7A`. The accent darkens to `#4A5FD9` to read on white and
+is the playhead and the drag bubble too. Items are pale tints of their kind with dark names (video `#E3E8F2`, audio
+`#DCF2EE`, graphs `#ECE8FC`); the preview stays dark. All values are in `Theme::LIGHT`.
 
 **Type.** Inter 4.1 for text, JetBrains Mono 2.304 (the NL build, without ligatures) for numbers, bundled in
 `crates/rastersong-gui/assets/fonts/` and put ahead of egui's own faces, which still cover the symbols and emoji
@@ -182,14 +195,20 @@ Relocate… button. A hint line at the bottom names the drag and double-click ge
 
 ## Timeline
 
-Board: [Main](design/ui-v2/Main.dc.html). **Shipped in stage 7.** Where it differs from the board: the tempo
-fields and Metronome stay in the title row (the Tempo stage's group), so the loop region and Snap sit at its right
-end, the region before Snap; the volume reads in percent, not dB; the sections keep their thick dividers without
-the board's GRAPHS / VIDEO / AUDIO labels, and tracks keep their heights and item colours (later stages). A
-track's name is still edited in place, outlined on hover.
+Board: [Main](design/ui-v2/Main.dc.html). **Shipped in stage 7**; the section labels, track heights and item colours
+followed with stage 10. Where it differs from the board: the tempo fields and Metronome stay in the title row (the
+Tempo stage's group), so the loop region and Snap sit at its right end, the region before Snap; the volume reads in
+percent, not dB; lanes keep their outlined grounds, so an empty stretch of a track still reads as the track; a
+track's name is still edited in place, outlined on hover; and a waveform is drawn as the audio's shape, not the
+board's bars.
 
 The three sections, items, trimming and graph items work as in [Timeline](app.md#timeline). The changes:
 
+- Each section is named in a capital label above its tracks (GRAPHS in the graph colour, VIDEO, AUDIO in the audio
+  colour), the thick line between two sections along the label's top. Tracks are 34 px (graphs), 52 px (video) and
+  44 px (audio) until resized.
+- Items are a dark body of their kind's colour with a bar along the top in a step lighter, their name in semibold;
+  graph items are outlined in the graph colour.
 - Track headers are calmer: a bar of the kind's colour, the name with a faint detail line under it (size and
   frame rate, or a slim volume bar), and small M and S toggles (S yellow while on); **removing a track moves into
   its right-click menu**.
@@ -233,5 +252,4 @@ Everything else is as in [Export](app.md#export).
 
 ## Not covered yet
 
-- **The light theme.** The boards are dark only; `Theme::LIGHT` needs its own pass with the same token names.
 - **The Settings window** keeps its current layout until it gets a board of its own.

@@ -857,7 +857,11 @@ independent of each other.
    first-beat marker, beat-grid snap and loop, bar.beat in the transport with the beat light.
 9. [x] **feature** Export window: two columns, the latest rendered frame, the summary and progress beside the
    settings.
-10. [ ] **feature** The light theme with the same tokens. *After 1.*
+10. [x] **feature** The light theme with the same tokens.
+   - [x] **feature** The timeline's section labels, track heights and item colours from the board, left over from
+     stage 7.
+   - [x] **bug** An output's signal name in the node inspector ran under its layout readout ("1600×1 stereo") when
+     the row was narrow; it is now cut short before it.
 
 ## Code health and DRY
 
