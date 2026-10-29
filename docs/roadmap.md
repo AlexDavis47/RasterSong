@@ -822,10 +822,10 @@ independent of each other.
 1. [x] **feature** Design tokens: the dark palette, type sizes, control heights, radii and spacing in `theme.rs`
    and `apply_style` ([UI V2](ui-v2.md#design-tokens)).
    - [x] **feature** Bundle Inter and JetBrains Mono ([Licensing](licensing.md#fonts)).
-   - [ ] **bug** Two GPU screenshot tests fail on master too: `bypass_screenshots` looks for a "Bypass graph"
-     label (the button says "Bypass graphs"), and `screenshots` times out waiting for the graph to fail
-     (`tests/screenshots.rs:280`). The other eight render.
-2. [ ] **feature** Shell: the top bar with the Export… button, the transport under the preview (two rows, no
+   - [ ] **bug** The GPU screenshot test `screenshots` times out waiting for the graph to fail
+     (`tests/screenshots.rs:280`), on master too. The other nine render (`bypass_screenshots` was fixed in stage 2:
+     it looked for a "Bypass graph" label).
+2. [x] **feature** Shell: the top bar with the Export… button, the transport under the preview (two rows, no
    wrapping), Result / Original / Split, and the status bar with pointer hints.
 3. [ ] **feature** Node graph: the category colour strip, wider nodes and larger text, bypassed and warning
    styles, the error count in the canvas header, the wire legend, the node search palette.

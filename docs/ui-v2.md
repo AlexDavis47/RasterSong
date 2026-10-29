@@ -71,9 +71,10 @@ egui's interact height). Corners are 6 px on controls, 8 px on nodes, cards and 
 ## Layout
 
 The window keeps the two rows from [Desktop app](app.md): preview, graph and inspector on top; Resources and the
-timeline below. Board: [Main](design/ui-v2/Main.dc.html).
+timeline below. Board: [Main](design/ui-v2/Main.dc.html). **The top bar, status bar, preview header and transport
+shipped in stage 2**, apart from what Tempo mode adds to the transport (stage 8).
 
-- **Top bar**: the menus, the project name with an "edited" mark, File → Settings, and an **Export…** button on
+- **Top bar**: the menus, the project name with an "edited" mark, a Settings button, and an **Export…** button on
   the right. No transport here.
 - **Status bar** along the bottom: the compile state on the left ("Graph compiled", or the error), the hint for
   what is under the pointer in the middle, the cache use and the project's picture size and rate on the right.
@@ -181,4 +182,3 @@ Everything else is as in [Export](app.md#export).
 
 - **The light theme.** The boards are dark only; `Theme::LIGHT` needs its own pass with the same token names.
 - **The Settings window** keeps its current layout until it gets a board of its own.
-- **Fonts** depend on the licensing check above; until then egui's default face at the sizes above.

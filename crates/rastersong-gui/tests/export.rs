@@ -75,7 +75,8 @@ fn the_file_menu_opens_the_export_window() {
     harness.run_steps(2);
     harness.get_by_label("File").click();
     harness.run_steps(2);
-    harness.get_by_label("Export…").click();
+    // The menu's item, not the top bar's button beside it.
+    harness.get_all_by_label("Export…").last().unwrap().click();
     harness.run_steps(2);
     assert!(harness.query_by_label("Format").is_some());
     assert!(harness.query_by_label("Sound").is_some());
@@ -89,6 +90,15 @@ fn the_file_menu_opens_the_export_window() {
             .iter()
             .any(|f| f.kind == rastersong_engine::FormatKind::ProRes)
     );
+}
+
+#[test]
+fn the_top_bar_export_button_opens_the_export_window() {
+    let mut harness = harness(app(60));
+    harness.run_steps(2);
+    harness.get_by_label("Export…").click();
+    harness.run_steps(2);
+    assert!(harness.query_by_label("Format").is_some());
 }
 
 #[test]

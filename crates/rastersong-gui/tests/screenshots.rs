@@ -430,7 +430,7 @@ fn bypass_screenshots() {
         harness.key_press(egui::Key::Escape);
         harness.run_steps(2);
 
-        harness.get_by_label("Bypass graph").click();
+        harness.get_by_label("Bypass graphs").click();
         harness.run_steps(6);
         save(&mut harness, &format!("{name}-9-graph-bypassed"));
     }
@@ -455,7 +455,7 @@ fn preview_screenshots() {
         wait_for_frames(&mut harness, 30);
         save(&mut harness, &format!("{name}-10-preview-processed"));
 
-        harness.get_by_label("Unprocessed").click();
+        harness.get_by_label("Original").click();
         // Give the source engine time to render its frames.
         for _ in 0..100 {
             harness.run_steps(1);
@@ -470,7 +470,7 @@ fn preview_screenshots() {
             &format!("{name}-12-split-unprocessed-selected"),
         );
 
-        harness.get_by_label("Unprocessed").click();
+        harness.get_by_label("Split").click();
         harness.run_steps(4);
         save(&mut harness, &format!("{name}-13-split-processed-selected"));
 

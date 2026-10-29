@@ -72,28 +72,57 @@ preview.rendering = Rendering
 preview.warming = Warming up {done}/{total}
 preview.warming.help = Rebuilding the history that delays and filters in the graph need before
   frame {frame} can be shown. Graphs with a lot of memory take longer after a seek.
+preview.title = Preview
+preview.result = Result
+preview.result.help = Show the processed video
+preview.original = Original
+preview.original.help = Show the video before the graph. Processing carries on.
+preview.split = Split
+preview.split.help = Compare both side by side and drag the divider. Click Split again to swap
+  the sides.
+preview.fit = Fit picture
+preview.fit.help = Fit the picture to the pane (F)
+controls.to_start = Go to start
+controls.to_start.help = Go to the start (Home)
+controls.play = Play
+controls.pause = Pause
 controls.play.help = Play / pause (Space)
 controls.loop = Loop
 controls.loop.help = Repeat the loop region (R)
 controls.loop.help_none = Ctrl+drag along the timeline's ruler to make a loop region
 controls.frame = frame {frame}
-controls.preview = Preview
 controls.preview.help = Preview resolution. Lower is faster; export is always full size.
-controls.unprocessed = Unprocessed
-controls.unprocessed.help = Show the original video instead of the processed one. Processing carries on.
-controls.split = Split
-controls.split.help = Compare both side by side. Drag the divider; switching Unprocessed swaps the sides.
 controls.resolution = {width}×{height} of {project_width}×{project_height}
 controls.resolution.help = Preview resolution, out of the project's resolution (the video's, which
   is what gets exported)
 controls.volume = Playback volume {percent}%
-feed.processed = Processed
-feed.unprocessed = Unprocessed
-cache.loop_rendered = loop rendered
-cache.rendered_to_end = rendered to the end
-cache.ahead = {seconds} s ahead
-cache.slowed = {speed}× · {ahead}
+feed.processed = Result
+feed.unprocessed = Original
+cache.ahead_label = Ahead
+cache.ahead = {seconds} s
+cache.loop_rendered = whole loop
+cache.rendered_to_end = to the end
+cache.slowed = {speed}× speed
+cache.warming = Warming up
+cache.warming_count = {done}/{total}
 cache.help = Rendered ahead of the playhead. Playback slows to what rendering can keep up with.
+
+# --- Top bar and status bar ---
+project.edited = · edited
+top.settings = Settings (Ctrl+,)
+top.export.help = Render the project to a video file
+status.idle = Nothing to render yet
+status.loading = Compiling the graph
+status.ready = Graph compiled
+status.cache = cache {used} / {budget} MiB
+status.cache.help = Memory the rendered frames take, out of what Settings → Rendering allows
+status.picture = {width}×{height} · {fps} fps
+hint.wire = Alt+scroll changes the view · hold Shift to listen
+hint.graph = Right-click adds a node · Alt+click a node bypasses it · hover a wire to inspect it
+hint.preview = Scroll to zoom · middle-drag to pan · F fits the picture
+hint.ruler = Click or drag to move the playhead · Ctrl+drag for a loop region
+hint.lanes = Drag an item's bar to move it, its edges to trim · Alt+drag an edge changes the rate ·
+  Shift drags freely
 
 # --- Tempo ---
 tempo.bpm.suffix = \sbpm

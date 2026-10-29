@@ -80,12 +80,17 @@ impl Settings {
                 .clamp(*Self::CACHE_MIB_RANGE.start(), *Self::CACHE_MIB_RANGE.end())
                 as usize
                 * (1 << 20),
-            lookahead_secs: self.render_ahead_secs.clamp(
-                *Self::RENDER_AHEAD_RANGE.start(),
-                *Self::RENDER_AHEAD_RANGE.end(),
-            ),
+            lookahead_secs: self.render_ahead(),
             audio_cache: rastersong_engine::AudioCache::in_user_dir(),
         }
+    }
+
+    /// How far ahead of the playhead to render, in seconds, within the range Settings offers.
+    pub fn render_ahead(&self) -> f64 {
+        self.render_ahead_secs.clamp(
+            *Self::RENDER_AHEAD_RANGE.start(),
+            *Self::RENDER_AHEAD_RANGE.end(),
+        )
     }
 
     pub fn preview_scale(&self) -> PreviewScale {

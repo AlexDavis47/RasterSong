@@ -63,7 +63,8 @@ pub use renderer::{
     single_composition,
 };
 pub use service::{
-    Engine, EngineConfig, EngineStatus, Failure, LoadedTrack, PreviewScale, RenderProgress,
+    CacheUse, Engine, EngineConfig, EngineStatus, Failure, LoadedTrack, PreviewScale,
+    RenderProgress,
 };
 pub use tap::{PICTURE_SIDE, Picture, Tap, TapOutcome, TapRequest, picture_size};
 pub use thumbnails::{THUMBNAIL_HEIGHT, Thumbnails, VideoKey};

@@ -414,8 +414,10 @@ pub struct TimelineResponse {
 }
 
 /// Where the timeline's rows were drawn, in screen space (before clipping to the visible part).
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TimelineLayout {
+    /// The ruler along the top, over the lanes.
+    pub ruler: Rect,
     /// The lane of each graph track, top first.
     pub graph_lanes: Vec<Rect>,
     /// The lane of each video and audio track, as [`TimelineModel::tracks`] lists them.
@@ -424,6 +426,18 @@ pub struct TimelineLayout {
     pub headers: Vec<Rect>,
     /// The space below the Graphs, Video and Audio sections' tracks, across the headers and lanes.
     pub tails: Vec<Rect>,
+}
+
+impl Default for TimelineLayout {
+    fn default() -> Self {
+        Self {
+            ruler: Rect::NOTHING,
+            graph_lanes: Vec::new(),
+            lanes: Vec::new(),
+            headers: Vec::new(),
+            tails: Vec::new(),
+        }
+    }
 }
 
 /// How close (pixels) the pointer must be to a loop edge on the ruler to drag that edge.
@@ -1408,6 +1422,7 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
     }
 
     response.layout = TimelineLayout {
+        ruler: areas.ruler,
         graph_lanes: (0..model.graph_tracks.len())
             .map(|row| areas.graph_lane(row, view.scroll_y))
             .collect(),

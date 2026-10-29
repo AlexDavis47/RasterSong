@@ -104,6 +104,13 @@ impl Default for EngineConfig {
     }
 }
 
+/// How much memory the rendered frames take, from [`Engine::cache_use`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CacheUse {
+    pub bytes: usize,
+    pub budget: usize,
+}
+
 /// A decoded audio track, for playback and display.
 #[derive(Debug, Clone)]
 pub struct LoadedTrack {
@@ -464,6 +471,15 @@ impl Engine {
     /// How many consecutive frames are rendered starting at `index`.
     pub fn buffered_from(&self, index: usize) -> usize {
         lock(&self.shared.cache).run_from(index)
+    }
+
+    /// The memory the rendered frames take and the most they may take, in bytes.
+    pub fn cache_use(&self) -> CacheUse {
+        let cache = lock(&self.shared.cache);
+        CacheUse {
+            bytes: cache.bytes(),
+            budget: cache.budget(),
+        }
     }
 
     /// The rendered frames, as ranges of frame indices.

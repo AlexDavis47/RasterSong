@@ -4,16 +4,30 @@ Two rows: along the bottom, the **Resources** panel and the **timeline** beside 
 **preview** with its playback controls underneath, the **node graph**, and the **inspector**. The app only holds UI
 state; everything is decoded, rendered and cached by the [engine](engine.md) on its render thread.
 
+The **top bar** holds the menus, the project's name (with "edited" while there are unsaved changes), a Settings
+button and **Export…**. The **status bar** along the bottom says whether the graph compiled (or why it didn't), names
+the gestures for what is under the pointer (a wire, the graph, the preview, the ruler or the lanes), and shows the
+cache's memory use out of its budget and the project's picture size and frame rate.
+
 This describes the app as it is. Changes planned from hands-on testing are in the
 [roadmap](roadmap.md#timeline-resources-and-routing). The interface redesign is planned in [UI V2](ui-v2.md).
 
 ## Preview
 
-Play/pause, the **Loop** button, timecode and frame, how far ahead is rendered (and the playback speed when
-rendering can't keep up), preview resolution (full, ½, ¼, ⅛, 1/16; ½ by default, with the size it renders at shown
-beside it) and playback volume. **Unprocessed** shows the original video instead of the processed one (processing
-carries on); **Split** shows both side by side with a draggable divider. The scroll wheel zooms the picture,
-middle-drag pans it and F fits it again. With no video loaded, the preview offers an Open Video button.
+The header chooses what the picture shows: **Result** (the processed video), **Original** (the video before the
+graph; processing carries on) or **Split**, both side by side with the original on the left and a draggable
+divider; clicking Split again swaps the sides. **Fit** (or F) fits the picture again after the scroll wheel zooms
+it or middle-drag pans it. The size the preview renders at, out of the project's, sits in the picture's corner.
+With no video loaded, the preview offers an Open Video button.
+
+The transport sits under the picture in two rows that don't wrap:
+
+1. Go to start, play/pause (the accent button), **Loop** (lit while the loop region repeats), and the timecode:
+   the position large, the length small and the frame number at the right.
+2. **Ahead**: how far ahead of the playhead is rendered, as seconds over a bar that fills toward the render-ahead
+   setting ("to the end" or "whole loop" once there's nothing left to render). It turns amber and names the speed
+   when rendering can't keep up and playback slows, and shows the warm-up's progress after a seek. Then the
+   preview resolution (full, ½, ¼, ⅛, 1/16; ½ by default) and the playback volume.
 
 ## Node graph
 
@@ -289,7 +303,7 @@ in red in the inspector) and aren't rendered until set to another.
 
 ## Export
 
-**File → Export…** opens the Export window. It renders the project at full resolution on its own thread, while
+**Export…** in the top bar (or **File → Export…**) opens the Export window. It renders the project at full resolution on its own thread, while
 the app stays usable.
 
 - **Format**: *H.264 (MP4)* with AAC sound, *ProRes (MOV)* with 24-bit PCM, or *FFV1 lossless (MKV)* with 16-bit

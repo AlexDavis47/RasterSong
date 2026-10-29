@@ -356,9 +356,11 @@ pub const CARD_RADIUS: u8 = 8;
 pub const MENU_RADIUS: u8 = 8;
 pub const WINDOW_RADIUS: u8 = 12;
 /// Text sizes that differ from egui's (body and buttons stay at its 13).
-const SMALL_SIZE: f32 = 10.5;
+pub const SMALL_SIZE: f32 = 10.5;
 const MONO_SIZE: f32 = 12.5;
 const HEADING_SIZE: f32 = 16.0;
+/// The large timecode under the preview.
+pub const TIMECODE_SIZE: f32 = 15.0;
 
 /// The bundled faces: Inter for text, JetBrains Mono (without ligatures) for numbers. Both are
 /// under the SIL Open Font License; the license texts sit beside them and ship in every package.

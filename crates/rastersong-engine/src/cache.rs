@@ -109,6 +109,11 @@ impl FrameCache {
         self.bytes
     }
 
+    /// The memory the cache may use, in bytes.
+    pub fn budget(&self) -> usize {
+        self.budget
+    }
+
     /// The cached frames as ranges of consecutive indices.
     pub fn ranges(&self) -> Vec<std::ops::Range<usize>> {
         let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();

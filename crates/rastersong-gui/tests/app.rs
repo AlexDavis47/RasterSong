@@ -171,7 +171,7 @@ fn play_button_and_space_bar_control_playback() {
         app.engine().info().is_some()
     });
 
-    harness.get_by_label("▶").click();
+    harness.get_by_label("Play").click();
     harness.step();
     assert!(harness.state().clock().is_playing());
 
@@ -2474,7 +2474,7 @@ fn copies_keep_input_connections_and_shift_does_the_opposite_once() {
 }
 
 #[test]
-fn the_split_divider_drags_and_unprocessed_swaps_the_sides() {
+fn the_split_divider_drags_and_split_again_swaps_the_sides() {
     use rastersong_gui::preview::Feed;
     let mut harness = loaded();
     harness.get_by_label("Split").click();
@@ -2495,10 +2495,107 @@ fn the_split_divider_drags_and_unprocessed_swaps_the_sides() {
         "{position} -> {moved}"
     );
 
-    harness.get_by_label("Unprocessed").click();
+    harness.get_by_label("Split").click();
     harness.run_steps(2);
     let (_, sides) = harness.state().preview_split().unwrap();
     assert_eq!(sides, (Feed::Processed, Feed::Unprocessed));
+
+    harness.get_by_label("Result").click();
+    harness.run_steps(2);
+    assert!(harness.state().preview_split().is_none());
+}
+
+#[test]
+fn original_shows_the_video_before_the_graph() {
+    use rastersong_gui::preview::Feed;
+    let mut harness = loaded();
+    assert_eq!(harness.state().preview_feed(), Feed::Processed);
+    harness.get_by_label("Original").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().preview_feed(), Feed::Unprocessed);
+    assert!(harness.state().preview_split().is_none());
+    // From Original, Split still puts the original on the left.
+    harness.get_by_label("Split").click();
+    harness.run_steps(2);
+    let (_, sides) = harness.state().preview_split().unwrap();
+    assert_eq!(sides, (Feed::Unprocessed, Feed::Processed));
+}
+
+#[test]
+fn go_to_start_moves_the_playhead_to_the_first_frame() {
+    let mut harness = loaded();
+    harness.key_press(egui::Key::ArrowRight);
+    harness.key_press(egui::Key::ArrowRight);
+    harness.run_steps(2);
+    assert_eq!(harness.state().clock().frame(), 2);
+    harness.get_by_label("Go to start").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().clock().frame(), 0);
+}
+
+#[test]
+fn the_play_button_names_what_it_will_do() {
+    let mut harness = loaded();
+    harness.get_by_label("Play").click();
+    harness.run_steps(2);
+    assert!(harness.query_by_label("Play").is_none());
+    harness.get_by_label("Pause").click();
+    harness.run_steps(2);
+    assert!(!harness.state().clock().is_playing());
+}
+
+#[test]
+fn the_top_bar_names_the_project_and_marks_it_edited() {
+    let mut harness = loaded();
+    assert!(harness.query_by_label("Untitled").is_some());
+    assert!(harness.query_by_label("· edited").is_none());
+    harness.state_mut().add_graph_track();
+    harness.run_steps(2);
+    assert!(harness.state().is_dirty());
+    assert!(harness.query_by_label("· edited").is_some());
+}
+
+#[test]
+fn the_top_bar_settings_button_opens_settings() {
+    let mut harness = loaded();
+    harness.get_by_label("Settings (Ctrl+,)").click();
+    harness.run_steps(2);
+    assert!(harness.query_by_label("Rendering").is_some());
+}
+
+#[test]
+fn the_status_bar_says_the_graph_compiled_and_shows_the_cache() {
+    let harness = loaded();
+    assert!(harness.query_by_label("Graph compiled").is_some());
+    // The budget is the default 1 GiB.
+    assert!(harness.query_by_label_contains(" / 1024 MiB").is_some());
+}
+
+#[test]
+fn the_status_bar_names_the_gestures_under_the_pointer() {
+    let mut harness = loaded();
+    let hover = |harness: &mut Harness<'_, App>, p: egui::Pos2| {
+        harness.event(Event::PointerMoved(p));
+        harness.run_steps(3);
+    };
+    let preview = harness.state().preview_rect().center();
+    hover(&mut harness, preview);
+    assert!(
+        harness
+            .query_by_label("Scroll to zoom · middle-drag to pan · F fits the picture")
+            .is_some()
+    );
+    let ruler = harness.state().timeline_layout().ruler.center();
+    hover(&mut harness, ruler);
+    assert!(
+        harness
+            .query_by_label("Click or drag to move the playhead · Ctrl+drag for a loop region")
+            .is_some()
+    );
+    let inspector = harness.state().inspector_rect().center();
+    hover(&mut harness, inspector);
+    assert!(harness.query_by_label_contains("Ctrl+drag").is_none());
+    assert!(harness.query_by_label_contains("Scroll to zoom").is_none());
 }
 
 #[test]

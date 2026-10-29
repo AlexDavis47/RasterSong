@@ -8,14 +8,18 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, Color32, CornerRadius, Margin, RichText, Ui, UiBuilder};
+use eframe::egui::{
+    self, Color32, CornerRadius, FontId, Margin, RichText, Sense, Stroke, Ui, UiBuilder, Vec2,
+    WidgetInfo, WidgetType, vec2,
+};
 use rastersong_engine::LoadedTrack;
 use rastersong_engine::playback::{MixTrack, Mixer};
 use rastersong_engine::{
     AudioSink, BackendInfo, CompileOptions, Engine, EngineConfig, EngineStatus, Frame, Graph,
     GraphDesc, GraphItem, Item, ItemRef, MediaBackend, NodeStats, PROJECT_EXTENSION, PlaybackClock,
-    PreviewScale, Project, ProjectTrack, Registry, ResourceId, ResourceKind, Thumbnails, Timeline,
-    TimelineMode, TrackKind, TrackSpec, VIDEO_SOURCE, VideoInfo, VideoKey, resource_name_for,
+    PreviewScale, Project, ProjectTrack, Registry, RenderInfo, ResourceId, ResourceKind,
+    Thumbnails, Timeline, TimelineMode, TrackKind, TrackSpec, VIDEO_SOURCE, VideoInfo, VideoKey,
+    resource_name_for,
 };
 use rastersong_lang::{tr, tr_args};
 
@@ -41,12 +45,15 @@ use crate::resources::{
     resource_kind, resource_name, resources_panel,
 };
 use crate::settings::Settings;
-use crate::theme::{Theme, ThemeChoice, apply_style};
+use crate::theme::{
+    CONTROL_HEIGHT, DENSE_HEIGHT, SMALL_SIZE, TIMECODE_SIZE, Theme, ThemeChoice, apply_style,
+};
 use crate::timeline::{
     DropGhost, GhostItem, GhostRow, GraphAction, GraphDrop, GraphItemView, GraphTrackView,
     LANE_HEIGHT, Thumbnail, TimelineLayout, TimelineModel, TimelineView, TrackAction,
     TrackThumbnails, TrackView, timecode, timeline,
 };
+use crate::widgets::{Icon, IconButton, paint_icon, segmented};
 
 /// The graph a new project starts with: the basic workflow from docs/concepts.md.
 pub const STARTER_GRAPH: &str = include_str!("../../../examples/graphs/am_bands.json");
@@ -111,6 +118,10 @@ pub struct App {
     timeline_layout: TimelineLayout,
     inspector_rect: egui::Rect,
     preview_rect: egui::Rect,
+    /// Where the graph canvas was last drawn.
+    canvas_rect: egui::Rect,
+    /// What the pointer could do where it was last frame, for the status bar.
+    hint: Option<&'static str>,
     audio: AudioOut,
     backend_info: Option<BackendInfo>,
     project: Project,
@@ -229,6 +240,8 @@ impl App {
             timeline_layout: TimelineLayout::default(),
             inspector_rect: egui::Rect::NOTHING,
             preview_rect: egui::Rect::NOTHING,
+            canvas_rect: egui::Rect::NOTHING,
+            hint: None,
             audio,
             backend_info,
             saved: project.clone(),
@@ -342,6 +355,11 @@ impl App {
 
     /// With the split on, where the divider sits (a fraction of the preview's width) and the
     /// feeds shown (left, right); `None` with it off.
+    /// The feed the preview shows; with the split on, the one on the right.
+    pub fn preview_feed(&self) -> Feed {
+        self.preview_feed
+    }
+
     pub fn preview_split(&self) -> Option<(f32, (Feed, Feed))> {
         self.preview_split
             .then(|| (self.split_position, split_sides(self.preview_feed)))
@@ -956,7 +974,14 @@ impl App {
         };
         egui::Panel::top("menu")
             .frame(panel(4))
-            .show(ui, |ui| self.menu_bar(ui));
+            .show(ui, |ui| self.top_bar(ui));
+        egui::Panel::bottom("status")
+            .frame(
+                egui::Frame::new()
+                    .fill(fill)
+                    .inner_margin(Margin::symmetric(12, 2)),
+            )
+            .show(ui, |ui| self.status_bar(ui));
         egui::Panel::bottom("timeline")
             .resizable(true)
             .default_size(300.0)
@@ -1033,6 +1058,11 @@ impl App {
         self.resource_dialogs(ui);
         self.confirm_dialog(ui);
         self.update_title(ui);
+        let hint = self.pointer_hint(ui);
+        if hint != self.hint {
+            self.hint = hint;
+            ui.ctx().request_repaint();
+        }
         // Last, once every drop target has had its chance at a dragged payload.
         crate::widgets::paint_bubble(ui.ctx());
     }
@@ -1090,6 +1120,7 @@ impl App {
             self.selected_items.clear();
             self.selected_graph_items.clear();
         }
+        self.canvas_rect = canvas.rect;
         self.update_listening(ui);
         self.bypass_all_button(ui, canvas.rect);
     }
@@ -1421,6 +1452,142 @@ impl App {
         }
     }
 
+    /// The top bar: the menus and the project's name on the left, Settings and Export… on the
+    /// right.
+    fn top_bar(&mut self, ui: &mut Ui) {
+        let theme = Theme::of(ui.ctx());
+        ui.horizontal(|ui| {
+            ui.set_min_height(CONTROL_HEIGHT);
+            // The right side first: the menu bar takes all the width it is given.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let export = egui::Button::new(
+                    RichText::new(tr("menu.file.export"))
+                        .strong()
+                        .color(theme.surfaces.ground),
+                )
+                .fill(theme.surfaces.text)
+                .stroke(Stroke::NONE)
+                .min_size(vec2(0.0, DENSE_HEIGHT));
+                if ui
+                    .add(export)
+                    .on_hover_text(tr("top.export.help"))
+                    .clicked()
+                {
+                    self.open_export();
+                }
+                if ui
+                    .add(IconButton::new(Icon::Settings, tr("top.settings")))
+                    .on_hover_text(tr("top.settings"))
+                    .clicked()
+                {
+                    self.show_settings = true;
+                }
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    self.menu_bar(ui)
+                });
+            });
+        });
+    }
+
+    /// The status bar: whether the graph compiled, what the pointer can do where it is, and the
+    /// cache use and picture on the right.
+    fn status_bar(&self, ui: &mut Ui) {
+        let theme = Theme::of(ui.ctx());
+        let text = |text: String| RichText::new(text).size(11.5).color(theme.text_dim);
+        ui.horizontal(|ui| {
+            ui.set_min_height(20.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if let (Some(info), Some(video)) = (self.engine.info(), self.first_video_info()) {
+                    let fps = info.frame_rate.as_f64();
+                    let fps = if (fps - fps.round()).abs() < 0.005 {
+                        format!("{fps:.0}")
+                    } else {
+                        format!("{fps:.2}")
+                    };
+                    ui.label(
+                        text(tr_args(
+                            "status.picture",
+                            &[
+                                ("width", &video.width.to_string()),
+                                ("height", &video.height.to_string()),
+                                ("fps", &fps),
+                            ],
+                        ))
+                        .monospace(),
+                    );
+                    ui.label(text("·".to_owned()));
+                }
+                let cache = self.engine.cache_use();
+                let mib = |bytes: usize| (bytes >> 20).to_string();
+                ui.label(
+                    text(tr_args(
+                        "status.cache",
+                        &[("used", &mib(cache.bytes)), ("budget", &mib(cache.budget))],
+                    ))
+                    .monospace(),
+                )
+                .on_hover_text(tr("status.cache.help"));
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    let (dot, state, failed) = match self.engine.status() {
+                        EngineStatus::Idle => (
+                            theme.surfaces.text_faint,
+                            tr("status.idle").to_owned(),
+                            false,
+                        ),
+                        EngineStatus::Loading => {
+                            (theme.warning, tr("status.loading").to_owned(), false)
+                        }
+                        EngineStatus::Ready => (theme.cached, tr("status.ready").to_owned(), false),
+                        EngineStatus::Failed(failure) => (theme.error, failure.message, true),
+                    };
+                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(8.0), Sense::hover());
+                    ui.painter().circle_filled(rect.center(), 3.5, dot);
+                    if failed {
+                        // The error matters more than the hint, and can be long.
+                        ui.add(egui::Label::new(text(state)).truncate());
+                        return;
+                    }
+                    ui.label(text(state));
+                    if let Some(hint) = self.hint {
+                        ui.add_space(12.0);
+                        ui.add(egui::Label::new(text(hint.to_owned())).truncate());
+                    }
+                });
+            });
+        });
+    }
+
+    /// What the pointer can do where it is, for the status bar: over a wire, the graph, the
+    /// preview, the ruler or the lanes.
+    fn pointer_hint(&self, ui: &Ui) -> Option<&'static str> {
+        if self.editor.hovered_output().is_some() {
+            return Some(tr("hint.wire"));
+        }
+        let p = ui.input(|i| i.pointer.hover_pos())?;
+        // Not through a menu or window drawn over the panels.
+        if ui.ctx().layer_id_at(p) != Some(ui.layer_id()) {
+            return None;
+        }
+        let layout = &self.timeline_layout;
+        let in_timeline = |rect: &egui::Rect| self.timeline_area.contains(p) && rect.contains(p);
+        if self.canvas_rect.contains(p) {
+            Some(tr("hint.graph"))
+        } else if self.preview_rect.contains(p) {
+            Some(tr("hint.preview"))
+        } else if in_timeline(&layout.ruler) {
+            Some(tr("hint.ruler"))
+        } else if layout
+            .lanes
+            .iter()
+            .chain(&layout.graph_lanes)
+            .any(in_timeline)
+        {
+            Some(tr("hint.lanes"))
+        } else {
+            None
+        }
+    }
+
     fn menu_bar(&mut self, ui: &mut Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button(tr("menu.file"), |ui| {
@@ -1489,6 +1656,12 @@ impl App {
                     ui.close();
                 }
             });
+            // The project's name after the menus, in the bar so the bar doesn't push it aside.
+            ui.separator();
+            ui.strong(self.project_name());
+            if self.is_dirty() {
+                ui.weak(tr("project.edited"));
+            }
         });
     }
 
@@ -1617,7 +1790,11 @@ impl App {
     }
 
     fn preview_column(&mut self, ui: &mut Ui) {
-        let controls_height = 96.0;
+        self.preview_header(ui);
+        ui.add_space(6.0);
+        // The transport's two rows and the space around them.
+        let controls_height =
+            CONTROL_HEIGHT + DENSE_HEIGHT + 2.0 * ui.spacing().item_spacing.y + 6.0;
         let size = egui::vec2(
             ui.available_width(),
             (ui.available_height() - controls_height).max(80.0),
@@ -1626,13 +1803,99 @@ impl App {
         // Overlays (messages, spinners) go in a child, so they never move the controls below.
         let open_video = {
             let mut overlay = ui.new_child(UiBuilder::new().max_rect(rect));
-            self.preview_image(&mut overlay, rect)
+            let open_video = self.preview_image(&mut overlay, rect);
+            self.resolution_tag(&mut overlay, rect);
+            open_video
         };
         if open_video {
             self.pick_video();
         }
         ui.add_space(6.0);
-        self.controls(ui);
+        self.transport(ui);
+    }
+
+    /// The preview's header: whether it shows the result, the original or both split, and Fit.
+    fn preview_header(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            ui.set_min_height(DENSE_HEIGHT);
+            ui.strong(tr("preview.title"));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add(IconButton::new(Icon::Fit, tr("preview.fit")))
+                    .on_hover_text(tr("preview.fit.help"))
+                    .clicked()
+                {
+                    self.preview_view.fit();
+                }
+                let options = [
+                    (tr("preview.result"), tr("preview.result.help")),
+                    (tr("preview.original"), tr("preview.original.help")),
+                    (tr("preview.split"), tr("preview.split.help")),
+                ];
+                if let Some(choice) = segmented(ui, &options, self.preview_choice()) {
+                    self.choose_preview(choice);
+                }
+            });
+        });
+    }
+
+    /// Which of Result (0), Original (1) and Split (2) the preview shows.
+    fn preview_choice(&self) -> usize {
+        match (self.preview_split, self.preview_feed) {
+            (true, _) => 2,
+            (false, Feed::Processed) => 0,
+            (false, Feed::Unprocessed) => 1,
+        }
+    }
+
+    /// Shows the result, the original, or both split with the original on the left. Choosing
+    /// Split again swaps the sides.
+    fn choose_preview(&mut self, choice: usize) {
+        match choice {
+            0 | 1 => {
+                self.preview_split = false;
+                self.preview_feed = if choice == 0 {
+                    Feed::Processed
+                } else {
+                    Feed::Unprocessed
+                };
+            }
+            _ if self.preview_split => self.preview_feed = self.preview_feed.other(),
+            _ => {
+                self.preview_split = true;
+                self.preview_feed = Feed::Processed;
+            }
+        }
+    }
+
+    /// The preview's size out of the project's, in the bottom-left corner of the picture.
+    fn resolution_tag(&self, ui: &mut Ui, rect: egui::Rect) {
+        let (Some(project), Some(preview)) = (self.first_video_info(), self.engine.info()) else {
+            return;
+        };
+        let text = tr_args(
+            "controls.resolution",
+            &[
+                ("width", &preview.width.to_string()),
+                ("height", &preview.height.to_string()),
+                ("project_width", &project.width.to_string()),
+                ("project_height", &project.height.to_string()),
+            ],
+        );
+        let galley =
+            ui.painter()
+                .layout_no_wrap(text, FontId::monospace(SMALL_SIZE), Color32::WHITE);
+        let area = egui::Align2::LEFT_BOTTOM
+            .anchor_size(rect.left_bottom() + vec2(8.0, -6.0), galley.size());
+        ui.painter().rect_filled(
+            area.expand(3.0),
+            CornerRadius::same(3),
+            Color32::from_black_alpha(150),
+        );
+        ui.painter()
+            .galley(area.min, galley, Color32::from_gray(200));
+        ui.interact(area, ui.id().with("resolution-tag"), Sense::hover())
+            .on_hover_text(tr("controls.resolution.help"));
     }
 
     /// Middle-drag pans the preview, the wheel zooms around the pointer, and F fits the frame.
@@ -1842,17 +2105,32 @@ impl App {
         open_video
     }
 
-    /// Playback controls under the preview.
-    fn controls(&mut self, ui: &mut Ui) {
+    /// Playback controls under the preview, in two rows that don't wrap: go to start, play, loop
+    /// and the timecode; then how far ahead is rendered, the preview resolution and the volume.
+    fn transport(&mut self, ui: &mut Ui) {
+        let theme = Theme::of(ui.ctx());
         let info = self.engine.info();
+        let square = Vec2::splat(CONTROL_HEIGHT);
         ui.horizontal(|ui| {
-            let label = if self.clock.is_playing() {
-                "⏸"
+            ui.spacing_mut().item_spacing.x = 6.0;
+            if ui
+                .add_enabled(
+                    info.is_some(),
+                    IconButton::new(Icon::ToStart, tr("controls.to_start")).size(square),
+                )
+                .on_hover_text(tr("controls.to_start.help"))
+                .clicked()
+            {
+                self.clock.seek(0);
+            }
+            let (icon, label) = if self.clock.is_playing() {
+                (Icon::Pause, tr("controls.pause"))
             } else {
-                "▶"
+                (Icon::Play, tr("controls.play"))
             };
-            let play =
-                egui::Button::new(RichText::new(label).size(16.0)).min_size(egui::vec2(34.0, 26.0));
+            let play = IconButton::new(icon, label)
+                .accent()
+                .size(vec2(40.0, CONTROL_HEIGHT));
             if ui
                 .add_enabled(info.is_some(), play)
                 .on_hover_text(tr("controls.play.help"))
@@ -1861,13 +2139,14 @@ impl App {
                 self.clock.toggle();
             }
             let looping = self.project.loop_region.is_some_and(|l| l.enabled);
-            let loop_button = egui::Button::selectable(looping, tr("controls.loop"))
-                .min_size(egui::vec2(0.0, 26.0));
             let hover = if self.project.loop_region.is_some() {
                 tr("controls.loop.help")
             } else {
                 tr("controls.loop.help_none")
             };
+            let loop_button = IconButton::new(Icon::Loop, tr("controls.loop"))
+                .selected(looping)
+                .size(square);
             if ui
                 .add_enabled(self.project.loop_region.is_some(), loop_button)
                 .on_hover_text(hover)
@@ -1876,22 +2155,13 @@ impl App {
             {
                 self.toggle_loop();
             }
-            if let Some(info) = info {
-                let fps = info.frame_rate.as_f64();
-                let frame = self.clock.frame();
-                ui.monospace(format!(
-                    "{} / {}",
-                    timecode(frame as f64 / fps),
-                    timecode(info.frames as f64 / fps)
-                ));
-                ui.weak(tr_args("controls.frame", &[("frame", &frame.to_string())]));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    self.cache_status(ui, info.frames, fps);
-                });
-            }
+            self.timecode_box(ui, info);
         });
         ui.horizontal(|ui| {
-            ui.label(tr("controls.preview"));
+            ui.spacing_mut().item_spacing.x = 8.0;
+            if let Some(info) = info {
+                self.ahead_meter(ui, info.frames, info.frame_rate.as_f64());
+            }
             let mut scale = self.settings.preview_scale();
             egui::ComboBox::from_id_salt("preview-scale")
                 .selected_text(scale.label())
@@ -1907,102 +2177,160 @@ impl App {
                 self.settings.set_preview_scale(scale);
                 self.engine.set_preview_scale(scale);
             }
-            let unprocessed = self.preview_feed == Feed::Unprocessed;
-            if ui
-                .add(egui::Button::selectable(
-                    unprocessed,
-                    tr("controls.unprocessed"),
-                ))
-                .on_hover_text(tr("controls.unprocessed.help"))
-                .clicked()
-            {
-                self.preview_feed = self.preview_feed.other();
-            }
-            if ui
-                .add(egui::Button::selectable(
-                    self.preview_split,
-                    tr("controls.split"),
-                ))
-                .on_hover_text(tr("controls.split.help"))
-                .clicked()
-            {
-                self.preview_split = !self.preview_split;
-            }
-            if let (Some(project), Some(preview)) = (self.first_video_info(), info) {
-                ui.weak(tr_args(
-                    "controls.resolution",
-                    &[
-                        ("width", &preview.width.to_string()),
-                        ("height", &preview.height.to_string()),
-                        ("project_width", &project.width.to_string()),
-                        ("project_height", &project.height.to_string()),
-                    ],
-                ))
-                .on_hover_text(tr("controls.resolution.help"));
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.label("🔊");
-            ui.spacing_mut().slider_width = 110.0;
-            let volume = self.settings.volume;
-            ui.add(egui::Slider::new(&mut self.settings.volume, 0.0..=1.0).show_value(false))
-                .on_hover_text(tr_args(
-                    "controls.volume",
-                    &[("percent", &format!("{:.0}", volume * 100.0))],
-                ));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().slider_width = 76.0;
+                let volume = self.settings.volume;
+                ui.add(egui::Slider::new(&mut self.settings.volume, 0.0..=1.0).show_value(false))
+                    .on_hover_text(tr_args(
+                        "controls.volume",
+                        &[("percent", &format!("{:.0}", volume * 100.0))],
+                    ));
+                let (rect, _) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::hover());
+                paint_icon(ui.painter(), rect, Icon::Volume, theme.text_dim);
+            });
         });
     }
 
-    /// What the render cache is doing, at the right of the controls: warming up after a seek, or
-    /// how far ahead of the playhead frames are ready.
-    fn cache_status(&self, ui: &mut Ui, frames: usize, fps: f64) {
+    /// The playhead's time large and the length small in a sunken box, the frame number at its
+    /// right.
+    fn timecode_box(&self, ui: &mut Ui, info: Option<RenderInfo>) {
         let theme = Theme::of(ui.ctx());
-        if let Some(progress) = self.engine.progress().filter(|p| p.warming) {
-            ui.colored_label(
-                theme.warning,
-                tr_args(
-                    "preview.warming",
-                    &[
-                        ("done", &progress.done.to_string()),
-                        ("total", &progress.total.to_string()),
-                    ],
-                ),
-            )
-            .on_hover_text(tr_args(
-                "preview.warming.help",
-                &[("frame", &progress.frame.to_string())],
-            ));
-            return;
-        }
         let frame = self.clock.frame();
-        let buffered_frames = self.buffered_ahead();
-        let buffered = buffered_frames as f64 / fps;
-        let speed = self.clock.speed();
-        let to_end = frame + buffered_frames >= frames;
-        let round_loop = self
-            .clock
-            .active_loop()
-            .is_some_and(|lp| buffered_frames >= lp.end - frame.min(lp.start));
-        let ahead = if round_loop {
-            tr("cache.loop_rendered").to_owned()
-        } else if to_end {
-            tr("cache.rendered_to_end").to_owned()
-        } else {
-            tr_args("cache.ahead", &[("seconds", &format!("{buffered:.1}"))])
-        };
-        let (text, color) = if !self.clock.is_playing() || speed >= 1.0 {
-            (ahead, ui.visuals().weak_text_color())
-        } else {
-            (
-                tr_args(
-                    "cache.slowed",
-                    &[("speed", &format!("{speed:.2}")), ("ahead", &ahead)],
-                ),
-                theme.warning,
+        let (position, length) = info.map_or((0.0, 0.0), |info| {
+            let fps = info.frame_rate.as_f64();
+            (frame as f64 / fps, info.frames as f64 / fps)
+        });
+        let size = vec2(ui.available_width(), CONTROL_HEIGHT);
+        let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
+        let (position, length) = (timecode(position), format!("/ {}", timecode(length)));
+        let frame = tr_args("controls.frame", &[("frame", &frame.to_string())]);
+        response.widget_info(|| {
+            WidgetInfo::labeled(
+                WidgetType::Label,
+                true,
+                format!("{position} {length} {frame}"),
             )
+        });
+        let painter = ui.painter_at(rect);
+        painter.rect(
+            rect,
+            7,
+            theme.surfaces.ground,
+            Stroke::new(1.0, theme.surfaces.border),
+            egui::StrokeKind::Inside,
+        );
+        let small = FontId::monospace(12.0);
+        let large = painter.layout_no_wrap(
+            position,
+            FontId::monospace(TIMECODE_SIZE),
+            theme.surfaces.text,
+        );
+        let length = painter.layout_no_wrap(length, small.clone(), theme.surfaces.text_faint);
+        let frame = painter.layout_no_wrap(frame, small, theme.text_dim);
+        // Bottoms level, so the three read along one line.
+        let top = rect.center().y - large.size().y / 2.0;
+        let bottom = top + large.size().y;
+        let left = rect.left() + 12.0;
+        let length_left = left + large.size().x + 8.0;
+        painter.galley(egui::pos2(left, top), large, theme.surfaces.text);
+        painter.galley(
+            egui::pos2(length_left, bottom - length.size().y),
+            length,
+            theme.surfaces.text_faint,
+        );
+        let frame_pos = egui::pos2(
+            rect.right() - 12.0 - frame.size().x,
+            bottom - frame.size().y,
+        );
+        painter.galley(frame_pos, frame, theme.text_dim);
+    }
+
+    /// How far ahead of the playhead frames are rendered, as a label over a bar: green while
+    /// playback keeps up, amber while rendering slows it or warms up after a seek.
+    fn ahead_meter(&self, ui: &mut Ui, frames: usize, fps: f64) {
+        let theme = Theme::of(ui.ctx());
+        let (label, value, fraction, color, help) =
+            if let Some(progress) = self.engine.progress().filter(|p| p.warming) {
+                (
+                    tr("cache.warming").to_owned(),
+                    tr_args(
+                        "cache.warming_count",
+                        &[
+                            ("done", &progress.done.to_string()),
+                            ("total", &progress.total.to_string()),
+                        ],
+                    ),
+                    progress.done as f32 / progress.total.max(1) as f32,
+                    theme.warning,
+                    tr_args(
+                        "preview.warming.help",
+                        &[("frame", &progress.frame.to_string())],
+                    ),
+                )
+            } else {
+                let frame = self.clock.frame();
+                let buffered_frames = self.buffered_ahead();
+                let buffered = buffered_frames as f64 / fps;
+                let round_loop = self
+                    .clock
+                    .active_loop()
+                    .is_some_and(|lp| buffered_frames >= lp.end - frame.min(lp.start));
+                let to_end = frame + buffered_frames >= frames;
+                let (value, fraction) = if round_loop {
+                    (tr("cache.loop_rendered").to_owned(), 1.0)
+                } else if to_end {
+                    (tr("cache.rendered_to_end").to_owned(), 1.0)
+                } else {
+                    (
+                        tr_args("cache.ahead", &[("seconds", &format!("{buffered:.1}"))]),
+                        (buffered / self.settings.render_ahead()) as f32,
+                    )
+                };
+                let speed = self.clock.speed();
+                let (label, color) = if !self.clock.is_playing() || speed >= 1.0 {
+                    (tr("cache.ahead_label").to_owned(), theme.cached)
+                } else {
+                    (
+                        tr_args("cache.slowed", &[("speed", &format!("{speed:.2}"))]),
+                        theme.warning,
+                    )
+                };
+                (label, value, fraction, color, tr("cache.help").to_owned())
+            };
+        let (rect, response) = ui.allocate_exact_size(vec2(124.0, DENSE_HEIGHT), Sense::hover());
+        response.widget_info(|| {
+            WidgetInfo::labeled(WidgetType::Label, true, format!("{label} {value}"))
+        });
+        let response = response.on_hover_text(help);
+        let painter = ui.painter_at(response.rect);
+        let font = FontId::proportional(SMALL_SIZE);
+        let label_color = if color == theme.warning {
+            theme.warning
+        } else {
+            theme.text_dim
         };
-        ui.colored_label(color, text)
-            .on_hover_text(tr("cache.help"));
+        painter.text(
+            rect.left_top() + vec2(0.0, 3.0),
+            egui::Align2::LEFT_TOP,
+            label,
+            font,
+            label_color,
+        );
+        painter.text(
+            rect.right_top() + vec2(0.0, 3.0),
+            egui::Align2::RIGHT_TOP,
+            value,
+            FontId::monospace(SMALL_SIZE),
+            theme.surfaces.text,
+        );
+        let track = egui::Rect::from_min_max(
+            egui::pos2(rect.left(), rect.bottom() - 8.0),
+            egui::pos2(rect.right(), rect.bottom() - 4.0),
+        );
+        painter.rect_filled(track, 2, theme.surfaces.raised_hover);
+        let mut filled = track;
+        filled.set_width(track.width() * fraction.clamp(0.0, 1.0));
+        painter.rect_filled(filled, 2, color);
     }
 
     fn timeline(&mut self, ui: &mut Ui) {
