@@ -524,9 +524,9 @@ fn track_screenshots() {
     wait_for_frames(&mut harness, 10);
     save(&mut harness, "dark-16-two-tracks");
 
-    // Drag the second audio header above the first, by its kind icon.
+    // Drag the second audio header above the first, by the bar of its kind colour.
     let from = harness
-        .get_all_by_label("♪")
+        .get_all_by_label("Audio track")
         .nth(1)
         .unwrap()
         .rect()
@@ -748,6 +748,31 @@ fn resources_screenshots() {
         harness.run_steps(3);
         save(&mut harness, &format!("{name}-resources-filtered"));
     }
+}
+
+/// The timeline's header with a loop region, and the track headers: a graph track, the video
+/// muted and an audio track soloed.
+#[test]
+#[ignore = "needs a GPU; run explicitly to look at the UI"]
+fn timeline_screenshots() {
+    let app = app_edited(ThemeChoice::Dark, 2, TimelineMode::Time, |project| {
+        let graph = project.graph_id;
+        let track = project.add_graph_track("Graph track 1");
+        project.place_graph(&track, graph, 0.0, 3.0);
+        project.loop_region = Some(rastersong_engine::LoopRegion {
+            start: 1.0,
+            end: 3.0,
+            enabled: true,
+        });
+    });
+    let mut harness = gpu_harness(app);
+    wait_for_frames(&mut harness, 30);
+    // The graph track's M comes first, then the video's; the video's S, then the audio's.
+    harness.get_all_by_label("S").nth(1).unwrap().click();
+    harness.run_steps(1);
+    harness.get_all_by_label("M").nth(1).unwrap().click();
+    harness.run_steps(4);
+    save(&mut harness, "dark-timeline");
 }
 
 /// The wire tooltip and the inspector's meters, on a graph with a compressor.

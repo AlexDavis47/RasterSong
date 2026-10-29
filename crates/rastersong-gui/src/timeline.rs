@@ -29,8 +29,8 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use eframe::egui::{
-    self, Align2, CornerRadius, FontId, Key, PointerButton, Rect, Sense, Stroke, TextureId, Ui,
-    UiBuilder, Vec2, pos2, vec2,
+    self, Align2, Color32, CornerRadius, FontId, Key, PointerButton, Rect, Sense, Stroke,
+    TextureId, Ui, UiBuilder, Vec2, pos2, vec2,
 };
 use rastersong_engine::{
     Edge, Item, LoopRegion, ResourceId, Tempo, TimelineMode, TrackKind, Waveform, snap_offset,
@@ -45,8 +45,15 @@ use crate::theme::Theme;
 pub const HEADER_WIDTH: f32 = 220.0;
 /// Gap between the headers and the lanes.
 const GAP: f32 = 6.0;
-/// Width of the name fields in the track headers, leaving room for the buttons beside them.
-const NAME_WIDTH: f32 = HEADER_WIDTH - 136.0;
+/// How far a header's widgets sit from its left edge, past the bar of its kind's colour.
+const KIND_INSET: f32 = 18.0;
+/// Size of a track's name in its header.
+const NAME_SIZE: f32 = 12.5;
+/// Height of a header's name, and of the name with the row of details under it.
+const NAME_HEIGHT: f32 = 18.0;
+const NAME_ROWS_HEIGHT: f32 = 40.0;
+/// Width of a header's M and S buttons.
+const TOGGLE_WIDTH: f32 = 22.0;
 const RULER_HEIGHT: f32 = 22.0;
 /// A track's height until the user changes it: tall enough for a header's two rows of widgets.
 pub const LANE_HEIGHT: f32 = 58.0;
@@ -1222,7 +1229,11 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         if !rect.intersects(header_clip) {
             continue;
         }
-        header_painter.rect_filled(rect, CornerRadius::same(3), ui.visuals().faint_bg_color);
+        header_painter.hline(
+            rect.x_range(),
+            rect.top() + 0.5,
+            Stroke::new(1.0, theme.surfaces.divider),
+        );
         // The background drags the track among the graph tracks and has the track's menu; it
         // goes under the widgets, so they keep their clicks.
         let grip = ui.interact(
@@ -1260,6 +1271,14 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
                 ui.close();
             }
         });
+        kind_bar(
+            ui,
+            rect,
+            header_clip,
+            theme.graph_block,
+            tr("timeline.graph_track.kind"),
+            ("graph-track-kind", row),
+        );
         header(ui, rect, header_clip, |ui| {
             graph_track_header(ui, track, row, &mut response);
         });
@@ -1269,12 +1288,18 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         if !rect.intersects(header_clip) {
             continue;
         }
-        let fill = if model.selected_track == Some(row) {
-            theme.accent.gamma_multiply(0.18)
-        } else {
-            ui.visuals().faint_bg_color
-        };
-        header_painter.rect_filled(rect, CornerRadius::same(3), fill);
+        if model.selected_track == Some(row) {
+            header_painter.rect_filled(
+                rect,
+                CornerRadius::same(3),
+                theme.accent.gamma_multiply(0.18),
+            );
+        }
+        header_painter.hline(
+            rect.x_range(),
+            rect.top() + 0.5,
+            Stroke::new(1.0, theme.surfaces.divider),
+        );
         // The header's background selects the track, drags it to a new place in its section
         // and has the track menu. It goes under the widgets (which are made after it), so they
         // keep their clicks.
@@ -1315,6 +1340,11 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
             tr("timeline.track.header.help")
         });
         grip.context_menu(|ui| track_menu(ui, model, row, &areas, &mut response));
+        let (color, kind) = match track.kind {
+            TrackKind::Video => (theme.ports.video, tr("timeline.track.kind.video")),
+            TrackKind::Audio => (theme.ports.audio, tr("timeline.track.kind.audio")),
+        };
+        kind_bar(ui, rect, header_clip, color, kind, ("track-kind", row));
         header(ui, rect, header_clip, |ui| {
             track_header(ui, track, &model.buses, row, &mut response);
         });
@@ -2491,7 +2521,7 @@ fn drop_slot(y: f32, boundaries: &[f32]) -> usize {
         .map_or(0, |(i, _)| i)
 }
 
-/// The glyph a track is marked with, in its header and while it is dragged.
+/// The glyph a track is marked with while it is dragged.
 fn track_icon(kind: TrackKind) -> &'static str {
     match kind {
         TrackKind::Video => "▣",
@@ -2502,9 +2532,9 @@ fn track_icon(kind: TrackKind) -> &'static str {
 /// The glyph graph tracks are marked with.
 const GRAPH_ICON: &str = "▤";
 
-/// The widgets of a track's header: name, mute, solo and remove; then the video's size and frame
-/// rate, or an audio track's volume and, when the project has several buses (or the track's is
-/// gone), its bus.
+/// The widgets of a track's header: its name with the M and S buttons beside it, and under the
+/// name the video's size and frame rate, or an audio track's volume and, when the project has
+/// several buses (or the track's is gone), its bus. Removing the track is in the header's menu.
 fn track_header(
     ui: &mut Ui,
     track: &TrackView,
@@ -2515,64 +2545,56 @@ fn track_header(
     // Labels don't select text here, so a drag that starts on one reaches the header below and
     // reorders the track.
     ui.style_mut().interaction.selectable_labels = false;
-    ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing.y = 2.0;
-        ui.horizontal(|ui| {
-            ui.label(track_icon(track.kind));
-            let edit = name_edit(ui, ui.id().with(("track-name", row)), &track.name, |e| {
-                e.desired_width(NAME_WIDTH)
-            });
-            let edit_response = edit.response.on_hover_text(tr("timeline.track.name.help"));
-            if edit_response.gained_focus() {
-                response.actions.push(TrackAction::Select(row));
-            }
-            if let Some(name) = edit.committed {
-                response.actions.push(TrackAction::Rename(row, name));
-            }
-            let mute = egui::Button::new(if track.muted { "🔇" } else { "🔊" }).frame(false);
-            if ui
-                .add(mute)
-                .on_hover_text(if track.muted {
-                    tr("timeline.track.unmute")
-                } else {
-                    tr("timeline.track.mute")
-                })
-                .clicked()
-            {
-                response.actions.push(TrackAction::ToggleMute(row));
-            }
-            if ui
-                .add(egui::Button::selectable(track.solo, "S"))
-                .on_hover_text(tr("timeline.track.solo"))
-                .clicked()
-            {
-                response.actions.push(TrackAction::ToggleSolo(row));
-            }
-            if ui
-                .add(egui::Button::new("×").frame(false))
-                .on_hover_text(tr("timeline.track.remove"))
-                .clicked()
-            {
-                response.actions.push(TrackAction::Remove(row));
-            }
-        });
+    let theme = Theme::of(ui.ctx());
+    let column = vec2(name_width(ui, 2), NAME_ROWS_HEIGHT);
+    ui.allocate_ui_with_layout(column, egui::Layout::top_down(egui::Align::Min), |ui| {
+        ui.set_width(column.x);
+        ui.spacing_mut().item_spacing.y = 3.0;
+        let edit = header_name(ui, ui.id().with(("track-name", row)), &track.name);
+        let edit_response = edit.response.on_hover_text(tr("timeline.track.name.help"));
+        if edit_response.gained_focus() {
+            response.actions.push(TrackAction::Select(row));
+        }
+        if let Some(name) = edit.committed {
+            response.actions.push(TrackAction::Rename(row, name));
+        }
         ui.horizontal(|ui| match track.kind {
-            _ if track.empty => {
-                ui.weak(tr("timeline.track.empty"));
-            }
+            _ if track.empty => detail(ui, tr("timeline.track.empty")),
             TrackKind::Video => {
                 if let Some(details) = &track.details {
-                    ui.add(
-                        egui::Label::new(egui::RichText::new(details).weak().small()).truncate(),
-                    );
+                    detail(ui, details);
                 }
             }
             TrackKind::Audio => audio_controls(ui, track, buses, row, response),
         });
     });
+    ui.add_space(6.0 - ui.spacing().item_spacing.x);
+    let mute_help = if track.muted {
+        tr("timeline.track.unmute")
+    } else {
+        tr("timeline.track.mute")
+    };
+    if track_toggle(ui, track.muted, "M", theme.text_dim)
+        .on_hover_text(mute_help)
+        .clicked()
+    {
+        response.actions.push(TrackAction::ToggleMute(row));
+    }
+    if track_toggle(ui, track.solo, "S", theme.solo)
+        .on_hover_text(tr("timeline.track.solo"))
+        .clicked()
+    {
+        response.actions.push(TrackAction::ToggleSolo(row));
+    }
 }
 
-/// The widgets of a graph track's header: its name, mute and remove.
+/// A header's small, faint line under the name.
+fn detail(ui: &mut Ui, text: &str) {
+    ui.add(egui::Label::new(egui::RichText::new(text).weak().small()).truncate());
+}
+
+/// The widgets of a graph track's header: its name and the M button. Removing the track is in
+/// the header's menu.
 fn graph_track_header(
     ui: &mut Ui,
     track: &GraphTrackView,
@@ -2580,40 +2602,35 @@ fn graph_track_header(
     response: &mut TimelineResponse,
 ) {
     ui.style_mut().interaction.selectable_labels = false;
-    ui.label(GRAPH_ICON);
-    let edit = name_edit(
-        ui,
-        ui.id().with(("graph-track-name", row)),
-        &track.name,
-        |e| e.desired_width(NAME_WIDTH),
+    let theme = Theme::of(ui.ctx());
+    let column = vec2(name_width(ui, 1), NAME_HEIGHT);
+    ui.allocate_ui_with_layout(
+        column,
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            let edit = header_name(ui, ui.id().with(("graph-track-name", row)), &track.name);
+            edit.response
+                .on_hover_text(tr("timeline.graph_track.name.help"));
+            if let Some(name) = edit.committed {
+                response.graph_actions.push(GraphAction::Rename(row, name));
+            }
+        },
     );
-    edit.response
-        .on_hover_text(tr("timeline.graph_track.name.help"));
-    if let Some(name) = edit.committed {
-        response.graph_actions.push(GraphAction::Rename(row, name));
-    }
-    let mute = egui::Button::new(if track.muted { "🔇" } else { "🔊" }).frame(false);
-    if ui
-        .add(mute)
-        .on_hover_text(if track.muted {
-            tr("timeline.graph_track.unmute")
-        } else {
-            tr("timeline.graph_track.mute")
-        })
+    ui.add_space(6.0 - ui.spacing().item_spacing.x);
+    let mute_help = if track.muted {
+        tr("timeline.graph_track.unmute")
+    } else {
+        tr("timeline.graph_track.mute")
+    };
+    if track_toggle(ui, track.muted, "M", theme.text_dim)
+        .on_hover_text(mute_help)
         .clicked()
     {
         response.graph_actions.push(GraphAction::ToggleMute(row));
     }
-    if ui
-        .add(egui::Button::new("×").frame(false))
-        .on_hover_text(tr("timeline.track.remove"))
-        .clicked()
-    {
-        response.graph_actions.push(GraphAction::Remove(row));
-    }
 }
 
-/// An audio track's volume, and its bus when there is a choice to make.
+/// An audio track's volume bar and level, and its bus when there is a choice to make.
 fn audio_controls(
     ui: &mut Ui,
     track: &TrackView,
@@ -2621,26 +2638,35 @@ fn audio_controls(
     row: usize,
     response: &mut TimelineResponse,
 ) {
-    let mut percent = f64::from(track.volume) * 100.0;
-    if ui
-        .add(
-            crate::value_box::ValueBox::new(&mut percent)
-                .range(0.0..=100.0)
-                .speed(0.5)
-                .max_decimals(0)
-                .suffix(tr("timeline.track.volume.suffix")),
-        )
-        .on_hover_text(tr("timeline.track.volume.help"))
-        .changed()
-    {
-        response
-            .actions
-            .push(TrackAction::SetVolume(row, (percent / 100.0) as f32));
+    const READOUT: f32 = 32.0;
+    const BUS: f32 = 64.0;
+    ui.spacing_mut().interact_size.y = 20.0;
+    let theme = Theme::of(ui.ctx());
+    let with_bus = buses.len() > 1 || !buses.contains(&track.bus);
+    let gaps = ui.spacing().item_spacing.x * if with_bus { 2.0 } else { 1.0 };
+    let used = READOUT + gaps + if with_bus { BUS + 20.0 } else { 0.0 };
+    let width = (ui.available_width() - used).max(24.0);
+    if let Some(volume) = volume_bar(ui, track.volume, width) {
+        response.actions.push(TrackAction::SetVolume(row, volume));
     }
-    if buses.len() > 1 || !buses.contains(&track.bus) {
+    let level = format!(
+        "{:.0}{}",
+        f64::from(track.volume) * 100.0,
+        tr("timeline.track.volume.suffix")
+    );
+    ui.add_sized(
+        vec2(READOUT, 14.0),
+        egui::Label::new(
+            egui::RichText::new(level)
+                .monospace()
+                .size(crate::theme::SMALL_SIZE)
+                .color(theme.text_dim),
+        ),
+    );
+    if with_bus {
         let mut bus = track.bus.clone();
         egui::ComboBox::from_id_salt(("track-bus", row))
-            .width(64.0)
+            .width(BUS)
             .selected_text(&bus)
             .show_ui(ui, |ui| {
                 for name in buses {
@@ -2886,13 +2912,122 @@ fn header(ui: &mut Ui, rect: Rect, clip: Rect, contents: impl FnOnce(&mut Ui)) {
         rect.min,
         vec2(rect.width(), rect.height().min(LANE_HEIGHT - 4.0)),
     );
+    let inner = Rect::from_min_max(top.min + vec2(KIND_INSET, 3.0), top.max - vec2(8.0, 3.0));
     let mut child = ui.new_child(
         UiBuilder::new()
-            .max_rect(top.shrink2(vec2(6.0, 3.0)))
+            .max_rect(inner)
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
     child.set_clip_rect(clip.intersect(ui.clip_rect()));
+    child.spacing_mut().item_spacing.x = 4.0;
     contents(&mut child);
+}
+
+/// The bar of a track's kind colour at the left of its header, named `label` for screen readers
+/// (and tests). It only senses hovering, so a drag that starts on it reaches the header below.
+fn kind_bar(
+    ui: &mut Ui,
+    rect: Rect,
+    clip: Rect,
+    color: Color32,
+    label: &str,
+    id: impl std::hash::Hash + std::fmt::Debug,
+) {
+    let top = rect.height().min(LANE_HEIGHT - 4.0);
+    let height = (top * 0.6).round().clamp(16.0, 34.0);
+    let bar = Rect::from_center_size(
+        pos2(rect.left() + 9.5, rect.top() + top / 2.0),
+        vec2(3.0, height),
+    );
+    ui.painter_at(clip)
+        .rect_filled(bar, CornerRadius::same(2), color);
+    let zone = bar.expand2(vec2(3.0, 0.0)).intersect(clip);
+    if zone.is_positive() {
+        ui.interact(zone, ui.id().with(id), Sense::hover())
+            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label));
+    }
+}
+
+/// A header's name: plain text that is edited in place, outlined while hovered or edited.
+fn header_name(ui: &mut Ui, id: egui::Id, name: &str) -> crate::name_edit::NameEdit {
+    let width = ui.available_width();
+    let edit = name_edit(ui, id, name, |e| {
+        e.frame(egui::Frame::NONE)
+            .margin(egui::Margin::ZERO)
+            .font(crate::theme::medium(NAME_SIZE))
+            .desired_width(width)
+    });
+    let theme = Theme::of(ui.ctx());
+    let outline = if edit.response.has_focus() {
+        Some(theme.accent)
+    } else if edit.response.hovered() {
+        Some(theme.surfaces.border)
+    } else {
+        None
+    };
+    if let Some(color) = outline {
+        ui.painter().rect_stroke(
+            edit.response.rect.expand2(vec2(3.0, 1.0)),
+            3,
+            Stroke::new(1.0, color),
+            egui::StrokeKind::Outside,
+        );
+    }
+    edit
+}
+
+/// A header's M or S button: outlined, and filled with `fill` while on.
+fn track_toggle(ui: &mut Ui, on: bool, letter: &str, fill: Color32) -> egui::Response {
+    let ink_on = Theme::of(ui.ctx()).surfaces.ground;
+    crate::widgets::toggle_box(ui, on, fill, letter, |painter, rect, ink, on| {
+        if on {
+            painter.rect_filled(rect, 4, fill);
+        }
+        painter.text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            letter,
+            crate::theme::semibold(11.0),
+            if on { ink_on } else { ink },
+        );
+    })
+}
+
+/// The width left for a header's name once `toggles` M and S buttons are beside it.
+fn name_width(ui: &Ui, toggles: usize) -> f32 {
+    let buttons = toggles as f32 * (TOGGLE_WIDTH + ui.spacing().item_spacing.x);
+    (ui.available_width() - buttons - 6.0).max(0.0)
+}
+
+/// An audio track's volume as a slim bar: drag or click along it to set the level, double-click
+/// for full. Returns the new volume when it changes.
+fn volume_bar(ui: &mut Ui, volume: f32, width: f32) -> Option<f32> {
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 14.0), Sense::click_and_drag());
+    let enabled = ui.is_enabled();
+    response.widget_info(|| {
+        egui::WidgetInfo::slider(enabled, f64::from(volume), tr("timeline.track.volume"))
+    });
+    let theme = Theme::of(ui.ctx());
+    let groove = Rect::from_center_size(rect.center(), vec2(rect.width(), 4.0));
+    let level = groove.with_max_x(groove.left() + groove.width() * volume.clamp(0.0, 1.0));
+    let painter = ui.painter();
+    painter.rect_filled(groove, 2, theme.surfaces.raised_active);
+    painter.rect_filled(level, 2, theme.ports.audio);
+    if response.hovered() || response.dragged() {
+        painter.circle_filled(level.right_center(), 4.0, theme.surfaces.text);
+    }
+    let response = response.on_hover_text(tr("timeline.track.volume.bar.help"));
+    if response.double_clicked() {
+        return (volume != 1.0).then_some(1.0);
+    }
+    if (response.dragged() || response.clicked())
+        && let Some(p) = response.interact_pointer_pos()
+    {
+        let at = ((p.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
+        let at = (at * 100.0).round() / 100.0;
+        return (at != volume).then_some(at);
+    }
+    None
 }
 
 #[cfg(test)]

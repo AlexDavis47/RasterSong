@@ -1911,20 +1911,18 @@ fn a_graph_item_moves_when_released_and_its_track_mutes_and_goes() {
     let position = harness.state().project().graph_tracks[0].items[0].position;
     assert!((position - 0.5).abs() < 0.05, "{position}");
 
-    let header = harness.get_by_label("▤").rect().center();
+    let header = harness.get_by_label("Graph track").rect().center();
     let mute = harness
-        .get_all_by_label("🔊")
+        .get_all_by_label("M")
         .map(|b| b.rect().center())
         .find(|c| (c.y - header.y).abs() < 4.0)
         .unwrap();
     click(&mut harness, mute, PointerButton::Primary);
     assert!(harness.state().project().graph_tracks[0].muted);
-    let remove = harness
-        .get_all_by_label("×")
-        .map(|b| b.rect().center())
-        .find(|c| (c.y - header.y).abs() < 4.0)
-        .unwrap();
-    click(&mut harness, remove, PointerButton::Primary);
+    // Removing it is in the header's menu.
+    right_click(&mut harness, header);
+    harness.get_by_label("Remove track").click();
+    harness.run_steps(2);
     assert!(harness.state().project().graph_tracks.is_empty());
 }
 
@@ -2031,9 +2029,9 @@ fn dragging_a_header_moves_the_track_within_its_section() {
         track_names(harness.state().project().tracks().collect()),
         ["video", "video 2", "audio", "audio 2"]
     );
-    // Dragged by the kind icon, which is a label over the header's background.
+    // Dragged by the bar of its kind's colour, which only senses hovering.
     let second_video = harness
-        .get_all_by_label("▣")
+        .get_all_by_label("Video track")
         .nth(1)
         .unwrap()
         .rect()
@@ -2054,7 +2052,7 @@ fn dragging_a_header_moves_the_track_within_its_section() {
     // A video track dragged far down stays at the bottom of the video tracks.
     harness.run_steps(2);
     let first_video = harness
-        .get_all_by_label("▣")
+        .get_all_by_label("Video track")
         .next()
         .unwrap()
         .rect()
@@ -2070,25 +2068,59 @@ fn dragging_a_header_moves_the_track_within_its_section() {
     );
 }
 
-#[test]
-fn tracks_are_removed_from_their_header() {
-    let mut harness = loaded_with(four_track_app());
-    // The second row's × button: video 2.
-    harness.get_all_by_label("×").nth(1).unwrap().click();
-    harness.run_steps(2);
-    assert_eq!(track_names(harness.state().project().videos()), ["video"]);
+/// The volume bar in the audio track's header.
+fn volume_bar(harness: &Harness<'_, App>) -> egui::Rect {
+    let area = harness.state().timeline_area();
+    harness
+        .query_all_by_role_and_label(egui::accesskit::Role::Slider, "Volume")
+        .map(|n| n.rect())
+        .find(|r| area.contains(r.center()))
+        .expect("the volume bar")
+}
 
-    // And from the header's right-click menu.
-    let icon = harness
-        .get_all_by_label("▣")
-        .next()
+#[test]
+fn an_audio_headers_volume_bar_drags_and_a_double_click_restores_full() {
+    let mut harness = loaded_quick(app());
+    let bar = volume_bar(&harness);
+    drag(
+        &mut harness,
+        bar.right_center() - vec2(1.0, 0.0),
+        bar.center(),
+    );
+    let volume = harness.state().project().audios()[0].volume;
+    assert!((volume - 0.5).abs() < 0.06, "{volume}");
+    // Well past the double-click delay, so the drag's click isn't counted.
+    harness.run_steps(30);
+    double_click(&mut harness, bar.center());
+    assert_eq!(harness.state().project().audios()[0].volume, 1.0);
+}
+
+#[test]
+fn the_m_buttons_mute_tracks() {
+    let mut harness = loaded();
+    // The video's header first, then the audio's.
+    harness.get_all_by_label("M").nth(1).unwrap().click();
+    harness.run_steps(2);
+    assert!(harness.state().project().audios()[0].muted);
+    assert!(!harness.state().project().videos()[0].muted);
+}
+
+#[test]
+fn tracks_are_removed_from_their_headers_menu() {
+    let mut harness = loaded_with(four_track_app());
+    // The headers have no remove button of their own.
+    assert!(harness.query_by_label("×").is_none());
+    // The second row's menu: video 2.
+    let bar = harness
+        .get_all_by_label("Video track")
+        .nth(1)
         .unwrap()
         .rect()
         .center();
-    right_click(&mut harness, icon);
+    right_click(&mut harness, bar);
     harness.get_by_label("Remove track").click();
     harness.run_steps(2);
-    assert!(harness.state().project().videos().is_empty());
+    assert_eq!(track_names(harness.state().project().videos()), ["video"]);
 }
 
 // --- Every interaction a hint promises (CONTRIBUTING rule 14) ---
@@ -2108,6 +2140,22 @@ fn with_loop(project: &mut Project) {
         end: 1.0,
         enabled: true,
     });
+}
+
+#[test]
+fn the_timeline_header_reads_the_loop_region_and_clicking_it_toggles_looping() {
+    // Without a region, it says how to make one.
+    let harness = loaded();
+    harness.get_by_label("Ctrl+drag the ruler for a loop region");
+
+    let mut harness = loaded_with(app_with_project(with_loop));
+    let readout = "Loop 0:00.50 – 0:01.00";
+    harness.get_by_label(readout).click();
+    harness.run_steps(2);
+    assert!(!harness.state().project().loop_region.unwrap().enabled);
+    harness.get_by_label(readout).click();
+    harness.run_steps(2);
+    assert!(harness.state().project().loop_region.unwrap().enabled);
 }
 
 #[test]
@@ -2761,7 +2809,11 @@ fn the_status_bar_names_the_gestures_under_the_pointer() {
     );
     let inspector = harness.state().inspector_rect().center();
     hover(&mut harness, inspector);
-    assert!(harness.query_by_label_contains("Ctrl+drag").is_none());
+    assert!(
+        harness
+            .query_by_label_contains("Ctrl+drag for a loop region")
+            .is_none()
+    );
     assert!(harness.query_by_label_contains("Scroll to zoom").is_none());
 }
 
@@ -2855,7 +2907,7 @@ fn the_track_menu_puts_a_resource_on_a_new_track_above_or_below() {
     let before = harness.state().project().tracks.len();
     let icon = |harness: &Harness<'_, App>| {
         harness
-            .get_all_by_label("▣")
+            .get_all_by_label("Video track")
             .next()
             .unwrap()
             .rect()

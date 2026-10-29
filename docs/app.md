@@ -176,10 +176,12 @@ write a graph as its own file.
 ## Timeline
 
 The timeline has three **sections** under a ruler, divided by a thick line: **Graphs** on top, then **Video**, then
-**Audio**. Tracks stay in their section and reorder within it. A **toolbar** above them is the same in both
+**Audio**. Tracks stay in their section and reorder within it. The timeline's title row is the same in both
 modes, so switching moves nothing: the **Time** / **Tempo** switch (a ruler of minutes and seconds, or of bars and
 beats), the tempo (bpm, beats per bar, first beat; beat and bar units in nodes follow it in either mode), the
-**Metronome** toggle, which plays only in Tempo mode, and **Snap** at the right. The timeline shows from launch, over a default ten seconds, with each empty section naming what to drop
+**Metronome** toggle, which plays only in Tempo mode, and at the right the **loop region** ("Loop 0:01.00 –
+0:03.00", bright while looping; click it to turn looping on or off, like R) and **Snap**. Without a loop region it
+says how to make one. The timeline shows from launch, over a default ten seconds, with each empty section naming what to drop
 in it. Each track is a lane of **items**, the stretches of its file (or, in the Graphs section, graphs) placed on
 the timeline.
 
@@ -191,9 +193,11 @@ the timeline.
 - **Every track is also a stem.** A graph can read any track on its own, before its volume, mute and solo.
 - **Graph tracks** hold graph items; see [Graph tracks](#graph-tracks).
 
-The video header shows the track's name (its file's name until renamed), size and frame rate; each audio header has
-the track's name (renaming a track updates the sources that read it), its volume and, when the project has several
-buses, its bus. Every header has **mute** and, for video and audio, **solo**, and a × that removes the track. Each
+Each header starts with a bar in its kind's colour (graph purple, video grey, audio teal) and the track's name,
+edited in place (renaming a track updates the sources that read it). Under the name, a video header shows the
+file's size and frame rate; an audio header its **volume** as a slim bar (drag or click along it, double-click for
+100%) and, when the project has several buses, its bus. Every header has **M** (mute) and, for video and audio,
+**S** (solo, yellow while on); removing a track is in the header's right-click menu. Each
 track's lane has its own outline (the selected track's is the accent color), so neighbouring tracks are easy to
 tell apart. The project lasts to the end of its last item and runs at its [timebase](engine.md#timeline). There is
 no way to make an empty track: a track appears when a resource is placed (File → Add Audio Tracks… places several
@@ -255,10 +259,10 @@ audio's waveform, and behaves like empty lane space. Items can't start before th
 - Every edit undoes as one step.
 
 Right-click a header for its menu: **Default height** resets its height, **New track above** / **New track below**
-(see above) add a track and **Remove track** removes it. A video or audio header also shows the track's name, size
-or volume, and **mute** and **solo**; a graph track's header has its name and mute. Drag the bottom edge of a
+(see above) add a track and **Remove track** removes it; a graph track's menu has **Remove track**. Drag the
+bottom edge of a
 header to change the track's **height**; double-clicking the edge, or the header's menu, resets it. Drag a header
-by its free space or its labels (not its name field, buttons, volume or bus) to **reorder** the track **within its
+by its free space, its kind bar or its details (not its name, buttons, volume bar or bus) to **reorder** the track **within its
 section**; a marker line shows where it goes. Frames rendered so far are marked in green along the bottom of the
 ruler. Item groups, heights, solo and mutes are saved with the project and undo like any edit.
 
@@ -268,8 +272,8 @@ ruler. Item groups, heights, solo and mutes are saved with the project and undo 
 - Click or drag on the ruler to seek; lane space selects instead (see above).
 - **Loop region** (as in Reaper): Ctrl+drag along the ruler to make one, snapped to whole frames (to the beat grid in
   Tempo mode); Ctrl+drag its edges to
-  change it. R or the Loop button by the play button turns looping on and off; right-click the ruler to do the
-  same or remove the region. Playing into the region repeats it; playing from after it plays on. While looping,
+  change it. R, the Loop button by the play button or the loop region in the title row turns looping on and off;
+  right-click the ruler to do the same or remove the region. Playing into the region repeats it; playing from after it plays on. While looping,
   rendering ahead wraps from the region's end to its start, so the loop plays without waiting. The region is saved
   with the project.
 

@@ -74,7 +74,6 @@ const MIN_GRAPH_ITEM_SECONDS: f64 = 5.0;
 const EMPTY_TIMELINE_FRAMES: usize = 300;
 const EMPTY_TIMELINE_RATE: f64 = 30.0;
 /// Height of the timeline's toolbar, the same in time and tempo mode.
-const TIMELINE_TOOLBAR_HEIGHT: f32 = DENSE_HEIGHT + 4.0;
 /// What copying timeline items puts on the system clipboard. The items themselves stay in the app.
 pub const ITEM_CLIPBOARD_MARKER: &str = "RasterSong timeline items";
 
@@ -1058,7 +1057,10 @@ impl App {
                     },
                 )
                 .show(ui, |ui| {
-                    card(ui, |ui| card_body(ui, 8, |ui| self.timeline(ui)));
+                    card(ui, |ui| {
+                        self.timeline_header(ui);
+                        card_body(ui, 8, |ui| self.timeline(ui));
+                    });
                 });
             },
         );
@@ -2589,7 +2591,6 @@ impl App {
             .map_or((EMPTY_TIMELINE_FRAMES, EMPTY_TIMELINE_RATE), |info| {
                 (info.frames, info.frame_rate.as_f64())
             });
-        self.timeline_toolbar(ui);
         self.tidy_item_selection();
         let loaded = self.engine.loaded_tracks();
         self.update_thumbnails(ui.ctx());
@@ -2988,42 +2989,94 @@ impl App {
         }
     }
 
-    /// The timeline's toolbar: the Time / Tempo switch, the tempo that beat and bar units follow,
-    /// the metronome (heard in tempo mode), and snapping at the right. It holds the same things
-    /// in both modes, so switching moves nothing.
-    fn timeline_toolbar(&mut self, ui: &mut Ui) {
-        let size = vec2(ui.available_width(), TIMELINE_TOOLBAR_HEIGHT);
-        ui.allocate_ui_with_layout(
-            size,
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                ui.set_min_size(size);
-                ui.spacing_mut().item_spacing.x = 6.0;
-                let modes = [
-                    (tr("timeline.mode.time"), tr("timeline.mode.time.help")),
-                    (tr("timeline.mode.tempo"), tr("timeline.mode.tempo.help")),
-                ];
-                let tempo_mode = self.project.timeline_mode == TimelineMode::Tempo;
-                if let Some(choice) = segmented(ui, &modes, usize::from(tempo_mode)) {
-                    self.project.timeline_mode = if choice == 0 {
-                        TimelineMode::Time
-                    } else {
-                        TimelineMode::Tempo
-                    };
-                }
-                ui.separator();
-                settings_window::tempo_fields(ui, &mut self.project.tempo);
-                ui.add_enabled_ui(tempo_mode, |ui| {
-                    ui.toggle_value(&mut self.settings.metronome, tr("tempo.metronome"))
-                        .on_hover_text(tr("tempo.metronome.help"))
-                        .on_disabled_hover_text(tr("tempo.metronome.time_mode"));
-                });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.toggle_value(&mut self.settings.snap, tr("timeline.snap"))
-                        .on_hover_text(tr("timeline.snap.help"));
-                });
-            },
-        );
+    /// The timeline's title row: the Time / Tempo switch, the tempo that beat and bar units
+    /// follow, the metronome (heard in tempo mode), and at the right Snap and the loop region. It
+    /// holds the same things in both modes, so switching moves nothing.
+    fn timeline_header(&mut self, ui: &mut Ui) {
+        card_header(ui, |ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            card_title(ui, tr("timeline.title"));
+            ui.add_space(4.0);
+            let modes = [
+                (tr("timeline.mode.time"), tr("timeline.mode.time.help")),
+                (tr("timeline.mode.tempo"), tr("timeline.mode.tempo.help")),
+            ];
+            let tempo_mode = self.project.timeline_mode == TimelineMode::Tempo;
+            if let Some(choice) = segmented(ui, &modes, usize::from(tempo_mode)) {
+                self.project.timeline_mode = if choice == 0 {
+                    TimelineMode::Time
+                } else {
+                    TimelineMode::Tempo
+                };
+            }
+            ui.separator();
+            settings_window::tempo_fields(ui, &mut self.project.tempo);
+            ui.add_enabled_ui(tempo_mode, |ui| {
+                ui.toggle_value(&mut self.settings.metronome, tr("tempo.metronome"))
+                    .on_hover_text(tr("tempo.metronome.help"))
+                    .on_disabled_hover_text(tr("tempo.metronome.time_mode"));
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.toggle_value(&mut self.settings.snap, tr("timeline.snap"))
+                    .on_hover_text(tr("timeline.snap.help"));
+                self.loop_readout(ui);
+            });
+        });
+    }
+
+    /// The loop region the ruler holds, as a button that turns looping on and off; without one,
+    /// how to make it.
+    fn loop_readout(&mut self, ui: &mut Ui) {
+        let theme = Theme::of(ui.ctx());
+        let Some(region) = self.project.loop_region else {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(tr("timeline.loop.none"))
+                        .size(crate::theme::SMALL_SIZE + 1.0)
+                        .color(theme.surfaces.text_faint),
+                )
+                .truncate(),
+            );
+            return;
+        };
+        let range = format!("{} – {}", timecode(region.start), timecode(region.end));
+        let ink = if region.enabled {
+            theme.surfaces.text
+        } else {
+            theme.surfaces.text_faint
+        };
+        let mut job = egui::text::LayoutJob::default();
+        RichText::new(format!("{} ", tr("timeline.loop.readout")))
+            .size(crate::theme::SMALL_SIZE + 1.0)
+            .color(theme.text_dim)
+            .append_to(
+                &mut job,
+                ui.style(),
+                egui::FontSelection::Default,
+                egui::Align::Center,
+            );
+        RichText::new(range)
+            .monospace()
+            .size(crate::theme::SMALL_SIZE + 1.0)
+            .color(ink)
+            .append_to(
+                &mut job,
+                ui.style(),
+                egui::FontSelection::Default,
+                egui::Align::Center,
+            );
+        let help = if region.enabled {
+            tr("timeline.loop.readout.on")
+        } else {
+            tr("timeline.loop.readout.off")
+        };
+        if ui
+            .add(egui::Button::new(job).frame(false))
+            .on_hover_text(help)
+            .clicked()
+        {
+            self.toggle_loop();
+        }
     }
 
     /// The stream of a file a video track plays, which thumbnails are made of.

@@ -52,6 +52,7 @@ until its pass.
 | Low / mid / high | `#FF9A3C` / `#F2D04B` / `#B48CFF` | `ports.low` … | Band parts |
 | Graph | `#9C86FF` | `graph_block` | Graph items |
 | Warning | `#F2B544` | `warning` | Warnings, the first-beat marker |
+| Solo | `#F2D04B` | `solo` | A soloed track's S button |
 | Warning ground | `#26231B`, border `#6E5420`, text `#F4E3BD` | (stage 9) | Warning bars (the odd-size bar in Export) |
 
 Category colours for nodes keep the six in `Theme::categories`; the strip shows them at full strength. Video and
@@ -178,9 +179,17 @@ Relocate… button. A hint line at the bottom names the drag and double-click ge
 
 ## Timeline
 
+Board: [Main](design/ui-v2/Main.dc.html). **Shipped in stage 7.** Where it differs from the board: the tempo
+fields and Metronome stay in the title row (the Tempo stage's group), so the loop region and Snap sit at its right
+end, the region before Snap; the volume reads in percent, not dB; the sections keep their thick dividers without
+the board's GRAPHS / VIDEO / AUDIO labels, and tracks keep their heights and item colours (later stages). A
+track's name is still edited in place, outlined on hover.
+
 The three sections, items, trimming and graph items work as in [Timeline](app.md#timeline). The changes:
 
-- Track headers are calmer: name, kind and S/M; **removing a track moves into its right-click menu**.
+- Track headers are calmer: a bar of the kind's colour, the name with a faint detail line under it (size and
+  frame rate, or a slim volume bar), and small M and S toggles (S yellow while on); **removing a track moves into
+  its right-click menu**.
 - The toolbar holds the **Time / Tempo** switch, **Snap**, and the **Loop** button with the region it covers; with
   no region it says "Ctrl+drag the ruler for a loop region".
 
