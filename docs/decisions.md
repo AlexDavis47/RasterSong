@@ -633,6 +633,15 @@ The interface is redesigned around where the eye already is, keeping every featu
   pickers in the inspector already say what each port reads, and a second way to set them would break the one
   implementation rule.
 
+### Beat lengths are time signatures (October 2026)
+
+The Beat node's length is written `numerator / denominator` of a whole note, as a time signature is, instead of a
+beat-or-bar period divided by a whole number, which could never repeat slower than a bar. The project's tempo has
+only a numerator (beats per bar), so a quarter note is taken as one beat: 1/4 is a beat and 4/4 four beats, also
+in a 3/4 project, where a bar is 3/4. Both parts are whole numbers, but any denominator is allowed (1/3, 1/12 for
+triplets), not only powers of two. No migration: a saved Beat that still has `period` or `division` fails with
+an unknown parameter until it is replaced ([No migrations before 1.0](#no-migrations-before-10-october-2026)).
+
 ## Open
 
 ### Open: "Audio to video" / "Video to audio" names

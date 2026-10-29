@@ -15,8 +15,8 @@ This describes the app as it is. Changes planned from hands-on testing are in th
 
 ## Preview
 
-The header chooses what the picture shows: **Result** (the processed video), **Original** (the video before the
-graph; processing carries on) or **Split**, both side by side with the original on the left and a draggable
+The header chooses what the picture shows: **Result** (the processed video), **Original** (the video mix before the
+graphs: the top video track playing at each frame, as the Video section mixes it; processing carries on) or **Split**, both side by side with the original on the left and a draggable
 divider; clicking Split again swaps the sides. **Fit** (or F) fits the picture again after the scroll wheel zooms
 it or middle-drag pans it. The size the preview renders at, out of the project's, sits in the picture's corner.
 With no video loaded, the preview offers an Open Video button.
@@ -116,7 +116,7 @@ an audio track's Volume (a slider and box like a parameter's), Mute, Solo, and a
 A **node** shows its name (shown on the node instead of its type; it changes on Enter or clicking away, and the type's own name unnames it), "Kind · id — description", its notes and
 warnings, what each output carries (port, colour, tag, size) with its meters, its shared settings (Resampling, Grouping, Channels, and
 Layout for generators; see
-[Node behavior](node-behavior.md#shared-node-settings)) and its parameters, with units, sliders (always linear) reset-to-default buttons, and an `int` toggle on numbers that are not whole-only (which rounds the value and, when a signal modulates it, every sample). Parameters that only make sense whole (Beat division and steps, Pack channels, Chorus voices, Phaser stages, Noise seed, Sample & Hold levels, Resample width and height) are declared `.integer()` in their spec: the slider handle jumps between whole values, typed numbers round, and they have no toggle. Each slider covers the parameter's
+[Node behavior](node-behavior.md#shared-node-settings)) and its parameters, with units, sliders (always linear) reset-to-default buttons, and an `int` toggle on numbers that are not whole-only (which rounds the value and, when a signal modulates it, every sample). Parameters that only make sense whole (Beat numerator, denominator and steps, Pack channels, Chorus voices, Phaser stages, Noise seed, Sample & Hold levels, Resample width and height) are declared `.integer()` in their spec: the slider handle jumps between whole values, typed numbers round, and they have no toggle. Each slider covers the parameter's
 usual range; typing (or dragging the value box) past it, up to the node's limits, widens the slider to match. Right-click a slider to set its range; the range is saved with the node in the graph (`"ranges"`), and it is also what a modulating signal is held to. Each
 parameter takes two lines: its pin toggle, name, `int` toggle, value box and reset button, then the slider across
 the inspector's width. Values left at their default aren't written to files.

@@ -18,8 +18,7 @@ use rastersong_engine::{
     AudioSink, BackendInfo, CompileOptions, Engine, EngineConfig, EngineStatus, Frame, Graph,
     GraphDesc, GraphItem, Item, ItemRef, MediaBackend, NodeStats, PROJECT_EXTENSION, PlaybackClock,
     PreviewScale, Project, ProjectTrack, Registry, RenderInfo, ResourceId, ResourceKind,
-    Thumbnails, Timeline, TimelineMode, TrackKind, TrackSpec, VIDEO_SOURCE, VideoInfo, VideoKey,
-    resource_name_for,
+    Thumbnails, Timeline, TimelineMode, TrackKind, VideoInfo, VideoKey, resource_name_for,
 };
 use rastersong_lang::{tr, tr_args};
 
@@ -329,6 +328,11 @@ impl App {
         &self.engine
     }
 
+    /// The engine rendering the original video, for the preview's Original feed.
+    pub fn source_engine(&self) -> &Engine {
+        &self.source_engine
+    }
+
     pub fn project(&self) -> &Project {
         &self.project
     }
@@ -420,10 +424,9 @@ impl App {
         self.engine.set_preview_scale(self.settings.preview_scale());
         self.refresh_missing(true);
         self.engine.set_timeline(self.timeline_of(&self.project));
-        self.engine
-            .set_composition(Some(self.project.composition()));
         self.sent_graph = without_layout(&self.project.graph);
-        self.engine.set_graph(self.sent_graph.clone());
+        self.engine
+            .set_graphs(self.sent_graph.clone(), Some(self.project.composition()));
         self.engine.set_tempo(self.project.tempo);
         self.engine.set_bypass_all(self.project.plays_track_mix());
         self.sent_mix = None;
@@ -932,7 +935,9 @@ impl App {
     /// Puts the project back to an earlier (or later) state from the history.
     fn restore(&mut self, project: Project) {
         self.engine.set_timeline(self.timeline_of(&project));
-        self.engine.set_composition(Some(project.composition()));
+        self.sent_graph = without_layout(&project.graph);
+        self.engine
+            .set_graphs(self.sent_graph.clone(), Some(project.composition()));
         self.editor.restore(&project.graph);
         self.project = project;
         self.tidy_track_selection();
@@ -1111,7 +1116,7 @@ impl App {
                     }
                     let buses: Vec<String> =
                         self.project.buses.iter().map(|b| b.name.clone()).collect();
-                    let frame = self.engine.frame(self.clock.frame());
+                    let frame = self.inspected_frame();
                     let params = frame.as_ref().map_or(&[][..], |f| &f.params[..]);
                     let meters = frame.as_ref().map_or(&[][..], |f| &f.meters[..]);
                     self.editor.show_inspector(
@@ -1154,6 +1159,15 @@ impl App {
         crate::widgets::paint_bubble(ui.ctx());
     }
 
+    /// The frame at the playhead, for its levels, params, costs and meters: only while they are
+    /// the open graph's. A frame rendered before another graph was opened is kept, but its
+    /// measurements are of the graph that was open then.
+    fn inspected_frame(&self) -> Option<Arc<Frame>> {
+        self.engine
+            .frame(self.clock.frame())
+            .filter(|f| f.open.is_none_or(|open| open == self.project.graph_id))
+    }
+
     /// Why the project can't render, if it can't. The editor shows the open graph, so a node of
     /// another graph isn't one it can point at, and is left out.
     fn failure(&self) -> Option<rastersong_engine::Failure> {
@@ -1169,7 +1183,7 @@ impl App {
     fn graph(&mut self, ui: &mut Ui) {
         self.editor.keep_connections = self.settings.keep_connections;
         self.editor.max_warmup_frames = self.project.max_warmup_frames;
-        let frame = self.engine.frame(self.clock.frame());
+        let frame = self.inspected_frame();
         let failure = self.failure();
         let levels = frame.as_ref().map_or(&[][..], |f| &f.levels[..]);
         let params = frame.as_ref().map_or(&[][..], |f| &f.params[..]);
@@ -1449,25 +1463,21 @@ impl App {
 
     /// Gives the source engine the video while the preview shows it, and takes it away after.
     fn sync_source_engine(&mut self) {
-        // The video alone, as the track the source graph reads.
+        // The video tracks with no graph tracks: the video mix, as the result shows it with
+        // graphs bypassed.
         let video = self
             .wants_source()
-            .then(|| self.project.video())
-            .flatten()
-            .map(|video| Timeline {
-                timebase: self.project.timebase,
-                tracks: vec![TrackSpec {
-                    items: video.items.clone(),
-                    stream: self.project.track_resource(video).and_then(|r| r.stream),
-                    ..TrackSpec::new(
-                        VIDEO_SOURCE,
-                        TrackKind::Video,
-                        self.project.track_path(video).unwrap_or(Path::new("")),
-                    )
-                }],
-                ..Timeline::default()
-            });
+            .then(|| {
+                let mut timeline = self.timeline_of(&self.project);
+                timeline.tracks.retain(|t| t.kind == TrackKind::Video);
+                timeline
+            })
+            .filter(|timeline| !timeline.tracks.is_empty());
         if self.source_video_sent != video {
+            let mut composition = self.project.composition().without_graphs();
+            composition.tracks.retain(|t| t.kind == TrackKind::Video);
+            composition.graphs.clear();
+            self.source_engine.set_composition(Some(composition));
             self.source_engine
                 .set_timeline(video.clone().unwrap_or_default());
             self.source_video_sent = video;
@@ -1514,17 +1524,14 @@ impl App {
     /// Sends edits to the engine and the audio output.
     fn sync(&mut self) {
         let graph = self.editor.to_desc();
-        let semantic = without_layout(&graph);
-        if semantic != self.sent_graph {
-            self.engine.set_graph(semantic.clone());
-            self.sent_graph = semantic;
-        }
+        self.sent_graph = without_layout(&graph);
         // An input port renamed in the editor keeps its items' sources.
         self.project.set_open_graph(graph);
         self.refresh_missing(false);
         self.engine.set_timeline(self.timeline_of(&self.project));
+        // Together, so opening another graph is seen to render the same frames.
         self.engine
-            .set_composition(Some(self.project.composition()));
+            .set_graphs(self.sent_graph.clone(), Some(self.project.composition()));
         self.engine.set_tempo(self.project.tempo);
         self.engine.set_bypass_all(self.project.plays_track_mix());
         self.engine.set_audio_rate(self.project.audio_rate);

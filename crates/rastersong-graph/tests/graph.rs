@@ -1203,19 +1203,27 @@ fn modulated_matches_set(kind: &str, set: &str, base: &str, param: &str, amount:
 
 #[test]
 fn generators_take_modulation_of_their_timing_and_shape() {
-    // Beat division: 1 + 20% of its 15 wide span is 4.
+    // Beat denominator: 4 + 12 of its 31 wide span is 16, a sixteenth.
     modulated_matches_set(
         "beat",
-        r#"{ "shape": "phase", "division": 4 }"#,
-        r#"{ "shape": "phase", "division": 1 }"#,
-        "division",
-        20.0,
+        r#"{ "shape": "phase", "denominator": 16 }"#,
+        r#"{ "shape": "phase", "denominator": 4 }"#,
+        "denominator",
+        12.0 / 31.0 * 100.0,
+    );
+    // Beat numerator: 1 + 2 more, three quarter notes.
+    modulated_matches_set(
+        "beat",
+        r#"{ "shape": "phase", "numerator": 3, "denominator": 32 }"#,
+        r#"{ "shape": "phase", "numerator": 1, "denominator": 32 }"#,
+        "numerator",
+        2.0 / 31.0 * 100.0,
     );
     // Beat steps: 4 + 3 more.
     modulated_matches_set(
         "beat",
-        r#"{ "shape": "step", "steps": 7, "division": 8 }"#,
-        r#"{ "shape": "step", "steps": 4, "division": 8 }"#,
+        r#"{ "shape": "step", "steps": 7, "denominator": 32 }"#,
+        r#"{ "shape": "step", "steps": 4, "denominator": 32 }"#,
         "steps",
         3.0 / 31.0 * 100.0,
     );

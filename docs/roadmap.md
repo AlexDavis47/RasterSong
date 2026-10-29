@@ -746,6 +746,9 @@ and a regenerated `nodes.md`.
   - [x] **feature** *Division* defaults to an integer (and is an integer parameter). Slower than the period is the bar period; old fractional divisions are raised to 1.
   - [x] **feature** *Steps* shows only when the mode is Step (conditional parameter).
   - [x] **feature** *Width* is conditional on the modes that use it.
+  - [x] **feature** The length is a time signature, *Numerator* / *Denominator* (1/4 a beat, 16/4 sixteen beats,
+    1/16 a sixteenth), replacing *Period* and *Division*, so it can repeat slower than a bar
+    ([Nodes](nodes.md))
 - **Constant**
   - [x] **feature** *Value*'s modulation toggle is off by default (no pin exposed): nobody modulates a constant.
 - **Noise**
@@ -924,6 +927,10 @@ The aim: one implementation per idea, so fixes and features land in one place. K
 - [x] **bug** Typing an input node's port name lost the field's focus after each character
 - [x] **bug** The starter graph had no Audio Output, so it was silent ([Graph tracks](app.md#graph-tracks))
 - [x] **bug** Splitting kept both halves selected, so dragging one moved both ([Timeline](app.md#timeline))
+- [x] **bug** Opening another graph invalidated the cache though nothing that renders changed
+  ([Engine](engine.md#composition))
+- [x] **bug** The preview's Original showed only the first video track, not the video mix
+  ([Preview](app.md#preview))
 
 ---
 

@@ -242,8 +242,16 @@ struct Shared {
 /// A tap's answer and the project version it was made for.
 struct TapDone {
     request: TapRequest,
-    key: CacheKey,
+    id: BuildId,
     outcome: TapOutcome,
+}
+
+/// What a renderer is built for: the cache key its frames go under, and how often the renderer
+/// has had to be rebuilt for that key (another graph opened, which renders the same frames).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BuildId {
+    key: CacheKey,
+    rebuilds: u64,
 }
 
 struct State {
@@ -256,6 +264,8 @@ struct State {
     bypass_all: bool,
     tempo: Tempo,
     key: CacheKey,
+    /// Bumped when the renderer must be built again though every rendered frame still holds.
+    rebuilds: u64,
     playhead: usize,
     /// Frames playback repeats, so rendering ahead wraps round them too.
     looping: Option<Range<usize>>,
@@ -299,8 +309,44 @@ struct Snapshot {
 
 /// A renderer built for one version of the project.
 struct Built {
-    key: CacheKey,
+    id: BuildId,
+    /// The open graph it was built with, if it renders a composition.
+    open: Option<u32>,
     renderer: Renderer,
+}
+
+impl State {
+    fn build_id(&self) -> BuildId {
+        BuildId {
+            key: self.key,
+            rebuilds: self.rebuilds,
+        }
+    }
+}
+
+/// What the frames are rendered from, out of the open graph and the composition: with a
+/// composition, every graph by id whichever one is open; without, the open graph.
+fn rendered_graphs(
+    graph: Option<&GraphDesc>,
+    composition: Option<&Composition>,
+) -> (Option<GraphDesc>, Option<Composition>) {
+    let registry = Registry::shared();
+    match composition {
+        None => (graph.map(|g| render_form(g, registry)), None),
+        Some(composition) => {
+            let mut composition = composition.clone();
+            let open = composition.open;
+            composition.graphs.retain(|(id, _)| *id != open);
+            if let Some(graph) = graph {
+                composition
+                    .graphs
+                    .push((open, render_form(graph, registry)));
+            }
+            composition.graphs.sort_by_key(|(id, _)| *id);
+            composition.open = 0;
+            (None, Some(composition))
+        }
+    }
 }
 
 impl Engine {
@@ -320,6 +366,7 @@ impl Engine {
                 bypass_all: false,
                 tempo: Tempo::default(),
                 key,
+                rebuilds: 0,
                 playhead: 0,
                 looping: None,
                 status: EngineStatus::Idle,
@@ -397,16 +444,7 @@ impl Engine {
     /// nothing: edits to nodes that don't feed the output, labels and positions are not edits as
     /// far as rendered frames are concerned.
     pub fn set_graph(&self, graph: GraphDesc) {
-        {
-            let state = lock(&self.shared.state);
-            if let Some(old) = &state.graph {
-                let registry = Registry::shared();
-                if render_form(old, registry) == render_form(&graph, registry) {
-                    return;
-                }
-            }
-        }
-        self.edit(|state| state.graph = Some(graph));
+        self.change_graphs(Some(graph), None);
     }
 
     /// Sets the project's composition: its tracks, graph tracks and the graphs they use; see
@@ -415,17 +453,54 @@ impl Engine {
     /// [`Self::set_graph`], changes that don't alter what the graphs render (labels, positions,
     /// nodes that feed nothing) are not edits.
     pub fn set_composition(&self, composition: Option<Composition>) {
-        let composition = composition.map(|mut composition| {
-            let registry = Registry::shared();
-            for (_, graph) in &mut composition.graphs {
-                *graph = render_form(graph, registry);
-            }
-            composition
+        self.change_graphs(None, Some(composition));
+    }
+
+    /// Sets the open graph and the composition at once, as [`Self::set_graph`] and
+    /// [`Self::set_composition`] would. Opening another graph swaps the open graph with one of
+    /// the composition's, which renders the same frames: setting both together sees that and
+    /// keeps every rendered frame, only rebuilding for what the editor inspects.
+    pub fn set_graphs(&self, graph: GraphDesc, composition: Option<Composition>) {
+        self.change_graphs(Some(graph), Some(composition));
+    }
+
+    /// Replaces the open graph and the composition, each if given. An edit only when the
+    /// rendered frames change.
+    fn change_graphs(&self, graph: Option<GraphDesc>, composition: Option<Option<Composition>>) {
+        let registry = Registry::shared();
+        let composition = composition.map(|composition| {
+            composition.map(|mut composition| {
+                for (_, graph) in &mut composition.graphs {
+                    *graph = render_form(graph, registry);
+                }
+                composition
+            })
         });
-        if lock(&self.shared.state).composition == composition {
+        let mut state = lock(&self.shared.state);
+        let graph = graph.or_else(|| state.graph.clone());
+        let composition = composition.unwrap_or_else(|| state.composition.clone());
+        if graph == state.graph && composition == state.composition {
             return;
         }
-        self.edit(|state| state.composition = composition);
+        let before = rendered_graphs(state.graph.as_ref(), state.composition.as_ref());
+        if before != rendered_graphs(graph.as_ref(), composition.as_ref()) {
+            drop(state);
+            self.edit(|state| {
+                state.graph = graph;
+                state.composition = composition;
+            });
+            return;
+        }
+        let open = |c: &Option<Composition>| c.as_ref().map(|c| c.open);
+        let reopened = open(&state.composition) != open(&composition);
+        state.graph = graph;
+        state.composition = composition;
+        if reopened {
+            // The same frames, but the editor inspects another graph's nodes.
+            state.rebuilds += 1;
+            state.changes += 1;
+            self.shared.changed.notify_all();
+        }
     }
 
     /// Skips every graph: the output shows and plays the mix.
@@ -582,7 +657,7 @@ impl Engine {
         }
         if let Some(done) = &*lock(&self.shared.tap_done)
             && done.request == *request
-            && done.key == state.key
+            && done.id == state.build_id()
         {
             return done.outcome.clone();
         }
@@ -763,7 +838,7 @@ struct Worker {
     /// The renderer taps are answered by, apart from the one filling the cache.
     tap_built: Option<Built>,
     /// The key the tap renderer failed to build for, so it isn't tried again until an edit.
-    tap_failed: Option<CacheKey>,
+    tap_failed: Option<BuildId>,
     /// Turns the listened connection's signal into sound, for the connection it was made for.
     listen_sink: Option<ListenSink>,
     audio: DecodedFiles,
@@ -782,13 +857,13 @@ struct ListenSink {
 /// What the worker should do next, decided while holding the state lock.
 enum Job {
     Build {
-        key: CacheKey,
+        id: BuildId,
         edits: u64,
         project: Snapshot,
     },
     /// Build the renderer taps are answered by.
     BuildTap {
-        key: CacheKey,
+        id: BuildId,
         edits: u64,
         project: Snapshot,
     },
@@ -818,16 +893,8 @@ impl Worker {
     fn run(mut self) {
         while let Some(job) = self.next_job() {
             match job {
-                Job::Build {
-                    key,
-                    edits,
-                    project,
-                } => self.build(key, edits, project),
-                Job::BuildTap {
-                    key,
-                    edits,
-                    project,
-                } => self.build_tap(key, edits, project),
+                Job::Build { id, edits, project } => self.build(id, edits, project),
+                Job::BuildTap { id, edits, project } => self.build_tap(id, edits, project),
                 Job::Tap { request, serial } => self.run_tap(request, serial),
                 Job::Listen { frame, serial } => self.run_listen(frame, serial),
                 Job::Render { seen } => {
@@ -849,7 +916,10 @@ impl Worker {
             let stuck = self.failed_at == Some(state.changes);
             if state.tap.is_none()
                 && state.listen.is_none()
-                && self.tap_built.as_ref().is_some_and(|b| b.key != state.key)
+                && self
+                    .tap_built
+                    .as_ref()
+                    .is_some_and(|b| b.id != state.build_id())
             {
                 // Nothing is asking, and what it would answer with is out of date.
                 self.tap_built = None;
@@ -858,9 +928,13 @@ impl Worker {
                 (state.timeline.tracks.is_empty(), &state.graph, stuck)
             {
                 if (state.tap.is_some() || state.listen.is_some())
-                    && self.tap_failed != Some(state.key)
+                    && self.tap_failed != Some(state.build_id())
                 {
-                    if self.tap_built.as_ref().is_some_and(|b| b.key == state.key) {
+                    if self
+                        .tap_built
+                        .as_ref()
+                        .is_some_and(|b| b.id == state.build_id())
+                    {
                         if let Some(request) = state.tap.clone() {
                             return Some(Job::Tap {
                                 request,
@@ -875,19 +949,23 @@ impl Worker {
                         }
                     } else {
                         return Some(Job::BuildTap {
-                            key: state.key,
+                            id: state.build_id(),
                             edits: self.shared.edits.load(Ordering::SeqCst),
                             project: Self::snapshot(&state, graph),
                         });
                     }
                 }
-                if self.built.as_ref().is_some_and(|b| b.key == state.key) {
+                if self
+                    .built
+                    .as_ref()
+                    .is_some_and(|b| b.id == state.build_id())
+                {
                     return Some(Job::Render {
                         seen: state.changes,
                     });
                 }
                 let job = Job::Build {
-                    key: state.key,
+                    id: state.build_id(),
                     edits: self.shared.edits.load(Ordering::SeqCst),
                     project: Self::snapshot(&state, graph),
                 };
@@ -936,19 +1014,19 @@ impl Worker {
         }
     }
 
-    fn build(&mut self, key: CacheKey, edits: u64, project: Snapshot) {
+    fn build(&mut self, id: BuildId, edits: u64, project: Snapshot) {
         self.built = None;
         let tracks = self.load_tracks(&project.timeline.tracks);
         let result = tracks.and_then(|(tracks, loaded)| {
             // Publish the audio even if the graph turns out not to compile: playback needs it.
             lock(&self.shared.state).loaded = loaded;
-            self.renderer(&tracks, key, &project)
+            self.renderer(&tracks, id.key, &project)
         });
 
         // A graph that can't render shouldn't hide the video: the timeline and playhead still
         // need its length and frame rate.
         let video_info = match &result {
-            Err(_) => self.fallback_info(&project.timeline, key),
+            Err(_) => self.fallback_info(&project.timeline, id.key),
             Ok(_) => None,
         };
 
@@ -967,7 +1045,11 @@ impl Worker {
                 });
                 state.compile_options = Some(renderer.compile_options().clone());
                 state.audio_sink = renderer.audio_sink();
-                self.built = Some(Built { key, renderer });
+                self.built = Some(Built {
+                    id,
+                    open: project.composition.as_ref().map(|c| c.open),
+                    renderer,
+                });
                 self.failed_at = None;
             }
             Err(failure) => {
@@ -1038,22 +1120,28 @@ impl Worker {
 
     /// Builds the renderer taps are answered by. A graph that fails to compile here fails the
     /// tap; the main build reports it to the user.
-    fn build_tap(&mut self, key: CacheKey, edits: u64, project: Snapshot) {
+    fn build_tap(&mut self, id: BuildId, edits: u64, project: Snapshot) {
         self.tap_built = None;
         let renderer = self
             .load_tracks(&project.timeline.tracks)
-            .and_then(|(tracks, _)| self.renderer(&tracks, key, &project));
+            .and_then(|(tracks, _)| self.renderer(&tracks, id.key, &project));
         if self.shared.edits.load(Ordering::SeqCst) != edits {
             return; // Edited while building; the tap asks again.
         }
         match renderer {
-            Ok(renderer) => self.tap_built = Some(Built { key, renderer }),
+            Ok(renderer) => {
+                self.tap_built = Some(Built {
+                    id,
+                    open: project.composition.as_ref().map(|c| c.open),
+                    renderer,
+                });
+            }
             Err(failure) => {
-                self.tap_failed = Some(key);
+                self.tap_failed = Some(id);
                 let serial = self.shared.tap_serial.load(Ordering::SeqCst);
                 let request = lock(&self.shared.state).tap.clone();
                 if let Some(request) = request {
-                    self.finish_tap(request, serial, key, TapOutcome::Failed(failure.detail));
+                    self.finish_tap(request, serial, id, TapOutcome::Failed(failure.detail));
                 }
             }
         }
@@ -1065,7 +1153,7 @@ impl Worker {
         let Some(built) = self.tap_built.as_mut() else {
             return;
         };
-        let key = built.key;
+        let id = built.id;
         let info = *built.renderer.info();
         let shared = &self.shared;
         let cancel = || {
@@ -1090,7 +1178,7 @@ impl Worker {
                 Err(e) => TapOutcome::Failed(e.to_string()),
             }
         };
-        self.finish_tap(request, serial, key, outcome);
+        self.finish_tap(request, serial, id, outcome);
     }
 
     /// The first frame of the sound of the connection being listened to that isn't rendered yet,
@@ -1176,7 +1264,7 @@ impl Worker {
     }
 
     /// Records the answer to a tap, unless a newer request has replaced it.
-    fn finish_tap(&self, request: TapRequest, serial: u64, key: CacheKey, outcome: TapOutcome) {
+    fn finish_tap(&self, request: TapRequest, serial: u64, id: BuildId, outcome: TapOutcome) {
         let mut state = lock(&self.shared.state);
         if self.shared.tap_serial.load(Ordering::SeqCst) != serial {
             return;
@@ -1184,7 +1272,7 @@ impl Worker {
         state.tap = None;
         *lock(&self.shared.tap_done) = Some(TapDone {
             request,
-            key,
+            id,
             outcome,
         });
         drop(state);
@@ -1370,9 +1458,10 @@ impl Worker {
                     costs: built.renderer.costs().into(),
                     meters: built.renderer.meters().into(),
                     audio: built.renderer.audio().cloned().map(Arc::new),
+                    open: built.open,
                 };
                 let playhead = self.shared.playhead.load(Ordering::SeqCst);
-                let inserted = lock(&self.shared.cache).insert(built.key, frame, playhead);
+                let inserted = lock(&self.shared.cache).insert(built.id.key, frame, playhead);
                 if inserted {
                     self.notify();
                 }

@@ -1527,7 +1527,7 @@ fn whole_number_parameters_round_what_is_typed() {
     select(&mut harness, "beat");
     harness.run_steps(3);
     let panel = harness.state().inspector_rect();
-    // The first number in a Beat's settings is its division, which only makes sense whole.
+    // The first number in a Beat's settings is its numerator, which only makes sense whole.
     let center = harness
         .query_all_by_role(egui::accesskit::Role::SpinButton)
         .map(|n| n.rect())
@@ -1541,7 +1541,7 @@ fn whole_number_parameters_round_what_is_typed() {
     harness.key_press(egui::Key::Enter);
     harness.run_steps(3);
     let node = key(&harness, "beat");
-    let value = harness.state().editor().node(node).unwrap().params["division"].clone();
+    let value = harness.state().editor().node(node).unwrap().params["numerator"].clone();
     assert_eq!(value, ParamValue::Number(3.0));
 }
 
@@ -1566,7 +1566,7 @@ fn parameters_a_setting_leaves_unused_are_hidden() {
     harness.run_steps(3);
     select(&mut harness, "beat");
     harness.run_steps(3);
-    harness.get_by_label("Division");
+    harness.get_by_label("Numerator");
     assert!(harness.query_by_label("Width").is_none());
     assert!(harness.query_by_label("Steps").is_none());
 }
@@ -2772,6 +2772,25 @@ fn original_shows_the_video_before_the_graph() {
     harness.run_steps(2);
     let (_, sides) = harness.state().preview_split().unwrap();
     assert_eq!(sides, (Feed::Unprocessed, Feed::Processed));
+}
+
+#[test]
+fn original_shows_the_video_mix_not_just_the_top_track() {
+    // An empty top track over a full one: the mix is the second track's picture.
+    let app = app_with_project(|project| {
+        project.add_track(TrackKind::Video, "video 2", "other");
+        project.tracks[0].items.clear();
+        project.bypass_graph = true;
+    });
+    let mut harness = loaded_with(app);
+    harness.get_by_label("Original").click();
+    step_until(&mut harness, "the original frame", |app| {
+        app.source_engine().frame(5).is_some()
+    });
+    let original = harness.state().source_engine().frame(5).unwrap();
+    let result = harness.state().engine().frame(5).unwrap();
+    assert!(original.rgb.iter().any(|&v| v != 0), "a picture, not black");
+    assert_eq!(original.rgb, result.rgb);
 }
 
 #[test]
