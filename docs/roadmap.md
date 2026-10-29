@@ -851,7 +851,7 @@ independent of each other.
      were clamped to 2.5 px. It is now the node's own shape cut to the strip.
 4. [x] **feature** Wire probe drum: wrap-around view wheel turned by Alt+scroll, clicks and ↑/↓.
 5. [x] **feature** Inspector: one layout for node, graph item and track selections; the modulation card.
-6. [ ] **feature** Resources: Media and Graphs together with counts and one filter field.
+6. [x] **feature** Resources: Media and Graphs together with counts and one filter field.
 7. [ ] **feature** Timeline: calmer headers with remove in the menu, the toolbar's Loop readout.
 8. [ ] **feature** Tempo mode: the tempo group by the Time/Tempo switch, the two-tier ruler, bar shading, the
    first-beat marker, beat-grid snap and loop, bar.beat in the transport with the beat light.

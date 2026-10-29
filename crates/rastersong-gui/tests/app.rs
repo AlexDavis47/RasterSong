@@ -1765,10 +1765,9 @@ fn graph_app(edit: impl FnOnce(&mut Project, u32, u32)) -> App {
     })
 }
 
-/// Switches the Resources panel to its graphs and returns the centre of the card named `name`.
+/// The centre of the Resources panel's row for the graph named `name`.
 fn graph_card(harness: &mut Harness<'_, App>, name: &str) -> Pos2 {
-    harness.get_by_label("Graphs").click();
-    harness.run_steps(2);
+    harness.run_steps(1);
     harness
         .get_all_by_label(name)
         .map(|n| n.rect().center())
@@ -2301,7 +2300,7 @@ fn ctrl_click(harness: &mut Harness<'_, App>, pos: Pos2) {
 }
 
 #[test]
-fn the_resource_cards_wrap_within_the_panel() {
+fn the_resource_rows_stay_within_the_panel() {
     let harness = loaded_with(stems_app());
     let panel_right = harness.state().timeline_area().left();
     let cards: Vec<egui::Rect> = (1..=3)
@@ -2313,11 +2312,9 @@ fn the_resource_cards_wrap_within_the_panel() {
                 .rect()
         })
         .collect();
-    let mut rows: Vec<i32> = cards.iter().map(|r| r.top().round() as i32).collect();
-    rows.dedup();
     assert!(
-        rows.len() >= 2,
-        "the cards fill more than one row: {cards:?}"
+        cards.windows(2).all(|w| w[1].top() >= w[0].bottom()),
+        "one row under another: {cards:?}"
     );
     assert!(
         cards.iter().all(|r| r.right() <= panel_right),

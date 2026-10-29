@@ -189,6 +189,9 @@ pub struct App {
     source_video_sent: Option<Timeline>,
     /// Resources whose files aren't there, checked about once a second.
     missing: HashSet<ResourceId>,
+    /// The streams of each linked file found so far, for the Resources panel's detail lines.
+    /// A file that can't be read is held with none, so it isn't read again every second.
+    streams: HashMap<PathBuf, Vec<rastersong_engine::StreamInfo>>,
     missing_checked: Option<Instant>,
     source_preview: Option<(egui::TextureHandle, Arc<Frame>)>,
     preview_view: PreviewView,
@@ -283,6 +286,7 @@ impl App {
             source_engine,
             source_video_sent: None,
             missing: HashSet::new(),
+            streams: HashMap::new(),
             missing_checked: None,
             source_preview: None,
             preview_view: PreviewView::default(),
@@ -703,6 +707,12 @@ impl App {
             .filter(|r| !self.backend.exists(&r.path))
             .map(|r| r.id)
             .collect();
+        for resource in &self.project.resources {
+            if !self.missing.contains(&resource.id) && !self.streams.contains_key(&resource.path) {
+                let streams = self.backend.streams(&resource.path).unwrap_or_default();
+                self.streams.insert(resource.path.clone(), streams);
+            }
+        }
     }
 
     /// The ids of resources whose files are missing.
@@ -1023,20 +1033,21 @@ impl App {
                 ..Margin::same(gap)
             },
             |ui| {
+                // Wide enough by default for Media and Graphs side by side.
                 let resources = egui::Panel::left("resources")
-                    .default_size(230.0)
-                    .min_size(160.0);
+                    .default_size(400.0)
+                    .min_size(200.0);
                 let gaps = Margin {
                     right: half,
                     ..Margin::ZERO
                 };
                 card_panel(ui, resources, gaps, |ui| {
                     card(ui, |ui| {
-                        card_body(ui, 8, |ui| {
-                            for action in resources_panel(ui, &self.project, &self.missing) {
-                                self.resource_action(action);
-                            }
-                        })
+                        let actions =
+                            resources_panel(ui, &self.project, &self.missing, &self.streams);
+                        for action in actions {
+                            self.resource_action(action);
+                        }
                     })
                 });
                 card_space(

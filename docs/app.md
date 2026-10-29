@@ -138,7 +138,14 @@ A connected (modulated) parameter is set in a card and shows, in the wire's colo
 
 ## Resources
 
-The **Resources** panel, left of the timeline, holds everything the project uses, in two tabs: **Media** and **Graphs**. Both show their resources as a grid of cards that wraps to the panel's width (one row at a time, as many cards as fit), drawn by one shared component (`resource_card`) so media and graphs look, drag and open menus the same way. The Media tab lists the media the project uses. Each resource is one stream of a
+The **Resources** panel, left of the timeline, holds everything the project uses as two labelled groups with
+counts, **Media · 4** and **Graphs · 2**: side by side when the panel is wide enough (it opens that wide), one above
+the other when it's narrowed. The title row holds a **Filter** field, which narrows both groups to the names that
+contain it (case doesn't matter), and **Import…**. Every resource is a row drawn by one shared component
+(`resource_card`), so media and graphs look, drag and open menus the same way: a picture of its kind, the name, and
+a line under it: the stream's shape for media (*video · 320×180 · 30 fps*, *audio · stereo · 48 kHz*, read once
+from the file), whether it's open and how many graph items place it for a graph (*open · 1 item*, *not placed*). A
+hint under the lists names the drag and double-click gestures. Each media resource is one stream of a
 linked file (embedding comes later on the [roadmap](roadmap.md#timeline-resources-and-routing)): a video stream
 or an audio stream with any number of channels. **Import…** (or File → Import Media…, or dropping files onto the
 window) adds files. A file with one video or audio stream becomes a resource at once; a file with more, such as a
@@ -151,18 +158,19 @@ made unique with `_2`, `_3`, …. Nothing reaches the timeline until it is place
 timeline** to add a track playing it from where it is dropped, or double-click it (or right-click → Add to
 Timeline) to add one at the playhead. The track is named after the resource. Right-click a card renames a resource (its tracks keep their names, since
 graph sources read tracks by name) or removes it; removing a resource that tracks play asks first and removes those tracks with it. A resource
-whose file is missing is drawn in red, with its path in the tooltip and a **Relocate…** button under the card, outside the drag area so it always takes the click (also in the
+whose file is missing is drawn in red and says *missing*, with its path in the tooltip and a **Relocate…** button at the row's end, outside the drag area so it always takes the click (also in the
 right-click menu, for any resource): pick where the file is now, and the other streams of the same file follow.
 Until it is found, the tracks that play it read as gaps and say so in their lanes. The panel checks about once a
 second, so a file that comes back (a drive plugged in) is picked up by itself.
 
-**Graphs** are resources too, on their own tab. A project can hold any number; **New graph** adds the template (the
+**Graphs** are resources too, in their own group. A project can hold any number; **+ New** adds the template (the
 video wired to Video Output, the sound to Audio Output) and opens it. Double-click a graph (or right-click → Open in
-editor) to open it in the node editor, which swaps it with the open one. The open graph is shown in bold. A graph
+editor) to open it in the node editor, which swaps it with the open one. The open graph is shown in bold, its row
+raised. A graph
 applies only where it is placed as a **graph item** on a [graph track](#graph-tracks): with none placed, the preview
 and the CLI play the plain mixes, and the open graph is only a description to edit. Right-click also renames,
 duplicates or removes a graph (the open graph can't be removed; removing one removes its graph items). Drag a graph
-card into the Graphs section of the timeline to place it. **File → Import Graph…** and **Export Graph…** read and
+row into the Graphs section of the timeline to place it. **File → Import Graph…** and **Export Graph…** read and
 write a graph as its own file.
 
 ## Timeline
@@ -271,7 +279,7 @@ The **Graphs** section holds **graph tracks**, and each holds **graph items**: a
 like an adjustment layer in a video editor. How they render is described in
 [Composition](engine.md#composition).
 
-- **Drag a graph card** from the Resources panel's Graphs tab into the Graphs section: onto a graph track it goes
+- **Drag a graph row** from the Resources panel's Graphs group into the Graphs section: onto a graph track it goes
   on that track from the drop point, on the line between two graph tracks (or below the last) it gets a new graph
   track there, anywhere else a new track on top. An empty section says *Drag a graph here to make a graph track*.
 - **The topmost graph item playing is the master.** At each frame the picture and sound you see and hear are the

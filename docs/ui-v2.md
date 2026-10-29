@@ -152,7 +152,7 @@ layout and tag, sample count included. *Readings* shows no box, since the number
 
 Board: [Main](design/ui-v2/Main.dc.html). **Shipped in stage 5**; the layout is `widgets/inspector.rs`, shared by
 the node, graph item and track inspectors. Where it differs from the board: a graph item's name is its graph's,
-shown but not edited there (graphs are renamed in the Graphs tab); graph tracks aren't selectable, so only video
+shown but not edited there (graphs are renamed in the Resources panel); graph tracks aren't selectable, so only video
 and audio tracks have a track inspector; the meters under the outputs are still the shared ones. The knob's
 right-click menu is gone, since everything it held is now in the card.
 
@@ -166,6 +166,11 @@ handle at the live value, the amount knob, the source ("from Three-Band Split ·
 "Moves by" in the parameter's unit. The behaviour is the same as in [Inspector](app.md#inspector).
 
 ## Resources
+
+Board: [Main](design/ui-v2/Main.dc.html). **Shipped in stage 6.** Where it differs from the board: a missing file
+keeps the error red rather than the board's dashed amber, and says *missing* (the board's *file missing* wraps
+beside Relocate…); the video's picture is an icon on the video colour, not its first frame; the hint sits under the
+graphs rather than pinned to the panel's bottom; and the groups stack when the panel is narrowed below 360 px.
 
 Media and Graphs show **together**, as two labelled groups with counts ("Media · 4", "Graphs · 2"), not two tabs.
 A filter field at the top narrows both. Cards keep `resource_card`; a missing file keeps its red card and

@@ -718,6 +718,38 @@ fn graph_stats_screenshots() {
     }
 }
 
+/// The Resources panel: media with their shapes, a missing file with Relocate…, the graphs with
+/// the open one marked, and the filter narrowing them.
+#[test]
+#[ignore = "needs a GPU; run explicitly to look at the UI"]
+fn resources_screenshots() {
+    for (theme, name) in [(ThemeChoice::Dark, "dark"), (ThemeChoice::Light, "light")] {
+        let app = app_edited(theme, 1, TimelineMode::Time, |project| {
+            project.add_resource(
+                rastersong_engine::ResourceKind::Audio,
+                "drums",
+                "gone/drums.wav",
+                None,
+            );
+            let graph = project.graph_id;
+            let track = project.add_graph_track("Graphs");
+            project.place_graph(&track, graph, 0.0, 4.0);
+            project.add_graph("Sidechain", None);
+        });
+        let mut harness = gpu_harness(app);
+        wait_for_frames(&mut harness, 30);
+        harness.run_steps(4);
+        save(&mut harness, &format!("{name}-resources"));
+        harness
+            .get(egui_kittest::kittest::By::new().predicate(|n| n.placeholder() == Some("Filter")))
+            .focus();
+        harness.run_steps(1);
+        harness.event(egui::Event::Text("side".into()));
+        harness.run_steps(3);
+        save(&mut harness, &format!("{name}-resources-filtered"));
+    }
+}
+
 /// The wire tooltip and the inspector's meters, on a graph with a compressor.
 #[test]
 #[ignore = "needs a GPU; run explicitly to look at the UI"]

@@ -1,15 +1,22 @@
-//! The Resources panel, listing the media the project uses, and the dialog that picks which
-//! streams of a file to import.
+//! The Resources panel, listing the media and the graphs the project uses, and the dialog that
+//! picks which streams of a file to import.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use eframe::egui::{self, Id, RichText, Sense, Ui};
-use rastersong_engine::{Project, ResourceId, ResourceKind, StreamInfo, StreamKind};
+use eframe::egui::{
+    self, Color32, FontId, Galley, Id, Margin, Painter, Rect, RichText, Sense, Stroke, StrokeKind,
+    Ui, Vec2, pos2, vec2,
+};
+use rastersong_engine::{
+    GraphEntry, Project, Resource, ResourceId, ResourceKind, StreamInfo, StreamKind,
+};
 use rastersong_lang::{tr, tr_args};
 
 use crate::name_edit::name_edit;
-use crate::widgets::channels_label;
+use crate::theme::{self, CONTROL_RADIUS, DENSE_HEIGHT, SMALL_SIZE, Theme};
+use crate::widgets::{Icon, card_header, card_title, channels_label, section_label};
 
 /// What the user did in the Resources panel.
 #[derive(Debug, Clone, PartialEq)]
@@ -111,36 +118,45 @@ pub fn stream_label(stream: &StreamInfo, n: usize) -> String {
     parts.join(" · ")
 }
 
-/// Which group of resources the panel shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ResourceTab {
-    #[default]
-    Media,
-    Graphs,
-}
+/// Height of one row in the resource lists.
+pub const ROW_HEIGHT: f32 = 44.0;
+/// The panel shows Media and Graphs side by side from this width, one above the other below it.
+pub const TWO_COLUMNS: f32 = 360.0;
+/// The picture at the start of a media row.
+const THUMB: Vec2 = vec2(40.0, 24.0);
+/// Space inside a row, around the picture and the text.
+const ROW_PAD: f32 = 6.0;
 
-/// Width of one card in the resource grid.
-pub const CARD_WIDTH: f32 = 92.0;
-const CARD_HEIGHT: f32 = 54.0;
+/// The picture at the start of a row: what kind of resource it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Thumb {
+    Video,
+    Audio,
+    Graph,
+}
 
 /// What a [`resource_card`] shows. Every resource, whatever its kind, is drawn from one of these,
 /// so media and graphs look and drag the same way.
 #[derive(Debug)]
 pub struct Card<'a> {
     pub id: Id,
+    pub thumb: Thumb,
+    /// The glyph on the drag bubble.
     pub glyph: &'a str,
-    pub glyph_help: &'a str,
     pub name: &'a str,
+    /// The line under the name: the stream's shape, or where a graph is used.
+    pub detail: String,
     pub hover: String,
-    /// The file is gone: the card is drawn in the error color.
+    /// The file is gone: the row is drawn in the error color.
     pub missing: bool,
     /// The graph is the one open in the editor.
     pub highlighted: bool,
-    /// The card is part of the selection a drag takes along.
+    /// The row is part of the selection a drag takes along.
     pub selected: bool,
-    /// How many cards a drag of this one carries (the selection, when it is in it).
+    /// How many rows a drag of this one carries (the selection, when it is in it).
     pub drag_count: usize,
-    /// Shown as a button under the card when it is set (Relocate for a missing file): label, help.
+    /// Shown as a button at the row's end when it is set (Relocate for a missing file): label,
+    /// help.
     pub fix_button: Option<(&'a str, &'a str)>,
 }
 
@@ -155,37 +171,108 @@ pub struct CardResponse {
     pub fixed: bool,
 }
 
-/// Like [`Ui::dnd_drag_source`], but the body also senses clicks (egui's version only senses
-/// drags, so double-click and the right-click menu never reach it), and while it is dragged the
-/// [drag bubble](crate::widgets::drag_bubble) with `bubble` (icon, label) follows the pointer and
-/// the body stays put, faded.
+/// Like [`Ui::dnd_drag_source`] over `rect`, but it also senses clicks (egui's version only
+/// senses drags, so double-click and the right-click menu never reach it), and while it is
+/// dragged the [drag bubble](crate::widgets::drag_bubble) with `bubble` (icon, label) follows the
+/// pointer and `paint` draws the body faded in place.
 fn drag_source<P: std::any::Any + Send + Sync>(
-    ui: &mut Ui,
+    ui: &Ui,
     id: Id,
+    rect: Rect,
     payload: P,
     bubble: (&str, &str),
-    add_contents: impl FnOnce(&mut Ui),
+    paint: impl FnOnce(&Painter, bool),
 ) -> egui::Response {
+    let response = ui
+        .interact(rect, id, Sense::click_and_drag())
+        .on_hover_cursor(egui::CursorIcon::Grab);
     if ui.ctx().is_being_dragged(id) {
         egui::DragAndDrop::set_payload(ui.ctx(), payload);
-        let response = ui
-            .scope(|ui| {
-                ui.multiply_opacity(0.4);
-                add_contents(ui);
-            })
-            .response;
-        crate::widgets::drag_bubble(ui.ctx(), response.rect, bubble.0, bubble.1);
-        response
+        let mut painter = ui.painter().clone();
+        painter.multiply_opacity(0.4);
+        paint(&painter, false);
+        crate::widgets::drag_bubble(ui.ctx(), rect, bubble.0, bubble.1);
     } else {
-        let rect = ui.scope(add_contents).response.rect;
-        ui.interact(rect, id, Sense::click_and_drag())
-            .on_hover_cursor(egui::CursorIcon::Grab)
+        paint(ui.painter(), response.hovered());
+    }
+    response
+}
+
+/// `text` on one line at most `width` wide, cut short with an ellipsis.
+fn one_line(ui: &Ui, text: &str, font: FontId, color: Color32, width: f32) -> Arc<Galley> {
+    let mut job = egui::text::LayoutJob::simple_singleline(text.to_owned(), font, color);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(width.max(0.0));
+    ui.painter().layout_job(job)
+}
+
+/// Paints the picture for `thumb` in `rect`: a frame for video, a waveform for sound, two joined
+/// nodes for a graph, a warning sign for a missing file.
+fn paint_thumb(painter: &Painter, rect: Rect, thumb: Thumb, missing: bool, theme: &Theme) {
+    let square = Rect::from_center_size(rect.center(), Vec2::splat(rect.height()));
+    if missing {
+        painter.rect_filled(rect, 3, theme.error.gamma_multiply(0.15));
+        let sign = square.shrink(5.0);
+        let stroke = Stroke::new(1.5, theme.error);
+        let at = |x: f32, y: f32| sign.lerp_inside(vec2(x, y));
+        painter.add(egui::Shape::closed_line(
+            vec![at(0.5, 0.0), at(1.0, 0.95), at(0.0, 0.95)],
+            stroke,
+        ));
+        painter.line_segment([at(0.5, 0.35), at(0.5, 0.6)], stroke);
+        painter.circle_filled(at(0.5, 0.78), 0.9, theme.error);
+        return;
+    }
+    match thumb {
+        Thumb::Video => {
+            painter.rect_filled(rect, 3, theme.video_block);
+            crate::widgets::paint_icon(painter, square, Icon::Picture, theme.surfaces.text_soft);
+        }
+        Thumb::Audio => {
+            painter.rect_filled(rect, 3, theme.ports.audio.gamma_multiply(0.14));
+            // A still waveform: the same shape on every row, standing for sound.
+            const LEVELS: [f32; 12] = [
+                0.0, 0.6, -0.8, 0.9, -0.5, 0.4, -0.7, 0.8, -0.3, 0.3, -0.1, 0.0,
+            ];
+            let wave = rect.shrink2(vec2(7.0, 6.0));
+            let points = LEVELS
+                .iter()
+                .enumerate()
+                .map(|(i, level)| {
+                    let x = wave.left() + wave.width() * i as f32 / (LEVELS.len() - 1) as f32;
+                    pos2(x, wave.center().y - level * wave.height() / 2.0)
+                })
+                .collect();
+            painter.add(egui::Shape::line(
+                points,
+                Stroke::new(1.3, theme.ports.audio),
+            ));
+        }
+        Thumb::Graph => {
+            painter.rect_filled(square, 5, theme.graph_block.gamma_multiply(0.16));
+            let ink = Stroke::new(1.4, theme.graph_block);
+            let node = |x: f32, y: f32| {
+                Rect::from_min_size(square.lerp_inside(vec2(x, y)), Vec2::splat(5.0))
+            };
+            let (a, b) = (node(0.15, 0.2), node(0.6, 0.55));
+            painter.rect_stroke(a, 1, ink, StrokeKind::Inside);
+            painter.rect_stroke(b, 1, ink, StrokeKind::Inside);
+            painter.add(egui::Shape::line(
+                vec![
+                    a.right_center(),
+                    pos2(a.right() + 3.0, a.center().y),
+                    pos2(a.right() + 3.0, b.center().y),
+                    b.left_center(),
+                ],
+                ink,
+            ));
+        }
     }
 }
 
-/// The one card every resource is drawn with. The card body is a drag source carrying `payload`;
-/// the fix button sits below it, outside the drag area, so a drag never swallows its click.
-/// Right-click opens a menu with a rename field, then whatever `menu` adds.
+/// The one row every resource is drawn with: a picture, the name and a detail line under it.
+/// The row is a drag source carrying `payload`; the fix button sits at its end, outside the drag
+/// area, so a drag never swallows its click. Right-click opens a menu with a rename field, then
+/// whatever `menu` adds.
 pub fn resource_card<P: std::any::Any + Send + Sync>(
     ui: &mut Ui,
     card: &Card<'_>,
@@ -193,153 +280,307 @@ pub fn resource_card<P: std::any::Any + Send + Sync>(
     menu: impl FnOnce(&mut Ui),
 ) -> CardResponse {
     let mut out = CardResponse::default();
-    let mut stroke = ui.visuals().widgets.noninteractive.bg_stroke;
-    if card.highlighted || card.selected {
-        stroke = egui::Stroke::new(1.5, ui.visuals().selection.stroke.color);
-    }
-    if card.missing {
-        stroke = egui::Stroke::new(1.0, ui.visuals().error_fg_color);
-    }
-    let fill = if card.selected {
-        ui.visuals().selection.bg_fill.gamma_multiply(0.5)
-    } else {
-        ui.visuals().faint_bg_color
-    };
-    let frame = egui::Frame::new()
-        .stroke(stroke)
-        .fill(fill)
-        .corner_radius(4)
-        .inner_margin(4);
-    // Top to bottom whatever row the card sits in, so a missing file's fix button goes under
-    // the card's name rather than widening the card beside it.
-    frame.show(ui, |ui| {
-        ui.set_width(CARD_WIDTH - 10.0);
-        ui.set_min_height(CARD_HEIGHT - 10.0);
-        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-            let label = if card.drag_count > 1 {
-                tr_args(
-                    "resources.drag.more",
-                    &[
-                        ("name", card.name),
-                        ("count", &(card.drag_count - 1).to_string()),
-                    ],
-                )
-            } else {
-                card.name.to_owned()
-            };
-            let body = drag_source(ui, card.id, payload, (card.glyph, &label), |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.label(RichText::new(card.glyph).size(18.0))
-                        .on_hover_text(card.glyph_help);
-                    let mut text = RichText::new(card.name);
-                    if card.missing {
-                        text = text.color(ui.visuals().error_fg_color);
-                    } else if card.highlighted {
-                        text = text.strong();
-                    }
-                    ui.add(egui::Label::new(text).truncate().sense(Sense::hover()));
-                });
-            });
-            let body = body.on_hover_text(&card.hover);
-            // Clicking the rename field must not close the menu, so only clicks outside do; the
-            // menu's buttons close it themselves.
-            egui::Popup::context_menu(&body)
-                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                .show(|ui| {
-                    let rename = name_edit(ui, card.id.with("name"), card.name, |t| {
-                        t.desired_width(180.0)
-                    });
-                    out.renamed = rename.committed;
-                    menu(ui);
-                });
-            out.double_clicked = body.double_clicked();
-            out.clicked = body.clicked();
-            if let Some((label, help)) = card.fix_button {
-                out.fixed = ui.small_button(label).on_hover_text(help).clicked();
-            }
-        });
+    let theme = Theme::of(ui.ctx());
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::hover());
+    let fix_font = FontId::new(
+        11.5,
+        ui.style().text_styles[&egui::TextStyle::Button]
+            .family
+            .clone(),
+    );
+    let fix_rect = card.fix_button.map(|(label, _)| {
+        let width = ui
+            .painter()
+            .layout_no_wrap(label.to_owned(), fix_font.clone(), theme.surfaces.text)
+            .size()
+            .x
+            + 20.0;
+        Rect::from_center_size(
+            pos2(rect.right() - ROW_PAD - width / 2.0, rect.center().y),
+            vec2(width, DENSE_HEIGHT),
+        )
     });
+    let body_rect = match fix_rect {
+        Some(fix) => rect.with_max_x(fix.left() - 4.0),
+        None => rect,
+    };
+    let label = if card.drag_count > 1 {
+        tr_args(
+            "resources.drag.more",
+            &[
+                ("name", card.name),
+                ("count", &(card.drag_count - 1).to_string()),
+            ],
+        )
+    } else {
+        card.name.to_owned()
+    };
+    let paint = |painter: &Painter, hovered: bool| {
+        let (fill, stroke) = if card.missing {
+            (
+                theme.error.gamma_multiply(0.06),
+                Stroke::new(1.0, theme.error.gamma_multiply(0.6)),
+            )
+        } else if card.selected {
+            (
+                theme.surfaces.raised,
+                Stroke::new(1.5, ui.visuals().selection.stroke.color),
+            )
+        } else if card.highlighted {
+            (
+                theme.surfaces.raised,
+                Stroke::new(1.0, theme.surfaces.border),
+            )
+        } else if hovered {
+            (theme.surfaces.raised, Stroke::NONE)
+        } else {
+            (Color32::TRANSPARENT, Stroke::NONE)
+        };
+        painter.rect(rect, CONTROL_RADIUS, fill, stroke, StrokeKind::Inside);
+        let thumb_width = match card.thumb {
+            Thumb::Graph => THUMB.y,
+            Thumb::Video | Thumb::Audio => THUMB.x,
+        };
+        let thumb = Rect::from_min_size(
+            pos2(rect.left() + ROW_PAD, rect.center().y - THUMB.y / 2.0),
+            vec2(thumb_width, THUMB.y),
+        );
+        paint_thumb(painter, thumb, card.thumb, card.missing, theme);
+        let left = thumb.right() + 8.0;
+        let width = body_rect.right() - ROW_PAD - left;
+        let (name_font, name_color) = if card.missing {
+            (FontId::proportional(12.5), theme.error)
+        } else if card.highlighted {
+            (theme::semibold(12.5), theme.surfaces.text)
+        } else {
+            (FontId::proportional(12.5), theme.surfaces.text)
+        };
+        let name = one_line(ui, card.name, name_font, name_color, width);
+        let detail = one_line(
+            ui,
+            &card.detail,
+            FontId::proportional(SMALL_SIZE),
+            theme.surfaces.text_faint,
+            width,
+        );
+        let top = rect.center().y - (name.size().y + detail.size().y + 1.0) / 2.0;
+        let name_height = name.size().y;
+        painter.galley(pos2(left, top), name, name_color);
+        painter.galley(
+            pos2(left, top + name_height + 1.0),
+            detail,
+            theme.surfaces.text_faint,
+        );
+    };
+    let body = drag_source(ui, card.id, body_rect, payload, (card.glyph, &label), paint);
+    body.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, card.name));
+    // The detail line too, for screen readers (and tests).
+    ui.ctx()
+        .accesskit_node_builder(body.id, |node| node.set_description(card.detail.clone()));
+    let body = body.on_hover_text(&card.hover);
+    // Clicking the rename field must not close the menu, so only clicks outside do; the menu's
+    // buttons close it themselves.
+    egui::Popup::context_menu(&body)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            let rename = name_edit(ui, card.id.with("name"), card.name, |t| {
+                t.desired_width(180.0)
+            });
+            out.renamed = rename.committed;
+            menu(ui);
+        });
+    out.double_clicked = body.double_clicked();
+    out.clicked = body.clicked();
+    if let (Some((label, help)), Some(fix)) = (card.fix_button, fix_rect) {
+        let button = egui::Button::new(RichText::new(label).font(fix_font)).min_size(fix.size());
+        // Placed over the row it is part of, without taking more room in the list.
+        out.fixed = ui.place(fix, button).on_hover_text(help).clicked();
+    }
     out
 }
 
-/// The panel: tabs for Media and Graphs, and a grid of cards for the chosen one.
+/// The panel: a title row with the filter and Import…, then Media and Graphs as two groups,
+/// side by side when the panel is wide enough. `streams` holds each linked file's streams as
+/// far as they are known, for the rows' detail lines.
 pub fn resources_panel(
     ui: &mut Ui,
     project: &Project,
     missing: &HashSet<ResourceId>,
+    streams: &HashMap<PathBuf, Vec<StreamInfo>>,
 ) -> Vec<ResourceAction> {
     let mut actions = Vec::new();
-    let tab_id = Id::new("resources-tab");
-    let mut tab: ResourceTab = ui.data(|d| d.get_temp(tab_id)).unwrap_or_default();
-    ui.horizontal(|ui| {
-        for (value, label) in [
-            (ResourceTab::Media, tr("resources.tab.media")),
-            (ResourceTab::Graphs, tr("resources.graphs")),
-        ] {
-            ui.selectable_value(&mut tab, value, label);
-        }
+    let filter_id = Id::new("resources-filter");
+    let mut filter: String = ui.data(|d| d.get_temp(filter_id)).unwrap_or_default();
+    card_header(ui, |ui| {
+        card_title(ui, tr("resources.title"));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let (label, help, action) = match tab {
-                ResourceTab::Media => (
-                    tr("resources.import"),
-                    tr("resources.import.help"),
-                    ResourceAction::Import,
-                ),
-                ResourceTab::Graphs => (
-                    tr("resources.graph.new"),
-                    tr("resources.graph.new.help"),
-                    ResourceAction::NewGraph,
-                ),
-            };
-            if ui.small_button(label).on_hover_text(help).clicked() {
-                actions.push(action);
+            if ui
+                .button(tr("resources.import"))
+                .on_hover_text(tr("resources.import.help"))
+                .clicked()
+            {
+                actions.push(ResourceAction::Import);
             }
+            ui.add(
+                egui::TextEdit::singleline(&mut filter)
+                    .id(filter_id.with("field"))
+                    .hint_text(tr("resources.filter"))
+                    .vertical_align(egui::Align::Center)
+                    .min_size(vec2(0.0, DENSE_HEIGHT))
+                    .desired_width(ui.available_width()),
+            )
+            .on_hover_text(tr("resources.filter.help"));
         });
     });
-    ui.data_mut(|d| d.insert_temp(tab_id, tab));
-    ui.separator();
+    ui.data_mut(|d| d.insert_temp(filter_id, filter.clone()));
+    let needle = filter.trim().to_lowercase();
+    let matches = |name: &str| name.to_lowercase().contains(&needle);
+    let media: Vec<&Resource> = project
+        .resources
+        .iter()
+        .filter(|r| matches(&r.name))
+        .collect();
+    let graphs: Vec<GraphEntry> = project
+        .graph_entries()
+        .into_iter()
+        .filter(|g| matches(&g.name))
+        .collect();
+    let body = ui.available_rect_before_wrap();
+    let two_columns = body.width() >= TWO_COLUMNS;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
-        .show(ui, |ui| match tab {
-            ResourceTab::Media => media_cards(ui, project, missing, &mut actions),
-            ResourceTab::Graphs => graph_cards(ui, project, &mut actions),
+        .show(ui, |ui| {
+            egui::Frame::new()
+                .inner_margin(Margin::symmetric(8, 10))
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    if two_columns {
+                        ui.columns(2, |columns| {
+                            media_group(
+                                &mut columns[0],
+                                project,
+                                &media,
+                                missing,
+                                streams,
+                                &mut actions,
+                            );
+                            graph_group(&mut columns[1], project, &graphs, &mut actions);
+                        });
+                    } else {
+                        media_group(ui, project, &media, missing, streams, &mut actions);
+                        ui.add_space(10.0);
+                        graph_group(ui, project, &graphs, &mut actions);
+                    }
+                });
         });
+    if two_columns {
+        // Between the columns, down the whole card.
+        let theme = Theme::of(ui.ctx());
+        ui.painter().vline(
+            body.center().x,
+            body.y_range(),
+            Stroke::new(1.0, theme.surfaces.divider),
+        );
+    }
     actions
 }
 
-/// Lays `items` out in rows of as many cards as fit the width. A wrapping layout doesn't wrap
-/// framed cards, so the rows are made here.
-fn card_grid<T>(ui: &mut Ui, items: &[T], mut show: impl FnMut(&mut Ui, &T)) {
-    let spacing = ui.spacing().item_spacing.x;
-    let columns =
-        (((ui.available_width() + spacing) / (CARD_WIDTH + spacing)).floor() as usize).max(1);
-    for row in items.chunks(columns) {
-        ui.horizontal_top(|ui| {
-            for item in row {
-                show(ui, item);
+/// A group's label with its count, and `add` at its right.
+fn group_header(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
+    ui.allocate_ui_with_layout(
+        vec2(ui.available_width(), 22.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            section_label(ui, label);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), add);
+        },
+    );
+}
+
+/// A quiet line in a group: why it is empty, or the hint under the lists.
+fn faint_note(ui: &mut Ui, text: &str) {
+    let theme = Theme::of(ui.ctx());
+    let text = RichText::new(text)
+        .size(11.0)
+        .color(theme.surfaces.text_faint);
+    // Left-aligned: a column's justified layout would spread the words across the line.
+    ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+        ui.add(egui::Label::new(text).wrap());
+    });
+}
+
+/// What a media row says under its name: the kind, then the stream's shape once it is known
+/// ("video · 320×180 · 30 fps", "audio · stereo · 48 kHz").
+pub fn media_detail(resource: &Resource, stream: Option<&StreamInfo>) -> String {
+    let mut parts = vec![match resource.kind {
+        ResourceKind::Video => tr("resources.detail.video").to_owned(),
+        ResourceKind::Audio => tr("resources.detail.audio").to_owned(),
+    }];
+    match stream.map(|s| s.kind) {
+        Some(StreamKind::Video {
+            width,
+            height,
+            frame_rate,
+        }) => {
+            parts.push(format!("{width}×{height}"));
+            if frame_rate > 0.0 {
+                let rate = format!("{frame_rate:.2}");
+                let rate = rate.trim_end_matches('0').trim_end_matches('.');
+                parts.push(tr_args("resources.detail.fps", &[("n", rate)]));
             }
-        });
+        }
+        Some(StreamKind::Audio {
+            sample_rate,
+            channels,
+        }) => {
+            parts.push(channels_label(channels).to_lowercase());
+            let khz = format!("{:.1}", f64::from(sample_rate) / 1000.0);
+            let khz = khz.trim_end_matches(".0");
+            parts.push(tr_args("resources.detail.khz", &[("n", khz)]));
+        }
+        None => {}
+    }
+    parts.join(" · ")
+}
+
+/// The stream of its file that `resource` plays, among `streams` (the file's): the one it names,
+/// or the first of its kind.
+fn resource_stream<'a>(resource: &Resource, streams: &'a [StreamInfo]) -> Option<&'a StreamInfo> {
+    match resource.stream {
+        Some(index) => streams.iter().find(|s| s.index == index),
+        None => streams.iter().find(|s| resource_kind(s) == resource.kind),
     }
 }
 
-fn media_cards(
+fn media_group(
     ui: &mut Ui,
     project: &Project,
+    shown: &[&Resource],
     missing: &HashSet<ResourceId>,
+    streams: &HashMap<PathBuf, Vec<StreamInfo>>,
     actions: &mut Vec<ResourceAction>,
 ) {
+    group_header(
+        ui,
+        &tr_args(
+            "resources.media_count",
+            &[("count", &shown.len().to_string())],
+        ),
+        |_| {},
+    );
     if project.resources.is_empty() {
-        ui.weak(tr("resources.empty"));
+        faint_note(ui, tr("resources.empty"));
+    } else if shown.is_empty() {
+        faint_note(ui, tr("resources.no_match"));
     }
-    // The selected cards, which a drag of any of them takes along.
+    // The selected rows, which a drag of any of them takes along.
     let selection_id = Id::new("resource-selection");
     let mut selection: Vec<ResourceId> = ui.data(|d| d.get_temp(selection_id)).unwrap_or_default();
     selection.retain(|&id| project.resource(id).is_some());
     let mut clicked = None;
-    card_grid(ui, &project.resources, |ui, resource| {
+    for resource in shown {
         let dragged: Vec<ResourceId> = if selection.contains(&resource.id) {
-            project
-                .resources
+            shown
                 .iter()
                 .map(|r| r.id)
                 .filter(|id| selection.contains(id))
@@ -349,9 +590,9 @@ fn media_cards(
         };
         let missing = missing.contains(&resource.id);
         let users = project.resource_users(resource.id).len();
-        let (glyph, kind) = match resource.kind {
-            ResourceKind::Video => ("🎞", tr("resources.kind.video")),
-            ResourceKind::Audio => ("🔊", tr("resources.kind.audio")),
+        let (glyph, thumb) = match resource.kind {
+            ResourceKind::Video => ("🎞", Thumb::Video),
+            ResourceKind::Audio => ("🔊", Thumb::Audio),
         };
         let file = resource
             .path
@@ -370,11 +611,20 @@ fn media_cards(
         }
         hover.push('\n');
         hover.push_str(tr("resources.drag.help"));
+        let detail = if missing {
+            tr("resources.detail.missing").to_owned()
+        } else {
+            let stream = streams
+                .get(&resource.path)
+                .and_then(|s| resource_stream(resource, s));
+            media_detail(resource, stream)
+        };
         let card = Card {
             id: Id::new(("resource", resource.id)),
+            thumb,
             glyph,
-            glyph_help: kind,
             name: &resource.name,
+            detail,
             hover,
             missing,
             highlighted: false,
@@ -409,8 +659,8 @@ fn media_cards(
         if out.clicked {
             clicked = Some(resource.id);
         }
-    });
-    // Click selects the card, Ctrl or Shift adds it to the selection or takes it out.
+    }
+    // Click selects the row, Ctrl or Shift adds it to the selection or takes it out.
     if let Some(id) = clicked {
         if ui.input(|i| i.modifiers.command || i.modifiers.shift) {
             match selection.iter().position(|&s| s == id) {
@@ -431,14 +681,63 @@ fn media_cards(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DraggedGraph(pub u32);
 
-/// The graphs, the open one marked. Double-click opens a graph in the editor.
-fn graph_cards(ui: &mut Ui, project: &Project, actions: &mut Vec<ResourceAction>) {
-    card_grid(ui, &project.graph_entries(), |ui, entry| {
+/// What a graph row says under its name: whether it is open, and how many items place it.
+pub fn graph_detail(project: &Project, entry: &GraphEntry) -> String {
+    let items = project
+        .graph_tracks
+        .iter()
+        .flat_map(|t| &t.items)
+        .filter(|item| item.graph == entry.id)
+        .count();
+    let placed = match items {
+        0 => tr("resources.graph.unplaced").to_owned(),
+        1 => tr("resources.graph.one_item").to_owned(),
+        n => tr_args("resources.graph.items", &[("count", &n.to_string())]),
+    };
+    if entry.open {
+        format!("{} · {placed}", tr("resources.graph.open_tag"))
+    } else {
+        placed
+    }
+}
+
+/// The graphs, the open one marked, and the panel's hint under them. Double-click opens a graph
+/// in the editor.
+fn graph_group(
+    ui: &mut Ui,
+    project: &Project,
+    shown: &[GraphEntry],
+    actions: &mut Vec<ResourceAction>,
+) {
+    group_header(
+        ui,
+        &tr_args(
+            "resources.graph_count",
+            &[("count", &shown.len().to_string())],
+        ),
+        |ui| {
+            let new = egui::Button::new(RichText::new(tr("resources.graph.new")).size(11.5))
+                .frame(false)
+                .min_size(vec2(0.0, 22.0));
+            if ui
+                .add(new)
+                .on_hover_text(tr("resources.graph.new.help"))
+                .clicked()
+            {
+                actions.push(ResourceAction::NewGraph);
+            }
+        },
+    );
+    if shown.is_empty() {
+        faint_note(ui, tr("resources.no_match"));
+    }
+    for entry in shown {
         let card = Card {
             id: Id::new(("graph", entry.id)),
+            thumb: Thumb::Graph,
             glyph: "🕸",
-            glyph_help: tr("resources.graph.kind"),
             name: &entry.name,
+            detail: graph_detail(project, entry),
             hover: if entry.open {
                 tr("resources.graph.open_now")
             } else {
@@ -471,7 +770,9 @@ fn graph_cards(ui: &mut Ui, project: &Project, actions: &mut Vec<ResourceAction>
         if out.double_clicked && !entry.open {
             actions.push(ResourceAction::OpenGraph(entry.id));
         }
-    });
+    }
+    ui.add_space(6.0);
+    faint_note(ui, tr("resources.hint"));
 }
 
 /// The "found multiple tracks" dialog for `pending`: a checkbox per stream. `Some(true)` when
