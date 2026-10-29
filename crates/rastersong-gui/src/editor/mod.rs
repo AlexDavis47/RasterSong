@@ -462,6 +462,27 @@ impl GraphEditor {
         self.search.is_some()
     }
 
+    /// Opens the node search over the middle of the canvas; the node goes there.
+    pub fn open_search(&mut self) {
+        let center = self.last_canvas.center();
+        let at = ((center - self.last_canvas.min - self.view.offset) / self.view.zoom).to_pos2();
+        let corner = center - vec2(search::WIDTH * 0.5, 160.0);
+        self.search = Some(search::SearchMenu::new(
+            corner.max(self.last_canvas.min),
+            at,
+            None,
+        ));
+    }
+
+    /// How many warnings the last compile found, over every node.
+    pub fn warning_count(&self) -> usize {
+        self.compiled
+            .iter()
+            .flat_map(|s| &s.diagnostics)
+            .filter(|d| d.severity == rastersong_engine::Severity::Warning)
+            .count()
+    }
+
     /// The canvas as last drawn, in screen space.
     pub fn canvas_rect(&self) -> Rect {
         self.last_canvas
@@ -830,7 +851,7 @@ fn auto_layout(graph: &GraphDesc) -> Vec<Pos2> {
         .map(|&d| {
             let row = rows.entry(d).or_insert(0usize);
             *row += 1;
-            pos2(d as f32 * 190.0, (*row - 1) as f32 * 110.0)
+            pos2(d as f32 * 190.0, (*row - 1) as f32 * 140.0)
         })
         .collect()
 }

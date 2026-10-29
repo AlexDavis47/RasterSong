@@ -33,13 +33,18 @@ The transport sits under the picture in two rows that don't wrap:
 
 Our own editor, drawn on a pannable, zoomable canvas (see [Decisions](decisions.md#own-node-graph)).
 
+A header over the canvas names the open graph and where it plays on the timeline ("on Graphs · 0:00–0:04", with
+how many more places it plays, or "not on the timeline"), counts its problems ("1 error · 1 warning"), and holds
+**+ Add node** and **Bypass graphs**. Each node has a strip in its category's colour along its top edge, with its
+title under it.
+
 - Scroll wheel zooms around the pointer; middle- or right-drag pans; F frames the whole graph.
 - Left-drag on empty space box-selects (Shift adds). Click a node to select it and show it in the inspector;
   Ctrl+ or Shift+click adds or removes it; drag to move the selection. Ctrl+A selects every node, Esc clears the
   selection.
 - **Alt+click** a node bypasses it (or the whole selection, if it is selected): a bypassed node passes its main
-  input through. **Bypass graphs**, on the canvas, skips every graph track and shows and plays the mix, to compare
-  with the original.
+  input through, and is drawn faded on a striped fill with BYPASSED in its title row. **Bypass graphs**, in the
+  canvas header, skips every graph track and shows and plays the mix, to compare with the original.
 - Drag from a pin to connect. An input takes one connection; a new one replaces the old. Dragging a connected
   input picks its wire up to move it. Dropping a wire on empty space opens the node search, connected.
 - Exposed parameters show as diamond pins under a node's inputs; a wire into one modulates that parameter.
@@ -51,9 +56,12 @@ Our own editor, drawn on a pannable, zoomable canvas (see [Decisions](decisions.
   graph item on the timeline picks a source for every port ([Graph tracks](#graph-tracks)), so tracks add no nodes
   and renaming a track leaves the graph alone. Ports are added and deleted like any node. Every graph has one
   **Output**, which can't be deleted or copied; a graph missing one gets one when opened.
-- Right-click empty space to add a node there: the search box has focus immediately; type, use ↑/↓, and press
-  Enter (or click). Right-click a node to copy, duplicate, bypass or delete it; Delete removes the selection,
-  Backspace removes it and reconnects the wires around it, Ctrl+D duplicates it.
+- Right-click empty space, or press **Tab** over it, to add a node there; **+ Add node** adds one in the middle of
+  the canvas. The node search opens with its field focused: type, use ↑/↓, and press Enter (or click). Results
+  are grouped under their categories, best match first, each with its one-line description. Opened from a
+  dropped wire, it names the pin the new node will connect to ("Connects to Split Channels.R"). Right-click a
+  node to copy, duplicate, bypass or delete it; Delete removes the selection, Backspace removes it and reconnects
+  the wires around it, Ctrl+D duplicates it.
 - **Inspecting a connection.** Resting the pointer on a wire or an output pin shows what it carries at the
   playhead: a meter and the mean, min, max and RMS, with a view above them and the list of views beside. The
   view is a **picture** (the signal stretched over the project's shape, the way Video Output does), a **scope**
@@ -76,13 +84,15 @@ Our own editor, drawn on a pannable, zoomable canvas (see [Decisions](decisions.
   channel is still red video; Video to Audio turns it into red audio. **Wires** in File → Settings → Application
   picks how the two show: solid (the part's colour, or the kind's), outlined (the kind's colour outlined in the
   part's), gradient (the part's colour down the centre, fading to the kind's at the edges) or glow (the kind's
-  colour as a crisp line, glowing in the part's).
-- Compile notes and warnings show as a badge on the node, with the message in its tooltip and in the inspector,
-  which also lists what each output carries. Notes (a signal whose tag doesn't suit the node, say) get a quiet
-  "i" badge; warnings (something lost or ignored) a yellow "!". Neither stops the render. With several inputs,
+  colour as a crisp line, glowing in the part's). A key in the canvas's bottom-right corner names the colours and
+  says that thickness is RMS; View → Show wire legend hides it.
+- Compile notes and warnings show as a badge on the node's corner, with the message in its tooltip and in the
+  inspector, which also lists what each output carries. Notes (a signal whose tag doesn't suit the node, say) get
+  a quiet "i" badge; warnings (something lost or ignored) a yellow "!", an amber outline, and the message in a
+  note under the node. Neither stops the render. With several inputs,
   the main input (which sets the output's length and layout) has a ring around its pin.
-- When the graph can't render, a bar along the bottom of the graph says why and outlines the node at fault in
-  red; clicking the bar shows the node. A placed graph that isn't the open one is named by its id in the
+- When the graph can't render, a bar along the bottom of the graph says why, and the node at fault gets a red
+  outline and a red "×" badge; clicking the bar shows the node. A placed graph that isn't the open one is named by its id in the
   message, and the bar has no node to show.
 - Moving or renaming nodes doesn't re-render; any other edit does.
 
@@ -328,7 +338,7 @@ why it failed. Tracks whose files are missing are left out, as in the preview.
 
 Space plays/pauses, ←/→ step one frame, Home jumps to the start, R turns looping on and off, F fits whichever panel
 is under the pointer (preview, graph or timeline), Ctrl+S saves, Ctrl+Z undoes, Ctrl+Shift+Z (or Ctrl+Y) redoes. In
-the graph, Ctrl+A selects all, Esc clears the selection, Delete removes it and Backspace removes it and reconnects
+the graph, Tab opens the node search at the pointer, Ctrl+A selects all, Esc clears the selection, Delete removes it and Backspace removes it and reconnects
 around it. In the graph, Ctrl+C, Ctrl+X and Ctrl+V copy, cut and paste nodes with
 the connections between them; pasted nodes land at the pointer. The **Edit** menu has the same commands. Duplicate
 and Paste also keep the node's input connections, unless **File → Settings → Keep input connections when duplicating and pasting** is off. Holding Shift

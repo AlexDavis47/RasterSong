@@ -277,6 +277,33 @@ fn capture(theme: ThemeChoice, theme_name: &str) {
     failed.run_steps(3);
     save(&mut failed, &format!("{theme_name}-4-error"));
 
+    // A warning: Interleave can't run once per channel, so it runs on them together.
+    let warned = app_edited(theme, 1, TimelineMode::Time, |project| {
+        project.graph = rastersong_engine::GraphDesc::from_json(
+            r#"{ "version": 0, "nodes": [ { "id": "v", "type": "video_input" },
+                { "id": "s", "type": "interleave", "channels": "separate" },
+                { "id": "p", "type": "pack" }, { "id": "o", "type": "output" } ],
+              "connections": [ { "from": "v", "to": "s" }, { "from": "s", "to": "p" },
+                { "from": "p", "to": "o" } ] }"#,
+        )
+        .unwrap();
+        let graph = project.graph_id;
+        let track = project.add_graph_track("Graphs");
+        project.place_graph(&track, graph, 0.0, 4.0);
+    });
+    let mut warned = gpu_harness(warned);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while warned.state().editor().warning_count() == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for the warning"
+        );
+        warned.step();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    warned.run_steps(3);
+    save(&mut warned, &format!("{theme_name}-4-warning"));
+
     // A delay whose time and feedback are modulated by the audio, selected.
     let graph = GraphDesc::from_json(
         r#"{ "version": 0,

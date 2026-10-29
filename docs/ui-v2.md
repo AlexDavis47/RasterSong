@@ -96,7 +96,11 @@ under it ([Tempo mode](#timeline-in-tempo-mode)).
 
 ## Node graph
 
-Board: [GraphDetail](design/ui-v2/GraphDetail.dc.html).
+Board: [GraphDetail](design/ui-v2/GraphDetail.dc.html). **Shipped in stage 3** except the wire probe drum (stage
+4). Where it differs from the board: the legend sits in the bottom-right corner (above the error bar), so it
+doesn't cover the Output that the graph ends at top-right, and View → Show wire legend hides it; it also names
+stereo's L R. The error bar is as before: a full-width strip that shows the node when clicked, without the
+board's *Show node* button or its line about the last good frame.
 
 - Each node has a **5 px colour strip** along its top edge in its category colour; the title sits below it, so
   colour and text don't compete. Nodes are wider (116 px at 100%) so titles fit.

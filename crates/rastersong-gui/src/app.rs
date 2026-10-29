@@ -965,6 +965,13 @@ impl App {
         }
         self.shortcuts(ui);
         self.update_inspection();
+        // Tab over the canvas (not through a window over it) opens the node search there.
+        if let Some(p) = ui.input(|i| i.pointer.hover_pos())
+            && self.canvas_rect.contains(p)
+            && ui.ctx().layer_id_at(p) == Some(ui.layer_id())
+        {
+            self.editor.search_on_tab(ui, p);
+        }
 
         let fill = ui.visuals().panel_fill;
         let panel = move |margin: i8| {
@@ -1087,6 +1094,7 @@ impl App {
         let levels = frame.as_ref().map_or(&[][..], |f| &f.levels[..]);
         let params = frame.as_ref().map_or(&[][..], |f| &f.params[..]);
         let costs = frame.as_ref().map_or(&[][..], |f| &f.costs[..]);
+        self.graph_header(ui, failure.as_ref());
         self.update_inspect_view(ui);
         let engine = &self.engine;
         let tap = |request: &rastersong_engine::TapRequest| engine.tap(request);
@@ -1100,6 +1108,7 @@ impl App {
                 show_stats: self.settings.node_stats,
                 costs,
                 show_performance: self.settings.show_performance,
+                show_legend: self.settings.wire_legend,
                 inspect: Some(crate::editor::InspectContext {
                     frame: self.clock.frame(),
                     tap: &tap,
@@ -1125,7 +1134,6 @@ impl App {
         }
         self.canvas_rect = canvas.rect;
         self.update_listening(ui);
-        self.bypass_all_button(ui, canvas.rect);
     }
 
     /// Holding Alt over a connection turns the wheel into a way to change the view.
@@ -1187,23 +1195,105 @@ impl App {
         }
     }
 
-    /// The toggle in the canvas's corner that skips the whole graph.
-    fn bypass_all_button(&mut self, ui: &mut Ui, canvas: egui::Rect) {
-        let id = ui.id().with("bypass-all");
-        egui::Area::new(id)
-            .order(egui::Order::Foreground)
-            .fixed_pos(canvas.right_top() + egui::vec2(-8.0, 8.0))
-            .pivot(egui::Align2::RIGHT_TOP)
-            .show(ui.ctx(), |ui| {
-                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                let on = self.project.bypass_graph;
-                let response = ui
-                    .selectable_label(on, tr("editor.bypass_graph"))
-                    .on_hover_text(tr("editor.bypass_graph.help"));
-                if response.clicked() {
-                    self.project.bypass_graph = !on;
-                }
-            });
+    /// The row over the canvas: the open graph's name, where it plays on the timeline, how many
+    /// errors and warnings it has, and Add node and Bypass graphs.
+    fn graph_header(&mut self, ui: &mut Ui, failure: Option<&rastersong_engine::Failure>) {
+        let theme = Theme::of(ui.ctx());
+        let size = egui::vec2(ui.available_width(), GRAPH_HEADER_HEIGHT);
+        let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+        ui.painter().hline(
+            rect.x_range(),
+            rect.bottom() - 0.5,
+            egui::Stroke::new(1.0, theme.surfaces.divider),
+        );
+        let inner = rect.shrink2(egui::vec2(12.0, 0.0));
+        let mut ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(inner)
+                .layout(egui::Layout::right_to_left(egui::Align::Center)),
+        );
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+        // The buttons first, so the name and the chip take what's left.
+        let on = self.project.bypass_graph;
+        if ui
+            .selectable_label(on, tr("editor.bypass_graph"))
+            .on_hover_text(tr("editor.bypass_graph.help"))
+            .clicked()
+        {
+            self.project.bypass_graph = !on;
+        }
+        let tab = egui::RichText::new(tr("editor.key.tab"))
+            .monospace()
+            .size(SMALL_SIZE)
+            .color(theme.text_dim);
+        if ui
+            .add(egui::Button::new(tr("editor.header.add_node")).right_text(tab))
+            .on_hover_text(tr("editor.header.add_node.help"))
+            .clicked()
+        {
+            self.editor.open_search();
+        }
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.label(
+                egui::RichText::new(tr("editor.header.kind")).color(theme.surfaces.text_faint),
+            );
+            ui.label(egui::RichText::new(tr("editor.header.separator")).color(theme.tick));
+            ui.label(egui::RichText::new(&self.project.graph_name).strong());
+            let (chip, help) = self.graph_placement();
+            egui::Frame::new()
+                .fill(theme.surfaces.raised)
+                .stroke(egui::Stroke::new(1.0, theme.surfaces.border))
+                .corner_radius(10)
+                .inner_margin(egui::Margin::symmetric(8, 1))
+                .show(ui, |ui| {
+                    ui.label(egui::RichText::new(chip).size(11.5).color(theme.text_dim))
+                })
+                .response
+                .on_hover_text(help);
+            let errors = usize::from(
+                failure.is_some_and(|f| f.graph.is_none_or(|g| g == self.project.graph_id)),
+            );
+            if let Some((text, color)) = problem_count(errors, self.editor.warning_count(), theme) {
+                ui.add_space(6.0);
+                let (dot, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                ui.painter().circle_filled(dot.center(), 4.0, color);
+                ui.label(egui::RichText::new(text).size(12.0).color(color));
+            }
+        });
+    }
+
+    /// Where the open graph plays, as the canvas header's chip says it, and the chip's hover
+    /// text.
+    fn graph_placement(&self) -> (String, &'static str) {
+        let id = self.project.graph_id;
+        let mut placed = self.project.graph_tracks.iter().flat_map(|t| {
+            t.items
+                .iter()
+                .filter(|i| i.graph == id)
+                .map(move |i| (t, i))
+        });
+        let Some((track, item)) = placed.next() else {
+            return (
+                tr("editor.header.unplaced").to_owned(),
+                tr("editor.header.unplaced.help"),
+            );
+        };
+        let first = tr_args(
+            "editor.header.placed",
+            &[
+                ("track", &track.name),
+                ("start", &crate::timeline::short_timecode(item.position)),
+                ("end", &crate::timeline::short_timecode(item.end())),
+            ],
+        );
+        let text = match placed.count() {
+            0 => first,
+            more => tr_args(
+                "editor.header.placed_more",
+                &[("placed", &first), ("count", &more.to_string())],
+            ),
+        };
+        (text, tr("editor.header.placed.help"))
     }
 
     /// Whether the preview needs the original video.
@@ -1658,6 +1748,7 @@ impl App {
                     &mut self.settings.show_performance,
                     tr("menu.view.performance"),
                 );
+                ui.checkbox(&mut self.settings.wire_legend, tr("menu.view.wire_legend"));
             });
             ui.menu_button(tr("menu.help"), |ui| {
                 if ui.button(tr("menu.help.about")).clicked() {
@@ -3212,6 +3303,40 @@ impl App {
             self.title = title;
         }
     }
+}
+
+/// Height of the row over the graph canvas.
+const GRAPH_HEADER_HEIGHT: f32 = 40.0;
+
+/// The canvas header's count of problems ("1 error · 1 warning") in the colour of the worst,
+/// or `None` with none.
+fn problem_count(errors: usize, warnings: usize, theme: &Theme) -> Option<(String, egui::Color32)> {
+    let count = |n: usize, one: &str, many: &str| match n {
+        0 => None,
+        1 => Some(tr(one).to_owned()),
+        n => Some(tr_args(many, &[("count", &n.to_string())])),
+    };
+    let parts: Vec<String> = [
+        count(
+            errors,
+            "editor.header.errors_one",
+            "editor.header.errors_many",
+        ),
+        count(
+            warnings,
+            "editor.header.warnings_one",
+            "editor.header.warnings_many",
+        ),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let color = if errors > 0 {
+        theme.error
+    } else {
+        theme.warning
+    };
+    (!parts.is_empty()).then(|| (parts.join(" · "), color))
 }
 
 /// How long the preview waits on a frame before saying so, when it has an older one to show.

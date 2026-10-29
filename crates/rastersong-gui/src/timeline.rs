@@ -659,6 +659,17 @@ pub fn timecode(seconds: f64) -> String {
     format!("{}:{:05.2}", minutes as u64, total - minutes * 60.0)
 }
 
+/// `seconds` as `m:ss` when it falls on a whole second, else as [`timecode`] does.
+pub fn short_timecode(seconds: f64) -> String {
+    let total = seconds.max(0.0);
+    if (total - total.round()).abs() < 0.005 {
+        let whole = total.round() as u64;
+        format!("{}:{:02}", whole / 60, whole % 60)
+    } else {
+        timecode(total)
+    }
+}
+
 /// Frames to show thumbnails of: one per slot of `slot_secs`, on a grid of power-of-two frame
 /// steps so the set barely changes as the view zooms. Returns `(step, frames)`.
 pub fn thumbnail_frames(
@@ -3106,6 +3117,9 @@ mod tests {
         assert_eq!(timecode(0.0), "0:00.00");
         assert_eq!(timecode(61.5), "1:01.50");
         assert_eq!(timecode(-3.0), "0:00.00");
+        assert_eq!(short_timecode(3.0), "0:03");
+        assert_eq!(short_timecode(125.0), "2:05");
+        assert_eq!(short_timecode(1.25), "0:01.25");
     }
 
     #[test]

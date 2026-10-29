@@ -1086,17 +1086,7 @@ fn adding_tracks_names_them_after_their_files_and_leaves_the_graph_alone() {
 #[test]
 fn dragging_a_wire_onto_a_parameter_pin_modulates_it() {
     let mut harness = loaded();
-    // Add a delay below the graph.
-    let canvas = harness.state().editor().canvas_rect();
-    click(
-        &mut harness,
-        pos2(canvas.center().x, canvas.bottom() - 120.0),
-        PointerButton::Secondary,
-    );
-    harness.event(Event::Text("delay".into()));
-    harness.run_steps(2);
-    harness.key_press(egui::Key::Enter);
-    harness.run_steps(3);
+    add_node(&mut harness, "delay");
     let delay = key(&harness, "delay");
     let audio = key(&harness, "audio");
 
@@ -1126,10 +1116,11 @@ fn dragging_a_wire_onto_a_parameter_pin_modulates_it() {
 
 /// Adds a node of `kind` through the right-click search, near the bottom of the canvas.
 fn add_node(harness: &mut Harness<'_, App>, search: &str) {
+    // The bottom-left corner, which the starter graph leaves empty.
     let canvas = harness.state().editor().canvas_rect();
     click(
         harness,
-        pos2(canvas.center().x, canvas.bottom() - 120.0),
+        pos2(canvas.left() + 40.0, canvas.bottom() - 110.0),
         PointerButton::Secondary,
     );
     harness.event(Event::Text(search.into()));
@@ -2945,4 +2936,215 @@ fn a_dragged_video_shows_where_it_lands_among_the_video_tracks() {
     press(&mut harness, to, PointerButton::Primary, false);
     assert_eq!(harness.state().project().videos().len(), 1);
     assert_eq!(harness.state().project().videos()[0].items.len(), 2);
+}
+
+#[test]
+fn laid_out_nodes_do_not_overlap() {
+    // The starter graph has no positions; nodes grew taller and used to run into the next row.
+    let harness = loaded();
+    let editor = harness.state().editor();
+    let rects: Vec<_> = editor
+        .to_desc()
+        .nodes
+        .iter()
+        .map(|n| {
+            editor
+                .node_screen_rect(editor.key_of(&n.id).unwrap())
+                .unwrap()
+        })
+        .collect();
+    for (i, a) in rects.iter().enumerate() {
+        for b in &rects[i + 1..] {
+            assert!(!a.intersects(*b), "{a:?} overlaps {b:?}");
+        }
+    }
+}
+
+/// The app with `graph` open and placed on a graph track from 0 to 4 seconds.
+fn app_with_placed(graph: &str) -> App {
+    let graph = GraphDesc::from_json(graph).unwrap();
+    app_with_project(move |project| {
+        project.graph = graph;
+        let id = project.graph_id;
+        let track = project.add_graph_track("Graphs");
+        project.place_graph(&track, id, 0.0, 4.0);
+    })
+}
+
+#[test]
+fn the_canvas_header_names_the_graph_and_where_it_plays() {
+    let harness = loaded();
+    let name = &harness.state().project().graph_name;
+    // Resources lists the graph too; the header's name sits just above the canvas.
+    let canvas = harness.state().editor().canvas_rect();
+    assert!(
+        harness.query_all_by_label(name).any(|n| {
+            let r = n.rect();
+            r.bottom() <= canvas.top() && r.top() >= canvas.top() - 44.0
+        }),
+        "{name}"
+    );
+    assert!(harness.query_by_label("not on the timeline").is_some());
+
+    let harness = loaded_with(app_with_placed(STARTER_GRAPH));
+    assert!(harness.query_by_label("on Graphs · 0:00–0:04").is_some());
+}
+
+#[test]
+fn the_canvas_header_counts_errors_and_warnings() {
+    let mut harness = harness(app_with_placed(
+        r#"{ "version": 0, "nodes": [ { "id": "v", "type": "video_input" },
+            { "id": "c", "type": "pack", "params": { "channels": 7 } },
+            { "id": "o", "type": "output" } ],
+          "connections": [ { "from": "v", "to": "c" }, { "from": "c", "to": "o" } ] }"#,
+    ));
+    step_until(&mut harness, "the failure", |app| {
+        matches!(
+            app.engine().status(),
+            rastersong_engine::EngineStatus::Failed(_)
+        )
+    });
+    harness.run_steps(2);
+    assert!(harness.query_by_label("1 error").is_some());
+
+    // Interleave can't run once per channel: it runs on them together, with a warning.
+    let mut harness = harness_for_warning();
+    step_until(&mut harness, "the warning", |app| {
+        app.editor().warning_count() > 0
+    });
+    harness.run_steps(2);
+    assert!(harness.query_by_label("1 warning").is_some());
+    assert!(harness.query_by_label_contains("error").is_none());
+}
+
+fn harness_for_warning() -> Harness<'static, App> {
+    harness(app_with_placed(
+        r#"{ "version": 0, "nodes": [ { "id": "v", "type": "video_input" },
+            { "id": "s", "type": "interleave", "channels": "separate" },
+            { "id": "p", "type": "pack" }, { "id": "o", "type": "output" } ],
+          "connections": [ { "from": "v", "to": "s" }, { "from": "s", "to": "p" },
+            { "from": "p", "to": "o" } ] }"#,
+    ))
+}
+
+#[test]
+fn add_node_in_the_canvas_header_adds_one_in_the_middle() {
+    let mut harness = loaded();
+    harness.get_by_label_contains("Add node").click();
+    harness.run_steps(2);
+    assert!(harness.state().editor().search_open());
+    harness.event(Event::Text("bit".into()));
+    harness.run_steps(2);
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(2);
+    let editor = harness.state().editor();
+    let added = editor
+        .key_of("bitcrush")
+        .expect("a bit crush node was added");
+    let placed = editor.node_screen_rect(added).unwrap().min;
+    let center = editor.canvas_rect().center();
+    assert!(placed.distance(center) < 1.5, "{placed:?} vs {center:?}");
+}
+
+#[test]
+fn tab_opens_the_node_search_at_the_pointer() {
+    let mut harness = loaded();
+    let canvas = harness.state().editor().canvas_rect();
+    let spot = pos2(canvas.left() + 40.0, canvas.bottom() - 110.0);
+    harness.event(Event::PointerMoved(spot));
+    harness.run_steps(1);
+    harness.key_press(egui::Key::Tab);
+    harness.run_steps(2);
+    assert!(harness.state().editor().search_open());
+    harness.event(Event::Text("bit".into()));
+    harness.run_steps(2);
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(2);
+    let editor = harness.state().editor();
+    let placed = editor
+        .node_screen_rect(editor.key_of("bitcrush").unwrap())
+        .unwrap()
+        .min;
+    assert!(placed.distance(spot) < 1.5, "{placed:?} vs {spot:?}");
+}
+
+#[test]
+fn the_node_search_groups_results_by_category_and_names_its_keys() {
+    let mut harness = loaded();
+    let canvas = harness.state().editor().canvas_rect();
+    right_click(
+        &mut harness,
+        pos2(canvas.left() + 40.0, canvas.bottom() - 110.0),
+    );
+    harness.event(Event::Text("delay".into()));
+    harness.run_steps(2);
+    let category = rastersong_engine::Registry::shared()
+        .get("delay")
+        .unwrap()
+        .spec
+        .category
+        .label()
+        .to_uppercase();
+    assert!(harness.query_by_label(&category).is_some(), "{category}");
+    assert!(harness.query_by_label("Delay").is_some());
+    for words in ["move", "add", "close"] {
+        assert!(harness.query_by_label(words).is_some(), "{words}");
+    }
+    assert!(harness.query_by_label("Connects to").is_none());
+}
+
+#[test]
+fn a_dropped_wire_names_what_the_new_node_connects_to() {
+    let mut harness = loaded();
+    let split = key(&harness, "split");
+    let pin = harness
+        .state()
+        .editor()
+        .pin_screen_pos(split, false, 0)
+        .unwrap();
+    let canvas = harness.state().editor().canvas_rect();
+    drag(
+        &mut harness,
+        pin,
+        pos2(canvas.left() + 40.0, canvas.bottom() - 110.0),
+    );
+    harness.run_steps(2);
+    assert!(harness.state().editor().search_open());
+    assert!(harness.query_by_label("Connects to").is_some());
+    assert!(
+        harness.query_by_label_contains(".R").is_some(),
+        "names the split's red channel"
+    );
+}
+
+#[test]
+fn the_canvas_has_a_key_to_the_wire_colours() {
+    let harness = loaded();
+    assert!(harness.query_by_label("Wires").is_some());
+}
+
+#[test]
+fn bypassing_a_node_keeps_its_size() {
+    // BYPASSED shortens the title rather than widening the node into its neighbours.
+    let mut harness = loaded();
+    let bands = key(&harness, "bands");
+    let before = harness.state().editor().node_screen_rect(bands).unwrap();
+    right_click(&mut harness, before.center_top() + vec2(0.0, 12.0));
+    harness.get_by_label("Bypass").click();
+    harness.run_steps(2);
+    let editor = harness.state().editor();
+    assert!(editor.node(bands).unwrap().bypass);
+    assert_eq!(editor.node_screen_rect(bands).unwrap(), before);
+}
+
+#[test]
+fn the_wire_legend_can_be_hidden_from_the_view_menu() {
+    let mut harness = loaded();
+    assert!(harness.query_by_label("Wires").is_some());
+    harness.get_by_label("View").click();
+    harness.run_steps(2);
+    harness.get_by_label("Show wire legend").click();
+    harness.run_steps(2);
+    assert!(!harness.state().settings().wire_legend);
+    assert!(harness.query_by_label("Wires").is_none());
 }

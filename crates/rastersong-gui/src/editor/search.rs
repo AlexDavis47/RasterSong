@@ -1,23 +1,31 @@
-//! The add-node search menu and the node context menu.
+//! The add-node search palette and the node context menu.
 
 use std::collections::BTreeSet;
 
-use eframe::egui::{self, Key, Pos2, Ui};
+use eframe::egui::{
+    self, Align2, FontId, Key, Pos2, Rect, Sense, Stroke, Ui, WidgetInfo, WidgetType, pos2, vec2,
+};
 use rastersong_engine::NodeType;
 use rastersong_lang::{tr, tr_args};
 
 use super::canvas::{Geometry, Pin};
 use super::ports;
 use super::{GraphEditor, NodeKey};
-use crate::theme::Theme;
+use crate::theme::{SMALL_SIZE, Theme};
+use crate::widgets::{kbd, paint_kbd};
 
 static NEXT_SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// Width of the palette.
+pub(super) const WIDTH: f32 = 370.0;
 /// Height of the list of node types, fixed so the popup doesn't change size as it filters.
 const LIST_HEIGHT: f32 = 320.0;
+/// Height of one result: its name over its one-line description.
+const RESULT_HEIGHT: f32 = 44.0;
 
-/// Opened by right-clicking empty canvas (or dropping a wire there). Typing filters; arrows move;
-/// Enter or a click adds the node where the menu was opened.
+/// Opened by right-clicking empty canvas, Tab, the canvas header's Add node, or dropping a wire on
+/// empty canvas. Typing filters; arrows move; Enter or a click adds the node where the palette
+/// was opened.
 #[derive(Debug, Clone)]
 pub(super) struct SearchMenu {
     /// Screen position of the menu.
@@ -95,14 +103,33 @@ pub(super) fn matches<'a>(
     found.into_iter().map(|(_, t)| t).collect()
 }
 
+/// `found` gathered by category for the palette's headings, each category where its best match
+/// was and each keeping its order.
+pub(super) fn grouped<'a>(found: &[&'a NodeType]) -> Vec<&'a NodeType> {
+    let mut categories = Vec::new();
+    for t in found {
+        if !categories.contains(&t.spec.category) {
+            categories.push(t.spec.category);
+        }
+    }
+    categories
+        .into_iter()
+        .flat_map(|c| found.iter().copied().filter(move |t| t.spec.category == c))
+        .collect()
+}
+
 impl GraphEditor {
-    pub(super) fn show_search(&mut self, ui: &Ui, _geometry: &[Geometry]) {
+    pub(super) fn show_search(&mut self, ui: &Ui, geometry: &[Geometry]) {
         let Some(mut menu) = self.search.take() else {
             return;
         };
         let types = self.registry.types();
-        let found = matches(&types, &menu.query, menu.from);
+        let found = grouped(&matches(&types, &menu.query, menu.from));
         menu.selected = menu.selected.min(found.len().saturating_sub(1));
+        let theme = Theme::of(ui.ctx());
+        let wire = menu
+            .from
+            .and_then(|pin| self.pin_name(geometry, pin, theme));
 
         let (up, down, enter, escape) = ui.input_mut(|i| {
             (
@@ -128,10 +155,12 @@ impl GraphEditor {
             .constrain(true)
             .show(ui.ctx(), |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.set_width(240.0);
+                    ui.set_width(WIDTH);
                     let edit = ui.add(
                         egui::TextEdit::singleline(&mut menu.query)
                             .hint_text(tr("editor.search.hint"))
+                            .font(FontId::proportional(13.5))
+                            .margin(vec2(10.0, 8.0))
                             .desired_width(f32::INFINITY),
                     );
                     if !menu.opened {
@@ -141,39 +170,61 @@ impl GraphEditor {
                     if edit.changed() {
                         menu.selected = 0;
                     }
+                    // What the new node will be connected to, when a wire was dropped.
+                    if let Some((name, color)) = &wire {
+                        ui.horizontal(|ui| {
+                            ui.weak(tr("editor.search.connects_to"));
+                            let (swatch, _) =
+                                ui.allocate_exact_size(vec2(12.0, 3.0), Sense::hover());
+                            ui.painter().rect_filled(swatch, 1, *color);
+                            ui.label(name);
+                        });
+                    }
                     ui.separator();
                     egui::ScrollArea::vertical()
                         .min_scrolled_height(LIST_HEIGHT)
                         .max_height(LIST_HEIGHT)
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = 2.0;
                             if found.is_empty() {
                                 ui.weak(tr("editor.search.none"));
                             }
+                            let mut category = None;
                             for (i, t) in found.iter().enumerate() {
-                                let row = ui.horizontal(|ui| {
-                                    let (dot, _) = ui.allocate_exact_size(
-                                        egui::vec2(8.0, 8.0),
-                                        egui::Sense::hover(),
+                                if category != Some(t.spec.category) {
+                                    category = Some(t.spec.category);
+                                    ui.add_space(if i == 0 { 2.0 } else { 6.0 });
+                                    ui.label(
+                                        egui::RichText::new(t.spec.category.label().to_uppercase())
+                                            .size(SMALL_SIZE)
+                                            .color(theme.surfaces.text_faint),
                                     );
-                                    ui.painter().circle_filled(
-                                        dot.center(),
-                                        3.5,
-                                        Theme::of(ui.ctx()).category(Some(t.spec.category)),
-                                    );
-                                    let label = ui.selectable_label(i == menu.selected, t.label());
-                                    ui.weak(t.spec.category.label());
-                                    label
-                                });
-                                let label = row.inner.on_hover_text(t.description());
-                                if i == menu.selected && (up || down) {
-                                    label.scroll_to_me(None);
                                 }
-                                if label.clicked() {
+                                let row = result_row(ui, theme, t, i == menu.selected);
+                                if i == menu.selected && (up || down) {
+                                    row.scroll_to_me(None);
+                                }
+                                if row.clicked() {
                                     chosen = Some(t.kind.clone());
                                 }
                             }
                         });
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        let hint = |ui: &mut Ui, text: &str| {
+                            ui.label(egui::RichText::new(text).size(11.0).color(theme.text_dim));
+                            ui.add_space(8.0);
+                        };
+                        kbd(ui, tr("editor.key.up"));
+                        kbd(ui, tr("editor.key.down"));
+                        hint(ui, tr("editor.search.move"));
+                        kbd(ui, tr("editor.key.enter"));
+                        hint(ui, tr("editor.search.add"));
+                        kbd(ui, tr("editor.key.escape"));
+                        hint(ui, tr("editor.search.close"));
+                    });
                 });
             });
 
@@ -187,6 +238,36 @@ impl GraphEditor {
         } else if !(escape || clicked_outside) {
             self.search = Some(menu);
         }
+    }
+
+    /// A pin as the palette names it ("Three-Band Split.high"), with its wire's colour.
+    fn pin_name(
+        &self,
+        geometry: &[Geometry],
+        pin: Pin,
+        theme: &Theme,
+    ) -> Option<(String, egui::Color32)> {
+        let (key, port) = match pin {
+            Pin::Out(key, port) | Pin::In(key, port) => (key, port),
+        };
+        let g = geometry.iter().find(|g| g.key == key)?;
+        let kind = self.kind_of(key)?;
+        let (port_name, color) = match pin {
+            Pin::Out(..) => {
+                let shown = g.outputs.get(port).map_or("", |o| o.1);
+                let name = if shown.is_empty() {
+                    super::editor_outputs(kind).get(port)?.name
+                } else {
+                    shown
+                };
+                (name, self.output_color(key, port, theme).solid())
+            }
+            Pin::In(..) => {
+                let name = g.inputs.iter().find(|p| p.port == port)?.name;
+                (name, theme.pin_required)
+            }
+        };
+        Some((format!("{}.{port_name}", g.title), color))
     }
 
     fn add_from_search(&mut self, menu: &SearchMenu, kind: &str) {
@@ -281,6 +362,65 @@ impl GraphEditor {
     }
 }
 
+/// One result in the palette: its category's dot, its name over its description, and the Enter
+/// key on the selected one.
+fn result_row(ui: &mut Ui, theme: &Theme, t: &NodeType, selected: bool) -> egui::Response {
+    let size = vec2(ui.available_width(), RESULT_HEIGHT);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    response.widget_info(|| {
+        WidgetInfo::selected(WidgetType::SelectableLabel, true, selected, t.label())
+    });
+    if !ui.is_rect_visible(rect) {
+        return response;
+    }
+    let painter = ui.painter();
+    let fill = if selected {
+        theme.accent.gamma_multiply(0.16)
+    } else if response.hovered() {
+        theme.surfaces.raised_hover
+    } else {
+        egui::Color32::TRANSPARENT
+    };
+    painter.rect(rect, 7, fill, Stroke::NONE, egui::StrokeKind::Inside);
+    painter.circle_filled(
+        pos2(rect.left() + 14.0, rect.center().y),
+        4.0,
+        theme.category(Some(t.spec.category)),
+    );
+    let mut right = rect.right() - 10.0;
+    if selected {
+        let key = paint_kbd(
+            painter,
+            theme,
+            pos2(right, rect.center().y),
+            tr("editor.key.enter"),
+        );
+        right = key.left() - 8.0;
+    }
+    let left = rect.left() + 28.0;
+    let text = Rect::from_x_y_ranges(left..=right.max(left), rect.y_range());
+    painter.text(
+        pos2(text.left(), rect.center().y - 1.0),
+        Align2::LEFT_BOTTOM,
+        t.label(),
+        FontId::proportional(13.0),
+        theme.surfaces.text,
+    );
+    let mut description = egui::text::LayoutJob::simple_singleline(
+        t.description().to_owned(),
+        FontId::proportional(11.0),
+        theme.text_dim,
+    );
+    description.wrap = egui::text::TextWrapping::truncate_at_width(text.width());
+    let galley = painter.layout_job(description);
+    painter.galley(
+        pos2(text.left(), rect.center().y + 1.0),
+        galley,
+        theme.text_dim,
+    );
+    response
+}
+
 #[cfg(test)]
 mod tests {
     use rastersong_engine::Registry;
@@ -306,6 +446,29 @@ mod tests {
         let all = labels("");
         assert_eq!(all.len(), types.len() - 1);
         assert!(!all.contains(&"Output") && all.contains(&"Video In"));
+    }
+
+    #[test]
+    fn results_are_gathered_by_category_best_match_first() {
+        let registry = Registry::shared();
+        let types = registry.types();
+        for query in ["", "de", "split", "a"] {
+            let found = matches(&types, query, None);
+            let gathered = grouped(&found);
+            assert_eq!(gathered.len(), found.len(), "{query}");
+            // Each category's results sit together, in the order of their best matches.
+            let mut seen = Vec::new();
+            for t in &gathered {
+                let c = t.spec.category;
+                if seen.last() != Some(&c) {
+                    assert!(!seen.contains(&c), "{query}: {c:?} split up");
+                    seen.push(c);
+                }
+            }
+            if let Some(first) = found.first() {
+                assert_eq!(gathered[0].spec.category, first.spec.category, "{query}");
+            }
+        }
     }
 
     #[test]

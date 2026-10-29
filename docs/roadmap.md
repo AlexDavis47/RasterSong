@@ -827,7 +827,7 @@ independent of each other.
      pulling its Output wire couldn't fail). The error shot now places a graph that can't render.
 2. [x] **feature** Shell: the top bar with the Export… button, the transport under the preview (two rows, no
    wrapping), Result / Original / Split, and the status bar with pointer hints.
-3. [ ] **feature** Node graph: the category colour strip, wider nodes and larger text, bypassed and warning
+3. [x] **feature** Node graph: the category colour strip, wider nodes and larger text, bypassed and warning
    styles, the error count in the canvas header, the wire legend, the node search palette.
 4. [ ] **feature** Wire probe drum: wrap-around view wheel turned by Alt+scroll, clicks and ↑/↓.
 5. [ ] **feature** Inspector: one layout for node, graph item and track selections; the modulation card.
