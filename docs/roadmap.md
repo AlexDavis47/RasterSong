@@ -931,6 +931,8 @@ The aim: one implementation per idea, so fixes and features land in one place. K
   ([Engine](engine.md#composition))
 - [x] **bug** The preview's Original showed only the first video track, not the video mix
   ([Preview](app.md#preview))
+- [x] **bug** A connection dropped while downloading FFmpeg failed the release build: downloads now retry every
+  error (`xtask/src/util.rs`)
 
 ---
 
