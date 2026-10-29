@@ -21,9 +21,7 @@ use rastersong_engine::{
 };
 
 pub use canvas::CanvasContext;
-pub use inspect::{
-    InspectContext, InspectMode, ViewChoice, changing_view, listening, scroll_steps,
-};
+pub use inspect::{InspectContext, InspectMode, ViewChoice, changing_view, listening};
 pub use inspector::InspectorContext;
 pub use modulation::{PARAM_PORT, as_param, param_port};
 pub use ports::port_label;
@@ -107,6 +105,10 @@ pub struct GraphEditor {
     hovered_audio: bool,
     /// Whether the wheel is for something other than zooming (changing the inspection view).
     pub scroll_reserved: bool,
+    /// The wire probe open on the canvas, if any.
+    probe: Option<tooltips::Probe>,
+    /// Steps the probe's drum was turned since the app last asked.
+    view_turn: i32,
     last_geometry: Vec<canvas::Geometry>,
     /// Text last copied, for the Edit menu's Paste (keyboard paste reads the system clipboard).
     clipboard: Option<String>,
@@ -155,6 +157,8 @@ impl GraphEditor {
             hovered_output: None,
             hovered_audio: false,
             scroll_reserved: false,
+            probe: None,
+            view_turn: 0,
             last_geometry: Vec::new(),
             clipboard: None,
             keep_connections: true,
@@ -508,6 +512,22 @@ impl GraphEditor {
     /// Whether the output the pointer rested on carries audio.
     pub fn hovered_is_audio(&self) -> bool {
         self.hovered_audio
+    }
+
+    /// Steps the wire probe's drum was turned since the last call, for the app to move the view
+    /// of the probed signal's kind by.
+    pub fn take_view_turn(&mut self) -> i32 {
+        std::mem::take(&mut self.view_turn)
+    }
+
+    /// Where the wire probe was last drawn, if it is open.
+    pub fn probe_rect(&self) -> Option<Rect> {
+        self.probe.map(|p| p.rect)
+    }
+
+    /// Where the wire probe's drum was last drawn, if the probe is open.
+    pub fn probe_drum_rect(&self) -> Option<Rect> {
+        self.probe.map(|p| p.drum)
     }
 
     /// The node output the pointer rested on in the last frame: `(node id, output)`.

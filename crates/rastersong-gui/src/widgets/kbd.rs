@@ -20,6 +20,23 @@ pub fn kbd(ui: &mut Ui, key: &str) -> Response {
     response
 }
 
+/// A line of `text` with `key` as a key cap where `text` says `{key}` ("{key}+scroll turns
+/// it"), so translations can put the key where their grammar wants it.
+pub fn kbd_text(ui: &mut Ui, text: &str, key: &str, size: f32, color: egui::Color32) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        let (before, after) = text.split_once("{key}").unwrap_or((text, ""));
+        let words = |ui: &mut Ui, words: &str| {
+            if !words.is_empty() {
+                ui.label(egui::RichText::new(words).size(size).color(color));
+            }
+        };
+        words(ui, before);
+        kbd(ui, key);
+        words(ui, after);
+    });
+}
+
 /// A button `height` high: `icon`, `label`, and the key that does the same as a key cap after
 /// it ("+ Add node [Tab]"). Named `label` for screen readers (and tests).
 pub fn key_button(ui: &mut Ui, icon: Icon, label: &str, key: &str, height: f32) -> Response {

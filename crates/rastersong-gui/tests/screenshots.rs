@@ -710,6 +710,10 @@ fn meter_screenshots() {
     let mut app = app(theme);
     let mut project = app.project().clone();
     project.graph = graph;
+    // Only a placed graph renders, so only a placed graph has something to inspect.
+    let id = project.graph_id;
+    let track = project.add_graph_track("Graphs");
+    project.place_graph(&track, id, 0.0, 4.0);
     app = App::new(
         Arc::new(
             FakeBackend::new()

@@ -65,12 +65,14 @@ no further than 85%: a graph wider than that starts from its inputs on the left,
   node to copy, duplicate, bypass or delete it; Delete removes the selection, Backspace removes it and reconnects
   the wires around it, Ctrl+D duplicates it.
 - **Inspecting a connection.** Resting the pointer on a wire or an output pin shows what it carries at the
-  playhead: a meter and the mean, min, max and RMS, with a view above them and the list of views beside. The
-  view is a **picture** (the signal stretched over the project's shape, the way Video Output does), a **scope**
+  playhead in the **probe**: the wire's ends and what it carries, the view, a meter and the mean, min, max and
+  RMS. Beside the view is the **drum**, a wheel of the views with the one shown in the middle; it wraps around,
+  so past Readings comes Picture again. The probe stays open while the pointer moves onto it: click a view on
+  the drum, scroll over it, or click it and use ↑/↓. The view is a **picture** (the signal stretched over the project's shape, the way Video Output does), a **scope**
   (the waveform), a **spectrum** (an FFT on a logarithmic frequency axis, smoothed between updates) or
   **readings only**, and any signal can be seen any way: audio as a picture, video as a spectrum. Hold **Alt**
-  over a connection and scroll to go through the views, one click of the wheel to a step; the popup fades and
-  resizes from one view to the next, and the wheel stops zooming meanwhile. The view is remembered separately for
+  over a connection and scroll to turn the drum, one click of the wheel to a view; the drum settles with a short
+  ease, the view fades and resizes from one to the next, and the wheel stops zooming meanwhile. The view is remembered separately for
   audio and for other signals (File → Settings). Hold **Shift** to hear the connection through the speakers,
   turning the playback down while the pointer stays on it. It plays along with the transport, so it is silent
   while playback is stopped: sound and picture always match. How often the view asks for a new frame while the playhead moves is the project's **update

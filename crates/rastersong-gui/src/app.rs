@@ -1185,24 +1185,22 @@ impl App {
         self.update_listening(ui);
     }
 
-    /// Holding Alt over a connection turns the wheel into a way to change the view.
+    /// Holding Alt over a connection turns the wheel into a way to change the view, as does
+    /// turning the probe's drum.
     fn update_inspect_view(&mut self, ui: &Ui) {
+        let turned = self.editor.take_view_turn();
+        if turned != 0 {
+            let audio = self.editor.hovered_is_audio();
+            self.settings.views.step(audio, turned);
+        }
         let inspecting = self.editor.hovered_output().is_some() && crate::editor::changing_view(ui);
         self.editor.scroll_reserved = inspecting;
         if !inspecting {
             self.inspect_scroll = 0.0;
             return;
         }
-        let wheel: Vec<_> = ui.input(|i| {
-            i.events
-                .iter()
-                .filter_map(|event| match event {
-                    egui::Event::MouseWheel { unit, delta, .. } => Some((*unit, delta.y)),
-                    _ => None,
-                })
-                .collect()
-        });
-        let steps = crate::editor::scroll_steps(wheel, &mut self.inspect_scroll);
+        let wheel = crate::widgets::wheel_events(ui);
+        let steps = crate::widgets::scroll_steps(wheel, &mut self.inspect_scroll);
         if steps != 0 {
             let audio = self.editor.hovered_is_audio();
             self.settings.views.step(audio, steps);

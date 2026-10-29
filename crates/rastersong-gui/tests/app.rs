@@ -2407,6 +2407,132 @@ fn holding_alt_and_scrolling_over_a_connection_changes_its_view() {
     assert_ne!(harness.state().settings().views, before);
 }
 
+/// Opens the probe on the first wire and moves the pointer onto its drum: returns the drum's
+/// rect and the view the probe shows.
+fn onto_the_drum(
+    harness: &mut Harness<'_, App>,
+) -> (egui::Rect, rastersong_gui::editor::InspectMode) {
+    hover_wire(harness);
+    step_until(harness, "the probe open", |app| {
+        app.editor()
+            .probe_drum_rect()
+            .is_some_and(|r| r.is_positive())
+    });
+    let drum = harness.state().editor().probe_drum_rect().unwrap();
+    harness.event(Event::PointerMoved(drum.center()));
+    harness.run_steps(2);
+    (drum, probed_view(harness))
+}
+
+/// The view the probe on the first wire shows.
+fn probed_view(harness: &Harness<'_, App>) -> rastersong_gui::editor::InspectMode {
+    let audio = harness.state().editor().hovered_is_audio();
+    harness.state().settings().views.of(audio)
+}
+
+#[test]
+fn the_probe_stays_open_while_the_pointer_is_on_it() {
+    let mut harness = loaded();
+    let (drum, _) = onto_the_drum(&mut harness);
+    let probe = harness.state().editor().probe_rect().unwrap();
+    assert!(probe.contains(drum.center()));
+    assert!(
+        harness.state().editor().hovered_output().is_some(),
+        "still about the wire it opened for"
+    );
+    // Off the probe and the wire, it closes.
+    harness.event(Event::PointerMoved(probe.right_bottom() + vec2(60.0, 60.0)));
+    harness.run_steps(2);
+    assert!(harness.state().editor().probe_rect().is_none());
+}
+
+#[test]
+fn clicking_a_view_on_the_drum_turns_it_there_and_it_wraps_around() {
+    let mut harness = loaded();
+    let (drum, view) = onto_the_drum(&mut harness);
+    // The slot below the middle is the next view.
+    click(
+        &mut harness,
+        drum.center() + vec2(0.0, 30.0),
+        PointerButton::Primary,
+    );
+    harness.run_steps(2);
+    assert_eq!(probed_view(&harness), view.stepped(1));
+    // Two above the middle now: back past where it started.
+    click(
+        &mut harness,
+        drum.center() - vec2(0.0, 60.0),
+        PointerButton::Primary,
+    );
+    harness.run_steps(2);
+    assert_eq!(probed_view(&harness), view.stepped(-1));
+    // And on round: from the first view, up is the last.
+    let first = rastersong_gui::editor::InspectMode::ALL[0];
+    let mut guard = 0;
+    while probed_view(&harness) != first {
+        click(
+            &mut harness,
+            drum.center() + vec2(0.0, 30.0),
+            PointerButton::Primary,
+        );
+        harness.run_steps(2);
+        guard += 1;
+        assert!(guard < 8, "never reached the first view");
+    }
+    click(
+        &mut harness,
+        drum.center() - vec2(0.0, 30.0),
+        PointerButton::Primary,
+    );
+    harness.run_steps(2);
+    assert_eq!(
+        probed_view(&harness),
+        *rastersong_gui::editor::InspectMode::ALL.last().unwrap()
+    );
+}
+
+#[test]
+fn arrow_keys_turn_the_drum_once_it_has_focus() {
+    let mut harness = loaded();
+    let (drum, view) = onto_the_drum(&mut harness);
+    let arrow = |harness: &mut Harness<'_, App>, key| {
+        harness.event(Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        });
+        harness.run_steps(2);
+    };
+    // Before it's focused the arrows are someone else's.
+    arrow(&mut harness, egui::Key::ArrowDown);
+    assert_eq!(probed_view(&harness), view);
+    // Clicking the middle focuses it without turning it.
+    click(&mut harness, drum.center(), PointerButton::Primary);
+    harness.run_steps(2);
+    assert_eq!(probed_view(&harness), view);
+    arrow(&mut harness, egui::Key::ArrowDown);
+    assert_eq!(probed_view(&harness), view.stepped(1));
+    arrow(&mut harness, egui::Key::ArrowUp);
+    arrow(&mut harness, egui::Key::ArrowUp);
+    assert_eq!(probed_view(&harness), view.stepped(-1));
+}
+
+#[test]
+fn the_wheel_over_the_drum_turns_it_one_view_a_notch() {
+    let mut harness = loaded();
+    let (_, view) = onto_the_drum(&mut harness);
+    harness.event(Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: vec2(0.0, -1.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: Modifiers::NONE,
+    });
+    harness.run_steps(2);
+    assert_eq!(probed_view(&harness), view.stepped(1));
+}
+
 #[test]
 fn holding_shift_over_a_connection_listens_to_it() {
     let mut harness = loaded();

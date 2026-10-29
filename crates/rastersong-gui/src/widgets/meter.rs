@@ -132,11 +132,11 @@ impl Scale {
     }
 }
 
-/// A meter of the values from `min` to `max` on `scale`, `width` wide, without peak hold: for
-/// tooltips.
-pub fn signal_meter(ui: &mut Ui, scale: Scale, min: f32, max: f32, width: f32) {
+/// A meter of the values from `min` to `max` on `scale`, its bar `width` wide (or filling the
+/// row), without peak hold: for tooltips and the wire probe.
+pub fn signal_meter(ui: &mut Ui, scale: Scale, min: f32, max: f32, width: Option<f32>) {
     let look = Look {
-        bar_width: Some(width),
+        bar_width: width,
         hold: false,
     };
     if scale == Scale::Decibels {

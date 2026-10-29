@@ -106,8 +106,8 @@ under it ([Tempo mode](#timeline-in-tempo-mode)).
 
 ## Node graph
 
-Board: [GraphDetail](design/ui-v2/GraphDetail.dc.html). **Shipped in stage 3** except the wire probe drum (stage
-4). Where it differs from the board: the legend is a small icon in the bottom-right corner (above the error bar)
+Board: [GraphDetail](design/ui-v2/GraphDetail.dc.html). **Shipped in stage 3**, the wire probe in stage 4. Where it
+differs from the board: the legend is a small icon in the bottom-right corner (above the error bar)
 that shows the key while hovered, so it never covers a node; the key also names stereo's L R. Fitting the graph
 stops at 85% so its text stays readable; a graph too wide for that starts from its inputs. The error bar is as before: a full-width strip that shows the node when clicked, without the
 board's *Show node* button or its line about the last good frame.
@@ -139,6 +139,12 @@ Picture again.
 - Shift to listen is unchanged; the probe's footer names both gestures.
 
 Each of these is a kittest ([CONTRIBUTING](../CONTRIBUTING.md) rule 14).
+
+Where the shipped probe differs from the board: it stays open while the pointer is on it, or on its way to it from
+where it opened, so the drum can be clicked; the plain wheel over the drum turns it too (Alt+wheel stays the
+wire's). The scope and spectrum are drawn in the wire's colour. The meter is still the shared one, a bar with its
+value in a box, until the inspector's stage restyles it everywhere. The line under the ends is the tooltip's
+layout and tag, sample count included. *Readings* shows no box, since the numbers are right under it.
 
 ## Inspector
 
