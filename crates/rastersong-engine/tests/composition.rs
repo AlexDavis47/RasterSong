@@ -629,6 +629,47 @@ fn the_service_renders_the_composition_and_it_is_part_of_the_cache_key() {
 }
 
 #[test]
+fn opening_another_graph_keeps_every_rendered_frame() {
+    let engine = engine();
+    engine.set_timeline(video_timeline());
+    let open_one = |open: u32, other: (u32, String)| {
+        let mut comp = composition(&video_track(), &[other]);
+        comp.open = open;
+        comp.graph_tracks = vec![graph_track("G", vec![span(0, 4, 1), span(4, FRAMES, 2)])];
+        comp
+    };
+    let has_node = |id: &str| engine.node_stats().iter().any(|s| &*s.node == id);
+    engine.set_graphs(
+        GraphDesc::from_json(&invert()).unwrap(),
+        Some(open_one(1, (2, crush()))),
+    );
+    let rendered = engine_frames(&engine, 8);
+    assert!(has_node("i"));
+    let kept = engine.frame(3).unwrap();
+    assert_eq!(kept.open, Some(1));
+
+    // Graph 2 opened: graph 1 goes back among the stored graphs, which renders the same.
+    engine.set_graphs(
+        GraphDesc::from_json(&crush()).unwrap(),
+        Some(open_one(2, (1, invert()))),
+    );
+    // Rebuilt for the editor, which now inspects graph 2's item...
+    wait_until("the open graph's stats", || has_node("c"));
+    // ...with the frames all kept.
+    assert!(Arc::ptr_eq(&kept, &engine.frame(3).unwrap()));
+    assert_eq!(engine_frames(&engine, 8), rendered);
+
+    // Editing the open graph is still an edit.
+    engine.set_graphs(
+        GraphDesc::from_json(&passthrough()).unwrap(),
+        Some(open_one(2, (1, invert()))),
+    );
+    wait_until("the edit", || {
+        engine.frame(3).is_none_or(|f| !Arc::ptr_eq(&kept, &f))
+    });
+}
+
+#[test]
 fn the_service_reports_a_graph_that_cannot_compile() {
     let engine = engine();
     engine.set_timeline(video_timeline());

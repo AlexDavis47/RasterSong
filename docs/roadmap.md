@@ -924,6 +924,8 @@ The aim: one implementation per idea, so fixes and features land in one place. K
 - [x] **bug** Typing an input node's port name lost the field's focus after each character
 - [x] **bug** The starter graph had no Audio Output, so it was silent ([Graph tracks](app.md#graph-tracks))
 - [x] **bug** Splitting kept both halves selected, so dragging one moved both ([Timeline](app.md#timeline))
+- [x] **bug** Opening another graph invalidated the cache though nothing that renders changed
+  ([Engine](engine.md#composition))
 
 ---
 

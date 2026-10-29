@@ -199,9 +199,12 @@ renders a connection's sound ahead of a position, for the listen key. Both are r
 A project hands the engine its **composition** (`Project::composition`, `Engine::set_composition`): the video and
 audio tracks, video first, each with its volume, bus and whether it is in the mix (not muted, not left out by a
 solo); the graph tracks, top first, with the items that play (muted tracks and items are left out, and bypassing
-graphs leaves out all of them); and the stored graphs. The open graph's description comes separately through
-`Engine::set_graph` because it changes as it is edited. Graphs are normalised with `render_form`, so labels and
-positions are not edits; any other change cancels and re-renders. Offline, the CLI's `rastersong render <project>
+graphs leaves out all of them); and the stored graphs. The open graph's description comes separately because it
+changes as it is edited; the app sends both at once with `Engine::set_graphs`. Graphs are normalised with
+`render_form`, so labels and positions are not edits; any other change cancels and re-renders. Which graph is open
+is not an edit either: the frames are compared as rendered from every graph by id, so opening another graph keeps
+the cache and only rebuilds the renderer for what the editor inspects. A kept frame records the graph that was open
+(`Frame::open`), and the app shows its levels, parameters, costs and meters only while that graph is still open. Offline, the CLI's `rastersong render <project>
 <out>` passes the composition in `RenderSettings::composition`.
 
 **Graph items.** A `GraphItem` places a graph on a graph track: position, length, `start` (seconds into the graph's

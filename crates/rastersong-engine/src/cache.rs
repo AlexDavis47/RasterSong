@@ -31,6 +31,10 @@ pub struct Frame {
     pub meters: Arc<[NodeMeters]>,
     /// The frame's rendered sound, when the graph has an audio output.
     pub audio: Option<Arc<AudioBlock>>,
+    /// The open graph when the frame was rendered, if it rendered a composition. Opening
+    /// another graph keeps the frame, but its levels, params, costs and meters describe the
+    /// graph that was open.
+    pub open: Option<u32>,
 }
 
 impl Frame {
@@ -190,6 +194,7 @@ mod tests {
             costs: Arc::new([]),
             meters: Arc::new([]),
             audio: None,
+            open: None,
         }
     }
 
