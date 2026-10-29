@@ -1,6 +1,6 @@
 //! A spectrum analyzer: the frequency content of a block of samples on a logarithmic axis.
 
-use eframe::egui::{self, Align2, FontId, Id, Sense, Ui, Vec2, pos2};
+use eframe::egui::{self, Align2, Color32, FontId, Id, Sense, Ui, Vec2, pos2};
 use rastersong_engine::Fft;
 use rastersong_lang::tr_args;
 
@@ -80,7 +80,15 @@ struct State {
 /// Draws the spectrum of `samples` (`channels` interleaved, mixed to mono) taken at `rate`
 /// samples a second, in a box of `size`. `id` keeps the display's smoothing: the same widget
 /// must pass the same id each frame.
-pub fn spectrum(ui: &mut Ui, id: Id, samples: &[f32], channels: usize, rate: f64, size: Vec2) {
+pub fn spectrum(
+    ui: &mut Ui,
+    id: Id,
+    samples: &[f32],
+    channels: usize,
+    rate: f64,
+    size: Vec2,
+    color: Color32,
+) {
     let theme = Theme::of(ui.ctx());
     let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
     let painter = ui.painter_at(rect);
@@ -172,13 +180,10 @@ pub fn spectrum(ui: &mut Ui, id: Id, samples: &[f32], channels: usize, rate: f64
     for point in &points {
         painter.line_segment(
             [*point, pos2(point.x, rect.bottom())],
-            egui::Stroke::new(1.0, theme.accent.gamma_multiply(0.25)),
+            egui::Stroke::new(1.0, color.gamma_multiply(0.25)),
         );
     }
-    painter.add(egui::Shape::line(
-        points,
-        egui::Stroke::new(1.2, theme.accent),
-    ));
+    painter.add(egui::Shape::line(points, egui::Stroke::new(1.2, color)));
     ui.data_mut(|d| d.insert_temp(key, state));
 }
 

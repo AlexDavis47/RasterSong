@@ -1,9 +1,9 @@
-//! Export: a project rendered from the start into a file, with progress and cancel. The CLI
-//! and the GUI's export dialog both go through here.
+//! Export: a project rendered from the start into a file, with progress, cancel and the latest
+//! frame for a preview. The CLI and the GUI's export dialog both go through here.
 
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use rastersong_graph::{GraphDesc, Registry, Tempo, render_form};
 use rastersong_media::{AudioCache, ExportFormat, MediaBackend, MediaWriter};
@@ -134,14 +134,93 @@ pub struct ExportSettings {
     pub bus: Bus,
 }
 
+/// The widest an export keeps its latest frame for a preview.
+pub const PREVIEW_WIDTH: usize = 480;
+
+/// A frame an export wrote, scaled down to at most [`PREVIEW_WIDTH`] wide.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewFrame {
+    pub index: usize,
+    pub width: usize,
+    pub height: usize,
+    /// Three bytes a pixel.
+    pub rgb: Vec<u8>,
+}
+
+/// The latest frame an export wrote, for a preview while it runs. A frame is copied in only once
+/// the previous one has been taken, so a preview that looks a few times a second costs little.
+#[derive(Debug, Default)]
+pub struct LatestFrame(Mutex<Option<PreviewFrame>>);
+
+impl LatestFrame {
+    /// The frame written since the last take, if any.
+    pub fn take(&self) -> Option<PreviewFrame> {
+        self.0.lock().ok()?.take()
+    }
+
+    /// Keeps frame `index` (`width` by `height`, packed RGB), scaled down, unless the last one
+    /// is still waiting to be taken.
+    fn offer(&self, index: usize, width: usize, height: usize, rgb: &[u8]) {
+        let Ok(mut slot) = self.0.lock() else {
+            return;
+        };
+        if slot.is_none() && width > 0 && height > 0 && rgb.len() == width * height * 3 {
+            *slot = Some(scaled(index, width, height, rgb));
+        }
+    }
+}
+
+/// Frame `index` scaled to at most [`PREVIEW_WIDTH`] wide, nearest pixel, keeping its shape.
+fn scaled(index: usize, width: usize, height: usize, rgb: &[u8]) -> PreviewFrame {
+    let to_width = width.min(PREVIEW_WIDTH);
+    let to_height = (height * to_width / width).max(1);
+    let mut out = Vec::with_capacity(to_width * to_height * 3);
+    for y in 0..to_height {
+        let row = y * height / to_height * width;
+        for x in 0..to_width {
+            let at = (row + x * width / to_width) * 3;
+            out.extend_from_slice(&rgb[at..at + 3]);
+        }
+    }
+    PreviewFrame {
+        index,
+        width: to_width,
+        height: to_height,
+        rgb: out,
+    }
+}
+
+/// Passes frames on to `sink`, keeping each in `preview` when it is wanted.
+struct Previewed<'a> {
+    sink: &'a mut dyn FrameSink,
+    preview: Option<&'a LatestFrame>,
+    size: (usize, usize),
+}
+
+impl FrameSink for Previewed<'_> {
+    fn start(&mut self, info: &RenderInfo, audio: &AudioSink) -> Result<(), EngineError> {
+        self.size = (info.width as usize, info.height as usize);
+        self.sink.start(info, audio)
+    }
+
+    fn frame(&mut self, frame: RenderedFrame) -> Result<(), EngineError> {
+        if let Some(preview) = self.preview {
+            preview.offer(frame.index, self.size.0, self.size.1, frame.rgb);
+        }
+        self.sink.frame(frame)
+    }
+}
+
 /// Renders `job` into `path`. `progress` hears the frames done and the total after each frame,
-/// and stops the export by returning `false`. A failed or cancelled export removes the file.
+/// and stops the export by returning `false`; `preview`, if given, keeps the latest frame
+/// written. A failed or cancelled export removes the file.
 pub fn export(
     backend: &dyn MediaBackend,
     cache: Option<&AudioCache>,
     job: &ExportJob,
     settings: &ExportSettings,
     path: &Path,
+    preview: Option<&LatestFrame>,
     progress: &mut dyn FnMut(usize, usize) -> bool,
 ) -> Result<RenderInfo, EngineError> {
     let _span = tracing::trace_span!("export").entered();
@@ -164,7 +243,11 @@ pub fn export(
             &tracks,
             &job.graph,
             &render_settings,
-            &mut sink,
+            &mut Previewed {
+                sink: &mut sink,
+                preview,
+                size: (0, 0),
+            },
             progress,
         )?;
         sink.finish()?;
@@ -347,6 +430,66 @@ mod tests {
         };
         let stem = mix_block(&bus_mixer(&tracks, &stems), 1, 2, 0, 4);
         assert_eq!(stem, [0.0, 0.0, 0.0, 0.125]);
+    }
+
+    #[test]
+    fn the_latest_frame_is_kept_scaled_down_once_taken() {
+        struct Count(usize);
+        impl FrameSink for Count {
+            fn start(&mut self, _: &RenderInfo, _: &AudioSink) -> Result<(), EngineError> {
+                Ok(())
+            }
+            fn frame(&mut self, _: RenderedFrame) -> Result<(), EngineError> {
+                self.0 += 1;
+                Ok(())
+            }
+        }
+        let (width, height) = (960usize, 4usize);
+        let info = RenderInfo {
+            width: width as u32,
+            height: height as u32,
+            frame_rate: rastersong_media::Rational::new(30, 1),
+            frames: 3,
+            timebase: crate::Timebase::DEFAULT,
+        };
+        // Each pixel's red is its column halved, so the scaled frame's red counts up by one.
+        let rgb: Vec<u8> = (0..width * height)
+            .flat_map(|i| [(i % width / 2) as u8, 0, 0])
+            .collect();
+        let latest = LatestFrame::default();
+        let mut count = Count(0);
+        let mut sink = Previewed {
+            sink: &mut count,
+            preview: Some(&latest),
+            size: (0, 0),
+        };
+        sink.start(&info, &AudioSink::TrackMix).unwrap();
+        for index in 0..2 {
+            let frame = RenderedFrame {
+                index,
+                rgb: &rgb,
+                audio: None,
+            };
+            sink.frame(frame).unwrap();
+        }
+        // Every frame is written; the first is kept until taken, half as wide and as tall.
+        assert_eq!(count.0, 2);
+        let frame = latest.take().unwrap();
+        assert_eq!((frame.index, frame.width, frame.height), (0, 480, 2));
+        assert_eq!(&frame.rgb[..9], &[0, 0, 0, 1, 0, 0, 2, 0, 0]);
+        assert_eq!(latest.take(), None);
+        let mut sink = Previewed {
+            sink: &mut count,
+            preview: Some(&latest),
+            size: (width, height),
+        };
+        let frame = RenderedFrame {
+            index: 2,
+            rgb: &rgb,
+            audio: None,
+        };
+        sink.frame(frame).unwrap();
+        assert_eq!(latest.take().map(|f| f.index), Some(2));
     }
 
     #[test]

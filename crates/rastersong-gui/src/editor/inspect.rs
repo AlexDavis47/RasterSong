@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use eframe::egui::{self, Id, Ui, Vec2, vec2};
+use eframe::egui::{self, Color32, Id, Ui, Vec2, vec2};
 use rastersong_engine::{Tap, TapOutcome, TapRequest};
 use rastersong_lang::tr;
 use serde::{Deserialize, Serialize};
@@ -18,14 +18,12 @@ const TRANSITION: f64 = 0.18;
 /// How long the pointer rests on a connection before it is looked at, in seconds. Moving across
 /// wires asks for nothing.
 const DWELL: f64 = 0.15;
-/// The popup's width.
-pub const WIDTH: f32 = 240.0;
-const SCOPE_HEIGHT: f32 = 72.0;
-const SPECTRUM_HEIGHT: f32 = 100.0;
+/// The view's width, beside the drum in the probe.
+pub const WIDTH: f32 = 310.0;
+const SCOPE_HEIGHT: f32 = 104.0;
+const SPECTRUM_HEIGHT: f32 = 104.0;
 /// The shape of a picture before there is one to measure.
 const DEFAULT_ASPECT: f32 = 16.0 / 9.0;
-/// Scrolled distance that moves the view by one for a smooth (trackpad) wheel, in points.
-const SCROLL_STEP: f32 = 30.0;
 
 /// A way of looking at a signal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -59,6 +57,16 @@ impl InspectMode {
             Self::Scope => tr("inspect.scope"),
             Self::Spectrum => tr("inspect.spectrum"),
             Self::Readings => tr("inspect.readings"),
+        }
+    }
+
+    /// What this view shows, in a line.
+    pub fn about(self) -> &'static str {
+        match self {
+            Self::Picture => tr("inspect.about.picture"),
+            Self::Scope => tr("inspect.about.scope"),
+            Self::Spectrum => tr("inspect.about.spectrum"),
+            Self::Readings => tr("inspect.about.readings"),
         }
     }
 
@@ -123,35 +131,6 @@ pub fn changing_view(ui: &Ui) -> bool {
 /// Whether Shift is held, which plays the connection under the pointer.
 pub fn listening(ui: &Ui) -> bool {
     !ui.ctx().egui_wants_keyboard_input() && ui.input(|i| i.modifiers.shift && !i.modifiers.alt)
-}
-
-/// How many steps through the views this frame's wheel events make: one for each notch of a
-/// wheel, and one for every [`SCROLL_STEP`] points of a smooth wheel, in the order they came.
-/// Down the wheel is down the list. `rest` carries the smooth wheel's remainder from frame to
-/// frame, and is cleared whenever a notch counts, so a click of the wheel never moves two.
-pub fn scroll_steps(
-    events: impl IntoIterator<Item = (egui::MouseWheelUnit, f32)>,
-    rest: &mut f32,
-) -> i32 {
-    let mut steps = 0;
-    for (unit, delta) in events {
-        match unit {
-            egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page => {
-                if delta != 0.0 {
-                    steps -= delta.signum() as i32;
-                    *rest = 0.0;
-                }
-            }
-            egui::MouseWheelUnit::Point => {
-                *rest -= delta;
-                while rest.abs() >= SCROLL_STEP {
-                    steps += rest.signum() as i32;
-                    *rest -= rest.signum() * SCROLL_STEP;
-                }
-            }
-        }
-    }
-    steps
 }
 
 /// What inspecting needs from the app: where the playhead is, how to ask the engine, and how
@@ -271,9 +250,9 @@ fn ready(state: &State) -> Visual {
 
 impl Visual {
     /// Draws the view for `mode` in a space of fixed size for it.
-    pub fn show(&self, ui: &mut Ui, mode: InspectMode) {
+    pub fn show(&self, ui: &mut Ui, mode: InspectMode, color: Color32) {
         match self {
-            Self::Ready { tap, version } => show_tap(ui, tap, *version, mode),
+            Self::Ready { tap, version } => show_tap(ui, tap, *version, mode, color),
             Self::Waiting => {
                 let (rect, _) =
                     ui.allocate_exact_size(vec2(WIDTH, mode.height()), egui::Sense::hover());
@@ -329,7 +308,7 @@ struct Transition {
 /// Draws the view for `mode` and, when it has just changed, fades the old
 /// view out and the new one in while the popup grows or shrinks to the new height, so changing
 /// views never makes the popup jump.
-pub fn show_view(ui: &mut Ui, visual: &Visual, mode: InspectMode) -> f32 {
+pub fn show_view(ui: &mut Ui, visual: &Visual, mode: InspectMode, color: Color32) -> f32 {
     let id = Id::new("inspect-transition");
     let now = ui.input(|i| i.time);
     let target = visual.height(mode);
@@ -358,11 +337,21 @@ pub fn show_view(ui: &mut Ui, visual: &Visual, mode: InspectMode) -> f32 {
     transition.shown = height;
 
     let (rect, _) = ui.allocate_exact_size(vec2(WIDTH, height), egui::Sense::hover());
+    if height >= 1.0 {
+        let theme = Theme::of(ui.ctx());
+        ui.painter().rect(
+            rect,
+            crate::theme::CONTROL_RADIUS,
+            ui.visuals().extreme_bg_color,
+            egui::Stroke::new(1.0, theme.surfaces.card_border),
+            egui::StrokeKind::Inside,
+        );
+    }
     let draw = |ui: &mut Ui, mode: InspectMode, opacity: f32| {
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
         child.set_clip_rect(rect.intersect(ui.clip_rect()));
         child.set_opacity(opacity);
-        visual.show(&mut child, mode);
+        visual.show(&mut child, mode, color);
     };
     if progress < 1.0 {
         draw(ui, transition.from, 1.0 - eased);
@@ -375,7 +364,7 @@ pub fn show_view(ui: &mut Ui, visual: &Visual, mode: InspectMode) -> f32 {
     height
 }
 
-fn show_tap(ui: &mut Ui, tap: &Tap, version: u64, mode: InspectMode) {
+fn show_tap(ui: &mut Ui, tap: &Tap, version: u64, mode: InspectMode, color: Color32) {
     let channels = tap.layout.samples_per_pixel.max(1) as usize;
     let size: Vec2 = vec2(WIDTH, mode.height());
     let id = Id::new("inspect-view");
@@ -394,11 +383,13 @@ fn show_tap(ui: &mut Ui, tap: &Tap, version: u64, mode: InspectMode) {
             None => too_big(ui, size),
         },
         InspectMode::Scope => match &tap.samples {
-            Some(samples) => crate::widgets::scope(ui, samples, channels, size),
+            Some(samples) => crate::widgets::scope(ui, samples, channels, size, color),
             None => too_big(ui, size),
         },
         InspectMode::Spectrum => match &tap.samples {
-            Some(samples) => crate::widgets::spectrum(ui, id, samples, channels, tap.rate, size),
+            Some(samples) => {
+                crate::widgets::spectrum(ui, id, samples, channels, tap.rate, size, color)
+            }
             None => too_big(ui, size),
         },
         InspectMode::Readings => {}
@@ -452,47 +443,22 @@ mod tests {
         for (time, mode) in [
             (0.0, InspectMode::Scope),
             (1.0, InspectMode::Scope),
-            (1.0, InspectMode::Spectrum),
-            (1.09, InspectMode::Spectrum),
-            (1.5, InspectMode::Spectrum),
+            (1.0, InspectMode::Readings),
+            (1.09, InspectMode::Readings),
+            (1.5, InspectMode::Readings),
         ] {
             let input = egui::RawInput {
                 time: Some(time),
                 ..Default::default()
             };
             let mut output = ctx.run_ui(input, |ui| {
-                heights.push(show_view(ui, &visual, mode));
+                heights.push(show_view(ui, &visual, mode, Color32::WHITE));
             });
             output.textures_delta.clear();
         }
         assert_eq!(heights[1], SCOPE_HEIGHT);
         assert_eq!(heights[2], SCOPE_HEIGHT, "starts where it was");
-        assert!(
-            heights[3] > SCOPE_HEIGHT && heights[3] < SPECTRUM_HEIGHT,
-            "{heights:?}"
-        );
-        assert_eq!(heights[4], SPECTRUM_HEIGHT);
-    }
-
-    #[test]
-    fn a_notch_of_the_wheel_is_one_step_whatever_its_size() {
-        use egui::MouseWheelUnit::Line;
-        let mut rest = 0.0;
-        // Three notches down, one up: down the wheel is further down the list.
-        assert_eq!(scroll_steps([(Line, -1.0)], &mut rest), 1);
-        assert_eq!(scroll_steps([(Line, -3.0)], &mut rest), 1);
-        assert_eq!(scroll_steps([(Line, 1.0)], &mut rest), -1);
-        // Separate notches in one frame each count.
-        assert_eq!(scroll_steps([(Line, -1.0), (Line, -1.0)], &mut rest), 2);
-    }
-
-    #[test]
-    fn a_smooth_wheel_steps_every_so_many_points_and_keeps_its_remainder() {
-        use egui::MouseWheelUnit::Point;
-        let mut rest = 0.0;
-        assert_eq!(scroll_steps([(Point, -20.0)], &mut rest), 0);
-        assert_eq!(scroll_steps([(Point, -20.0)], &mut rest), 1);
-        assert!((rest - 10.0).abs() < 1e-4);
-        assert_eq!(scroll_steps([(Point, 40.0)], &mut rest), -1);
+        assert!(heights[3] > 0.0 && heights[3] < SCOPE_HEIGHT, "{heights:?}");
+        assert_eq!(heights[4], 0.0, "readings only take no room");
     }
 }

@@ -233,10 +233,16 @@ fn ffmpeg_runtime_libs(ffmpeg_dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(libs)
 }
 
-/// RasterSong's license, FFmpeg's license and build information, and the Rust dependencies'
-/// notices.
+/// RasterSong's license, FFmpeg's license and build information, the bundled fonts' licenses,
+/// and the Rust dependencies' notices.
 fn write_notices(root: &Path, ffmpeg_dir: &Path, dest: &Path) -> Result<()> {
     fs::copy(root.join("LICENSE"), dest.join("LICENSE.txt"))?;
+    for font in ["Inter-LICENSE.txt", "JetBrainsMono-LICENSE.txt"] {
+        fs::copy(
+            root.join("crates/rastersong-gui/assets/fonts").join(font),
+            dest.join(font),
+        )?;
+    }
     fs::copy(
         ffmpeg_dir.join(release_ffmpeg::LICENSE_FILE),
         dest.join("FFmpeg-LICENSE.txt"),

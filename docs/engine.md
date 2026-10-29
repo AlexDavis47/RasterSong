@@ -87,7 +87,8 @@ open, whether playback is running or not. It fills the first missing frame in a 
 seconds by default, limited to ¾ of the cache budget (1 GiB by default) so some frames behind the playhead survive
 for scrubbing back. When the cache is over budget, the frame farthest from the playhead is evicted, with frames
 behind it counting as twice as far. With a loop region active, the window wraps from the region's end to its
-start, so the loop plays without waiting.
+start, so the loop plays without waiting. `Engine::cache_use` gives the memory the frames take and the budget,
+which the app's status bar shows.
 
 **Cache rule.** Rendered frames are keyed by `(graph_version, preview_scale, frame_index)`. Any graph edit
 (parameter, node, connection) bumps `graph_version`, which invalidates everything rendered with the old version

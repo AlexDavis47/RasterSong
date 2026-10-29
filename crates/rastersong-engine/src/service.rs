@@ -104,6 +104,13 @@ impl Default for EngineConfig {
     }
 }
 
+/// How much memory the rendered frames take, from [`Engine::cache_use`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CacheUse {
+    pub bytes: usize,
+    pub budget: usize,
+}
+
 /// A decoded audio track, for playback and display.
 #[derive(Debug, Clone)]
 pub struct LoadedTrack {
@@ -156,6 +163,15 @@ impl Failure {
             },
         }
     }
+}
+
+/// How far the current render's output trails its sources, and how much history it renders after
+/// a seek ([`crate::Renderer::latency_frames`] and [`crate::Renderer::warmup_frames`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RenderDelays {
+    pub latency_frames: usize,
+    /// Frames pre-rendered after a seek, within the project's limit.
+    pub warmup_frames: usize,
 }
 
 /// What the render thread is working on right now.
@@ -248,6 +264,8 @@ struct State {
     loaded: Vec<LoadedTrack>,
     /// What each node of the current graph costs, once it has compiled.
     node_stats: Vec<NodeStats>,
+    /// The current render's latency and warmup, once it has compiled.
+    delays: Option<RenderDelays>,
     /// What the last graph that compiled was compiled against.
     compile_options: Option<CompileOptions>,
     /// The rate the graph's sound is rendered at.
@@ -308,6 +326,7 @@ impl Engine {
                 info: None,
                 loaded: Vec::new(),
                 node_stats: Vec::new(),
+                delays: None,
                 compile_options: None,
                 audio_rate: DEFAULT_AUDIO_RATE,
                 max_warmup_frames: DEFAULT_MAX_WARMUP_FRAMES,
@@ -466,6 +485,15 @@ impl Engine {
         lock(&self.shared.cache).run_from(index)
     }
 
+    /// The memory the rendered frames take and the most they may take, in bytes.
+    pub fn cache_use(&self) -> CacheUse {
+        let cache = lock(&self.shared.cache);
+        CacheUse {
+            bytes: cache.bytes(),
+            budget: cache.budget(),
+        }
+    }
+
     /// The rendered frames, as ranges of frame indices.
     pub fn cached_ranges(&self) -> Vec<Range<usize>> {
         lock(&self.shared.cache).ranges()
@@ -490,6 +518,12 @@ impl Engine {
     /// don't feed the output aren't listed.
     pub fn node_stats(&self) -> Vec<NodeStats> {
         lock(&self.shared.state).node_stats.clone()
+    }
+
+    /// How late the current render's output is and how many frames it pre-renders after a seek,
+    /// once it has compiled.
+    pub fn delays(&self) -> Option<RenderDelays> {
+        lock(&self.shared.state).delays
     }
 
     /// The sources, frame rate, tempo and output size the last graph that compiled was
@@ -927,6 +961,10 @@ impl Worker {
                 state.status = EngineStatus::Ready;
                 state.info = Some(*renderer.info());
                 state.node_stats = renderer.node_stats().to_vec();
+                state.delays = Some(RenderDelays {
+                    latency_frames: renderer.latency_frames(),
+                    warmup_frames: renderer.warmup_frames(),
+                });
                 state.compile_options = Some(renderer.compile_options().clone());
                 state.audio_sink = renderer.audio_sink();
                 self.built = Some(Built { key, renderer });
@@ -937,6 +975,7 @@ impl Worker {
                 state.status = EngineStatus::Failed(failure);
                 state.info = video_info;
                 state.node_stats.clear();
+                state.delays = None;
                 state.audio_sink = AudioSink::TrackMix;
                 self.failed_at = Some(state.changes);
             }

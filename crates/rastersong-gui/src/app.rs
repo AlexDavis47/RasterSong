@@ -8,14 +8,18 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, Color32, CornerRadius, Margin, RichText, Ui, UiBuilder};
+use eframe::egui::{
+    self, Color32, CornerRadius, FontId, Margin, RichText, Sense, Stroke, Ui, UiBuilder, Vec2,
+    WidgetInfo, WidgetType, vec2,
+};
 use rastersong_engine::LoadedTrack;
 use rastersong_engine::playback::{MixTrack, Mixer};
 use rastersong_engine::{
     AudioSink, BackendInfo, CompileOptions, Engine, EngineConfig, EngineStatus, Frame, Graph,
     GraphDesc, GraphItem, Item, ItemRef, MediaBackend, NodeStats, PROJECT_EXTENSION, PlaybackClock,
-    PreviewScale, Project, ProjectTrack, Registry, ResourceId, ResourceKind, Thumbnails, Timeline,
-    TimelineMode, TrackKind, TrackSpec, VIDEO_SOURCE, VideoInfo, VideoKey, resource_name_for,
+    PreviewScale, Project, ProjectTrack, Registry, RenderInfo, ResourceId, ResourceKind,
+    Thumbnails, Timeline, TimelineMode, TrackKind, TrackSpec, VIDEO_SOURCE, VideoInfo, VideoKey,
+    resource_name_for,
 };
 use rastersong_lang::{tr, tr_args};
 
@@ -32,7 +36,7 @@ const AUDIO_RATES: [u32; 4] = [44_100, 48_000, 88_200, 96_000];
 /// One track as playback mixes it: its name, items and gain.
 /// A track as playback mixes it: name, items, level, and whether it is routed to the master bus.
 type MixEntry = (String, Vec<Item>, f32, bool);
-use crate::editor::{CanvasContext, GraphEditor, InspectorContext, without_layout};
+use crate::editor::{CanvasContext, GraphEditor, InspectorContext, StatsContext, without_layout};
 use crate::history::History;
 use crate::item_inspector::{ItemEdit, graph_item_inspector};
 use crate::preview::{Feed, PreviewView, clamp_split, split_rects, split_sides};
@@ -41,11 +45,18 @@ use crate::resources::{
     resource_kind, resource_name, resources_panel,
 };
 use crate::settings::Settings;
-use crate::theme::{Theme, ThemeChoice, apply_style};
+use crate::theme::{
+    CONTROL_HEIGHT, DENSE_HEIGHT, SMALL_SIZE, TIMECODE_SIZE, Theme, ThemeChoice, apply_style,
+};
 use crate::timeline::{
     DropGhost, GhostItem, GhostRow, GraphAction, GraphDrop, GraphItemView, GraphTrackView,
-    LANE_HEIGHT, Thumbnail, TimelineLayout, TimelineModel, TimelineView, TrackAction,
-    TrackThumbnails, TrackView, timecode, timeline,
+    Thumbnail, TimelineLayout, TimelineModel, TimelineView, TrackAction, TrackThumbnails,
+    TrackView, bar_beat, bar_beat_tick, beats_at, lane_height, timecode, timeline,
+};
+use crate::track_inspector::track_inspector;
+use crate::widgets::{
+    CARD_GAP, HALF_GAP, Icon, IconButton, KeyButton, beat_lights, card, card_body, card_header,
+    card_panel, card_space, card_title, paint_icon, segmented,
 };
 
 /// The graph a new project starts with: the basic workflow from docs/concepts.md.
@@ -62,6 +73,7 @@ const MIN_GRAPH_ITEM_SECONDS: f64 = 5.0;
 /// The length of the timeline before anything is loaded, in frames of [`EMPTY_TIMELINE_RATE`].
 const EMPTY_TIMELINE_FRAMES: usize = 300;
 const EMPTY_TIMELINE_RATE: f64 = 30.0;
+/// Height of the timeline's toolbar, the same in time and tempo mode.
 /// What copying timeline items puts on the system clipboard. The items themselves stay in the app.
 pub const ITEM_CLIPBOARD_MARKER: &str = "RasterSong timeline items";
 
@@ -111,6 +123,10 @@ pub struct App {
     timeline_layout: TimelineLayout,
     inspector_rect: egui::Rect,
     preview_rect: egui::Rect,
+    /// Where the graph canvas was last drawn.
+    canvas_rect: egui::Rect,
+    /// What the pointer could do where it was last frame, for the status bar.
+    hint: Option<&'static str>,
     audio: AudioOut,
     backend_info: Option<BackendInfo>,
     project: Project,
@@ -145,6 +161,9 @@ pub struct App {
     applied_theme: Option<ThemeChoice>,
     /// The selected track, by name.
     selected_track: Option<String>,
+    /// Whether the inspector shows the selected track: set when a track's header or item is
+    /// clicked, cleared when a graph item or a node is.
+    inspect_track: bool,
     /// The selected timeline items.
     selected_items: Vec<ItemRef>,
     /// The selected graph item: its graph track's name and its place on it. Its inspector
@@ -169,6 +188,9 @@ pub struct App {
     source_video_sent: Option<Timeline>,
     /// Resources whose files aren't there, checked about once a second.
     missing: HashSet<ResourceId>,
+    /// The streams of each linked file found so far, for the Resources panel's detail lines.
+    /// A file that can't be read is held with none, so it isn't read again every second.
+    streams: HashMap<PathBuf, Vec<rastersong_engine::StreamInfo>>,
     missing_checked: Option<Instant>,
     source_preview: Option<(egui::TextureHandle, Arc<Frame>)>,
     preview_view: PreviewView,
@@ -229,6 +251,8 @@ impl App {
             timeline_layout: TimelineLayout::default(),
             inspector_rect: egui::Rect::NOTHING,
             preview_rect: egui::Rect::NOTHING,
+            canvas_rect: egui::Rect::NOTHING,
+            hint: None,
             audio,
             backend_info,
             saved: project.clone(),
@@ -243,6 +267,7 @@ impl App {
             inspect_scroll: 0.0,
             waiting_since: None,
             selected_track: None,
+            inspect_track: false,
             selected_items: Vec::new(),
             selected_graph_items: Vec::new(),
             hovered_row: None,
@@ -260,6 +285,7 @@ impl App {
             source_engine,
             source_video_sent: None,
             missing: HashSet::new(),
+            streams: HashMap::new(),
             missing_checked: None,
             source_preview: None,
             preview_view: PreviewView::default(),
@@ -342,6 +368,11 @@ impl App {
 
     /// With the split on, where the divider sits (a fraction of the preview's width) and the
     /// feeds shown (left, right); `None` with it off.
+    /// The feed the preview shows; with the split on, the one on the right.
+    pub fn preview_feed(&self) -> Feed {
+        self.preview_feed
+    }
+
     pub fn preview_split(&self) -> Option<(f32, (Feed, Feed))> {
         self.preview_split
             .then(|| (self.split_position, split_sides(self.preview_feed)))
@@ -675,6 +706,12 @@ impl App {
             .filter(|r| !self.backend.exists(&r.path))
             .map(|r| r.id)
             .collect();
+        for resource in &self.project.resources {
+            if !self.missing.contains(&resource.id) && !self.streams.contains_key(&resource.path) {
+                let streams = self.backend.streams(&resource.path).unwrap_or_default();
+                self.streams.insert(resource.path.clone(), streams);
+            }
+        }
     }
 
     /// The ids of resources whose files are missing.
@@ -935,6 +972,10 @@ impl App {
             });
             apply_style(ui.ctx());
             self.initialized = true;
+            // egui loads the bundled faces at the start of the next frame, and the styles
+            // already name them: draw from then on.
+            ui.ctx().request_repaint();
+            return;
         }
         if self.applied_theme != Some(self.settings.theme) {
             ui.ctx().set_theme(self.settings.theme.preference());
@@ -947,65 +988,132 @@ impl App {
         }
         self.shortcuts(ui);
         self.update_inspection();
+        // Tab over the canvas (not through a window over it) opens the node search there.
+        if let Some(p) = ui.input(|i| i.pointer.hover_pos())
+            && self.canvas_rect.contains(p)
+            && ui.ctx().layer_id_at(p) == Some(ui.layer_id())
+        {
+            self.editor.search_on_tab(ui, p);
+        }
 
-        let fill = ui.visuals().panel_fill;
-        let panel = move |margin: i8| {
+        // The top bar and the status bar run the window's width; every other panel is a card
+        // on the ground, CARD_GAP from its neighbours and the window's edge. Between two cards
+        // each side takes half the gap, so the resize handle on the edge sits in its middle.
+        let bar = |ui: &Ui, margin: Margin| {
             egui::Frame::new()
-                .fill(fill)
-                .inner_margin(Margin::same(margin))
+                .fill(Theme::of(ui.ctx()).surfaces.bar)
+                .inner_margin(margin)
         };
-        egui::Panel::top("menu")
-            .frame(panel(4))
-            .show(ui, |ui| self.menu_bar(ui));
-        egui::Panel::bottom("timeline")
-            .resizable(true)
+        let divider = Stroke::new(1.0, Theme::of(ui.ctx()).surfaces.divider);
+        let gap = CARD_GAP;
+        let top_bar = egui::Panel::top("menu")
+            .frame(bar(ui, Margin::symmetric(8, 6)))
+            .show(ui, |ui| self.top_bar(ui))
+            .response
+            .rect;
+        ui.painter()
+            .hline(top_bar.x_range(), top_bar.bottom() - 0.5, divider);
+        let status_bar = egui::Panel::bottom("status")
+            .frame(bar(ui, Margin::symmetric(12, 2)))
+            .show(ui, |ui| self.status_bar(ui))
+            .response
+            .rect;
+        ui.painter()
+            .hline(status_bar.x_range(), status_bar.top() + 0.5, divider);
+        let half = HALF_GAP;
+        let timeline = egui::Panel::bottom("timeline")
             .default_size(300.0)
-            .min_size(130.0)
-            .frame(panel(8))
-            .show(ui, |ui| {
-                egui::Panel::left("resources")
-                    .resizable(true)
-                    .default_size(200.0)
-                    .min_size(140.0)
-                    .frame(egui::Frame::new().inner_margin(Margin {
-                        right: 8,
-                        ..Margin::ZERO
-                    }))
-                    .show(ui, |ui| {
-                        for action in resources_panel(ui, &self.project, &self.missing) {
+            .min_size(130.0);
+        card_panel(
+            ui,
+            timeline,
+            Margin {
+                top: half,
+                ..Margin::same(gap)
+            },
+            |ui| {
+                // Wide enough by default for Media and Graphs side by side.
+                let resources = egui::Panel::left("resources")
+                    .default_size(400.0)
+                    .min_size(200.0);
+                let gaps = Margin {
+                    right: half,
+                    ..Margin::ZERO
+                };
+                card_panel(ui, resources, gaps, |ui| {
+                    card(ui, |ui| {
+                        let actions =
+                            resources_panel(ui, &self.project, &self.missing, &self.streams);
+                        for action in actions {
                             self.resource_action(action);
                         }
+                    })
+                });
+                card_space(
+                    ui,
+                    Margin {
+                        left: half,
+                        ..Margin::ZERO
+                    },
+                )
+                .show(ui, |ui| {
+                    card(ui, |ui| {
+                        self.timeline_header(ui);
+                        card_body(ui, 8, |ui| self.timeline(ui));
                     });
-                self.timeline(ui);
-            });
-        egui::Panel::left("preview")
-            .resizable(true)
+                });
+            },
+        );
+        let upper = Margin {
+            top: gap,
+            bottom: half,
+            left: half,
+            right: half,
+        };
+        let preview = egui::Panel::left("preview")
             .default_size(ui.available_width() * 0.33)
-            .min_size(280.0)
-            .frame(panel(8))
-            .show(ui, |ui| self.preview_column(ui));
+            .min_size(280.0);
+        card_panel(ui, preview, Margin { left: gap, ..upper }, |ui| {
+            card(ui, |ui| self.preview_column(ui));
+        });
         let mut item_edits = Vec::new();
-        self.inspector_rect = egui::Panel::right("inspector")
-            .resizable(true)
+        let mut track_actions = Vec::new();
+        let inspector = egui::Panel::right("inspector")
             .default_size(340.0)
-            .min_size(300.0)
-            .frame(panel(10))
-            .show(ui, |ui| {
-                // A selected graph item shows its own inspector instead of the node's.
-                if let [(track, item)] = &self.selected_graph_items[..]
-                    && self.project.graph_item(track, *item).is_some()
-                {
-                    egui::ScrollArea::vertical().show(ui, |ui| {
+            .min_size(300.0);
+        self.inspector_rect = card_panel(
+            ui,
+            inspector,
+            Margin {
+                right: gap,
+                ..upper
+            },
+            |ui| {
+                card(ui, |ui| {
+                    // The inspector shows the track whose header or item was clicked last, else
+                    // a selected graph item, else the active node.
+                    let track = self
+                        .selected_track
+                        .as_deref()
+                        .filter(|_| self.inspect_track)
+                        .and_then(|name| self.project.tracks().position(|t| t.name == name));
+                    if let Some(row) = track {
+                        let buses: Vec<String> =
+                            self.project.buses.iter().map(|b| b.name.clone()).collect();
+                        track_actions = track_inspector(ui, &self.project, &buses, row);
+                        return;
+                    }
+                    if let [(track, item)] = &self.selected_graph_items[..]
+                        && self.project.graph_item(track, *item).is_some()
+                    {
                         item_edits = graph_item_inspector(ui, &self.project, track, *item);
-                    });
-                    return;
-                }
-                let buses: Vec<String> =
-                    self.project.buses.iter().map(|b| b.name.clone()).collect();
-                let frame = self.engine.frame(self.clock.frame());
-                let params = frame.as_ref().map_or(&[][..], |f| &f.params[..]);
-                let meters = frame.as_ref().map_or(&[][..], |f| &f.meters[..]);
-                egui::ScrollArea::vertical().show(ui, |ui| {
+                        return;
+                    }
+                    let buses: Vec<String> =
+                        self.project.buses.iter().map(|b| b.name.clone()).collect();
+                    let frame = self.engine.frame(self.clock.frame());
+                    let params = frame.as_ref().map_or(&[][..], |f| &f.params[..]);
+                    let meters = frame.as_ref().map_or(&[][..], |f| &f.meters[..]);
                     self.editor.show_inspector(
                         ui,
                         &InspectorContext {
@@ -1014,16 +1122,20 @@ impl App {
                             meters,
                         },
                     );
-                });
-            })
-            .response
-            .rect;
+                })
+            },
+        )
+        .response
+        .rect;
+        for action in track_actions {
+            self.track_action(ui.ctx(), action);
+        }
         for edit in item_edits {
             self.graph_item_edit(edit);
         }
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().inner_margin(Margin::ZERO))
-            .show(ui, |ui| self.graph(ui));
+            .frame(card_space(ui, upper))
+            .show(ui, |ui| card(ui, |ui| self.graph(ui)));
 
         self.sync();
         self.record_history(ui);
@@ -1033,27 +1145,36 @@ impl App {
         self.resource_dialogs(ui);
         self.confirm_dialog(ui);
         self.update_title(ui);
+        let hint = self.pointer_hint(ui);
+        if hint != self.hint {
+            self.hint = hint;
+            ui.ctx().request_repaint();
+        }
         // Last, once every drop target has had its chance at a dragged payload.
         crate::widgets::paint_bubble(ui.ctx());
+    }
+
+    /// Why the project can't render, if it can't. The editor shows the open graph, so a node of
+    /// another graph isn't one it can point at, and is left out.
+    fn failure(&self) -> Option<rastersong_engine::Failure> {
+        let EngineStatus::Failed(mut failure) = self.engine.status() else {
+            return None;
+        };
+        if failure.graph.is_some_and(|g| g != self.project.graph_id) {
+            failure.node = None;
+        }
+        Some(failure)
     }
 
     fn graph(&mut self, ui: &mut Ui) {
         self.editor.keep_connections = self.settings.keep_connections;
         self.editor.max_warmup_frames = self.project.max_warmup_frames;
         let frame = self.engine.frame(self.clock.frame());
-        let failure = match self.engine.status() {
-            // The editor shows the open graph: a node of another graph isn't one it can point at.
-            EngineStatus::Failed(mut failure) => {
-                if failure.graph.is_some_and(|g| g != self.project.graph_id) {
-                    failure.node = None;
-                }
-                Some(failure)
-            }
-            _ => None,
-        };
+        let failure = self.failure();
         let levels = frame.as_ref().map_or(&[][..], |f| &f.levels[..]);
         let params = frame.as_ref().map_or(&[][..], |f| &f.params[..]);
         let costs = frame.as_ref().map_or(&[][..], |f| &f.costs[..]);
+        self.graph_header(ui, failure.as_ref());
         self.update_inspect_view(ui);
         let engine = &self.engine;
         let tap = |request: &rastersong_engine::TapRequest| engine.tap(request);
@@ -1067,6 +1188,13 @@ impl App {
                 show_stats: self.settings.node_stats,
                 costs,
                 show_performance: self.settings.show_performance,
+                graph_stats: self.settings.graph_stats.then(|| StatsContext {
+                    frame_rate: self
+                        .engine
+                        .info()
+                        .map_or(EMPTY_TIMELINE_RATE, |info| info.frame_rate.as_f64()),
+                    delays: self.engine.delays(),
+                }),
                 inspect: Some(crate::editor::InspectContext {
                     frame: self.clock.frame(),
                     tap: &tap,
@@ -1089,29 +1217,28 @@ impl App {
         if clicked_here {
             self.selected_items.clear();
             self.selected_graph_items.clear();
+            self.inspect_track = false;
         }
+        self.canvas_rect = canvas.rect;
         self.update_listening(ui);
-        self.bypass_all_button(ui, canvas.rect);
     }
 
-    /// Holding Alt over a connection turns the wheel into a way to change the view.
+    /// Holding Alt over a connection turns the wheel into a way to change the view, as does
+    /// turning the probe's drum.
     fn update_inspect_view(&mut self, ui: &Ui) {
+        let turned = self.editor.take_view_turn();
+        if turned != 0 {
+            let audio = self.editor.hovered_is_audio();
+            self.settings.views.step(audio, turned);
+        }
         let inspecting = self.editor.hovered_output().is_some() && crate::editor::changing_view(ui);
         self.editor.scroll_reserved = inspecting;
         if !inspecting {
             self.inspect_scroll = 0.0;
             return;
         }
-        let wheel: Vec<_> = ui.input(|i| {
-            i.events
-                .iter()
-                .filter_map(|event| match event {
-                    egui::Event::MouseWheel { unit, delta, .. } => Some((*unit, delta.y)),
-                    _ => None,
-                })
-                .collect()
-        });
-        let steps = crate::editor::scroll_steps(wheel, &mut self.inspect_scroll);
+        let wheel = crate::widgets::wheel_events(ui);
+        let steps = crate::widgets::scroll_steps(wheel, &mut self.inspect_scroll);
         if steps != 0 {
             let audio = self.editor.hovered_is_audio();
             self.settings.views.step(audio, steps);
@@ -1153,22 +1280,166 @@ impl App {
         }
     }
 
-    /// The toggle in the canvas's corner that skips the whole graph.
-    fn bypass_all_button(&mut self, ui: &mut Ui, canvas: egui::Rect) {
-        let id = ui.id().with("bypass-all");
-        egui::Area::new(id)
-            .order(egui::Order::Foreground)
-            .fixed_pos(canvas.right_top() + egui::vec2(-8.0, 8.0))
-            .pivot(egui::Align2::RIGHT_TOP)
-            .show(ui.ctx(), |ui| {
-                let on = self.project.bypass_graph;
-                let response = ui
-                    .selectable_label(on, tr("editor.bypass_graph"))
-                    .on_hover_text(tr("editor.bypass_graph.help"));
-                if response.clicked() {
-                    self.project.bypass_graph = !on;
-                }
+    /// The row over the canvas: the open graph's name, where it plays on the timeline, how many
+    /// errors and warnings it has, and Add node, Bypass graphs and Frame graph.
+    fn graph_header(&mut self, ui: &mut Ui, failure: Option<&rastersong_engine::Failure>) {
+        let theme = Theme::of(ui.ctx());
+        card_header(ui, |ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                self.graph_header_buttons(ui);
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    self.graph_header_title(ui, failure, theme);
+                });
             });
+        });
+    }
+
+    /// The canvas header's buttons, from the right: Frame graph, Bypass graphs, Add node.
+    fn graph_header_buttons(&mut self, ui: &mut Ui) {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        let height = HEADER_BUTTON_HEIGHT;
+        if ui
+            .add(IconButton::new(Icon::Fit, tr("editor.header.frame")).size(vec2(height, height)))
+            .on_hover_text(tr("editor.header.frame.help"))
+            .clicked()
+        {
+            self.editor.frame_graph();
+        }
+        let on = self.project.bypass_graph;
+        if ui
+            .add(
+                egui::Button::new(tr("editor.bypass_graph"))
+                    .selected(on)
+                    .min_size(vec2(0.0, height)),
+            )
+            .on_hover_text(tr("editor.bypass_graph.help"))
+            .clicked()
+        {
+            self.project.bypass_graph = !on;
+        }
+        if ui
+            .add(
+                KeyButton::new(tr("editor.header.add_node"), tr("editor.key.tab"))
+                    .icon(Icon::Plus)
+                    .height(height),
+            )
+            .on_hover_text(tr("editor.header.add_node.help"))
+            .clicked()
+        {
+            self.editor.open_search();
+        }
+    }
+
+    /// "Graph › name", where it plays, and how many errors and warnings it has.
+    fn graph_header_title(
+        &self,
+        ui: &mut Ui,
+        failure: Option<&rastersong_engine::Failure>,
+        theme: &Theme,
+    ) {
+        {
+            ui.label(
+                egui::RichText::new(tr("editor.header.kind")).color(theme.surfaces.text_faint),
+            );
+            // The chevron between the kind and the name.
+            let (r, _) = ui.allocate_exact_size(vec2(8.0, 10.0), egui::Sense::hover());
+            ui.painter().add(egui::Shape::line(
+                vec![
+                    r.left_top() + vec2(2.0, 1.0),
+                    r.left_top() + vec2(6.0, 5.0),
+                    r.left_top() + vec2(2.0, 9.0),
+                ],
+                Stroke::new(1.4, theme.tick),
+            ));
+            card_title(ui, &self.project.graph_name);
+            let errors = usize::from(
+                failure.is_some_and(|f| f.graph.is_none_or(|g| g == self.project.graph_id)),
+            );
+            let count =
+                problem_count(errors, self.editor.warning_count(), theme).map(|(text, color)| {
+                    let galley =
+                        ui.painter()
+                            .layout_no_wrap(text, egui::FontId::proportional(12.0), color);
+                    (galley, color)
+                });
+            // The count always shows; the chip gets what's left of the row, shortened to fit.
+            let spacing = ui.spacing().item_spacing.x;
+            let count_width = count
+                .as_ref()
+                .map_or(0.0, |(g, _)| 6.0 + 8.0 + 2.0 * spacing + g.size().x);
+            let room = ui.available_width() - count_width - spacing - 16.0;
+            if room >= MIN_CHIP_TEXT {
+                self.placement_chip(ui, theme, room);
+            }
+            if let Some((galley, color)) = count {
+                ui.add_space(6.0);
+                let (dot, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                ui.painter().circle_filled(dot.center(), 4.0, color);
+                ui.label(galley);
+            }
+        }
+    }
+
+    /// The pill that says where the open graph plays, its text cut short to `room` if it must
+    /// be.
+    fn placement_chip(&self, ui: &mut Ui, theme: &Theme, room: f32) {
+        let (chip, help) = self.graph_placement();
+        let mut job = egui::text::LayoutJob::simple_singleline(
+            chip.clone(),
+            egui::FontId::proportional(11.5),
+            theme.text_dim,
+        );
+        job.wrap = egui::text::TextWrapping::truncate_at_width(room);
+        let text = ui.painter().layout_job(job);
+        let (pill, response) = ui.allocate_exact_size(
+            vec2(text.size().x + 16.0, text.size().y + 4.0),
+            egui::Sense::hover(),
+        );
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &chip));
+        ui.painter().rect(
+            pill,
+            pill.height() / 2.0,
+            theme.surfaces.raised,
+            Stroke::new(1.0, theme.surfaces.border),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter()
+            .galley(pill.center() - text.size() / 2.0, text, theme.text_dim);
+        response.on_hover_text(help);
+    }
+
+    /// Where the open graph plays, as the canvas header's chip says it, and the chip's hover
+    /// text.
+    fn graph_placement(&self) -> (String, &'static str) {
+        let id = self.project.graph_id;
+        let mut placed = self.project.graph_tracks.iter().flat_map(|t| {
+            t.items
+                .iter()
+                .filter(|i| i.graph == id)
+                .map(move |i| (t, i))
+        });
+        let Some((track, item)) = placed.next() else {
+            return (
+                tr("editor.header.unplaced").to_owned(),
+                tr("editor.header.unplaced.help"),
+            );
+        };
+        let first = tr_args(
+            "editor.header.placed",
+            &[
+                ("track", &track.name),
+                ("start", &crate::timeline::short_timecode(item.position)),
+                ("end", &crate::timeline::short_timecode(item.end())),
+            ],
+        );
+        let text = match placed.count() {
+            0 => first,
+            more => tr_args(
+                "editor.header.placed_more",
+                &[("placed", &first), ("count", &more.to_string())],
+            ),
+        };
+        (text, tr("editor.header.placed.help"))
     }
 
     /// Whether the preview needs the original video.
@@ -1420,6 +1691,148 @@ impl App {
         }
     }
 
+    /// The top bar: the menus and the project's name on the left, Settings and Export… on the
+    /// right.
+    fn top_bar(&mut self, ui: &mut Ui) {
+        let theme = Theme::of(ui.ctx());
+        ui.horizontal(|ui| {
+            ui.set_min_height(CONTROL_HEIGHT);
+            // The right side first: the menu bar takes all the width it is given.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let export = egui::Button::new(
+                    RichText::new(tr("menu.file.export"))
+                        .strong()
+                        .color(theme.surfaces.ground),
+                )
+                .fill(theme.surfaces.text)
+                .stroke(Stroke::NONE)
+                .min_size(vec2(0.0, DENSE_HEIGHT));
+                if ui
+                    .add(export)
+                    .on_hover_text(tr("top.export.help"))
+                    .clicked()
+                {
+                    self.open_export();
+                }
+                if ui
+                    .add(IconButton::new(Icon::Settings, tr("top.settings")))
+                    .on_hover_text(tr("top.settings"))
+                    .clicked()
+                {
+                    self.show_settings = true;
+                }
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    self.menu_bar(ui)
+                });
+            });
+        });
+    }
+
+    /// The status bar: whether the graph compiled, what the pointer can do where it is, and the
+    /// cache use and picture on the right.
+    fn status_bar(&self, ui: &mut Ui) {
+        let theme = Theme::of(ui.ctx());
+        let text = |text: String| RichText::new(text).size(11.5).color(theme.text_dim);
+        ui.horizontal(|ui| {
+            ui.set_min_height(20.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if let (Some(info), Some(video)) = (self.engine.info(), self.first_video_info()) {
+                    let fps = info.frame_rate.as_f64();
+                    let fps = if (fps - fps.round()).abs() < 0.005 {
+                        format!("{fps:.0}")
+                    } else {
+                        format!("{fps:.2}")
+                    };
+                    ui.label(
+                        text(tr_args(
+                            "status.picture",
+                            &[
+                                ("width", &video.width.to_string()),
+                                ("height", &video.height.to_string()),
+                                ("fps", &fps),
+                            ],
+                        ))
+                        .monospace(),
+                    );
+                    ui.label(text("·".to_owned()));
+                }
+                let cache = self.engine.cache_use();
+                let mib = |bytes: usize| (bytes >> 20).to_string();
+                ui.label(
+                    text(tr_args(
+                        "status.cache",
+                        &[("used", &mib(cache.bytes)), ("budget", &mib(cache.budget))],
+                    ))
+                    .monospace(),
+                )
+                .on_hover_text(tr("status.cache.help"));
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    let (dot, state, failed) = match self.engine.status() {
+                        EngineStatus::Failed(_) => (
+                            theme.error,
+                            self.failure()
+                                .map(|f| self.editor.failure_message(&f))
+                                .unwrap_or_default(),
+                            true,
+                        ),
+                        EngineStatus::Idle => (
+                            theme.surfaces.text_faint,
+                            tr("status.idle").to_owned(),
+                            false,
+                        ),
+                        EngineStatus::Loading => {
+                            (theme.warning, tr("status.loading").to_owned(), false)
+                        }
+                        EngineStatus::Ready => (theme.cached, tr("status.ready").to_owned(), false),
+                    };
+                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(8.0), Sense::hover());
+                    ui.painter().circle_filled(rect.center(), 3.5, dot);
+                    if failed {
+                        // The error matters more than the hint, and can be long.
+                        ui.add(egui::Label::new(text(state)).truncate());
+                        return;
+                    }
+                    ui.label(text(state));
+                    if let Some(hint) = self.hint {
+                        ui.add_space(12.0);
+                        ui.add(egui::Label::new(text(hint.to_owned())).truncate());
+                    }
+                });
+            });
+        });
+    }
+
+    /// What the pointer can do where it is, for the status bar: over a wire, the graph, the
+    /// preview, the ruler or the lanes.
+    fn pointer_hint(&self, ui: &Ui) -> Option<&'static str> {
+        if self.editor.hovered_output().is_some() {
+            return Some(tr("hint.wire"));
+        }
+        let p = ui.input(|i| i.pointer.hover_pos())?;
+        // Not through a menu or window drawn over the panels.
+        if ui.ctx().layer_id_at(p) != Some(ui.layer_id()) {
+            return None;
+        }
+        let layout = &self.timeline_layout;
+        let in_timeline = |rect: &egui::Rect| self.timeline_area.contains(p) && rect.contains(p);
+        if self.canvas_rect.contains(p) {
+            Some(tr("hint.graph"))
+        } else if self.preview_rect.contains(p) {
+            Some(tr("hint.preview"))
+        } else if in_timeline(&layout.ruler) {
+            Some(tr("hint.ruler"))
+        } else if layout
+            .lanes
+            .iter()
+            .chain(&layout.graph_lanes)
+            .any(in_timeline)
+        {
+            Some(tr("hint.lanes"))
+        } else {
+            None
+        }
+    }
+
     fn menu_bar(&mut self, ui: &mut Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button(tr("menu.file"), |ui| {
@@ -1481,6 +1894,7 @@ impl App {
                     &mut self.settings.show_performance,
                     tr("menu.view.performance"),
                 );
+                ui.checkbox(&mut self.settings.graph_stats, tr("menu.view.graph_stats"));
             });
             ui.menu_button(tr("menu.help"), |ui| {
                 if ui.button(tr("menu.help.about")).clicked() {
@@ -1488,6 +1902,12 @@ impl App {
                     ui.close();
                 }
             });
+            // The project's name after the menus, in the bar so the bar doesn't push it aside.
+            ui.separator();
+            card_title(ui, &self.project_name());
+            if self.is_dirty() {
+                ui.label(RichText::new(tr("project.edited")).size(12.0).weak());
+            }
         });
     }
 
@@ -1616,7 +2036,15 @@ impl App {
     }
 
     fn preview_column(&mut self, ui: &mut Ui) {
-        let controls_height = 96.0;
+        self.preview_header(ui);
+        card_body(ui, 8, |ui| self.preview_body(ui));
+    }
+
+    /// The picture and the transport under it.
+    fn preview_body(&mut self, ui: &mut Ui) {
+        // The transport's two rows and the space around them.
+        let controls_height =
+            CONTROL_HEIGHT + DENSE_HEIGHT + 2.0 * ui.spacing().item_spacing.y + 6.0;
         let size = egui::vec2(
             ui.available_width(),
             (ui.available_height() - controls_height).max(80.0),
@@ -1625,13 +2053,98 @@ impl App {
         // Overlays (messages, spinners) go in a child, so they never move the controls below.
         let open_video = {
             let mut overlay = ui.new_child(UiBuilder::new().max_rect(rect));
-            self.preview_image(&mut overlay, rect)
+            let open_video = self.preview_image(&mut overlay, rect);
+            self.resolution_tag(&mut overlay, rect);
+            open_video
         };
         if open_video {
             self.pick_video();
         }
         ui.add_space(6.0);
-        self.controls(ui);
+        self.transport(ui);
+    }
+
+    /// The preview's header: whether it shows the result, the original or both split, and Fit.
+    fn preview_header(&mut self, ui: &mut Ui) {
+        card_header(ui, |ui| {
+            card_title(ui, tr("preview.title"));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add(IconButton::new(Icon::Fit, tr("preview.fit")))
+                    .on_hover_text(tr("preview.fit.help"))
+                    .clicked()
+                {
+                    self.preview_view.fit();
+                }
+                let options = [
+                    (tr("preview.result"), tr("preview.result.help")),
+                    (tr("preview.original"), tr("preview.original.help")),
+                    (tr("preview.split"), tr("preview.split.help")),
+                ];
+                if let Some(choice) = segmented(ui, &options, self.preview_choice()) {
+                    self.choose_preview(choice);
+                }
+            });
+        });
+    }
+
+    /// Which of Result (0), Original (1) and Split (2) the preview shows.
+    fn preview_choice(&self) -> usize {
+        match (self.preview_split, self.preview_feed) {
+            (true, _) => 2,
+            (false, Feed::Processed) => 0,
+            (false, Feed::Unprocessed) => 1,
+        }
+    }
+
+    /// Shows the result, the original, or both split with the original on the left. Choosing
+    /// Split again swaps the sides.
+    fn choose_preview(&mut self, choice: usize) {
+        match choice {
+            0 | 1 => {
+                self.preview_split = false;
+                self.preview_feed = if choice == 0 {
+                    Feed::Processed
+                } else {
+                    Feed::Unprocessed
+                };
+            }
+            _ if self.preview_split => self.preview_feed = self.preview_feed.other(),
+            _ => {
+                self.preview_split = true;
+                self.preview_feed = Feed::Processed;
+            }
+        }
+    }
+
+    /// The preview's size out of the project's, in the bottom-left corner of the picture.
+    fn resolution_tag(&self, ui: &mut Ui, rect: egui::Rect) {
+        let (Some(project), Some(preview)) = (self.first_video_info(), self.engine.info()) else {
+            return;
+        };
+        let text = tr_args(
+            "controls.resolution",
+            &[
+                ("width", &preview.width.to_string()),
+                ("height", &preview.height.to_string()),
+                ("project_width", &project.width.to_string()),
+                ("project_height", &project.height.to_string()),
+            ],
+        );
+        let galley =
+            ui.painter()
+                .layout_no_wrap(text, FontId::monospace(SMALL_SIZE), Color32::WHITE);
+        let area = egui::Align2::LEFT_BOTTOM
+            .anchor_size(rect.left_bottom() + vec2(8.0, -6.0), galley.size());
+        ui.painter().rect_filled(
+            area.expand(3.0),
+            CornerRadius::same(3),
+            Color32::from_black_alpha(150),
+        );
+        ui.painter()
+            .galley(area.min, galley, Color32::from_gray(200));
+        ui.interact(area, ui.id().with("resolution-tag"), Sense::hover())
+            .on_hover_text(tr("controls.resolution.help"));
     }
 
     /// Middle-drag pans the preview, the wheel zooms around the pointer, and F fits the frame.
@@ -1841,17 +2354,32 @@ impl App {
         open_video
     }
 
-    /// Playback controls under the preview.
-    fn controls(&mut self, ui: &mut Ui) {
+    /// Playback controls under the preview, in two rows that don't wrap: go to start, play, loop
+    /// and the timecode; then how far ahead is rendered, the preview resolution and the volume.
+    fn transport(&mut self, ui: &mut Ui) {
+        let theme = Theme::of(ui.ctx());
         let info = self.engine.info();
+        let square = Vec2::splat(CONTROL_HEIGHT);
         ui.horizontal(|ui| {
-            let label = if self.clock.is_playing() {
-                "⏸"
+            ui.spacing_mut().item_spacing.x = 6.0;
+            if ui
+                .add_enabled(
+                    info.is_some(),
+                    IconButton::new(Icon::ToStart, tr("controls.to_start")).size(square),
+                )
+                .on_hover_text(tr("controls.to_start.help"))
+                .clicked()
+            {
+                self.clock.seek(0);
+            }
+            let (icon, label) = if self.clock.is_playing() {
+                (Icon::Pause, tr("controls.pause"))
             } else {
-                "▶"
+                (Icon::Play, tr("controls.play"))
             };
-            let play =
-                egui::Button::new(RichText::new(label).size(16.0)).min_size(egui::vec2(34.0, 26.0));
+            let play = IconButton::new(icon, label)
+                .accent()
+                .size(vec2(40.0, CONTROL_HEIGHT));
             if ui
                 .add_enabled(info.is_some(), play)
                 .on_hover_text(tr("controls.play.help"))
@@ -1860,13 +2388,14 @@ impl App {
                 self.clock.toggle();
             }
             let looping = self.project.loop_region.is_some_and(|l| l.enabled);
-            let loop_button = egui::Button::selectable(looping, tr("controls.loop"))
-                .min_size(egui::vec2(0.0, 26.0));
             let hover = if self.project.loop_region.is_some() {
                 tr("controls.loop.help")
             } else {
                 tr("controls.loop.help_none")
             };
+            let loop_button = IconButton::new(Icon::Loop, tr("controls.loop"))
+                .selected(looping)
+                .size(square);
             if ui
                 .add_enabled(self.project.loop_region.is_some(), loop_button)
                 .on_hover_text(hover)
@@ -1875,22 +2404,13 @@ impl App {
             {
                 self.toggle_loop();
             }
-            if let Some(info) = info {
-                let fps = info.frame_rate.as_f64();
-                let frame = self.clock.frame();
-                ui.monospace(format!(
-                    "{} / {}",
-                    timecode(frame as f64 / fps),
-                    timecode(info.frames as f64 / fps)
-                ));
-                ui.weak(tr_args("controls.frame", &[("frame", &frame.to_string())]));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    self.cache_status(ui, info.frames, fps);
-                });
-            }
+            self.timecode_box(ui, info);
         });
         ui.horizontal(|ui| {
-            ui.label(tr("controls.preview"));
+            ui.spacing_mut().item_spacing.x = 8.0;
+            if let Some(info) = info {
+                self.ahead_meter(ui, info.frames, info.frame_rate.as_f64());
+            }
             let mut scale = self.settings.preview_scale();
             egui::ComboBox::from_id_salt("preview-scale")
                 .selected_text(scale.label())
@@ -1906,102 +2426,184 @@ impl App {
                 self.settings.set_preview_scale(scale);
                 self.engine.set_preview_scale(scale);
             }
-            let unprocessed = self.preview_feed == Feed::Unprocessed;
-            if ui
-                .add(egui::Button::selectable(
-                    unprocessed,
-                    tr("controls.unprocessed"),
-                ))
-                .on_hover_text(tr("controls.unprocessed.help"))
-                .clicked()
-            {
-                self.preview_feed = self.preview_feed.other();
-            }
-            if ui
-                .add(egui::Button::selectable(
-                    self.preview_split,
-                    tr("controls.split"),
-                ))
-                .on_hover_text(tr("controls.split.help"))
-                .clicked()
-            {
-                self.preview_split = !self.preview_split;
-            }
-            if let (Some(project), Some(preview)) = (self.first_video_info(), info) {
-                ui.weak(tr_args(
-                    "controls.resolution",
-                    &[
-                        ("width", &preview.width.to_string()),
-                        ("height", &preview.height.to_string()),
-                        ("project_width", &project.width.to_string()),
-                        ("project_height", &project.height.to_string()),
-                    ],
-                ))
-                .on_hover_text(tr("controls.resolution.help"));
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.label("🔊");
-            ui.spacing_mut().slider_width = 110.0;
-            let volume = self.settings.volume;
-            ui.add(egui::Slider::new(&mut self.settings.volume, 0.0..=1.0).show_value(false))
-                .on_hover_text(tr_args(
-                    "controls.volume",
-                    &[("percent", &format!("{:.0}", volume * 100.0))],
-                ));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().slider_width = 76.0;
+                let volume = self.settings.volume;
+                ui.add(egui::Slider::new(&mut self.settings.volume, 0.0..=1.0).show_value(false))
+                    .on_hover_text(tr_args(
+                        "controls.volume",
+                        &[("percent", &format!("{:.0}", volume * 100.0))],
+                    ));
+                let (rect, _) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::hover());
+                paint_icon(ui.painter(), rect, Icon::Volume, theme.text_dim);
+            });
         });
     }
 
-    /// What the render cache is doing, at the right of the controls: warming up after a seek, or
-    /// how far ahead of the playhead frames are ready.
-    fn cache_status(&self, ui: &mut Ui, frames: usize, fps: f64) {
+    /// The playhead's time large and the length small in a sunken box, the frame number at its
+    /// right. In tempo mode the large reading is bar.beat.sixteenth, the beat light follows it
+    /// with a segment for each beat of the bar, and the time takes the frame number's place.
+    fn timecode_box(&self, ui: &mut Ui, info: Option<RenderInfo>) {
         let theme = Theme::of(ui.ctx());
-        if let Some(progress) = self.engine.progress().filter(|p| p.warming) {
-            ui.colored_label(
-                theme.warning,
-                tr_args(
-                    "preview.warming",
-                    &[
-                        ("done", &progress.done.to_string()),
-                        ("total", &progress.total.to_string()),
-                    ],
-                ),
-            )
-            .on_hover_text(tr_args(
-                "preview.warming.help",
-                &[("frame", &progress.frame.to_string())],
-            ));
-            return;
-        }
         let frame = self.clock.frame();
-        let buffered_frames = self.buffered_ahead();
-        let buffered = buffered_frames as f64 / fps;
-        let speed = self.clock.speed();
-        let to_end = frame + buffered_frames >= frames;
-        let round_loop = self
-            .clock
-            .active_loop()
-            .is_some_and(|lp| buffered_frames >= lp.end - frame.min(lp.start));
-        let ahead = if round_loop {
-            tr("cache.loop_rendered").to_owned()
-        } else if to_end {
-            tr("cache.rendered_to_end").to_owned()
-        } else {
-            tr_args("cache.ahead", &[("seconds", &format!("{buffered:.1}"))])
-        };
-        let (text, color) = if !self.clock.is_playing() || speed >= 1.0 {
-            (ahead, ui.visuals().weak_text_color())
+        let (seconds, length) = info.map_or((0.0, 0.0), |info| {
+            let fps = info.frame_rate.as_f64();
+            (frame as f64 / fps, info.frames as f64 / fps)
+        });
+        let size = vec2(ui.available_width(), CONTROL_HEIGHT);
+        let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
+        let (position, length, frame) = if self.project.timeline_mode == TimelineMode::Tempo {
+            (
+                bar_beat_tick(&self.project.tempo, seconds),
+                tr("controls.bar_beat").to_owned(),
+                timecode(seconds),
+            )
         } else {
             (
-                tr_args(
-                    "cache.slowed",
-                    &[("speed", &format!("{speed:.2}")), ("ahead", &ahead)],
-                ),
-                theme.warning,
+                timecode(seconds),
+                format!("/ {}", timecode(length)),
+                tr_args("controls.frame", &[("frame", &frame.to_string())]),
             )
         };
-        ui.colored_label(color, text)
-            .on_hover_text(tr("cache.help"));
+        response.widget_info(|| {
+            WidgetInfo::labeled(
+                WidgetType::Label,
+                true,
+                format!("{position} {length} {frame}"),
+            )
+        });
+        let painter = ui.painter_at(rect);
+        painter.rect(
+            rect,
+            7,
+            theme.surfaces.ground,
+            Stroke::new(1.0, theme.surfaces.border),
+            egui::StrokeKind::Inside,
+        );
+        let small = FontId::monospace(12.0);
+        let large = painter.layout_no_wrap(
+            position,
+            FontId::monospace(TIMECODE_SIZE),
+            theme.surfaces.text,
+        );
+        let length = painter.layout_no_wrap(length, small.clone(), theme.surfaces.text_faint);
+        let frame = painter.layout_no_wrap(frame, small, theme.text_dim);
+        // Bottoms level, so the three read along one line.
+        let top = rect.center().y - large.size().y / 2.0;
+        let bottom = top + large.size().y;
+        let left = rect.left() + 12.0;
+        let length_left = left + large.size().x + 8.0;
+        let lights_left = length_left + length.size().x + 14.0;
+        painter.galley(egui::pos2(left, top), large, theme.surfaces.text);
+        painter.galley(
+            egui::pos2(length_left, bottom - length.size().y),
+            length,
+            theme.surfaces.text_faint,
+        );
+        let frame_pos = egui::pos2(
+            rect.right() - 12.0 - frame.size().x,
+            bottom - frame.size().y,
+        );
+        painter.galley(frame_pos, frame, theme.text_dim);
+        if self.project.timeline_mode == TimelineMode::Tempo {
+            let beats = self.project.tempo.sanitized().beats_per_bar;
+            let lights = egui::Rect::from_min_max(
+                egui::pos2(lights_left, rect.center().y - 3.0),
+                egui::pos2(frame_pos.x - 10.0, rect.center().y + 3.0),
+            );
+            let lit = self.beat_in_bar();
+            ui.place(lights, |ui: &mut Ui| {
+                beat_lights(ui, beats, lit, vec2(14.0, 5.0), 3.0)
+            });
+        }
+    }
+
+    /// How far ahead of the playhead frames are rendered, as a label over a bar: green while
+    /// playback keeps up, amber while rendering slows it or warms up after a seek.
+    fn ahead_meter(&self, ui: &mut Ui, frames: usize, fps: f64) {
+        let theme = Theme::of(ui.ctx());
+        let (label, value, fraction, color, help) =
+            if let Some(progress) = self.engine.progress().filter(|p| p.warming) {
+                (
+                    tr("cache.warming").to_owned(),
+                    tr_args(
+                        "cache.warming_count",
+                        &[
+                            ("done", &progress.done.to_string()),
+                            ("total", &progress.total.to_string()),
+                        ],
+                    ),
+                    progress.done as f32 / progress.total.max(1) as f32,
+                    theme.warning,
+                    tr_args(
+                        "preview.warming.help",
+                        &[("frame", &progress.frame.to_string())],
+                    ),
+                )
+            } else {
+                let frame = self.clock.frame();
+                let buffered_frames = self.buffered_ahead();
+                let buffered = buffered_frames as f64 / fps;
+                let round_loop = self
+                    .clock
+                    .active_loop()
+                    .is_some_and(|lp| buffered_frames >= lp.end - frame.min(lp.start));
+                let to_end = frame + buffered_frames >= frames;
+                let (value, fraction) = if round_loop {
+                    (tr("cache.loop_rendered").to_owned(), 1.0)
+                } else if to_end {
+                    (tr("cache.rendered_to_end").to_owned(), 1.0)
+                } else {
+                    (
+                        tr_args("cache.ahead", &[("seconds", &format!("{buffered:.1}"))]),
+                        (buffered / self.settings.render_ahead()) as f32,
+                    )
+                };
+                let speed = self.clock.speed();
+                let (label, color) = if !self.clock.is_playing() || speed >= 1.0 {
+                    (tr("cache.ahead_label").to_owned(), theme.cached)
+                } else {
+                    (
+                        tr_args("cache.slowed", &[("speed", &format!("{speed:.2}"))]),
+                        theme.warning,
+                    )
+                };
+                (label, value, fraction, color, tr("cache.help").to_owned())
+            };
+        let (rect, response) = ui.allocate_exact_size(vec2(124.0, DENSE_HEIGHT), Sense::hover());
+        response.widget_info(|| {
+            WidgetInfo::labeled(WidgetType::Label, true, format!("{label} {value}"))
+        });
+        let response = response.on_hover_text(help);
+        let painter = ui.painter_at(response.rect);
+        let font = FontId::proportional(SMALL_SIZE);
+        let label_color = if color == theme.warning {
+            theme.warning
+        } else {
+            theme.text_dim
+        };
+        painter.text(
+            rect.left_top() + vec2(0.0, 3.0),
+            egui::Align2::LEFT_TOP,
+            label,
+            font,
+            label_color,
+        );
+        painter.text(
+            rect.right_top() + vec2(0.0, 3.0),
+            egui::Align2::RIGHT_TOP,
+            value,
+            FontId::monospace(SMALL_SIZE),
+            theme.surfaces.text,
+        );
+        let track = egui::Rect::from_min_max(
+            egui::pos2(rect.left(), rect.bottom() - 8.0),
+            egui::pos2(rect.right(), rect.bottom() - 4.0),
+        );
+        painter.rect_filled(track, 2, theme.surfaces.raised_hover);
+        let mut filled = track;
+        filled.set_width(track.width() * fraction.clamp(0.0, 1.0));
+        painter.rect_filled(filled, 2, color);
     }
 
     fn timeline(&mut self, ui: &mut Ui) {
@@ -2013,7 +2615,6 @@ impl App {
             .map_or((EMPTY_TIMELINE_FRAMES, EMPTY_TIMELINE_RATE), |info| {
                 (info.frames, info.frame_rate.as_f64())
             });
-        self.tempo_bar(ui);
         self.tidy_item_selection();
         let loaded = self.engine.loaded_tracks();
         self.update_thumbnails(ui.ctx());
@@ -2084,15 +2685,6 @@ impl App {
         if let Some(region) = response.loop_region {
             self.project.loop_region = region;
         }
-        if response.toggle_snap {
-            self.settings.snap = !self.settings.snap;
-        }
-        if response.toggle_mode {
-            self.project.timeline_mode = match self.project.timeline_mode {
-                TimelineMode::Time => TimelineMode::Tempo,
-                TimelineMode::Tempo => TimelineMode::Time,
-            };
-        }
         if let Some(frame) = response.seek {
             self.clock.seek(frame);
         }
@@ -2118,7 +2710,7 @@ impl App {
             solo: t.solo,
             silenced: !self.project.in_mix(i),
             volume: t.volume,
-            height: t.height.unwrap_or(LANE_HEIGHT),
+            height: t.height.unwrap_or(lane_height(t.kind)),
             bus: t.bus.clone(),
             missing: t.resource.is_some_and(|r| self.missing.contains(&r)),
             selected_items: self
@@ -2318,6 +2910,7 @@ impl App {
 
     fn select_graph_item(&mut self, track: String, item: usize) {
         self.selected_items.clear();
+        self.inspect_track = false;
         self.selected_graph_items = vec![(track, item)];
     }
 
@@ -2420,19 +3013,157 @@ impl App {
         }
     }
 
-    /// In tempo mode, the tempo of the music that beat and bar units follow. Time mode shows
-    /// nothing: the mode button lives in the timeline's ruler header.
-    fn tempo_bar(&mut self, ui: &mut Ui) {
-        if self.project.timeline_mode != TimelineMode::Tempo {
-            return;
-        }
-        let tempo = &mut self.project.tempo;
-        ui.horizontal(|ui| {
+    /// The timeline's title row: the tempo group, then at the right Snap and the loop region. It
+    /// holds the same things in both modes, so switching moves nothing.
+    fn timeline_header(&mut self, ui: &mut Ui) {
+        card_header(ui, |ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            settings_window::tempo_fields(ui, tempo);
-            ui.toggle_value(&mut self.settings.metronome, tr("tempo.metronome"))
-                .on_hover_text(tr("tempo.metronome.help"));
+            card_title(ui, tr("timeline.title"));
+            ui.add_space(4.0);
+            self.tempo_group(ui);
+            let tempo_mode = self.project.timeline_mode == TimelineMode::Tempo;
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let snap = if tempo_mode {
+                    tr("timeline.snap.beats")
+                } else {
+                    tr("timeline.snap")
+                };
+                ui.toggle_value(&mut self.settings.snap, snap)
+                    .on_hover_text(tr("timeline.snap.help"));
+                self.loop_readout(ui);
+            });
         });
+    }
+
+    /// The Time / Tempo switch with the tempo attached to it in one group: bpm, beats per bar and
+    /// first beat, which beat and bar units follow in either mode, and the metronome (heard in
+    /// tempo mode) with a light for each beat of the bar.
+    fn tempo_group(&mut self, ui: &mut Ui) {
+        let theme = Theme::of(ui.ctx());
+        let tempo_mode = self.project.timeline_mode == TimelineMode::Tempo;
+        egui::Frame::new()
+            .fill(theme.surfaces.inner_card)
+            .stroke(Stroke::new(1.0, theme.surfaces.border))
+            .corner_radius(9)
+            .inner_margin(Margin {
+                left: 3,
+                right: 6,
+                top: 2,
+                bottom: 2,
+            })
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                let modes = [
+                    (tr("timeline.mode.time"), tr("timeline.mode.time.help")),
+                    (tr("timeline.mode.tempo"), tr("timeline.mode.tempo.help")),
+                ];
+                if let Some(choice) = segmented(ui, &modes, usize::from(tempo_mode)) {
+                    self.project.timeline_mode = if choice == 0 {
+                        TimelineMode::Time
+                    } else {
+                        TimelineMode::Tempo
+                    };
+                }
+                settings_window::tempo_fields(ui, &mut self.project.tempo);
+                ui.add_enabled_ui(tempo_mode, |ui| {
+                    ui.scope(|ui| {
+                        // Amber while on, like the beat it clicks along with.
+                        let selection = &mut ui.visuals_mut().selection;
+                        selection.bg_fill = theme.beat.gamma_multiply(0.16);
+                        selection.stroke = Stroke::new(1.0, theme.beat);
+                        ui.toggle_value(&mut self.settings.metronome, tr("tempo.metronome"))
+                            .on_hover_text(tr("tempo.metronome.help"))
+                            .on_disabled_hover_text(tr("tempo.metronome.time_mode"));
+                    });
+                    let lit = (self.settings.metronome && tempo_mode)
+                        .then(|| self.beat_in_bar())
+                        .flatten();
+                    beat_lights(
+                        ui,
+                        self.project.tempo.sanitized().beats_per_bar,
+                        lit,
+                        Vec2::splat(6.0),
+                        3.0,
+                    );
+                });
+            });
+    }
+
+    /// The playhead's time in seconds, once a video is open.
+    fn playhead_secs(&self) -> Option<f64> {
+        let info = self.engine.info()?;
+        Some(self.clock.frame() as f64 / info.frame_rate.as_f64())
+    }
+
+    /// The beat of the bar the playhead is in, from 0, once a video is open.
+    fn beat_in_bar(&self) -> Option<u32> {
+        let tempo = self.project.tempo.sanitized();
+        let beat = beats_at(&tempo, self.playhead_secs()?).floor() as i64;
+        Some(beat.rem_euclid(i64::from(tempo.beats_per_bar)) as u32)
+    }
+
+    /// The loop region the ruler holds, as a button that turns looping on and off; without one,
+    /// how to make it.
+    fn loop_readout(&mut self, ui: &mut Ui) {
+        let theme = Theme::of(ui.ctx());
+        let Some(region) = self.project.loop_region else {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(tr("timeline.loop.none"))
+                        .size(crate::theme::SMALL_SIZE + 1.0)
+                        .color(theme.surfaces.text_faint),
+                )
+                .truncate(),
+            );
+            return;
+        };
+        let range = if self.project.timeline_mode == TimelineMode::Tempo {
+            let tempo = &self.project.tempo;
+            format!(
+                "{} – {}",
+                bar_beat(tempo, region.start),
+                bar_beat(tempo, region.end)
+            )
+        } else {
+            format!("{} – {}", timecode(region.start), timecode(region.end))
+        };
+        let ink = if region.enabled {
+            theme.surfaces.text
+        } else {
+            theme.surfaces.text_faint
+        };
+        let mut job = egui::text::LayoutJob::default();
+        RichText::new(format!("{} ", tr("timeline.loop.readout")))
+            .size(crate::theme::SMALL_SIZE + 1.0)
+            .color(theme.text_dim)
+            .append_to(
+                &mut job,
+                ui.style(),
+                egui::FontSelection::Default,
+                egui::Align::Center,
+            );
+        RichText::new(range)
+            .monospace()
+            .size(crate::theme::SMALL_SIZE + 1.0)
+            .color(ink)
+            .append_to(
+                &mut job,
+                ui.style(),
+                egui::FontSelection::Default,
+                egui::Align::Center,
+            );
+        let help = if region.enabled {
+            tr("timeline.loop.readout.on")
+        } else {
+            tr("timeline.loop.readout.off")
+        };
+        if ui
+            .add(egui::Button::new(job).frame(false))
+            .on_hover_text(help)
+            .clicked()
+        {
+            self.toggle_loop();
+        }
     }
 
     /// The stream of a file a video track plays, which thumbnails are made of.
@@ -2553,10 +3284,14 @@ impl App {
     fn track_action(&mut self, ctx: &egui::Context, action: TrackAction) {
         let name = |app: &mut Self, row: usize| app.track_at(row).map(|t| t.name.clone());
         match action {
-            TrackAction::Select(row) => self.selected_track = name(self, row),
+            TrackAction::Select(row) => {
+                self.selected_track = name(self, row);
+                self.inspect_track = true;
+            }
             TrackAction::SelectItem { row, item, toggle } => {
                 let Some(track) = name(self, row) else { return };
                 self.selected_track = Some(track.clone());
+                self.inspect_track = true;
                 self.selected_graph_items.clear();
                 let at = ItemRef::new(track, item);
                 if !toggle {
@@ -2762,7 +3497,7 @@ impl App {
             }
             TrackAction::SetHeight(row, height) => {
                 if let Some(track) = self.track_at(row) {
-                    track.height = (height != LANE_HEIGHT).then_some(height);
+                    track.height = (height != lane_height(track.kind)).then_some(height);
                 }
             }
             TrackAction::SetBus(row, bus) => {
@@ -2874,6 +3609,42 @@ impl App {
             self.title = title;
         }
     }
+}
+
+/// Height of the buttons in the row over the graph canvas.
+const HEADER_BUTTON_HEIGHT: f32 = 30.0;
+/// The narrowest the placement chip's text is cut to before the chip is left out.
+const MIN_CHIP_TEXT: f32 = 40.0;
+
+/// The canvas header's count of problems ("1 error · 1 warning") in the colour of the worst,
+/// or `None` with none.
+fn problem_count(errors: usize, warnings: usize, theme: &Theme) -> Option<(String, egui::Color32)> {
+    let count = |n: usize, one: &str, many: &str| match n {
+        0 => None,
+        1 => Some(tr(one).to_owned()),
+        n => Some(tr_args(many, &[("count", &n.to_string())])),
+    };
+    let parts: Vec<String> = [
+        count(
+            errors,
+            "editor.header.errors_one",
+            "editor.header.errors_many",
+        ),
+        count(
+            warnings,
+            "editor.header.warnings_one",
+            "editor.header.warnings_many",
+        ),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let color = if errors > 0 {
+        theme.error
+    } else {
+        theme.warning
+    };
+    (!parts.is_empty()).then(|| (parts.join(" · "), color))
 }
 
 /// How long the preview waits on a frame before saying so, when it has an older one to show.

@@ -5,8 +5,8 @@ this page is the short list. If a rule here and a document disagree, fix the doc
 
 ## Branches and merging
 
-1. The 1.0 rebuild lives on `1.0-foundation`. **Nothing from it goes to `master`** and no PR targets `master`.
-2. Work on a branch off `1.0-foundation`; merge back only when all of these pass, as CI runs them:
+1. The 1.0 rebuild lives on `master`. Work on a branch off `master` and merge it back through a pull request.
+2. Merge only when all of these pass, as CI runs them:
    `cargo xtask fmt --check` (the workspace and the node files), `cargo clippy --workspace --all-targets -- -D
    warnings`, `cargo xtask docs --check`, `cargo xtask fixtures` then `cargo test --workspace`, and `cargo deny
    check`. See [Testing](docs/testing.md).

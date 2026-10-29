@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RasterSong: graph editor detail</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0E0F11}
+a{color:#A9B6FF}a:hover{color:#CDD5FF}
+.rs button,.rs input{font-family:inherit}
+.btn{height:30px;padding:0 10px;border-radius:6px;border:1px solid #2A2C31;background:#1C1D21;color:#ECEDEF;font-size:12.5px;font-weight:500;display:inline-flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap}
+.ghost{background:transparent;border-color:transparent;color:#C3C6CD}
+.kbd{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#A1A4AC;border:1px solid #33353B;border-bottom-width:2px;border-radius:4px;padding:0 4px;line-height:15px}
+.lbl{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:#868A94;font-weight:600}
+.mono{font-family:'JetBrains Mono',monospace}
+.seg{display:inline-flex;background:#0E0F11;border:1px solid #2A2C31;border-radius:7px;padding:2px;gap:2px}
+.seg button{height:24px;border:0;border-radius:5px;background:transparent;color:#A1A4AC;font-size:12px;font-weight:500;padding:0 9px;cursor:pointer;display:inline-flex;align-items:center;gap:5px}
+.node{position:absolute;width:140px;background:#1E1F23;border:1px solid #33353B;border-radius:8px;box-shadow:0 6px 16px rgba(0,0,0,.35)}
+.nh{position:relative;height:30px;display:flex;align-items:center;gap:6px;padding:5px 10px 0;box-sizing:border-box;border-bottom:1px solid #2A2C31;font-size:13px;font-weight:600;color:#ECEDEF;white-space:nowrap;overflow:hidden;border-radius:7px 7px 0 0}
+.nh .dot{position:absolute;left:0;right:0;top:0;width:auto;height:5px;border-radius:0}
+.drum{position:relative;width:96px;height:150px;overflow:hidden;flex:none;border-right:1px solid #24262B;cursor:ns-resize;outline:none}
+.drum:focus-visible{box-shadow:inset 0 0 0 2px #8FA2FF}
+.slot{height:30px;width:100%;display:flex;align-items:center;gap:7px;padding:0 10px;border:0;background:transparent;font-size:11.5px;cursor:pointer;box-sizing:border-box;transform-origin:50% 50%}
+.nr{height:24px;display:flex;align-items:center;justify-content:space-between;padding:0 11px;font-size:11.5px;color:#A1A4AC}
+.dot{width:8px;height:8px;border-radius:50%;flex:none}
+.pin{position:absolute;width:10px;height:10px;border-radius:50%;border:2px solid #1E1F23}
+.badge{position:absolute;top:-9px;right:-9px;width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace}
+.res{display:flex;align-items:center;gap:10px;height:44px;padding:0 10px;border-radius:7px;border:0;background:transparent;width:100%;text-align:left;color:#ECEDEF;cursor:pointer}
+</style>
+</helmet>
+<div class="rs" style="width: 1120px; height: 720px; background: #16171A; color: #ECEDEF; font-family: Inter, system-ui, sans-serif; font-size: 13px; display: flex; flex-direction: column; border: 1px solid #24262B; border-radius: 10px; overflow: hidden; box-sizing: border-box">
+  <div style="height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 10px 0 14px; border-bottom: 1px solid #202227; flex: none">
+    <span style="color: #868A94">Graph</span>
+    <svg width="8" height="10" viewBox="0 0 8 10" aria-hidden="true"><path d="M2 1l4 4-4 4" fill="none" stroke="#5A5D66" stroke-width="1.4"></path></svg>
+    <span style="font-weight: 600">Sidechain</span>
+    <span style="font-size: 11.5px; color: #A1A4AC; background: #1C1D21; border: 1px solid #2A2C31; border-radius: 10px; padding: 1px 8px">on Graph track 2 · 0:01–0:02</span>
+    <span style="display: flex; align-items: center; gap: 6px; margin-left: 10px; font-size: 12px; color: #FF7A7A"><span class="dot" style="background: #FF5D5D"></span>1 error · 1 warning</span>
+    <div style="display: flex; gap: 6px; margin-left: auto">
+      <button class="btn">+ Add node <span class="kbd">Tab</span></button>
+      <button class="btn">Bypass graphs</button>
+    </div>
+  </div>
+
+  <div style="flex: 1; position: relative; background-color: #121315; background-image: radial-gradient(#26282D 1px, transparent 1px); background-size: 20px 20px; overflow: hidden">
+    <svg width="1120" height="676" viewBox="0 0 1120 676" aria-hidden="true" style="position: absolute; inset: 0" fill="none" stroke-linecap="round">
+      <path d="M164 188 C190 188 184 168 210 168" stroke="#3FC7B4" stroke-width="3"></path>
+      <path d="M350 168 C390 168 380 88 420 88" stroke="#FF9A3C" stroke-width="5"></path>
+      <path d="M560 88 C590 88 590 88 620 88" stroke="#FF9A3C" stroke-width="4" stroke-dasharray="6 5" opacity=".6"></path>
+      <path d="M350 216 C470 216 600 318 720 318" stroke="#B48CFF" stroke-width="2" stroke-dasharray="5 5"></path>
+      <path d="M386 128 L404 300" stroke="#ECEDEF" stroke-width="1" opacity=".5"></path>
+    </svg>
+    <span aria-hidden="true" style="position: absolute; left: 379px; top: 121px; width: 14px; height: 14px; border-radius: 50%; border: 2px solid #ECEDEF; background: #FF9A3C; box-sizing: border-box"></span>
+
+    <div class="node" style="left: 24px; top: 140px"><div class="nh"><span class="dot" style="background: #5B8CFF"></span>In: Audio</div><div style="padding: 6px 0"><div class="nr"><span></span><span>audio</span></div></div><span class="pin" style="right: -7px; top: 43px; background: #3FC7B4"></span></div>
+
+    <div class="node" style="left: 210px; top: 120px"><div class="nh"><span class="dot" style="background: #FF9A3C"></span>Three-Band Split</div><div style="padding: 6px 0"><div class="nr"><span>in</span><span>low</span></div><div class="nr"><span></span><span>mid</span></div><div class="nr"><span></span><span>high</span></div></div>
+      <span class="pin" style="left: -7px; top: 43px; background: #3FC7B4"></span><span class="pin" style="right: -7px; top: 43px; background: #FF9A3C"></span><span class="pin" style="right: -7px; top: 67px; background: #F2D04B"></span><span class="pin" style="right: -7px; top: 91px; background: #B48CFF; box-shadow: 0 0 0 3px rgba(180,140,255,.35)"></span></div>
+
+    <div class="node" style="left: 420px; top: 40px; background: repeating-linear-gradient(135deg, #1E1F23 0 8px, #222328 8px 16px); opacity: .8"><div class="nh" style="color: #A1A4AC"><span class="dot" style="background: #FF9A3C"></span>Delay<span style="margin-left: auto; font-size: 10px; font-weight: 600; letter-spacing: .06em; color: #F2D04B">BYPASSED</span></div><div style="padding: 6px 0"><div class="nr"><span>in</span><span>out</span></div><div class="nr"><span>◆ time</span><span></span></div><div class="nr"><span>◆ feedback</span><span></span></div></div>
+      <span class="pin" style="left: -7px; top: 43px; background: #FF9A3C"></span><span class="pin" style="left: -7px; top: 67px; background: #3A3C42; border-radius: 2px; transform: rotate(45deg)"></span><span class="pin" style="left: -7px; top: 91px; background: #3A3C42; border-radius: 2px; transform: rotate(45deg)"></span><span class="pin" style="right: -7px; top: 43px; background: #FF9A3C"></span></div>
+
+    <div class="node" style="left: 620px; top: 40px; width: 160px; border-color: #8A6A22"><div class="nh"><span class="dot" style="background: #4ED37A"></span>Audio Output</div><div style="padding: 6px 0"><div class="nr"><span>in</span><span class="mono" style="color: #F2B544">bus: Stems</span></div><div class="nr"><span>◆ volume</span><span class="mono">0 dB</span></div></div>
+      <span class="pin" style="left: -7px; top: 43px; background: #FF9A3C"></span><span class="pin" style="left: -7px; top: 67px; background: #3A3C42; border-radius: 2px; transform: rotate(45deg)"></span>
+      <span class="badge" role="img" aria-label="Warning" style="background: #F2B544; color: #0E0F11">!</span>
+      <div style="position: absolute; left: 0; top: calc(100% + 8px); width: 230px; background: #26231B; border: 1px solid #6E5420; border-radius: 6px; padding: 7px 9px; font-size: 11.5px; color: #F4E3BD; line-height: 1.4">Writes to bus <b>Stems</b>, which the project doesn't have. Not rendered until set to another bus.</div></div>
+
+    <div class="node" style="left: 830px; top: 200px; border-color: #FF5D5D; box-shadow: 0 0 0 2px rgba(255,93,93,.5)"><div class="nh"><span class="dot" style="background: #FF9A3C"></span>Bit Crush</div><div style="padding: 6px 0"><div class="nr"><span style="color: #FF8A8A">in · empty</span><span>out</span></div><div class="nr"><span>◆ bits</span><span class="mono">4</span></div></div>
+      <span class="pin" style="left: -7px; top: 43px; background: transparent; border-color: #FF5D5D"></span><span class="pin" style="left: -7px; top: 67px; background: #3A3C42; border-radius: 2px; transform: rotate(45deg)"></span><span class="pin" style="right: -7px; top: 43px; background: #5A5D66"></span>
+      <span class="badge" role="img" aria-label="Error" style="background: #FF5D5D; color: #0E0F11">×</span></div>
+
+    <!-- WIRE PROBE: hover a wire -->
+    <div role="dialog" aria-label="Wire probe" style="position: absolute; left: 236px; top: 300px; width: 430px; background: #1A1B1F; border: 1px solid #33353B; border-radius: 10px; box-shadow: 0 16px 40px rgba(0,0,0,.5); display: flex; flex-direction: column; overflow: hidden">
+      <div style="padding: 10px 12px 8px; display: flex; flex-direction: column; gap: 3px; border-bottom: 1px solid #24262B">
+        <div style="display: flex; align-items: center; gap: 6px; font-weight: 600"><span style="width: 14px; height: 3px; border-radius: 2px; background: #FF9A3C"></span>Three-Band Split.low <span style="color: #868A94; font-weight: 400">→</span> Delay.in</div>
+        <div class="mono" style="font-size: 11px; color: #A1A4AC">1600×1 stereo · audio · low band · −1 to 1</div>
+      </div>
+      <div style="display: flex">
+        <!-- VIEW DRUM: wrap-around, the middle slot is the view shown -->
+        <div class="drum" role="listbox" tabindex="0" aria-label="View: scroll or use arrow keys" onWheel="{{onWheel}}" onKeyDown="{{onKey}}">
+          <div aria-hidden="true" style="position: absolute; left: 6px; right: 6px; top: 60px; height: 30px; border-radius: 6px; background: #2A2C31; box-shadow: inset 0 0 0 1px #8FA2FF"></div>
+          <div style="position: absolute; left: 0; right: 0; top: 0; transform: translateY({{ty}}px); transition: {{tr}}">
+            <sc-for list="{{slots}}" as="s" hint-placeholder-count="20">
+              <button class="slot" role="option" aria-selected="{{s.sel}}" tabindex="-1" onClick="{{s.pick}}" style="color: {{s.color}}; font-weight: {{s.weight}}; opacity: {{s.op}}; transform: {{s.tf}}; transition: {{tr}}">
+                <sc-if value="{{s.isPicture}}" hint-placeholder-val="{{ false }}"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="11" height="9" rx="1.5"></rect><path d="M2 10l3-3 2 2 2-3 3 4"></path></svg></sc-if>
+                <sc-if value="{{s.isScope}}" hint-placeholder-val="{{ true }}"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1 7c1.5-5 3-5 4 0s2.5 5 4 0 2.5-5 4 0"></path></svg></sc-if>
+                <sc-if value="{{s.isSpectrum}}" hint-placeholder-val="{{ false }}"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 12V6M5 12V3M8 12V7M11 12V9"></path></svg></sc-if>
+                <sc-if value="{{s.isReadings}}" hint-placeholder-val="{{ false }}"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 3.5h10M2 7h7M2 10.5h9"></path></svg></sc-if>
+                <span>{{s.label}}</span>
+              </button>
+            </sc-for>
+          </div>
+          <div aria-hidden="true" style="position: absolute; inset: 0; pointer-events: none; background: linear-gradient(#1A1B1F 0%, rgba(26,27,31,0) 34%, rgba(26,27,31,0) 66%, #1A1B1F 100%)"></div>
+        </div>
+        <div style="flex: 1; min-width: 0; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px">
+          <div style="height: 104px; border-radius: 6px; background: #0E0F11; border: 1px solid #24262B; position: relative; overflow: hidden">
+            <sc-if value="{{v.isScope}}" hint-placeholder-val="{{ true }}"><svg width="100%" height="102" viewBox="0 0 300 102" preserveAspectRatio="none" role="img" aria-label="Scope of the low band" style="display: block"><path d="M0 51H300" stroke="#2A2C31"></path><path d="{{scope}}" fill="none" stroke="#FF9A3C" stroke-width="1.6" vector-effect="non-scaling-stroke"></path></svg></sc-if>
+            <sc-if value="{{v.isSpectrum}}" hint-placeholder-val="{{ false }}"><svg width="100%" height="102" viewBox="0 0 300 102" preserveAspectRatio="none" role="img" aria-label="Spectrum of the low band" style="display: block"><path d="M0 34H300M0 68H300" stroke="#24262B"></path><path d="{{spec}}" fill="rgba(255,154,60,.25)" stroke="#FF9A3C" stroke-width="1.4" vector-effect="non-scaling-stroke"></path></svg><span class="mono" style="position: absolute; left: 6px; bottom: 3px; font-size: 9.5px; color: #868A94">20 Hz</span><span class="mono" style="position: absolute; right: 6px; bottom: 3px; font-size: 9.5px; color: #868A94">20 kHz</span></sc-if>
+            <sc-if value="{{v.isPicture}}" hint-placeholder-val="{{ false }}"><div role="img" aria-label="The signal drawn as a picture" style="position: absolute; inset: 0; background: repeating-linear-gradient(90deg, #2A1606 0 3px, #FF9A3C 3px 4px, #7A4418 4px 9px, #120A04 9px 13px)"></div></sc-if>
+            <sc-if value="{{v.isReadings}}" hint-placeholder-val="{{ false }}"><div style="position: absolute; inset: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: center; gap: 8px 12px; padding: 0 14px"><span style="display: flex; justify-content: space-between"><span style="color: #A1A4AC">Mean</span><span class="mono">+0.012</span></span><span style="display: flex; justify-content: space-between"><span style="color: #A1A4AC">RMS</span><span class="mono">0.301</span></span><span style="display: flex; justify-content: space-between"><span style="color: #A1A4AC">Min</span><span class="mono">−0.488</span></span><span style="display: flex; justify-content: space-between"><span style="color: #A1A4AC">Max</span><span class="mono">+0.495</span></span></div></sc-if>
+          </div>
+          <span style="font-size: 11px; color: #868A94">{{v.hint}}</span>
+        </div>
+      </div>
+      <div style="padding: 10px 12px 4px; display: flex; align-items: center; gap: 8px; border-top: 1px solid #24262B">
+        <span style="width: 36px; color: #A1A4AC; font-size: 12px">Peak</span>
+        <div style="flex: 1; height: 8px; border-radius: 4px; background: #24262B; position: relative"><div style="width: 72%; height: 8px; border-radius: 4px; background: #FF9A3C"></div><span style="position: absolute; left: 80%; top: -2px; width: 2px; height: 12px; background: #ECEDEF"></span></div>
+        <span class="mono" style="font-size: 12px; width: 58px; text-align: right">−6.1 dB</span>
+      </div>
+      <div style="padding: 6px 12px 10px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px">
+        <div style="display: flex; flex-direction: column; gap: 2px"><span class="lbl">Mean</span><span class="mono" style="font-size: 12px">+0.012</span></div>
+        <div style="display: flex; flex-direction: column; gap: 2px"><span class="lbl">Min</span><span class="mono" style="font-size: 12px">−0.488</span></div>
+        <div style="display: flex; flex-direction: column; gap: 2px"><span class="lbl">Max</span><span class="mono" style="font-size: 12px">+0.495</span></div>
+        <div style="display: flex; flex-direction: column; gap: 2px"><span class="lbl">RMS</span><span class="mono" style="font-size: 12px">0.301</span></div>
+      </div>
+      <div style="padding: 8px 12px; border-top: 1px solid #24262B; font-size: 11px; color: #A1A4AC; display: flex; gap: 12px"><span><span class="kbd">Alt</span>+scroll on the wire turns the drum</span><span>hold <span class="kbd">Shift</span>: listen</span></div>
+    </div>
+
+    <!-- NODE SEARCH: dropped wire on empty space -->
+    <div role="dialog" aria-label="Add node" style="position: absolute; left: 720px; top: 300px; width: 370px; background: #1A1B1F; border: 1px solid #33353B; border-radius: 10px; box-shadow: 0 16px 40px rgba(0,0,0,.5); overflow: hidden">
+      <div style="padding: 10px; border-bottom: 1px solid #24262B; display: flex; flex-direction: column; gap: 8px">
+        <label style="display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border-radius: 7px; background: #0E0F11; border: 1px solid #8FA2FF">
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="none" stroke="#A1A4AC" stroke-width="1.5" stroke-linecap="round"><circle cx="6" cy="6" r="4"></circle><path d="M9 9l3.5 3.5"></path></svg>
+          <span style="position: absolute; left: -9999px">Search nodes</span>
+          <input value="de" style="flex: 1; background: transparent; border: 0; color: #ECEDEF; font-size: 13.5px; outline: none">
+        </label>
+        <div style="font-size: 11.5px; color: #A1A4AC; display: flex; align-items: center; gap: 6px">Connects to <span style="width: 12px; height: 3px; border-radius: 2px; background: #B48CFF"></span><span style="color: #ECEDEF">Three-Band Split.high</span></div>
+      </div>
+      <div style="padding: 6px; display: flex; flex-direction: column; gap: 2px">
+        <div class="lbl" style="padding: 6px 10px 2px">Effects</div>
+        <button class="res" style="background: #252A40"><span class="dot" style="background: #FF9A3C"></span><span style="display: flex; flex-direction: column; flex: 1; min-width: 0"><span style="font-weight: 600">Delay</span><span style="font-size: 11px; color: #A1A4AC; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Delays by rows or frames; modulating time bends rows</span></span><span class="kbd">Enter</span></button>
+        <button class="res"><span class="dot" style="background: #FF9A3C"></span><span style="display: flex; flex-direction: column; flex: 1; min-width: 0"><span>Dynamic EQ Band</span><span style="font-size: 11px; color: #A1A4AC">Gain follows the level of the signal</span></span></button>
+        <button class="res"><span class="dot" style="background: #FF9A3C"></span><span style="display: flex; flex-direction: column; flex: 1; min-width: 0"><span>Crossfade</span><span style="font-size: 11px; color: #A1A4AC">Fades or cuts between two signals</span></span></button>
+        <div class="lbl" style="padding: 8px 10px 2px">Conversion</div>
+        <button class="res"><span class="dot" style="background: #FF6BA8"></span><span style="display: flex; flex-direction: column; flex: 1; min-width: 0"><span>Audio to Video</span><span style="font-size: 11px; color: #A1A4AC">Audio's −1 to 1 back to video's 0 to 1</span></span></button>
+      </div>
+      <div style="padding: 8px 12px; border-top: 1px solid #24262B; font-size: 11px; color: #A1A4AC; display: flex; gap: 12px"><span><span class="kbd">↑</span><span class="kbd">↓</span> move</span><span><span class="kbd">Enter</span> add</span><span><span class="kbd">Esc</span> close</span></div>
+    </div>
+
+    <!-- WIRE LEGEND -->
+    <div style="position: absolute; right: 14px; top: 14px; width: 120px; background: rgba(22,23,26,.92); border: 1px solid #2A2C31; border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 5px; font-size: 11px; color: #C3C6CD">
+      <span class="lbl">Wires</span>
+      <span style="display: flex; align-items: center; gap: 6px"><span style="width: 16px; height: 3px; background: #C9CCD3; border-radius: 2px"></span>video</span>
+      <span style="display: flex; align-items: center; gap: 6px"><span style="width: 16px; height: 3px; background: #3FC7B4; border-radius: 2px"></span>audio</span>
+      <span style="display: flex; align-items: center; gap: 4px"><span style="width: 8px; height: 3px; background: #FF5D5D"></span><span style="width: 8px; height: 3px; background: #4ED37A"></span><span style="width: 8px; height: 3px; background: #5B8CFF"></span><span style="margin-left: 2px">R G B</span></span>
+      <span style="display: flex; align-items: center; gap: 4px"><span style="width: 8px; height: 3px; background: #FF9A3C"></span><span style="width: 8px; height: 3px; background: #F2D04B"></span><span style="width: 8px; height: 3px; background: #B48CFF"></span><span style="margin-left: 2px">low mid high</span></span>
+      <span style="color: #868A94">Thickness = RMS</span>
+    </div>
+
+    <!-- CAN'T RENDER BAR -->
+    <div role="alert" style="position: absolute; left: 14px; right: 14px; bottom: 14px; height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 8px 0 14px; border-radius: 8px; background: #2A1719; border: 1px solid #7A2E33">
+      <span class="dot" style="background: #FF5D5D"></span>
+      <span style="font-weight: 600; color: #FFB3B3">Can't render</span>
+      <span style="color: #F1D0D0">Bit Crush has nothing on its <span class="mono">in</span> input. The preview shows the last good frame.</span>
+      <button class="btn" style="margin-left: auto; background: #3A1E21; border-color: #7A2E33">Show node</button>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1120,"height":720}}'>
+class Component extends DCLogic {
+  views() {
+    return [
+      { id: 'picture', label: 'Picture', hint: 'The signal stretched over the project shape, like Video Output.' },
+      { id: 'scope', label: 'Scope', hint: 'The waveform at the playhead.' },
+      { id: 'spectrum', label: 'Spectrum', hint: 'FFT on a log frequency axis, smoothed between updates.' },
+      { id: 'readings', label: 'Readings', hint: 'Numbers only, no view.' }
+    ];
+  }
+  // The drum repeats the four views five times; pos indexes that list. After each turn it settles
+  // back into the middle repeat without animating, so it wraps around forever.
+  pos() { return this.state && this.state.pos != null ? this.state.pos : 9; }
+  componentWillUnmount() { clearTimeout(this.t); }
+  go(k) {
+    const N = 4, MID = 8, cur = this.pos();
+    if (k < N || k >= 16) {
+      const norm = MID + ((cur % N) + N) % N;
+      this.setState({ pos: norm, noAnim: true });
+      requestAnimationFrame(() => requestAnimationFrame(() => this.go(norm + (k - cur))));
+      return;
+    }
+    this.setState({ pos: k, noAnim: false });
+    clearTimeout(this.t);
+    this.t = setTimeout(() => {
+      const p = this.pos();
+      const norm = MID + ((p % N) + N) % N;
+      if (norm !== p) {
+        this.setState({ pos: norm, noAnim: true });
+        requestAnimationFrame(() => requestAnimationFrame(() => this.setState({ noAnim: false })));
+      }
+    }, 320);
+  }
+  step(dir) {
+    const now = Date.now();
+    if (now - (this.last || 0) < 120) return;
+    this.last = now;
+    this.go(this.pos() + dir);
+  }
+  renderVals() {
+    const VIEWS = this.views(), SLOT = 30, CYCLES = 5, N = 4;
+    const pos = this.pos();
+    const slots = [];
+    for (let k = 0; k < CYCLES * N; k++) {
+      const v = VIEWS[k % N];
+      const d = k - pos, a = Math.min(Math.abs(d), 3);
+      slots.push({
+        label: v.label,
+        isPicture: v.id === 'picture', isScope: v.id === 'scope', isSpectrum: v.id === 'spectrum', isReadings: v.id === 'readings',
+        sel: d === 0 ? 'true' : 'false',
+        color: d === 0 ? '#ECEDEF' : '#A1A4AC',
+        weight: d === 0 ? 600 : 400,
+        op: Math.max(0, 1 - a * 0.32).toFixed(2),
+        tf: 'perspective(220px) rotateX(' + (-d * 24) + 'deg) scale(' + (1 - a * 0.07).toFixed(2) + ')',
+        pick: () => this.go(k)
+      });
+    }
+    const cur = VIEWS[((pos % N) + N) % N];
+    let scope = 'M0 51';
+    for (let x = 0; x <= 300; x += 3) {
+      const y = 51 - Math.sin(x / 21) * 32 * (0.7 + 0.3 * Math.sin(x / 85)) - Math.sin(x / 5) * 3;
+      scope += ' L' + x + ' ' + y.toFixed(1);
+    }
+    let spec = 'M0 102';
+    for (let x = 0; x <= 300; x += 4) {
+      const y = 18 + (x / 300) * 70 + Math.sin(x / 9) * 4 + (x < 60 ? -10 * Math.sin(x / 19) : 0);
+      spec += ' L' + x + ' ' + Math.min(100, y).toFixed(1);
+    }
+    spec += ' L300 102 Z';
+    return {
+      slots,
+      ty: 60 - pos * SLOT,
+      tr: this.state && this.state.noAnim ? 'none' : 'transform .26s cubic-bezier(.2,.8,.2,1), opacity .26s',
+      v: { isPicture: cur.id === 'picture', isScope: cur.id === 'scope', isSpectrum: cur.id === 'spectrum', isReadings: cur.id === 'readings', hint: cur.hint },
+      scope, spec,
+      onWheel: (e) => { if (e.deltaY) this.step(e.deltaY > 0 ? 1 : -1); },
+      onKey: (e) => {
+        if (e.key === 'ArrowDown') { e.preventDefault(); this.step(1); }
+        if (e.key === 'ArrowUp') { e.preventDefault(); this.step(-1); }
+      }
+    };
+  }
+}
+</script>
+</body>
+</html>

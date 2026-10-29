@@ -153,13 +153,25 @@ fn shows_the_graph_and_renders() {
 }
 
 #[test]
+fn bypass_graphs_button_stays_on_one_line() {
+    // Inter is wider than egui's own face; the corner button used to wrap to two lines.
+    let mut harness = loaded();
+    harness.run_steps(2);
+    let button = harness.get_by_label("Bypass graphs").rect();
+    assert!(
+        button.height() <= rastersong_gui::theme::CONTROL_HEIGHT,
+        "{button:?}"
+    );
+}
+
+#[test]
 fn play_button_and_space_bar_control_playback() {
     let mut harness = harness(app());
     step_until(&mut harness, "the project to load", |app| {
         app.engine().info().is_some()
     });
 
-    harness.get_by_label("▶").click();
+    harness.get_by_label("Play").click();
     harness.step();
     assert!(harness.state().clock().is_playing());
 
@@ -187,6 +199,11 @@ fn clicking_a_node_makes_it_active() {
 #[test]
 fn dragging_empty_space_box_selects() {
     let mut harness = loaded();
+    // Wide enough for the whole graph to fit at the zoom it is framed at.
+    harness.set_size(egui::vec2(1900.0, 1000.0));
+    harness.run_steps(2);
+    harness.get_by_label("Frame graph").click();
+    harness.run_steps(2);
     let canvas = harness.state().editor().canvas_rect();
     drag(
         &mut harness,
@@ -436,7 +453,7 @@ fn new_project_asks_before_dropping_changes() {
     );
 }
 
-use rastersong_gui::timeline::{HEADER_WIDTH, LANE_HEIGHT};
+use rastersong_gui::timeline::{HEADER_WIDTH, VIDEO_LANE_HEIGHT};
 
 /// The lane of video or audio track row `row` (0 is the video), where it was last drawn.
 fn lane(harness: &Harness<'_, App>, row: usize) -> egui::Rect {
@@ -448,6 +465,21 @@ fn time_x(harness: &Harness<'_, App>, seconds: f64) -> f32 {
     let area = harness.state().timeline_area();
     let lanes_left = area.left() + HEADER_WIDTH + 6.0;
     harness.state().timeline_view().x(lanes_left, seconds)
+}
+
+/// Half a second into the timeline, below its last track and above its bottom edge: off every
+/// lane, where a dropped resource makes a track of its own.
+fn below_the_tracks(harness: &Harness<'_, App>) -> Pos2 {
+    let last = harness
+        .state()
+        .timeline_layout()
+        .lanes
+        .last()
+        .unwrap()
+        .bottom();
+    let bottom = harness.state().timeline_area().bottom();
+    assert!(bottom - last > 8.0, "no room below the tracks");
+    pos2(time_x(harness, 0.5), (last + bottom) / 2.0)
 }
 
 /// Screen x of `seconds` in the timeline's lanes, and the vertical middle of lane `row` (0 is
@@ -522,6 +554,7 @@ fn the_selection_box_is_drawn_over_the_items() {
     let mut harness = loaded();
     let from = timeline_point(&harness, 0.2, 1);
     let to = timeline_point(&harness, 1.5, 0);
+    let selection = egui::Rect::from_two_pos(from, to);
     harness.event(Event::PointerMoved(from));
     harness.run_steps(1);
     press(&mut harness, from, PointerButton::Primary, true);
@@ -529,13 +562,17 @@ fn the_selection_box_is_drawn_over_the_items() {
         harness.event(Event::PointerMoved(from + (to - from) * t));
         harness.run_steps(1);
     }
-    let selection = egui::Rect::from_two_pos(from, to);
+    // An outline around the whole box (the timeline card's) isn't drawn over it.
     let rects: Vec<egui::Rect> = harness
         .output()
         .shapes
         .iter()
         .filter_map(|clipped| match &clipped.shape {
-            egui::Shape::Rect(r) => Some(r.rect),
+            egui::Shape::Rect(r)
+                if !(r.fill == egui::Color32::TRANSPARENT && r.rect.contains_rect(selection)) =>
+            {
+                Some(r.rect)
+            }
             _ => None,
         })
         .collect();
@@ -900,7 +937,7 @@ fn dragging_a_headers_bottom_edge_changes_the_track_height() {
     drag(&mut harness, edge, edge + vec2(0.0, 40.0));
     let height = harness.state().project().videos()[0].height.unwrap();
     assert!(
-        (height - (LANE_HEIGHT + 40.0)).abs() < 2.0,
+        (height - (VIDEO_LANE_HEIGHT + 40.0)).abs() < 2.0,
         "height {height}"
     );
 }
@@ -928,7 +965,7 @@ fn double_clicking_a_headers_bottom_edge_resets_the_track_height() {
     double_click(&mut harness, edge + vec2(0.0, 40.0));
     let height = harness.state().project().videos()[0].height;
     assert!(
-        height.is_none_or(|h| (h - LANE_HEIGHT).abs() < 0.5),
+        height.is_none_or(|h| (h - VIDEO_LANE_HEIGHT).abs() < 0.5),
         "height {height:?}"
     );
 }
@@ -1074,17 +1111,7 @@ fn adding_tracks_names_them_after_their_files_and_leaves_the_graph_alone() {
 #[test]
 fn dragging_a_wire_onto_a_parameter_pin_modulates_it() {
     let mut harness = loaded();
-    // Add a delay below the graph.
-    let canvas = harness.state().editor().canvas_rect();
-    click(
-        &mut harness,
-        pos2(canvas.center().x, canvas.bottom() - 120.0),
-        PointerButton::Secondary,
-    );
-    harness.event(Event::Text("delay".into()));
-    harness.run_steps(2);
-    harness.key_press(egui::Key::Enter);
-    harness.run_steps(3);
+    add_node(&mut harness, "delay");
     let delay = key(&harness, "delay");
     let audio = key(&harness, "audio");
 
@@ -1114,10 +1141,11 @@ fn dragging_a_wire_onto_a_parameter_pin_modulates_it() {
 
 /// Adds a node of `kind` through the right-click search, near the bottom of the canvas.
 fn add_node(harness: &mut Harness<'_, App>, search: &str) {
+    // The bottom-left corner, which the starter graph leaves empty.
     let canvas = harness.state().editor().canvas_rect();
     click(
         harness,
-        pos2(canvas.center().x, canvas.bottom() - 120.0),
+        pos2(canvas.left() + 40.0, canvas.bottom() - 110.0),
         PointerButton::Secondary,
     );
     harness.event(Event::Text(search.into()));
@@ -1229,7 +1257,10 @@ fn typing_a_very_long_number_keeps_the_inspector_width() {
         chars <= rastersong_gui::value_box::MAX_CHARS,
         "{chars} characters"
     );
-    assert!(width <= 60.0, "the box is {width} wide while typing");
+    assert!(
+        width <= rastersong_gui::editor::param_field::VALUE_WIDTH,
+        "the box is {width} wide while typing"
+    );
     for _ in 0..4 {
         harness.run_steps(5);
         let width = harness.state().inspector_rect().width();
@@ -1734,10 +1765,9 @@ fn graph_app(edit: impl FnOnce(&mut Project, u32, u32)) -> App {
     })
 }
 
-/// Switches the Resources panel to its graphs and returns the centre of the card named `name`.
+/// The centre of the Resources panel's row for the graph named `name`.
 fn graph_card(harness: &mut Harness<'_, App>, name: &str) -> Pos2 {
-    harness.get_by_label("Graphs").click();
-    harness.run_steps(2);
+    harness.run_steps(1);
     harness
         .get_all_by_label(name)
         .map(|n| n.rect().center())
@@ -1812,7 +1842,7 @@ fn the_item_inspector_picks_each_ports_source() {
     let bar = pos2(time_x(&harness, 0.5), graph_lane(&harness, 0).top() + 7.0);
     click(&mut harness, bar, PointerButton::Primary);
     harness.run_steps(2);
-    assert!(harness.query_by_label("Graph item").is_some());
+    assert!(harness.query_by_label("GRAPH ITEM").is_some());
     // The combo box on the Side port's line.
     let side = harness.get_by_label("♪ In: Side").rect().center();
     let combo = harness
@@ -1843,7 +1873,9 @@ fn the_item_inspector_picks_each_ports_source() {
     shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
     assert_eq!(source(&harness), None);
     // Pre-roll is switched off here too.
-    harness.get_by_label("Pre-roll").click();
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::CheckBox, "Pre-roll")
+        .click();
     harness.run_steps(2);
     assert!(!harness.state().project().graph_tracks[0].items[0].pre_roll);
 }
@@ -1879,20 +1911,18 @@ fn a_graph_item_moves_when_released_and_its_track_mutes_and_goes() {
     let position = harness.state().project().graph_tracks[0].items[0].position;
     assert!((position - 0.5).abs() < 0.05, "{position}");
 
-    let header = harness.get_by_label("▤").rect().center();
+    let header = harness.get_by_label("Graph track").rect().center();
     let mute = harness
-        .get_all_by_label("🔊")
+        .get_all_by_label("M")
         .map(|b| b.rect().center())
         .find(|c| (c.y - header.y).abs() < 4.0)
         .unwrap();
     click(&mut harness, mute, PointerButton::Primary);
     assert!(harness.state().project().graph_tracks[0].muted);
-    let remove = harness
-        .get_all_by_label("×")
-        .map(|b| b.rect().center())
-        .find(|c| (c.y - header.y).abs() < 4.0)
-        .unwrap();
-    click(&mut harness, remove, PointerButton::Primary);
+    // Removing it is in the header's menu.
+    right_click(&mut harness, header);
+    harness.get_by_label("Remove track").click();
+    harness.run_steps(2);
     assert!(harness.state().project().graph_tracks.is_empty());
 }
 
@@ -1999,14 +2029,14 @@ fn dragging_a_header_moves_the_track_within_its_section() {
         track_names(harness.state().project().tracks().collect()),
         ["video", "video 2", "audio", "audio 2"]
     );
-    // Dragged by the kind icon, which is a label over the header's background.
+    // Dragged by the bar of its kind's colour, which only senses hovering.
     let second_video = harness
-        .get_all_by_label("▣")
+        .get_all_by_label("Video track")
         .nth(1)
         .unwrap()
         .rect()
         .center();
-    let to = second_video - vec2(0.0, LANE_HEIGHT);
+    let to = second_video - vec2(0.0, VIDEO_LANE_HEIGHT);
     drag_to(&mut harness, second_video, to);
     // The drag bubble follows the pointer meanwhile.
     assert!(matches!(
@@ -2022,7 +2052,7 @@ fn dragging_a_header_moves_the_track_within_its_section() {
     // A video track dragged far down stays at the bottom of the video tracks.
     harness.run_steps(2);
     let first_video = harness
-        .get_all_by_label("▣")
+        .get_all_by_label("Video track")
         .next()
         .unwrap()
         .rect()
@@ -2030,7 +2060,7 @@ fn dragging_a_header_moves_the_track_within_its_section() {
     drag(
         &mut harness,
         first_video,
-        first_video + vec2(0.0, LANE_HEIGHT * 4.0),
+        first_video + vec2(0.0, VIDEO_LANE_HEIGHT * 4.0),
     );
     assert_eq!(
         track_names(harness.state().project().tracks().collect()),
@@ -2038,25 +2068,70 @@ fn dragging_a_header_moves_the_track_within_its_section() {
     );
 }
 
-#[test]
-fn tracks_are_removed_from_their_header() {
-    let mut harness = loaded_with(four_track_app());
-    // The second row's × button: video 2.
-    harness.get_all_by_label("×").nth(1).unwrap().click();
-    harness.run_steps(2);
-    assert_eq!(track_names(harness.state().project().videos()), ["video"]);
+/// The volume bar in the audio track's header.
+fn volume_bar(harness: &Harness<'_, App>) -> egui::Rect {
+    let area = harness.state().timeline_area();
+    harness
+        .query_all_by_role_and_label(egui::accesskit::Role::Slider, "Volume")
+        .map(|n| n.rect())
+        .find(|r| area.contains(r.center()))
+        .expect("the volume bar")
+}
 
-    // And from the header's right-click menu.
-    let icon = harness
-        .get_all_by_label("▣")
-        .next()
+#[test]
+fn an_audio_headers_volume_bar_drags_and_a_double_click_restores_full() {
+    let mut harness = loaded_quick(app());
+    let bar = volume_bar(&harness);
+    drag(
+        &mut harness,
+        bar.right_center() - vec2(1.0, 0.0),
+        bar.center(),
+    );
+    let volume = harness.state().project().audios()[0].volume;
+    assert!((volume - 0.5).abs() < 0.06, "{volume}");
+    // Well past the double-click delay, so the drag's click isn't counted.
+    harness.run_steps(30);
+    double_click(&mut harness, bar.center());
+    assert_eq!(harness.state().project().audios()[0].volume, 1.0);
+}
+
+#[test]
+fn the_m_buttons_mute_tracks() {
+    let mut harness = loaded();
+    // The video's header first, then the audio's.
+    harness.get_all_by_label("M").nth(1).unwrap().click();
+    harness.run_steps(2);
+    assert!(harness.state().project().audios()[0].muted);
+    assert!(!harness.state().project().videos()[0].muted);
+}
+
+#[test]
+fn tracks_are_removed_from_their_headers_menu() {
+    let mut harness = loaded_with(four_track_app());
+    // The headers have no remove button of their own.
+    assert!(harness.query_by_label("×").is_none());
+    // The second row's menu: video 2.
+    let bar = harness
+        .get_all_by_label("Video track")
+        .nth(1)
         .unwrap()
         .rect()
         .center();
-    right_click(&mut harness, icon);
+    right_click(&mut harness, bar);
     harness.get_by_label("Remove track").click();
     harness.run_steps(2);
-    assert!(harness.state().project().videos().is_empty());
+    assert_eq!(track_names(harness.state().project().videos()), ["video"]);
+}
+
+#[test]
+fn each_section_is_named_above_its_tracks() {
+    let harness = loaded_with(four_track_app());
+    let top = |label: &str| harness.get_by_label(label).rect().top();
+    let first_track = |kind: &str| harness.get_all_by_label(kind).next().unwrap().rect().top();
+    assert!(top("GRAPHS") < top("VIDEO"));
+    assert!(top("VIDEO") < first_track("Video track"));
+    // The audio tracks are scrolled out of the harness's short timeline; their label shows.
+    assert!(first_track("Video track") < top("AUDIO"));
 }
 
 // --- Every interaction a hint promises (CONTRIBUTING rule 14) ---
@@ -2076,6 +2151,22 @@ fn with_loop(project: &mut Project) {
         end: 1.0,
         enabled: true,
     });
+}
+
+#[test]
+fn the_timeline_header_reads_the_loop_region_and_clicking_it_toggles_looping() {
+    // Without a region, it says how to make one.
+    let harness = loaded();
+    harness.get_by_label("Ctrl+drag the ruler for a loop region");
+
+    let mut harness = loaded_with(app_with_project(with_loop));
+    let readout = "Loop 0:00.50 – 0:01.00";
+    harness.get_by_label(readout).click();
+    harness.run_steps(2);
+    assert!(!harness.state().project().loop_region.unwrap().enabled);
+    harness.get_by_label(readout).click();
+    harness.run_steps(2);
+    assert!(harness.state().project().loop_region.unwrap().enabled);
 }
 
 #[test]
@@ -2104,15 +2195,68 @@ fn right_clicking_the_ruler_offers_looping_options() {
 }
 
 #[test]
-fn clicking_the_ruler_mode_switches_between_time_and_tempo() {
+fn the_toolbar_switches_modes_without_moving_the_timeline() {
     let mut harness = loaded();
     assert_eq!(harness.state().project().timeline_mode, TimelineMode::Time);
-    harness.get_by_label("⏱ Time").click();
+    let lanes = harness.state().timeline_area();
+    let metronome = harness.get_by_label("Metronome").rect();
+    harness.get_by_label("Tempo").click();
     harness.run_steps(2);
     assert_eq!(harness.state().project().timeline_mode, TimelineMode::Tempo);
-    harness.get_by_label("♪ Tempo").click();
+    assert_eq!(harness.state().timeline_area(), lanes);
+    assert_eq!(harness.get_by_label("Metronome").rect(), metronome);
+    harness.get_by_label("Time").click();
     harness.run_steps(2);
     assert_eq!(harness.state().project().timeline_mode, TimelineMode::Time);
+    assert_eq!(harness.state().timeline_area(), lanes);
+}
+
+#[test]
+fn the_toolbar_holds_snapping_and_the_metronome_plays_only_in_tempo_mode() {
+    let mut harness = loaded();
+    assert!(harness.state().settings().snap);
+    harness.get_by_label("Snap").click();
+    harness.run_steps(2);
+    assert!(!harness.state().settings().snap);
+    // The snap button sits right of the tempo, at the toolbar's end.
+    let snap = harness.get_by_label("Snap").rect();
+    assert!(snap.left() > harness.get_by_label("Metronome").rect().right());
+
+    harness.get_by_label("Metronome").click();
+    harness.run_steps(2);
+    assert!(!harness.state().settings().metronome, "off in time mode");
+    harness.get_by_label("Tempo").click();
+    harness.run_steps(2);
+    harness.get_by_label("Metronome").click();
+    harness.run_steps(2);
+    assert!(harness.state().settings().metronome);
+}
+
+#[test]
+fn tempo_mode_reads_bars_and_beats_in_the_timeline_and_the_transport() {
+    // 120 bpm in 4/4: the loop from 0.5 s to 1 s is beats 2 to 3 of bar 1.
+    let mut harness = loaded_with(app_with_project(with_loop));
+    let ruler = harness.state().timeline_layout().ruler;
+    harness.get_by_label_contains("frame 0");
+    assert!(harness.query_by_label("First beat").is_none());
+    harness.get_by_label("Tempo").click();
+    harness.run_steps(2);
+
+    harness.get_by_label("Loop 1.2 – 1.3");
+    harness.get_by_label("Snap · beats");
+    harness.get_by_label("First beat");
+    harness.get_by_label("1.1.1 bar.beat 0:00.00");
+    // The beat light by the timecode, on the first beat; the metronome's are off with it.
+    harness.get_by_label("Beat 1 of 4");
+    harness.get_by_label("4 beats to the bar");
+    // The ruler grows a tier for the beats.
+    let tempo_ruler = harness.state().timeline_layout().ruler;
+    assert_eq!(tempo_ruler.top(), ruler.top());
+    assert!(tempo_ruler.height() > ruler.height());
+
+    harness.get_by_label("Metronome").click();
+    harness.run_steps(2);
+    assert_eq!(harness.get_all_by_label("Beat 1 of 4").count(), 2);
 }
 
 /// A primary click with `modifiers` held.
@@ -2193,8 +2337,7 @@ fn dragging_a_media_card_onto_the_timeline_makes_a_track() {
         .rect()
         .center();
     // Below the tracks, off every lane.
-    let mut to = timeline_point(&harness, 0.5, 1);
-    to.y += LANE_HEIGHT * 1.5;
+    let to = below_the_tracks(&harness);
     drag(&mut harness, card, to);
     harness.run_steps(2);
     assert_eq!(harness.state().project().videos().len(), 2);
@@ -2243,7 +2386,7 @@ fn ctrl_click(harness: &mut Harness<'_, App>, pos: Pos2) {
 }
 
 #[test]
-fn the_resource_cards_wrap_within_the_panel() {
+fn the_resource_rows_stay_within_the_panel() {
     let harness = loaded_with(stems_app());
     let panel_right = harness.state().timeline_area().left();
     let cards: Vec<egui::Rect> = (1..=3)
@@ -2255,11 +2398,9 @@ fn the_resource_cards_wrap_within_the_panel() {
                 .rect()
         })
         .collect();
-    let mut rows: Vec<i32> = cards.iter().map(|r| r.top().round() as i32).collect();
-    rows.dedup();
     assert!(
-        rows.len() >= 2,
-        "the cards fill more than one row: {cards:?}"
+        cards.windows(2).all(|w| w[1].top() >= w[0].bottom()),
+        "one row under another: {cards:?}"
     );
     assert!(
         cards.iter().all(|r| r.right() <= panel_right),
@@ -2277,8 +2418,7 @@ fn selected_cards_are_dragged_into_the_timeline_together() {
     let fourth = card_center(&harness, "stem2");
     ctrl_click(&mut harness, fourth);
     // The ghost of the drag shows a row for each.
-    let mut to = timeline_point(&harness, 0.5, 1);
-    to.y += LANE_HEIGHT * 1.5;
+    let to = below_the_tracks(&harness);
     drag(&mut harness, fourth, to);
     harness.run_steps(2);
     let project = harness.state().project();
@@ -2297,8 +2437,7 @@ fn an_unselected_card_drags_alone() {
     let first = card_center(&harness, "stem1");
     click(&mut harness, first, PointerButton::Primary);
     let fifth = card_center(&harness, "stem2");
-    let mut to = timeline_point(&harness, 0.5, 1);
-    to.y += LANE_HEIGHT * 1.5;
+    let to = below_the_tracks(&harness);
     drag(&mut harness, fifth, to);
     harness.run_steps(2);
     let names: Vec<String> = harness
@@ -2394,6 +2533,132 @@ fn holding_alt_and_scrolling_over_a_connection_changes_its_view() {
     assert_ne!(harness.state().settings().views, before);
 }
 
+/// Opens the probe on the first wire and moves the pointer onto its drum: returns the drum's
+/// rect and the view the probe shows.
+fn onto_the_drum(
+    harness: &mut Harness<'_, App>,
+) -> (egui::Rect, rastersong_gui::editor::InspectMode) {
+    hover_wire(harness);
+    step_until(harness, "the probe open", |app| {
+        app.editor()
+            .probe_drum_rect()
+            .is_some_and(|r| r.is_positive())
+    });
+    let drum = harness.state().editor().probe_drum_rect().unwrap();
+    harness.event(Event::PointerMoved(drum.center()));
+    harness.run_steps(2);
+    (drum, probed_view(harness))
+}
+
+/// The view the probe on the first wire shows.
+fn probed_view(harness: &Harness<'_, App>) -> rastersong_gui::editor::InspectMode {
+    let audio = harness.state().editor().hovered_is_audio();
+    harness.state().settings().views.of(audio)
+}
+
+#[test]
+fn the_probe_stays_open_while_the_pointer_is_on_it() {
+    let mut harness = loaded();
+    let (drum, _) = onto_the_drum(&mut harness);
+    let probe = harness.state().editor().probe_rect().unwrap();
+    assert!(probe.contains(drum.center()));
+    assert!(
+        harness.state().editor().hovered_output().is_some(),
+        "still about the wire it opened for"
+    );
+    // Off the probe and the wire, it closes.
+    harness.event(Event::PointerMoved(probe.right_bottom() + vec2(60.0, 60.0)));
+    harness.run_steps(2);
+    assert!(harness.state().editor().probe_rect().is_none());
+}
+
+#[test]
+fn clicking_a_view_on_the_drum_turns_it_there_and_it_wraps_around() {
+    let mut harness = loaded();
+    let (drum, view) = onto_the_drum(&mut harness);
+    // The slot below the middle is the next view.
+    click(
+        &mut harness,
+        drum.center() + vec2(0.0, 30.0),
+        PointerButton::Primary,
+    );
+    harness.run_steps(2);
+    assert_eq!(probed_view(&harness), view.stepped(1));
+    // Two above the middle now: back past where it started.
+    click(
+        &mut harness,
+        drum.center() - vec2(0.0, 60.0),
+        PointerButton::Primary,
+    );
+    harness.run_steps(2);
+    assert_eq!(probed_view(&harness), view.stepped(-1));
+    // And on round: from the first view, up is the last.
+    let first = rastersong_gui::editor::InspectMode::ALL[0];
+    let mut guard = 0;
+    while probed_view(&harness) != first {
+        click(
+            &mut harness,
+            drum.center() + vec2(0.0, 30.0),
+            PointerButton::Primary,
+        );
+        harness.run_steps(2);
+        guard += 1;
+        assert!(guard < 8, "never reached the first view");
+    }
+    click(
+        &mut harness,
+        drum.center() - vec2(0.0, 30.0),
+        PointerButton::Primary,
+    );
+    harness.run_steps(2);
+    assert_eq!(
+        probed_view(&harness),
+        *rastersong_gui::editor::InspectMode::ALL.last().unwrap()
+    );
+}
+
+#[test]
+fn arrow_keys_turn_the_drum_once_it_has_focus() {
+    let mut harness = loaded();
+    let (drum, view) = onto_the_drum(&mut harness);
+    let arrow = |harness: &mut Harness<'_, App>, key| {
+        harness.event(Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        });
+        harness.run_steps(2);
+    };
+    // Before it's focused the arrows are someone else's.
+    arrow(&mut harness, egui::Key::ArrowDown);
+    assert_eq!(probed_view(&harness), view);
+    // Clicking the middle focuses it without turning it.
+    click(&mut harness, drum.center(), PointerButton::Primary);
+    harness.run_steps(2);
+    assert_eq!(probed_view(&harness), view);
+    arrow(&mut harness, egui::Key::ArrowDown);
+    assert_eq!(probed_view(&harness), view.stepped(1));
+    arrow(&mut harness, egui::Key::ArrowUp);
+    arrow(&mut harness, egui::Key::ArrowUp);
+    assert_eq!(probed_view(&harness), view.stepped(-1));
+}
+
+#[test]
+fn the_wheel_over_the_drum_turns_it_one_view_a_notch() {
+    let mut harness = loaded();
+    let (_, view) = onto_the_drum(&mut harness);
+    harness.event(Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: vec2(0.0, -1.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: Modifiers::NONE,
+    });
+    harness.run_steps(2);
+    assert_eq!(probed_view(&harness), view.stepped(1));
+}
+
 #[test]
 fn holding_shift_over_a_connection_listens_to_it() {
     let mut harness = loaded();
@@ -2462,7 +2727,7 @@ fn copies_keep_input_connections_and_shift_does_the_opposite_once() {
 }
 
 #[test]
-fn the_split_divider_drags_and_unprocessed_swaps_the_sides() {
+fn the_split_divider_drags_and_split_again_swaps_the_sides() {
     use rastersong_gui::preview::Feed;
     let mut harness = loaded();
     harness.get_by_label("Split").click();
@@ -2483,10 +2748,143 @@ fn the_split_divider_drags_and_unprocessed_swaps_the_sides() {
         "{position} -> {moved}"
     );
 
-    harness.get_by_label("Unprocessed").click();
+    harness.get_by_label("Split").click();
     harness.run_steps(2);
     let (_, sides) = harness.state().preview_split().unwrap();
     assert_eq!(sides, (Feed::Processed, Feed::Unprocessed));
+
+    harness.get_by_label("Result").click();
+    harness.run_steps(2);
+    assert!(harness.state().preview_split().is_none());
+}
+
+#[test]
+fn original_shows_the_video_before_the_graph() {
+    use rastersong_gui::preview::Feed;
+    let mut harness = loaded();
+    assert_eq!(harness.state().preview_feed(), Feed::Processed);
+    harness.get_by_label("Original").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().preview_feed(), Feed::Unprocessed);
+    assert!(harness.state().preview_split().is_none());
+    // From Original, Split still puts the original on the left.
+    harness.get_by_label("Split").click();
+    harness.run_steps(2);
+    let (_, sides) = harness.state().preview_split().unwrap();
+    assert_eq!(sides, (Feed::Unprocessed, Feed::Processed));
+}
+
+#[test]
+fn go_to_start_moves_the_playhead_to_the_first_frame() {
+    let mut harness = loaded();
+    harness.key_press(egui::Key::ArrowRight);
+    harness.key_press(egui::Key::ArrowRight);
+    harness.run_steps(2);
+    assert_eq!(harness.state().clock().frame(), 2);
+    harness.get_by_label("Go to start").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().clock().frame(), 0);
+}
+
+#[test]
+fn the_play_button_names_what_it_will_do() {
+    let mut harness = loaded();
+    harness.get_by_label("Play").click();
+    harness.run_steps(2);
+    assert!(harness.query_by_label("Play").is_none());
+    harness.get_by_label("Pause").click();
+    harness.run_steps(2);
+    assert!(!harness.state().clock().is_playing());
+}
+
+#[test]
+fn the_top_bar_names_the_project_and_marks_it_edited() {
+    let mut harness = loaded();
+    assert!(harness.query_by_label("Untitled").is_some());
+    assert!(harness.query_by_label("· edited").is_none());
+    harness.state_mut().add_graph_track();
+    harness.run_steps(2);
+    assert!(harness.state().is_dirty());
+    assert!(harness.query_by_label("· edited").is_some());
+}
+
+#[test]
+fn the_top_bar_settings_button_opens_settings() {
+    let mut harness = loaded();
+    harness.get_by_label("Settings (Ctrl+,)").click();
+    harness.run_steps(2);
+    assert!(harness.query_by_label("Rendering").is_some());
+}
+
+#[test]
+fn the_status_bar_says_the_graph_compiled_and_shows_the_cache() {
+    let harness = loaded();
+    assert!(harness.query_by_label("Graph compiled").is_some());
+    // The budget is the default 1 GiB.
+    assert!(harness.query_by_label_contains(" / 1024 MiB").is_some());
+}
+
+#[test]
+fn the_status_bar_names_the_gestures_under_the_pointer() {
+    let mut harness = loaded();
+    let hover = |harness: &mut Harness<'_, App>, p: egui::Pos2| {
+        harness.event(Event::PointerMoved(p));
+        harness.run_steps(3);
+    };
+    let preview = harness.state().preview_rect().center();
+    hover(&mut harness, preview);
+    assert!(
+        harness
+            .query_by_label("Scroll to zoom · middle-drag to pan · F fits the picture")
+            .is_some()
+    );
+    let ruler = harness.state().timeline_layout().ruler.center();
+    hover(&mut harness, ruler);
+    assert!(
+        harness
+            .query_by_label("Click or drag to move the playhead · Ctrl+drag for a loop region")
+            .is_some()
+    );
+    let inspector = harness.state().inspector_rect().center();
+    hover(&mut harness, inspector);
+    assert!(
+        harness
+            .query_by_label_contains("Ctrl+drag for a loop region")
+            .is_none()
+    );
+    assert!(harness.query_by_label_contains("Scroll to zoom").is_none());
+}
+
+#[test]
+fn the_status_bar_names_the_failing_node_as_the_error_bar_does() {
+    let app = app_with_project(|project| {
+        project.graph = GraphDesc::from_json(
+            r#"{ "version": 0, "nodes": [ { "id": "v", "type": "video_input" },
+                { "id": "c", "type": "pack", "params": { "channels": 7 } },
+                { "id": "o", "type": "output" } ],
+              "connections": [ { "from": "v", "to": "c" }, { "from": "c", "to": "o" } ] }"#,
+        )
+        .unwrap();
+        let graph = project.graph_id;
+        let track = project.add_graph_track("Graphs");
+        project.place_graph(&track, graph, 0.0, 2.0);
+    });
+    let mut harness = harness(app);
+    step_until(&mut harness, "the failure", |app| {
+        matches!(
+            app.engine().status(),
+            rastersong_engine::EngineStatus::Failed(_)
+        )
+    });
+    harness.run_steps(2);
+    let rastersong_engine::EngineStatus::Failed(failure) = harness.state().engine().status() else {
+        unreachable!()
+    };
+    let message = harness.state().editor().failure_message(&failure);
+    assert!(message.starts_with("Pack: "), "{message}");
+    // The error bar puts a warning sign before it; the status bar shows it as it is.
+    assert!(harness.query_by_label(&message).is_some());
+    assert!(harness.query_by_label_contains("node `c`").is_none());
 }
 
 #[test]
@@ -2547,7 +2945,7 @@ fn the_track_menu_puts_a_resource_on_a_new_track_above_or_below() {
     let before = harness.state().project().tracks.len();
     let icon = |harness: &Harness<'_, App>| {
         harness
-            .get_all_by_label("▣")
+            .get_all_by_label("Video track")
             .next()
             .unwrap()
             .rect()
@@ -2655,8 +3053,7 @@ fn a_dragged_card_shows_the_bubble_which_blooms_where_it_is_dropped() {
         .unwrap()
         .rect()
         .center();
-    let mut to = timeline_point(&harness, 0.5, 1);
-    to.y += LANE_HEIGHT * 1.5;
+    let to = below_the_tracks(&harness);
     drag_to(&mut harness, card, to);
     assert!(matches!(
         bubble_phase(&harness.ctx),
@@ -2804,4 +3201,507 @@ fn a_dragged_video_shows_where_it_lands_among_the_video_tracks() {
     press(&mut harness, to, PointerButton::Primary, false);
     assert_eq!(harness.state().project().videos().len(), 1);
     assert_eq!(harness.state().project().videos()[0].items.len(), 2);
+}
+
+#[test]
+fn laid_out_nodes_do_not_overlap() {
+    // The starter graph has no positions; nodes grew taller and used to run into the next row.
+    let harness = loaded();
+    let editor = harness.state().editor();
+    let rects: Vec<_> = editor
+        .to_desc()
+        .nodes
+        .iter()
+        .map(|n| {
+            editor
+                .node_screen_rect(editor.key_of(&n.id).unwrap())
+                .unwrap()
+        })
+        .collect();
+    for (i, a) in rects.iter().enumerate() {
+        for b in &rects[i + 1..] {
+            assert!(!a.intersects(*b), "{a:?} overlaps {b:?}");
+        }
+    }
+}
+
+/// The app with `graph` open and placed on a graph track from 0 to 4 seconds.
+fn app_with_placed(graph: &str) -> App {
+    let graph = GraphDesc::from_json(graph).unwrap();
+    app_with_project(move |project| {
+        project.graph = graph;
+        let id = project.graph_id;
+        let track = project.add_graph_track("Graphs");
+        project.place_graph(&track, id, 0.0, 4.0);
+    })
+}
+
+#[test]
+fn the_canvas_header_names_the_graph_and_where_it_plays() {
+    let harness = loaded();
+    let name = &harness.state().project().graph_name;
+    // Resources lists the graph too; the header's name sits just above the canvas.
+    let canvas = harness.state().editor().canvas_rect();
+    assert!(
+        harness.query_all_by_label(name).any(|n| {
+            let r = n.rect();
+            r.bottom() <= canvas.top() && r.top() >= canvas.top() - 44.0
+        }),
+        "{name}"
+    );
+    assert!(harness.query_by_label("not on the timeline").is_some());
+
+    let harness = loaded_with(app_with_placed(STARTER_GRAPH));
+    assert!(harness.query_by_label("on Graphs · 0:00–0:04").is_some());
+}
+
+#[test]
+fn the_canvas_header_counts_errors_and_warnings() {
+    let mut harness = harness(app_with_placed(
+        r#"{ "version": 0, "nodes": [ { "id": "v", "type": "video_input" },
+            { "id": "c", "type": "pack", "params": { "channels": 7 } },
+            { "id": "o", "type": "output" } ],
+          "connections": [ { "from": "v", "to": "c" }, { "from": "c", "to": "o" } ] }"#,
+    ));
+    step_until(&mut harness, "the failure", |app| {
+        matches!(
+            app.engine().status(),
+            rastersong_engine::EngineStatus::Failed(_)
+        )
+    });
+    harness.run_steps(2);
+    assert!(harness.query_by_label("1 error").is_some());
+
+    // Interleave can't run once per channel: it runs on them together, with a warning.
+    let mut harness = harness_for_warning();
+    step_until(&mut harness, "the warning", |app| {
+        app.editor().warning_count() > 0
+    });
+    harness.run_steps(2);
+    assert!(harness.query_by_label("1 warning").is_some());
+    assert!(harness.query_by_label_contains("error").is_none());
+}
+
+fn harness_for_warning() -> Harness<'static, App> {
+    harness(app_with_placed(
+        r#"{ "version": 0, "nodes": [ { "id": "v", "type": "video_input" },
+            { "id": "s", "type": "interleave", "channels": "separate" },
+            { "id": "p", "type": "pack" }, { "id": "o", "type": "output" } ],
+          "connections": [ { "from": "v", "to": "s" }, { "from": "s", "to": "p" },
+            { "from": "p", "to": "o" } ] }"#,
+    ))
+}
+
+#[test]
+fn add_node_in_the_canvas_header_adds_one_in_the_middle() {
+    let mut harness = loaded();
+    harness.get_by_label_contains("Add node").click();
+    harness.run_steps(2);
+    assert!(harness.state().editor().search_open());
+    harness.event(Event::Text("bit".into()));
+    harness.run_steps(2);
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(2);
+    let editor = harness.state().editor();
+    let added = editor
+        .key_of("bitcrush")
+        .expect("a bit crush node was added");
+    let placed = editor.node_screen_rect(added).unwrap().min;
+    let center = editor.canvas_rect().center();
+    assert!(placed.distance(center) < 1.5, "{placed:?} vs {center:?}");
+}
+
+#[test]
+fn tab_opens_the_node_search_at_the_pointer() {
+    let mut harness = loaded();
+    let canvas = harness.state().editor().canvas_rect();
+    let spot = pos2(canvas.left() + 40.0, canvas.bottom() - 110.0);
+    harness.event(Event::PointerMoved(spot));
+    harness.run_steps(1);
+    harness.key_press(egui::Key::Tab);
+    harness.run_steps(2);
+    assert!(harness.state().editor().search_open());
+    harness.event(Event::Text("bit".into()));
+    harness.run_steps(2);
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(2);
+    let editor = harness.state().editor();
+    let placed = editor
+        .node_screen_rect(editor.key_of("bitcrush").unwrap())
+        .unwrap()
+        .min;
+    assert!(placed.distance(spot) < 1.5, "{placed:?} vs {spot:?}");
+}
+
+#[test]
+fn the_node_search_groups_results_by_category_and_names_its_keys() {
+    let mut harness = loaded();
+    let canvas = harness.state().editor().canvas_rect();
+    right_click(
+        &mut harness,
+        pos2(canvas.left() + 40.0, canvas.bottom() - 110.0),
+    );
+    harness.event(Event::Text("delay".into()));
+    harness.run_steps(2);
+    let category = rastersong_engine::Registry::shared()
+        .get("delay")
+        .unwrap()
+        .spec
+        .category
+        .label()
+        .to_uppercase();
+    assert!(harness.query_by_label(&category).is_some(), "{category}");
+    assert!(harness.query_by_label("Delay").is_some());
+    for words in ["move", "add", "close"] {
+        assert!(harness.query_by_label(words).is_some(), "{words}");
+    }
+    assert!(harness.query_by_label("Connects to").is_none());
+}
+
+#[test]
+fn a_dropped_wire_names_what_the_new_node_connects_to() {
+    let mut harness = loaded();
+    let split = key(&harness, "split");
+    let pin = harness
+        .state()
+        .editor()
+        .pin_screen_pos(split, false, 0)
+        .unwrap();
+    let canvas = harness.state().editor().canvas_rect();
+    drag(
+        &mut harness,
+        pin,
+        pos2(canvas.left() + 40.0, canvas.bottom() - 110.0),
+    );
+    harness.run_steps(2);
+    assert!(harness.state().editor().search_open());
+    assert!(harness.query_by_label("Connects to").is_some());
+    assert!(
+        harness.query_by_label_contains(".R").is_some(),
+        "names the split's red channel"
+    );
+}
+
+#[test]
+fn a_nodes_colour_strip_keeps_to_its_rounded_corners() {
+    // Drawn as the node's own rounded rect cut to the strip, not as a short rect whose corners
+    // epaint would clamp to half its height.
+    let harness = loaded();
+    let node = harness
+        .state()
+        .editor()
+        .node_screen_rect(key(&harness, "video"))
+        .unwrap();
+    let strip = harness
+        .output()
+        .shapes
+        .iter()
+        .find_map(|clipped| match &clipped.shape {
+            egui::Shape::Rect(r)
+                if (clipped.clip_rect.top() - node.top()).abs() < 0.5
+                    && clipped.clip_rect.height() < 10.0 =>
+            {
+                Some(r.clone())
+            }
+            _ => None,
+        });
+    let strip = strip.expect("the video node's strip is drawn clipped to the node's top");
+    assert!((strip.rect.min - node.min).length() < 0.5);
+    assert!((strip.rect.max - node.max).length() < 0.5);
+}
+
+#[test]
+fn the_wire_legend_icon_opens_the_key_when_hovered() {
+    let mut harness = loaded();
+    let icon = harness.get_by_label("Wires").rect().center();
+    assert!(harness.query_by_label("Thickness = RMS").is_none());
+    harness.event(Event::PointerMoved(icon));
+    harness.run_steps(30);
+    assert!(harness.query_by_label("Thickness = RMS").is_some());
+    assert!(harness.query_by_label("low mid high").is_some());
+}
+
+#[test]
+fn bypassing_a_node_keeps_its_size() {
+    // BYPASSED shortens the title rather than widening the node into its neighbours.
+    let mut harness = loaded();
+    let bands = key(&harness, "bands");
+    let before = harness.state().editor().node_screen_rect(bands).unwrap();
+    right_click(&mut harness, before.center_top() + vec2(0.0, 12.0));
+    // The node's menu, not the inspector's Bypass button.
+    let panel = harness.state().inspector_rect();
+    harness
+        .query_all_by_label("Bypass")
+        .find(|n| !panel.contains(n.rect().center()))
+        .expect("the node menu's Bypass")
+        .click();
+    harness.run_steps(2);
+    let editor = harness.state().editor();
+    assert!(editor.node(bands).unwrap().bypass);
+    assert_eq!(editor.node_screen_rect(bands).unwrap(), before);
+}
+
+#[test]
+fn the_canvas_header_never_runs_into_its_buttons() {
+    // With a warning to count, the row is too narrow for the whole chip: it is cut short.
+    let mut harness = harness_for_warning();
+    step_until(&mut harness, "the warning", |app| {
+        app.editor().warning_count() > 0
+    });
+    harness.run_steps(2);
+    let add = harness.get_by_label_contains("Add node").rect();
+    let count = harness.get_by_label("1 warning").rect();
+    assert!(count.right() < add.left(), "{count:?} runs into {add:?}");
+}
+
+#[test]
+fn the_panels_are_cards_set_apart_on_the_window() {
+    let harness = loaded();
+    let gap = f32::from(rastersong_gui::widgets::CARD_GAP);
+    let app = harness.state();
+    let canvas = app.editor().canvas_rect();
+    assert!(canvas.left() - app.preview_rect().right() >= gap);
+    // The inspector's panel starts mid-gap; its card, half a gap further in.
+    let half = f32::from(rastersong_gui::widgets::HALF_GAP);
+    assert!(app.inspector_rect().left() + half - canvas.right() >= gap);
+    assert!(app.timeline_area().top() - canvas.bottom() >= gap);
+}
+
+#[test]
+fn the_gap_between_cards_resizes_them_without_drawing_a_line() {
+    let mut harness = loaded();
+    let gap = f32::from(rastersong_gui::widgets::CARD_GAP);
+    // The middle of the gap left of the graph's card (the canvas is 1 px in from its outline).
+    let canvas = harness.state().editor().canvas_rect();
+    let middle = pos2(canvas.left() - 1.0 - gap / 2.0, canvas.center().y);
+    harness.event(Event::PointerMoved(middle));
+    harness.run_steps(2);
+    assert_eq!(
+        harness.output().platform_output.cursor_icon,
+        egui::CursorIcon::ResizeHorizontal
+    );
+    let column = egui::Rangef::new(middle.x - gap / 2.0, middle.x + gap / 2.0);
+    let line_in_gap = harness.output().shapes.iter().any(|clipped| {
+        matches!(&clipped.shape, egui::Shape::LineSegment { points, stroke }
+            if stroke.width > 0.0
+                && points.iter().all(|p| column.contains(p.x))
+                && (points[1].y - points[0].y).abs() > 100.0)
+    });
+    assert!(!line_in_gap, "a resize line is drawn in the gap");
+    drag(&mut harness, middle, middle + vec2(60.0, 0.0));
+    harness.run_steps(2);
+    let moved = harness.state().editor().canvas_rect().left() - canvas.left();
+    assert!((moved - 60.0).abs() < 2.0, "the graph moved {moved} px");
+}
+
+#[test]
+fn frame_graph_fits_the_graph_again() {
+    let mut harness = loaded();
+    let video = key(&harness, "video");
+    let framed = harness.state().editor().node_screen_rect(video).unwrap();
+    harness.event(Event::PointerMoved(framed.center()));
+    harness.event(Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: vec2(0.0, 120.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: Modifiers::NONE,
+    });
+    harness.run_steps(20);
+    assert_ne!(
+        harness.state().editor().node_screen_rect(video).unwrap(),
+        framed
+    );
+    harness.get_by_label("Frame graph").click();
+    harness.run_steps(3);
+    assert_eq!(
+        harness.state().editor().node_screen_rect(video).unwrap(),
+        framed
+    );
+}
+
+#[test]
+fn a_graph_too_wide_for_the_canvas_starts_from_its_inputs() {
+    // At 1400 px the starter graph is wider than the canvas: rather than shrink its text, the
+    // view starts from the inputs on the left and the rest is a pan away.
+    let harness = loaded();
+    let editor = harness.state().editor();
+    let canvas = editor.canvas_rect();
+    let video = editor.node_screen_rect(key(&harness, "video")).unwrap();
+    let out = editor.node_screen_rect(key(&harness, "out")).unwrap();
+    assert!(out.right() > canvas.right(), "{out:?} in {canvas:?}");
+    assert!(video.left() > canvas.left() && video.left() < canvas.left() + 50.0);
+    assert!(editor.view().zoom >= 0.85);
+}
+
+#[test]
+fn the_inspectors_bypass_button_bypasses_the_node() {
+    let mut harness = loaded();
+    select(&mut harness, "bands");
+    let bands = key(&harness, "bands");
+    assert!(harness.query_by_label("NODE").is_some());
+    harness.get_by_label("Bypass").click();
+    harness.run_steps(2);
+    assert!(harness.state().editor().node(bands).unwrap().bypass);
+    harness.get_by_label("Restore").click();
+    harness.run_steps(2);
+    assert!(!harness.state().editor().node(bands).unwrap().bypass);
+}
+
+#[test]
+fn clicking_a_track_shows_its_inspector_until_a_node_is_clicked() {
+    let mut harness = loaded();
+    let bar = pos2(time_x(&harness, 0.5), lane(&harness, 1).top() + 7.0);
+    click(&mut harness, bar, PointerButton::Primary);
+    harness.run_steps(2);
+    assert!(harness.query_by_label("TRACK").is_some());
+    assert!(harness.query_by_label("MIX").is_some());
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::CheckBox, "Mute")
+        .click();
+    harness.run_steps(2);
+    assert!(harness.state().project().audios()[0].muted);
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::CheckBox, "Solo")
+        .click();
+    harness.run_steps(2);
+    assert!(harness.state().project().audios()[0].solo);
+    let volume = harness.state().project().audios()[0].volume;
+    let rect = harness
+        .query_all_by_role(egui::accesskit::Role::SpinButton)
+        .map(|n| n.rect())
+        .find(|r| harness.state().inspector_rect().contains(r.center()))
+        .expect("the volume box");
+    drag(&mut harness, rect.center(), rect.center() - vec2(40.0, 0.0));
+    assert!(harness.state().project().audios()[0].volume < volume);
+
+    select(&mut harness, "bands");
+    assert!(harness.query_by_label("TRACK").is_none());
+    assert!(harness.query_by_label("NODE").is_some());
+}
+
+#[test]
+fn the_inspector_renames_a_node_when_the_name_is_committed() {
+    let mut harness = loaded();
+    select(&mut harness, "bands");
+    let bands = key(&harness, "bands");
+    let panel = harness.state().inspector_rect();
+    let field = harness
+        .query_all_by_role(egui::accesskit::Role::TextInput)
+        .map(|n| n.rect())
+        .find(|r| panel.contains(r.center()))
+        .expect("the name field");
+    click(&mut harness, field.center(), PointerButton::Primary);
+    harness.key_press_modifiers(Modifiers::COMMAND, egui::Key::A);
+    harness.event(Event::Text("Lows".into()));
+    harness.run_steps(2);
+    assert_eq!(harness.state().editor().node(bands).unwrap().label, None);
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(2);
+    let label = harness.state().editor().node(bands).unwrap().label.clone();
+    assert_eq!(label.as_deref(), Some("Lows"));
+}
+
+// --- Graph statistics and the text under nodes ---
+
+/// Video through a two-frame delay to the output: the delay has warmup to show.
+const DELAYED: &str = r#"{ "version": 0,
+  "nodes": [
+    { "id": "video", "type": "video_input" },
+    { "id": "delay", "type": "delay", "params": { "time": 2, "unit": "frame" } },
+    { "id": "out", "type": "output" }
+  ],
+  "connections": [ { "from": "video", "to": "delay" }, { "from": "delay", "to": "out" } ] }"#;
+
+/// [`DELAYED`] placed on the timeline, so it renders.
+fn delayed_app() -> App {
+    app_with_project(|project| {
+        project.graph = GraphDesc::from_json(DELAYED).unwrap();
+        let graph = project.graph_id;
+        let track = project.add_graph_track("Graphs");
+        project.place_graph(&track, graph, 0.0, 2.0);
+    })
+}
+
+/// The rects of the text painted this frame that `matches` picks.
+fn text_rects(harness: &Harness<'_, App>, matches: impl Fn(&str) -> bool) -> Vec<egui::Rect> {
+    harness
+        .output()
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(t) if matches(t.galley.text()) => {
+                Some(egui::Rect::from_min_size(t.pos, t.galley.size()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_nodes_processing_time_goes_under_its_latency_and_warmup() {
+    let mut harness = loaded_with(delayed_app());
+    let mut settings = harness.state().settings().clone();
+    settings.node_stats = true;
+    settings.show_performance = true;
+    harness.state_mut().set_settings(settings);
+    harness.run_steps(3);
+    // Only the delay has warmup; every node has a time.
+    let stats = text_rects(&harness, |t| t.starts_with("warmup"));
+    assert_eq!(stats.len(), 1, "{stats:?}");
+    let delay = harness
+        .state()
+        .editor()
+        .node_screen_rect(key(&harness, "delay"))
+        .unwrap();
+    let cost: Vec<_> = text_rects(&harness, |t| t.contains(" ms · "))
+        .into_iter()
+        .filter(|r| r.x_range().intersects(delay.x_range()))
+        .collect();
+    assert_eq!(cost.len(), 1, "{cost:?}");
+    assert!(!stats[0].intersects(cost[0]), "{stats:?} overlaps {cost:?}");
+    assert!(cost[0].top() >= stats[0].bottom());
+    // A node with no latency or warmup keeps its time on the first line, at the right.
+    let video = harness
+        .state()
+        .editor()
+        .node_screen_rect(key(&harness, "video"))
+        .unwrap();
+    let video_cost = text_rects(&harness, |t| t.contains(" ms · "))
+        .into_iter()
+        .find(|r| r.x_range().intersects(video.x_range()))
+        .unwrap();
+    assert!((video_cost.right() - (video.right() - 5.0)).abs() < 1.0);
+    assert!(video_cost.top() - video.bottom() < 8.0);
+}
+
+#[test]
+fn graph_statistics_show_in_the_editors_corner_when_turned_on() {
+    let mut harness = loaded_with(delayed_app());
+    assert!(harness.query_by_label("Graph statistics").is_none());
+    let mut settings = harness.state().settings().clone();
+    settings.graph_stats = true;
+    harness.state_mut().set_settings(settings);
+    harness.run_steps(3);
+    let card = harness.get_by_label("Graph statistics").rect();
+    let canvas = harness.state().editor().canvas_rect();
+    assert!(canvas.contains_rect(card));
+    assert!(
+        card.left() - canvas.left() < 20.0,
+        "in the bottom-left corner"
+    );
+    let painted = |text: &str| !text_rects(&harness, |t| t == text).is_empty();
+    for label in [
+        "Nodes",
+        "Connections",
+        "Samples / block",
+        "Render",
+        "Samples / ms",
+    ] {
+        assert!(painted(label), "no {label}");
+    }
+    // Three nodes, two connections, and a delay that needs history after a seek.
+    let values = text_rects(&harness, |t| t == "3" || t == "2");
+    assert!(values.iter().any(|r| card.contains_rect(*r)));
+    assert!(painted("Of a frame"));
+    assert!(!text_rects(&harness, |t| t.ends_with(" ms")).is_empty());
 }

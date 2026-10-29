@@ -258,6 +258,11 @@ Renames, merges, splits and removals need **no migration** while the format is v
   advisory and never part of the cache key. Feeds the benchmarks workflow in [benchmarks.md](benchmarks.md).
 - [x] **chore** Profiling: samply as the documented sampling profiler, and `rastersong-cli render --trace` for a
   per-frame, per-node timeline of an export ([Development](development.md#profiling)).
+- [x] **feature** Graph statistics (View → Show graph statistics): a card in the graph editor's corner with the
+  nodes and connections, the samples the outputs hold per block, the render time and its share of a frame,
+  samples per millisecond, and the render's latency and warmup.
+- [x] **bug** With node latency and warmup and performance both shown, a narrow node's processing time was drawn
+  over its warmup. It now goes on the line below, and a warning note below both.
 
 Found by profiling 1080p exports (see [Benchmarks](benchmarks.md#2026-10-22-where-an-export-spends-its-time)),
 roughly in order of payoff:
@@ -329,6 +334,9 @@ Reusable widgets, built once in `rastersong-gui` (a `widgets/` module) and used 
 
 - [x] Reaper-style track headers, grab-scroll, scroll-zoom, tick lines, tempo ruler, thumbnails and waveforms
 - [x] **chore** Removed the Fit button (its tooltip was wrong and F already fits the view).
+- [x] **bug** Switching to Tempo mode added the tempo bar above the timeline and pushed it down. A toolbar is
+  always there now, with the Time / Tempo switch, the tempo, the Metronome (heard in Tempo mode) and Snap, which
+  left the ruler's corner.
 - Automation clips and the multi-clip timeline are now part of
   [Timeline, resources and routing](#timeline-resources-and-routing).
 
@@ -812,6 +820,48 @@ and a regenerated `nodes.md`.
   mention is renamed or removed.
 
 ---
+
+## UI V2
+
+The interface redesign in [UI V2](ui-v2.md). Each stage moves its part of that page into [Desktop app](app.md)
+when it ships, with kittests for every gesture its hints name. Stages 1 and 2 come first; the rest are
+independent of each other.
+
+1. [x] **feature** Design tokens: the dark palette, type sizes, control heights, radii and spacing in `theme.rs`
+   and `apply_style` ([UI V2](ui-v2.md#design-tokens)).
+   - [x] **feature** Bundle Inter and JetBrains Mono ([Licensing](licensing.md#fonts)).
+   - [x] **bug** Two GPU screenshot tests failed on master: `bypass_screenshots` looked for a "Bypass graph"
+     label, and `screenshots` waited for a graph that never compiled (the starter project places no graph, so
+     pulling its Output wire couldn't fail). The error shot now places a graph that can't render.
+2. [x] **feature** Shell: the top bar with the Export… button, the transport under the preview (two rows, no
+   wrapping), Result / Original / Split, and the status bar with pointer hints.
+3. [x] **feature** Node graph: the category colour strip, wider nodes and larger text, bypassed and warning
+   styles, the error count in the canvas header, the wire legend, the node search palette.
+   - [x] **bug** Stages 2 and 3 didn't match the boards' renders: the panels were flat and joined instead of
+     rounded cards with gaps, every label was in Inter Regular (the boards use medium buttons and semibold
+     titles), buttons had no outline, the canvas header lacked the pill, the + icon and Frame graph, and the graph
+     was framed at 65%, too small to read. The wire legend became a hover icon.
+   - [x] **bug** A missing file's Relocate… button sat beside its resource card instead of under it, doubling the
+     card's width and pushing its neighbour out of the panel.
+   - [x] **bug** Text still looked tall and narrow next to the boards: hinting rounded Inter's lowercase height up
+     a pixel. The bundled faces are now unhinted, as browsers draw them.
+   - [x] **bug** The panels' resize lines were drawn against one card's edge instead of in the gap between the
+     cards; they are now invisible, the handle centred in the gap.
+   - [x] **bug** A node's colour strip poked out past its rounded corners: as a rect only 5 px tall, its corners
+     were clamped to 2.5 px. It is now the node's own shape cut to the strip.
+4. [x] **feature** Wire probe drum: wrap-around view wheel turned by Alt+scroll, clicks and ↑/↓.
+5. [x] **feature** Inspector: one layout for node, graph item and track selections; the modulation card.
+6. [x] **feature** Resources: Media and Graphs together with counts and one filter field.
+7. [x] **feature** Timeline: calmer headers with remove in the menu, the toolbar's Loop readout.
+8. [x] **feature** Tempo mode: the tempo group by the Time/Tempo switch, the two-tier ruler, bar shading, the
+   first-beat marker, beat-grid snap and loop, bar.beat in the transport with the beat light.
+9. [x] **feature** Export window: two columns, the latest rendered frame, the summary and progress beside the
+   settings.
+10. [x] **feature** The light theme with the same tokens.
+   - [x] **feature** The timeline's section labels, track heights and item colours from the board, left over from
+     stage 7.
+   - [x] **bug** An output's signal name in the node inspector ran under its layout readout ("1600×1 stereo") when
+     the row was narrow; it is now cut short before it.
 
 ## Code health and DRY
 

@@ -1,6 +1,6 @@
 //! A scope: the waveform of a block of samples.
 
-use eframe::egui::{self, Rect, Sense, Ui, Vec2, vec2};
+use eframe::egui::{self, Color32, Rect, Sense, Ui, Vec2, vec2};
 
 use crate::theme::Theme;
 
@@ -28,8 +28,8 @@ fn envelope(samples: &[f32], channels: usize, channel: usize, columns: usize) ->
 }
 
 /// Draws `samples` (`channels` interleaved, at most two shown, one lane each) on a `-1..=1`
-/// scale in a box of `size`. Values outside the scale are clipped to the box.
-pub fn scope(ui: &mut Ui, samples: &[f32], channels: usize, size: Vec2) {
+/// scale in a box of `size`, in `color`. Values outside the scale are clipped to the box.
+pub fn scope(ui: &mut Ui, samples: &[f32], channels: usize, size: Vec2, color: Color32) {
     let theme = Theme::of(ui.ctx());
     let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
     let painter = ui.painter_at(rect);
@@ -62,15 +62,12 @@ pub fn scope(ui: &mut Ui, samples: &[f32], channels: usize, size: Vec2) {
                     egui::pos2(px, y(hi)),
                     egui::pos2(px, y(lo).max(y(hi) + 1.0)),
                 ],
-                egui::Stroke::new(1.0, theme.accent),
+                egui::Stroke::new(1.0, color),
             );
             line.push(egui::pos2(px, y((lo + hi) * 0.5)));
         }
         // Joined up, so a signal with fewer samples than columns is a line and not dots.
-        painter.add(egui::Shape::line(
-            line,
-            egui::Stroke::new(1.0, theme.accent),
-        ));
+        painter.add(egui::Shape::line(line, egui::Stroke::new(1.0, color)));
     }
 }
 

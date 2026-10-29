@@ -242,50 +242,67 @@ fn capture(theme: ThemeChoice, theme_name: &str) {
     harness.key_press(egui::Key::Escape);
     harness.run_steps(2);
 
-    // Break the graph: pull the wire off the output and drop it on empty space.
-    let out = harness.state().editor().key_of("out").unwrap();
-    let pin = harness
-        .state()
-        .editor()
-        .pin_screen_pos(out, true, 0)
-        .unwrap();
-    let canvas = harness.state().editor().canvas_rect();
-    let drop = canvas.left_top() + egui::vec2(30.0, 30.0);
-    harness.event(egui::Event::PointerMoved(pin));
-    harness.run_steps(1);
-    harness.event(egui::Event::PointerButton {
-        pos: pin,
-        button: egui::PointerButton::Primary,
-        pressed: true,
-        modifiers: egui::Modifiers::NONE,
+    // A graph that can't render: Combine Channels swapped for a Pack of seven channels, which
+    // no picture has.
+    let failing = app_edited(theme, 1, TimelineMode::Time, |project| {
+        let node = project
+            .graph
+            .nodes
+            .iter_mut()
+            .find(|n| n.id == "combine")
+            .unwrap();
+        node.kind = "pack".into();
+        node.params.insert(
+            "channels".into(),
+            rastersong_engine::ParamValue::Number(7.0),
+        );
+        // Only a placed graph renders, so only a placed graph can fail.
+        let graph = project.graph_id;
+        let track = project.add_graph_track("Graphs");
+        project.place_graph(&track, graph, 0.0, 4.0);
     });
-    harness.run_steps(1);
-    for t in [0.3, 0.6, 1.0] {
-        harness.event(egui::Event::PointerMoved(pin + (drop - pin) * t));
-        harness.run_steps(1);
-    }
-    harness.event(egui::Event::PointerButton {
-        pos: drop,
-        button: egui::PointerButton::Primary,
-        pressed: false,
-        modifiers: egui::Modifiers::NONE,
-    });
-    harness.run_steps(2);
-    harness.key_press(egui::Key::Escape);
+    let mut failed = gpu_harness(failing);
     let deadline = Instant::now() + Duration::from_secs(20);
     while !matches!(
-        harness.state().engine().status(),
+        failed.state().engine().status(),
         rastersong_engine::EngineStatus::Failed(_)
     ) {
         assert!(
             Instant::now() < deadline,
             "timed out waiting for the failure"
         );
-        harness.step();
+        failed.step();
         std::thread::sleep(Duration::from_millis(5));
     }
-    harness.run_steps(3);
-    save(&mut harness, &format!("{theme_name}-4-error"));
+    failed.run_steps(3);
+    save(&mut failed, &format!("{theme_name}-4-error"));
+
+    // A warning: Interleave can't run once per channel, so it runs on them together.
+    let warned = app_edited(theme, 1, TimelineMode::Time, |project| {
+        project.graph = rastersong_engine::GraphDesc::from_json(
+            r#"{ "version": 0, "nodes": [ { "id": "v", "type": "video_input" },
+                { "id": "s", "type": "interleave", "channels": "separate" },
+                { "id": "p", "type": "pack" }, { "id": "o", "type": "output" } ],
+              "connections": [ { "from": "v", "to": "s" }, { "from": "s", "to": "p" },
+                { "from": "p", "to": "o" } ] }"#,
+        )
+        .unwrap();
+        let graph = project.graph_id;
+        let track = project.add_graph_track("Graphs");
+        project.place_graph(&track, graph, 0.0, 4.0);
+    });
+    let mut warned = gpu_harness(warned);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while warned.state().editor().warning_count() == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for the warning"
+        );
+        warned.step();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    warned.run_steps(3);
+    save(&mut warned, &format!("{theme_name}-4-warning"));
 
     // A delay whose time and feedback are modulated by the audio, selected.
     let graph = GraphDesc::from_json(
@@ -430,7 +447,7 @@ fn bypass_screenshots() {
         harness.key_press(egui::Key::Escape);
         harness.run_steps(2);
 
-        harness.get_by_label("Bypass graph").click();
+        harness.get_by_label("Bypass graphs").click();
         harness.run_steps(6);
         save(&mut harness, &format!("{name}-9-graph-bypassed"));
     }
@@ -455,7 +472,7 @@ fn preview_screenshots() {
         wait_for_frames(&mut harness, 30);
         save(&mut harness, &format!("{name}-10-preview-processed"));
 
-        harness.get_by_label("Unprocessed").click();
+        harness.get_by_label("Original").click();
         // Give the source engine time to render its frames.
         for _ in 0..100 {
             harness.run_steps(1);
@@ -470,7 +487,7 @@ fn preview_screenshots() {
             &format!("{name}-12-split-unprocessed-selected"),
         );
 
-        harness.get_by_label("Unprocessed").click();
+        harness.get_by_label("Split").click();
         harness.run_steps(4);
         save(&mut harness, &format!("{name}-13-split-processed-selected"));
 
@@ -507,15 +524,15 @@ fn track_screenshots() {
     wait_for_frames(&mut harness, 10);
     save(&mut harness, "dark-16-two-tracks");
 
-    // Drag the second audio header above the first, by its kind icon.
+    // Drag the second audio header above the first, by the bar of its kind colour.
     let from = harness
-        .get_all_by_label("♪")
+        .get_all_by_label("Audio track")
         .nth(1)
         .unwrap()
         .rect()
         .center();
     let x = from.x;
-    let row = rastersong_gui::timeline::LANE_HEIGHT;
+    let row = rastersong_gui::timeline::AUDIO_LANE_HEIGHT;
     harness.event(egui::Event::PointerMoved(from));
     harness.run_steps(1);
     harness.event(egui::Event::PointerButton {
@@ -658,7 +675,16 @@ fn item_screenshots() {
 #[ignore = "needs a GPU; run explicitly to look at the UI"]
 fn tempo_bar_with_metronome() {
     for (theme, name) in [(ThemeChoice::Dark, "dark"), (ThemeChoice::Light, "light")] {
-        let mut app = app_in_mode(theme, 1, TimelineMode::Tempo);
+        // The board's tempo, with a loop over bars 2 and 3.
+        let mut app = app_edited(theme, 1, TimelineMode::Tempo, |project| {
+            project.tempo.bpm = 128.0;
+            project.tempo.offset_secs = 0.12;
+            project.loop_region = Some(rastersong_engine::LoopRegion {
+                start: 0.12 + 4.0 * 60.0 / 128.0,
+                end: 0.12 + 12.0 * 60.0 / 128.0,
+                enabled: true,
+            });
+        });
         let mut settings = app.settings().clone();
         settings.metronome = true;
         app.set_settings(settings);
@@ -666,6 +692,146 @@ fn tempo_bar_with_metronome() {
         harness.run_steps(6);
         save(&mut harness, &format!("{name}-tempo-metronome"));
     }
+}
+
+/// The Export window as the board shows it: an odd width with its warning over a loop region,
+/// then an export under way with its latest frame.
+#[test]
+#[ignore = "needs a GPU; run explicitly to look at the UI"]
+fn export_screenshots() {
+    for (theme, name) in [(ThemeChoice::Dark, "dark"), (ThemeChoice::Light, "light")] {
+        for width in [1281, 1280] {
+            let app = app_edited(theme, 1, TimelineMode::Time, |project| {
+                project.timebase = Some(rastersong_engine::Timebase {
+                    width,
+                    height: 720,
+                    frame_rate: Rational::new(30, 1),
+                });
+                project.loop_region = Some(rastersong_engine::LoopRegion {
+                    start: 1.0,
+                    end: 3.0,
+                    enabled: false,
+                });
+            });
+            let mut harness = gpu_harness(app);
+            harness.state_mut().open_export();
+            harness.run_steps(4);
+            if width % 2 == 1 {
+                harness.get_by_label("Loop region").click();
+                harness.run_steps(4);
+                save(&mut harness, &format!("{name}-export-odd"));
+                continue;
+            }
+            let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("screenshot-export.mkv");
+            harness.state_mut().start_export(path);
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while harness.state().export_frame().is_none_or(|f| f < 20) {
+                assert!(Instant::now() < deadline, "the export showed no frame");
+                std::thread::sleep(Duration::from_millis(20));
+                harness.run_steps(1);
+            }
+            harness.run_steps(2);
+            save(&mut harness, &format!("{name}-export-running"));
+            harness.state_mut().cancel_export();
+            while matches!(
+                harness.state().export_state(),
+                rastersong_gui::ExportState::Running { .. }
+            ) {
+                std::thread::sleep(Duration::from_millis(20));
+                harness.run_steps(1);
+            }
+        }
+    }
+}
+
+/// The graph statistics card, with each node's latency and warmup and its time under it.
+#[test]
+#[ignore = "needs a GPU; run explicitly to look at the UI"]
+fn graph_stats_screenshots() {
+    for (theme, name) in [(ThemeChoice::Dark, "dark"), (ThemeChoice::Light, "light")] {
+        let app = app_edited(theme, 1, TimelineMode::Time, |project| {
+            project.graph = GraphDesc::from_json(
+                r#"{ "version": 0,
+                    "nodes": [
+                        { "id": "video", "type": "video_input", "position": [0, 0] },
+                        { "id": "delay", "type": "delay", "position": [200, 0],
+                          "params": { "time": 2, "unit": "frame" } },
+                        { "id": "out", "type": "output", "position": [400, 0] }
+                    ],
+                    "connections": [ { "from": "video", "to": "delay" }, { "from": "delay", "to": "out" } ] }"#,
+            )
+            .unwrap();
+            let graph = project.graph_id;
+            let track = project.add_graph_track("Graphs");
+            project.place_graph(&track, graph, 0.0, 4.0);
+        });
+        let mut harness = gpu_harness(app);
+        wait_for_frames(&mut harness, 30);
+        let mut settings = harness.state().settings().clone();
+        settings.node_stats = true;
+        settings.show_performance = true;
+        settings.graph_stats = true;
+        harness.state_mut().set_settings(settings);
+        harness.run_steps(6);
+        save(&mut harness, &format!("{name}-graph-stats"));
+    }
+}
+
+/// The Resources panel: media with their shapes, a missing file with Relocate…, the graphs with
+/// the open one marked, and the filter narrowing them.
+#[test]
+#[ignore = "needs a GPU; run explicitly to look at the UI"]
+fn resources_screenshots() {
+    for (theme, name) in [(ThemeChoice::Dark, "dark"), (ThemeChoice::Light, "light")] {
+        let app = app_edited(theme, 1, TimelineMode::Time, |project| {
+            project.add_resource(
+                rastersong_engine::ResourceKind::Audio,
+                "drums",
+                "gone/drums.wav",
+                None,
+            );
+            let graph = project.graph_id;
+            let track = project.add_graph_track("Graphs");
+            project.place_graph(&track, graph, 0.0, 4.0);
+            project.add_graph("Sidechain", None);
+        });
+        let mut harness = gpu_harness(app);
+        wait_for_frames(&mut harness, 30);
+        harness.run_steps(4);
+        save(&mut harness, &format!("{name}-resources"));
+        harness
+            .get(egui_kittest::kittest::By::new().predicate(|n| n.placeholder() == Some("Filter")))
+            .focus();
+        harness.run_steps(1);
+        harness.event(egui::Event::Text("side".into()));
+        harness.run_steps(3);
+        save(&mut harness, &format!("{name}-resources-filtered"));
+    }
+}
+
+/// The timeline's header with a loop region, and the track headers: a graph track, the video
+/// muted and an audio track soloed.
+#[test]
+#[ignore = "needs a GPU; run explicitly to look at the UI"]
+fn timeline_screenshots() {
+    let app = app_edited(ThemeChoice::Dark, 2, TimelineMode::Time, |project| {
+        let graph = project.graph_id;
+        let track = project.add_graph_track("Graph track 1");
+        project.place_graph(&track, graph, 0.0, 3.0);
+        project.loop_region = Some(rastersong_engine::LoopRegion {
+            start: 1.0,
+            end: 3.0,
+            enabled: true,
+        });
+    });
+    let mut harness = gpu_harness(app);
+    wait_for_frames(&mut harness, 30);
+    // The graph track's M comes first, then the video's; the video's S, then the audio's.
+    harness.get_all_by_label("S").nth(1).unwrap().click();
+    harness.run_steps(1);
+    harness.get_all_by_label("M").nth(1).unwrap().click();
+    harness.run_steps(4);
+    save(&mut harness, "dark-timeline");
 }
 
 /// The wire tooltip and the inspector's meters, on a graph with a compressor.
@@ -693,6 +859,10 @@ fn meter_screenshots() {
     let mut app = app(theme);
     let mut project = app.project().clone();
     project.graph = graph;
+    // Only a placed graph renders, so only a placed graph has something to inspect.
+    let id = project.graph_id;
+    let track = project.add_graph_track("Graphs");
+    project.place_graph(&track, id, 0.0, 4.0);
     app = App::new(
         Arc::new(
             FakeBackend::new()

@@ -1,5 +1,6 @@
-//! The Export window: format, bus and size, then a render of the whole project into a file on
-//! a worker thread, with progress, time left and Cancel.
+//! The Export window, in two columns: on the left format, quality, bus, range and size; on the
+//! right the latest rendered frame, a summary, the progress with time left and Cancel, and the
+//! Export… button. The render runs on a worker thread, so the app stays usable.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -7,17 +8,30 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, RichText, Ui};
-use rastersong_engine::export::{ExportJob, ExportSettings, export};
+use eframe::egui::{
+    self, Align, Layout, Margin, Rect, RichText, Stroke, Ui, UiBuilder, Vec2, vec2,
+};
+use rastersong_engine::export::{ExportJob, ExportSettings, LatestFrame, PreviewFrame, export};
 use rastersong_engine::{
-    EngineError, ExportFormat, FormatKind, ProResProfile, Quality, RenderInfo, Timebase,
-    export_formats,
+    EngineError, ExportFormat, FormatKind, MAX_WARMUP_FRAMES_LIMIT, ProResProfile, Quality,
+    RenderInfo, Timebase, UNBOUNDED_WARMUP, export_formats,
 };
 use rastersong_lang::{tr, tr_args};
 
 use super::App;
+use super::settings_window::frame_rate_label;
+use crate::theme::{self, CARD_RADIUS, CONTROL_RADIUS, SMALL_SIZE, Theme};
 use crate::timeline::timecode;
 use crate::value_box::ValueBox;
+use crate::widgets::{
+    Icon, IconButton, channels_label, choice_card, picture, section, section_label, segmented,
+};
+
+/// The window's size, and the width of the result column on its right.
+const WINDOW_SIZE: Vec2 = vec2(800.0, 720.0);
+const RESULT_WIDTH: f32 = 288.0;
+/// The height of the title row.
+const HEADER_HEIGHT: f32 = 56.0;
 
 /// What the Export window is set to, kept while the app runs.
 #[derive(Debug, Clone)]
@@ -30,6 +44,9 @@ pub(super) struct ExportDialog {
     size: Option<(u32, u32)>,
     /// Export only the loop region, when there is one.
     region: bool,
+    /// The latest frame the export wrote, and a count that changes with it.
+    frame: Option<PreviewFrame>,
+    frame_version: u64,
 }
 
 impl Default for ExportDialog {
@@ -40,6 +57,8 @@ impl Default for ExportDialog {
             bus: None,
             size: None,
             region: false,
+            frame: None,
+            frame_version: 0,
         }
     }
 }
@@ -51,6 +70,7 @@ pub(super) struct RunningExport {
     done: Arc<AtomicUsize>,
     total: Arc<AtomicUsize>,
     cancel: Arc<AtomicBool>,
+    latest: Arc<LatestFrame>,
     started: Instant,
     thread: JoinHandle<Result<RenderInfo, EngineError>>,
 }
@@ -65,12 +85,31 @@ pub enum ExportState {
     Failed(String),
 }
 
+/// The frames before the range an export renders without writing them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Warmup {
+    None,
+    /// As many as the graph remembers.
+    Frames(usize),
+    /// Every one, because the graph has feedback.
+    FromStart,
+}
+
 /// The name a format is listed under.
 fn format_name(kind: FormatKind) -> &'static str {
     match kind {
         FormatKind::H264 => tr("export.format.h264"),
         FormatKind::ProRes => tr("export.format.prores"),
         FormatKind::Ffv1 => tr("export.format.ffv1"),
+    }
+}
+
+/// What a format is for, and the sound it carries.
+fn format_about(kind: FormatKind) -> &'static str {
+    match kind {
+        FormatKind::H264 => tr("export.format.h264.about"),
+        FormatKind::ProRes => tr("export.format.prores.about"),
+        FormatKind::Ffv1 => tr("export.format.ffv1.about"),
     }
 }
 
@@ -102,6 +141,78 @@ fn duration_label(seconds: f64) -> String {
     }
 }
 
+/// "H.264 needs an even width; 1281 is odd.", or `None` when `kind` can encode the size.
+fn odd_size_note(kind: FormatKind, width: u32, height: u32) -> Option<String> {
+    let (even_width, even_height) = kind.nearest_size(width, height);
+    let (side, size) = match (even_width != width, even_height != height) {
+        (false, false) => return None,
+        (true, false) => (tr("export.odd_side.width"), width.to_string()),
+        (false, true) => (tr("export.odd_side.height"), height.to_string()),
+        (true, true) => (tr("export.odd_side.both"), format!("{width}×{height}")),
+    };
+    Some(tr_args(
+        "export.odd_size.short",
+        &[
+            ("format", kind.codec_name()),
+            ("side", side),
+            ("size", &size),
+        ],
+    ))
+}
+
+/// The frames before `start` an export renders first, for a graph whose nodes need up to
+/// `needed` frames of warmup.
+fn warmup_before(start: usize, needed: u32) -> Warmup {
+    if start == 0 || needed == 0 {
+        Warmup::None
+    } else if needed == UNBOUNDED_WARMUP || needed >= MAX_WARMUP_FRAMES_LIMIT {
+        Warmup::FromStart
+    } else {
+        Warmup::Frames(start.min(needed as usize))
+    }
+}
+
+/// A name on the left and its value in monospace on the right.
+fn summary_row(ui: &mut Ui, name: &str, value: &str) -> egui::Response {
+    let theme = Theme::of(ui.ctx());
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(name).size(12.5).color(theme.text_dim));
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.add(egui::Label::new(RichText::new(value).monospace().size(12.0)).truncate())
+        })
+        .inner
+    })
+    .inner
+}
+
+/// A small tag on a dark ground over the preview, at `pos` anchored by `align`.
+fn preview_tag(
+    ui: &Ui,
+    pos: egui::Pos2,
+    align: egui::Align2,
+    text: &str,
+    dot: Option<egui::Color32>,
+) {
+    let painter = ui.painter();
+    let galley = painter.layout_no_wrap(
+        text.to_owned(),
+        egui::FontId::monospace(10.0),
+        egui::Color32::WHITE,
+    );
+    let dot_width = if dot.is_some() { 11.0 } else { 0.0 };
+    let size = galley.size() + vec2(12.0 + dot_width, 4.0);
+    let rect = align.anchor_size(pos, size);
+    painter.rect_filled(rect, 4, egui::Color32::from_black_alpha(166));
+    if let Some(color) = dot {
+        painter.circle_filled(egui::pos2(rect.left() + 9.0, rect.center().y), 3.0, color);
+    }
+    painter.galley(
+        rect.min + vec2(6.0 + dot_width, 2.0),
+        galley,
+        egui::Color32::WHITE,
+    );
+}
+
 impl App {
     /// Opens the Export window.
     pub fn open_export(&mut self) {
@@ -118,6 +229,11 @@ impl App {
             (None, Some(outcome)) => outcome.clone(),
             (None, None) => ExportState::Idle,
         }
+    }
+
+    /// The index of the latest frame the export window shows, if it has one.
+    pub fn export_frame(&self) -> Option<usize> {
+        self.export.frame.as_ref().map(|f| f.index)
     }
 
     /// Asks the running export, if any, to stop.
@@ -169,11 +285,17 @@ impl App {
         let done = Arc::new(AtomicUsize::new(0));
         let total = Arc::new(AtomicUsize::new(0));
         let cancel = Arc::new(AtomicBool::new(false));
+        let latest = Arc::new(LatestFrame::default());
         let backend = self.backend.clone();
         let cache = self.audio_cache.clone();
         let thread = {
-            let (done, total, cancel, path) =
-                (done.clone(), total.clone(), cancel.clone(), path.clone());
+            let (done, total, cancel, latest, path) = (
+                done.clone(),
+                total.clone(),
+                cancel.clone(),
+                latest.clone(),
+                path.clone(),
+            );
             std::thread::Builder::new()
                 .name("export".into())
                 .spawn(move || {
@@ -183,6 +305,7 @@ impl App {
                         &job,
                         &settings,
                         &path,
+                        Some(&latest),
                         &mut |frames, of| {
                             done.store(frames, Ordering::Relaxed);
                             total.store(of, Ordering::Relaxed);
@@ -193,26 +316,35 @@ impl App {
                 .expect("the export thread starts")
         };
         self.export_outcome = None;
+        self.export.frame = None;
         self.running_export = Some(RunningExport {
             path,
             done,
             total,
             cancel,
+            latest,
             started: Instant::now(),
             thread,
         });
     }
 
-    /// Picks up a finished export.
+    /// Picks up the latest frame written and a finished export.
     fn poll_export(&mut self) {
-        if !self
-            .running_export
-            .as_ref()
-            .is_some_and(|run| run.thread.is_finished())
-        {
+        let Some(run) = &self.running_export else {
+            return;
+        };
+        if let Some(frame) = run.latest.take() {
+            self.export.frame = Some(frame);
+            self.export.frame_version += 1;
+        }
+        if !run.thread.is_finished() {
             return;
         }
         let run = self.running_export.take().expect("checked");
+        if let Some(frame) = run.latest.take() {
+            self.export.frame = Some(frame);
+            self.export.frame_version += 1;
+        }
         self.export_outcome = Some(match run.thread.join() {
             Ok(Ok(_)) => ExportState::Done(run.path),
             Ok(Err(EngineError::Cancelled)) => ExportState::Cancelled,
@@ -224,27 +356,85 @@ impl App {
     pub(super) fn export_window(&mut self, ctx: &egui::Context) {
         self.poll_export();
         if self.running_export.is_some() {
-            // Keep the progress moving while nothing else repaints.
+            // Keep the progress and the frame moving while nothing else repaints.
             ctx.request_repaint_after(Duration::from_millis(100));
         }
-        let mut open = self.export.open;
+        if !self.export.open {
+            return;
+        }
+        let mut close = false;
         egui::Window::new(tr("export.title"))
-            .open(&mut open)
+            .title_bar(false)
             .collapsible(false)
             .resizable(false)
-            .default_width(360.0)
+            .fixed_size(WINDOW_SIZE)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.content_rect().center())
+            .frame(egui::Frame::window(&ctx.global_style()).inner_margin(0))
             .show(ctx, |ui| {
-                if self.running_export.is_some() {
-                    self.export_progress(ui);
-                } else {
-                    self.export_settings(ui);
-                }
+                let theme = Theme::of(ui.ctx());
+                let (rect, _) = ui.allocate_exact_size(WINDOW_SIZE, egui::Sense::hover());
+                let header = rect.with_max_y(rect.top() + HEADER_HEIGHT);
+                let body = rect.with_min_y(header.bottom());
+                let result = body.with_min_x(body.right() - RESULT_WIDTH);
+                let settings = body.with_max_x(result.left());
+                let painter = ui.painter();
+                painter.hline(
+                    rect.x_range(),
+                    header.bottom(),
+                    Stroke::new(1.0, theme.surfaces.divider),
+                );
+                painter.rect_filled(
+                    result,
+                    egui::CornerRadius {
+                        se: theme::WINDOW_RADIUS,
+                        ..Default::default()
+                    },
+                    theme.surfaces.bar,
+                );
+                painter.vline(
+                    result.left(),
+                    result.y_range(),
+                    Stroke::new(1.0, theme.surfaces.divider),
+                );
+                close = self.export_header(ui, header);
+                let running = self.running_export.is_some();
+                let padded = |r: Rect, x: f32| r.shrink2(vec2(x, 18.0));
+                ui.new_child(UiBuilder::new().max_rect(padded(settings, 20.0)))
+                    .add_enabled_ui(!running, |ui| self.export_settings(ui));
+                let mut column = ui.new_child(UiBuilder::new().max_rect(padded(result, 16.0)));
+                self.export_result(&mut column);
             });
         // Closing the window doesn't stop an export; reopening it shows the progress.
-        self.export.open = open;
+        if close {
+            self.export.open = false;
+        }
+    }
+
+    /// The title, what exporting does, and Close. Returns whether Close was clicked.
+    fn export_header(&self, ui: &mut Ui, rect: Rect) -> bool {
+        let theme = Theme::of(ui.ctx());
+        let mut row = ui.new_child(
+            UiBuilder::new()
+                .max_rect(rect.shrink2(vec2(16.0, 0.0)).with_min_x(rect.left() + 20.0))
+                .layout(Layout::left_to_right(Align::Center)),
+        );
+        row.spacing_mut().item_spacing.x = 10.0;
+        row.label(RichText::new(tr("export.title")).font(theme::semibold(16.0)));
+        row.label(
+            RichText::new(tr("export.subtitle"))
+                .size(12.0)
+                .color(theme.surfaces.text_faint),
+        );
+        row.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.add(IconButton::new(Icon::Close, tr("export.close")).size(vec2(32.0, 32.0)))
+                .clicked()
+        })
+        .inner
     }
 
     fn export_settings(&mut self, ui: &mut Ui) {
+        let theme = Theme::of(ui.ctx());
         let available = export_formats();
         if available.is_empty() {
             ui.label(tr("export.no_formats"));
@@ -253,131 +443,136 @@ impl App {
         let Some(mut format) = self.export_format() else {
             return;
         };
+        ui.spacing_mut().item_spacing.y = 18.0;
 
-        egui::Grid::new("export-settings")
-            .num_columns(2)
-            .spacing([12.0, 6.0])
-            .show(ui, |ui| {
-                ui.label(tr("export.format"));
-                egui::ComboBox::from_id_salt("export-format")
-                    .selected_text(format_name(format.kind()))
-                    .show_ui(ui, |ui| {
-                        for f in available {
-                            if ui
-                                .selectable_label(f.kind == format.kind(), format_name(f.kind))
-                                .clicked()
-                                && f.kind != format.kind()
-                            {
-                                format = f.kind.default_format();
-                            }
-                        }
-                    });
-                ui.end_row();
-
-                match &mut format {
-                    ExportFormat::H264 { quality } => {
-                        ui.label(tr("export.quality"));
-                        egui::ComboBox::from_id_salt("export-quality")
-                            .selected_text(quality_name(*quality))
-                            .show_ui(ui, |ui| {
-                                for q in Quality::ALL {
-                                    ui.selectable_value(quality, q, quality_name(q));
-                                }
-                            });
-                        ui.end_row();
-                    }
-                    ExportFormat::ProRes { profile } => {
-                        ui.label(tr("export.profile"));
-                        egui::ComboBox::from_id_salt("export-profile")
-                            .selected_text(profile_name(*profile))
-                            .show_ui(ui, |ui| {
-                                for p in ProResProfile::ALL {
-                                    ui.selectable_value(profile, p, profile_name(p));
-                                }
-                            });
-                        ui.end_row();
-                    }
-                    ExportFormat::Ffv1 => {}
+        section(ui, tr("export.format"), |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            for f in available {
+                let selected = f.kind == format.kind();
+                let about = if selected {
+                    format!(
+                        "{} {}",
+                        format_about(f.kind),
+                        tr_args("export.encoder", &[("encoder", f.video_encoder)])
+                    )
+                } else {
+                    format_about(f.kind).to_owned()
+                };
+                if choice_card(ui, selected, format_name(f.kind), &about).clicked() && !selected {
+                    format = f.kind.default_format();
                 }
+            }
+        });
 
-                let buses = ExportJob::from_project(&self.project).buses();
-                let master = buses[0].name.clone();
-                let mut bus = self.export.bus.clone().unwrap_or_else(|| master.clone());
-                ui.label(tr("export.bus"));
-                egui::ComboBox::from_id_salt("export-bus")
-                    .selected_text(&bus)
-                    .show_ui(ui, |ui| {
-                        for b in &buses {
-                            ui.selectable_value(&mut bus, b.name.clone(), &b.name);
-                        }
-                    });
-                ui.end_row();
-                self.export.bus = (bus != master).then_some(bus);
-
-                ui.label(tr("export.range"));
-                self.export_range(ui);
-                ui.end_row();
-
-                ui.label(tr("export.size"));
-                self.export_size(ui);
-                ui.end_row();
-            });
+        match &mut format {
+            ExportFormat::H264 { quality } => {
+                section(ui, tr("export.quality"), |ui| {
+                    let options: Vec<_> = Quality::ALL
+                        .iter()
+                        .map(|q| (quality_name(*q), tr("export.quality.help")))
+                        .collect();
+                    let on = Quality::ALL.iter().position(|q| q == quality).unwrap_or(0);
+                    if let Some(i) = segmented(ui, &options, on) {
+                        *quality = Quality::ALL[i];
+                    }
+                });
+            }
+            ExportFormat::ProRes { profile } => {
+                section(ui, tr("export.profile"), |ui| {
+                    let options: Vec<_> = ProResProfile::ALL
+                        .iter()
+                        .map(|p| (profile_name(*p), tr("export.profile.help")))
+                        .collect();
+                    let on = ProResProfile::ALL
+                        .iter()
+                        .position(|p| p == profile)
+                        .unwrap_or(0);
+                    if let Some(i) = segmented(ui, &options, on) {
+                        *profile = ProResProfile::ALL[i];
+                    }
+                });
+            }
+            ExportFormat::Ffv1 => {}
+        }
         self.export.format = format;
 
-        let encoder = available
-            .iter()
-            .find(|f| f.kind == format.kind())
-            .map_or("", |f| f.video_encoder);
+        ui.columns(2, |columns| {
+            columns[0].spacing_mut().item_spacing.y = 6.0;
+            columns[1].spacing_mut().item_spacing.y = 6.0;
+            self.export_bus(&mut columns[0]);
+            self.export_range(&mut columns[1]);
+        });
+
+        section(ui, tr("export.size"), |ui| {
+            ui.spacing_mut().item_spacing.y = 8.0;
+            self.export_size(ui, format.kind());
+            let (width, height) = self.export_output_size();
+            if let Some(note) = odd_size_note(format.kind(), width, height) {
+                let (even_width, even_height) = format.kind().nearest_size(width, height);
+                egui::Frame::new()
+                    .fill(theme.warning_note)
+                    .stroke(Stroke::new(1.0, theme.warning_note_border))
+                    .corner_radius(CONTROL_RADIUS)
+                    .inner_margin(Margin::symmetric(10, 6))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(note)
+                                    .size(12.0)
+                                    .color(theme.warning_note_text),
+                            );
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                let fix = egui::Button::new(
+                                    RichText::new(tr_args(
+                                        "export.odd_size.fix",
+                                        &[
+                                            ("width", &even_width.to_string()),
+                                            ("height", &even_height.to_string()),
+                                        ],
+                                    ))
+                                    .color(theme.warning_note_text),
+                                )
+                                .fill(theme.warning_note)
+                                .stroke(Stroke::new(1.0, theme.warning_note_border));
+                                if ui.add(fix).clicked() {
+                                    self.export.size = Some((even_width, even_height));
+                                }
+                            });
+                        });
+                    });
+            }
+        });
+    }
+
+    /// The bus written, and where its sound comes from.
+    fn export_bus(&mut self, ui: &mut Ui) {
+        let theme = Theme::of(ui.ctx());
+        section_label(ui, tr("export.bus"));
+        let buses = ExportJob::from_project(&self.project).buses();
+        let master = buses[0].name.clone();
+        let mut bus = self.export.bus.clone().unwrap_or_else(|| master.clone());
+        let label = |name: &str| {
+            let channels = buses
+                .iter()
+                .find(|b| b.name == name)
+                .map_or(2, |b| b.channels);
+            format!("{name} · {}", channels_label(channels))
+        };
+        egui::ComboBox::from_id_salt("export-bus")
+            .width(ui.available_width())
+            .selected_text(label(&bus))
+            .show_ui(ui, |ui| {
+                for b in &buses {
+                    ui.selectable_value(&mut bus, b.name.clone(), label(&b.name));
+                }
+            });
         ui.label(
-            RichText::new(tr_args("export.encoder", &[("encoder", encoder)]))
-                .weak()
-                .small(),
+            RichText::new(tr_args("export.bus.about", &[("bus", &bus)]))
+                .size(11.0)
+                .color(theme.surfaces.text_faint),
         );
-
-        let (width, height) = self.export_output_size();
-        let problem = format.kind().size_problem(width, height);
-        let odd = problem.is_some();
-        if let Some(problem) = problem {
-            ui.colored_label(ui.visuals().warn_fg_color, problem);
-            let (even_width, even_height) = format.kind().nearest_size(width, height);
-            if ui
-                .button(tr_args(
-                    "export.odd_size.fix",
-                    &[
-                        ("width", &even_width.to_string()),
-                        ("height", &even_height.to_string()),
-                    ],
-                ))
-                .clicked()
-            {
-                self.export.size = Some((even_width, even_height));
-            }
-        }
-
-        match &self.export_outcome {
-            Some(ExportState::Done(path)) => {
-                ui.label(tr_args(
-                    "export.done",
-                    &[("path", &path.display().to_string())],
-                ));
-            }
-            Some(ExportState::Cancelled) => {
-                ui.label(tr("export.cancelled"));
-            }
-            Some(ExportState::Failed(message)) => {
-                ui.colored_label(ui.visuals().error_fg_color, message);
-            }
-            _ => {}
-        }
-
-        ui.add_space(6.0);
-        if ui
-            .add_enabled(!odd, egui::Button::new(tr("export.start")))
-            .clicked()
-            && let Some(path) = self.pick_export_path(format.kind())
-        {
-            self.start_export(path);
-        }
+        self.export.bus = (bus != master).then_some(bus);
     }
 
     /// The project's size and frame rate: its own, or what the engine took from its video.
@@ -406,82 +601,314 @@ impl App {
             .and_then(|region| region.frames(fps))
     }
 
-    /// The whole project, or only its loop region.
-    fn export_range(&mut self, ui: &mut Ui) {
-        let length = self
-            .engine
-            .info()
-            .map_or(0.0, |info| info.frames as f64 / info.frame_rate.as_f64());
-        let whole = tr_args("export.range.whole", &[("length", &timecode(length))]);
-        let region = self.project.loop_region.map(|r| {
-            tr_args(
-                "export.range.region",
-                &[("start", &timecode(r.start)), ("end", &timecode(r.end))],
-            )
-        });
-        let mut chosen = self.export.region && region.is_some();
-        let response = egui::ComboBox::from_id_salt("export-range")
-            .selected_text(if chosen {
-                region.clone().unwrap_or_default()
-            } else {
-                whole.clone()
-            })
-            .show_ui(ui, |ui| {
-                ui.selectable_value(&mut chosen, false, whole);
-                match region {
-                    Some(region) => {
-                        ui.selectable_value(&mut chosen, true, region);
-                    }
-                    None => {
-                        ui.label(RichText::new(tr("export.range.no_region")).weak());
-                    }
-                }
-            });
-        if self.project.loop_region.is_none() {
-            response
-                .response
-                .on_hover_text(tr("export.range.no_region"));
-        }
-        if self.project.loop_region.is_some() {
-            self.export.region = chosen;
-        }
+    /// The frames the export writes: the loop region's, or the whole project's.
+    fn export_frames(&self) -> std::ops::Range<usize> {
+        self.export_region()
+            .unwrap_or_else(|| 0..self.engine.info().map_or(0, |info| info.frames))
     }
 
-    /// The project's size, or a size of its own.
-    fn export_size(&mut self, ui: &mut Ui) {
+    /// What the export renders before the frames it writes.
+    fn export_warmup(&self) -> Warmup {
+        let needed = self
+            .engine
+            .node_stats()
+            .iter()
+            .map(|s| s.warmup_frames)
+            .max()
+            .unwrap_or(0);
+        warmup_before(self.export_frames().start, needed)
+    }
+
+    /// The whole project or only its loop region, and the span and frames that makes.
+    fn export_range(&mut self, ui: &mut Ui) {
+        let theme = Theme::of(ui.ctx());
+        section_label(ui, tr("export.range"));
+        let has_region = self.project.loop_region.is_some();
+        let options = [
+            (tr("export.range.whole"), tr("export.range.whole.help")),
+            (
+                tr("export.range.region"),
+                if has_region {
+                    tr("export.range.region.help")
+                } else {
+                    tr("export.range.no_region")
+                },
+            ),
+        ];
+        let chosen = usize::from(self.export.region && has_region);
+        if let Some(choice) = segmented(ui, &options, chosen)
+            && has_region
+        {
+            self.export.region = choice == 1;
+        }
+        let fps = self.export_timebase().frame_rate.as_f64();
+        let frames = self.export_frames();
+        ui.label(
+            RichText::new(tr_args(
+                "export.range.span",
+                &[
+                    ("start", &timecode(frames.start as f64 / fps)),
+                    ("end", &timecode(frames.end as f64 / fps)),
+                    ("frames", &frames.len().to_string()),
+                ],
+            ))
+            .monospace()
+            .size(11.0)
+            .color(theme.surfaces.text_faint),
+        );
+    }
+
+    /// The project's size, or a size of its own; an odd side is outlined.
+    fn export_size(&mut self, ui: &mut Ui, kind: FormatKind) {
+        let theme = Theme::of(ui.ctx());
         let (width, height) = self.export_output_size();
+        let (even_width, even_height) = kind.nearest_size(width, height);
         ui.horizontal(|ui| {
-            let mut custom = self.export.size.is_some();
-            if ui
-                .checkbox(&mut custom, tr("export.size.custom"))
-                .on_hover_text(tr("export.size.help"))
-                .changed()
-            {
-                self.export.size = custom.then_some((width, height));
+            ui.spacing_mut().item_spacing.x = 8.0;
+            let options = [
+                (tr("export.size.project"), tr("export.size.project.help")),
+                (tr("export.size.custom"), tr("export.size.help")),
+            ];
+            let custom = self.export.size.is_some();
+            if let Some(choice) = segmented(ui, &options, usize::from(custom)) {
+                self.export.size = (choice == 1).then_some((width, height));
             }
             match &mut self.export.size {
                 Some((w, h)) => {
-                    for value in [w, h] {
+                    for (i, (value, odd)) in [(w, even_width != width), (h, even_height != height)]
+                        .into_iter()
+                        .enumerate()
+                    {
+                        if i == 1 {
+                            ui.label(RichText::new("×").color(theme.surfaces.text_faint));
+                        }
                         let mut size = f64::from(*value);
-                        if ui
-                            .add(
-                                ValueBox::new(&mut size)
-                                    .range(16.0..=8192.0)
-                                    .max_decimals(0)
-                                    .speed(2.0)
-                                    .suffix(tr("settings.resolution.suffix")),
-                            )
-                            .changed()
-                        {
+                        let response = ui.add(
+                            ValueBox::new(&mut size)
+                                .range(16.0..=8192.0)
+                                .max_decimals(0)
+                                .speed(2.0)
+                                .suffix(tr("settings.resolution.suffix")),
+                        );
+                        if odd {
+                            ui.painter().rect_stroke(
+                                response.rect,
+                                CONTROL_RADIUS,
+                                Stroke::new(1.0, theme.warning_outline),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
+                        if response.changed() {
                             *value = size.round() as u32;
                         }
                     }
                 }
                 None => {
-                    ui.label(format!("{width}×{height}"));
+                    ui.label(
+                        RichText::new(format!("{width}×{height}"))
+                            .monospace()
+                            .color(theme.text_dim),
+                    );
                 }
             }
         });
+    }
+
+    /// The file the export writes, or wrote: its name only.
+    fn export_file_name(&self, kind: FormatKind) -> String {
+        let path = match (&self.running_export, &self.export_outcome) {
+            (Some(run), _) => Some(&run.path),
+            (None, Some(ExportState::Done(path))) => Some(path),
+            _ => None,
+        };
+        path.and_then(|p| p.file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| format!("{}.{}", self.project_name(), kind.extension()))
+    }
+
+    /// The right column: the latest frame, the summary, then at the bottom the progress and the
+    /// Export… button.
+    fn export_result(&mut self, ui: &mut Ui) {
+        let theme = Theme::of(ui.ctx());
+        let fps = self.export_timebase().frame_rate.as_f64();
+        ui.spacing_mut().item_spacing.y = 12.0;
+        ui.horizontal(|ui| {
+            section_label(ui, tr("export.latest"));
+            if let Some(frame) = &self.export.frame {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(tr_args(
+                            "export.latest.frame",
+                            &[
+                                ("frame", &frame.index.to_string()),
+                                ("time", &timecode(frame.index as f64 / fps)),
+                            ],
+                        ))
+                        .monospace()
+                        .size(11.0)
+                        .color(theme.text_dim),
+                    );
+                });
+            }
+        });
+        self.export_preview(ui);
+
+        let format = self.export_format();
+        let kind = format.map_or(FormatKind::H264, |f| f.kind());
+        let (width, height) = self.export_output_size();
+        let frames = self.export_frames();
+        let warmup = self.export_warmup();
+        ui.add_space(4.0);
+        section_label(ui, tr("export.summary"));
+        ui.scope(|ui| {
+            ui.spacing_mut().item_spacing.y = 8.0;
+            summary_row(ui, tr("export.summary.file"), &self.export_file_name(kind));
+            summary_row(
+                ui,
+                tr("export.summary.picture"),
+                &format!("{width}×{height}"),
+            );
+            summary_row(
+                ui,
+                tr("export.summary.rate"),
+                &frame_rate_label(self.export_timebase().frame_rate),
+            );
+            summary_row(
+                ui,
+                tr("export.summary.length"),
+                &timecode(frames.len() as f64 / fps),
+            );
+            let warmup_text = match warmup {
+                Warmup::None => tr("export.warmup.none").to_owned(),
+                Warmup::Frames(n) => tr_args("export.warmup.frames", &[("frames", &n.to_string())]),
+                Warmup::FromStart => tr("export.warmup.from_start").to_owned(),
+            };
+            summary_row(ui, tr("export.summary.warmup"), &warmup_text);
+        });
+        let why = match warmup {
+            Warmup::None => None,
+            Warmup::Frames(n) => Some(tr_args(
+                "export.warmup.frames.why",
+                &[("frames", &n.to_string())],
+            )),
+            Warmup::FromStart => Some(tr("export.warmup.from_start.why").to_owned()),
+        };
+        if let Some(why) = why {
+            ui.label(
+                RichText::new(why)
+                    .size(11.5)
+                    .color(theme.surfaces.text_faint),
+            );
+        }
+
+        // Kept to the bottom, top-down, at the height it took last frame (its card grows and
+        // shrinks with what it says).
+        let height_id = ui.id().with("export-bottom");
+        let last_height = ui.data(|d| d.get_temp::<f32>(height_id)).unwrap_or(140.0);
+        let max = ui.max_rect();
+        let bottom =
+            Rect::from_min_max(egui::pos2(max.left(), max.bottom() - last_height), max.max);
+        let mut ui = ui.new_child(UiBuilder::new().max_rect(bottom));
+        {
+            let ui = &mut ui;
+            ui.spacing_mut().item_spacing.y = 8.0;
+            section_label(ui, tr("export.progress.title"));
+            self.export_progress(ui);
+            let odd = odd_size_note(kind, width, height).is_some();
+            let running = self.running_export.is_some();
+            let text = if odd {
+                tr("export.start.odd")
+            } else {
+                tr("export.start")
+            };
+            let enabled = !odd && !running && format.is_some();
+            let button = egui::Button::new(RichText::new(text).color(if enabled {
+                theme.surfaces.ground
+            } else {
+                theme.surfaces.text_faint
+            }))
+            .fill(if enabled {
+                theme.accent
+            } else {
+                theme.surfaces.raised_active
+            });
+            let size = vec2(ui.available_width(), 40.0);
+            let clicked = ui
+                .add_enabled_ui(enabled, |ui| ui.add_sized(size, button))
+                .inner
+                .clicked();
+            if clicked && let Some(path) = self.pick_export_path(kind) {
+                self.start_export(path);
+            }
+        }
+        let used = ui.min_rect().height();
+        if (used - last_height).abs() > 0.5 {
+            ui.data_mut(|d| d.insert_temp(height_id, used));
+            ui.ctx().request_repaint();
+        }
+    }
+
+    /// The latest frame written, fitted into a 16:9 box, tagged with the output size and, while
+    /// the export runs, "Rendering".
+    fn export_preview(&self, ui: &mut Ui) {
+        let theme = Theme::of(ui.ctx());
+        let width = ui.available_width();
+        let (rect, _) =
+            ui.allocate_exact_size(vec2(width, width * 9.0 / 16.0), egui::Sense::hover());
+        ui.painter().rect(
+            rect,
+            CONTROL_RADIUS,
+            theme.preview_bg,
+            Stroke::new(1.0, theme.surfaces.border),
+            egui::StrokeKind::Outside,
+        );
+        match &self.export.frame {
+            Some(frame) => {
+                let aspect = frame.width as f32 / frame.height.max(1) as f32;
+                let size = if aspect > rect.aspect_ratio() {
+                    vec2(rect.width(), rect.width() / aspect)
+                } else {
+                    vec2(rect.height() * aspect, rect.height())
+                };
+                let fit = Rect::from_center_size(rect.center(), size);
+                let mut inner = ui.new_child(UiBuilder::new().max_rect(fit));
+                picture(
+                    &mut inner,
+                    ui.id().with("export-frame"),
+                    self.export.frame_version,
+                    [frame.width, frame.height],
+                    &frame.rgb,
+                    fit.width(),
+                );
+            }
+            None => {
+                ui.painter().text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    tr("export.latest.empty"),
+                    egui::FontId::proportional(11.5),
+                    theme.surfaces.text_faint,
+                );
+            }
+        }
+        let corner = rect.shrink(6.0);
+        if self.running_export.is_some() {
+            preview_tag(
+                ui,
+                corner.left_bottom(),
+                egui::Align2::LEFT_BOTTOM,
+                tr("export.rendering"),
+                Some(theme.error),
+            );
+        }
+        let (w, h) = self.export_output_size();
+        preview_tag(
+            ui,
+            corner.right_bottom(),
+            egui::Align2::RIGHT_BOTTOM,
+            &format!("{w}×{h}"),
+            None,
+        );
     }
 
     /// Asks where to write a file of `kind`.
@@ -501,41 +928,94 @@ impl App {
         dialog.save_file()
     }
 
+    /// The progress card: frames done, time left, a bar and Cancel while it runs; afterwards
+    /// where the file went, or why it didn't.
     fn export_progress(&mut self, ui: &mut Ui) {
-        let Some(run) = &self.running_export else {
-            return;
-        };
-        let done = run.done.load(Ordering::Relaxed);
-        let total = run.total.load(Ordering::Relaxed);
-        let fraction = if total == 0 {
-            0.0
-        } else {
-            done as f32 / total as f32
-        };
-        ui.label(tr_args(
-            "export.writing",
-            &[("path", &run.path.display().to_string())],
-        ));
-        ui.add(egui::ProgressBar::new(fraction).show_percentage());
-        let elapsed = run.started.elapsed().as_secs_f64();
-        let left = if done == 0 {
-            String::from("–")
-        } else {
-            duration_label(elapsed / done as f64 * (total - done) as f64)
-        };
-        ui.label(tr_args(
-            "export.progress",
-            &[
-                ("done", &done.to_string()),
-                ("total", &total.to_string()),
-                ("left", &left),
-            ],
-        ));
-        let cancelling = run.cancel.load(Ordering::Relaxed);
-        if ui
-            .add_enabled(!cancelling, egui::Button::new(tr("dialog.cancel")))
-            .clicked()
-        {
+        let theme = Theme::of(ui.ctx());
+        let mut cancel = false;
+        egui::Frame::new()
+            .fill(theme.surfaces.inner_card)
+            .stroke(Stroke::new(1.0, theme.surfaces.border))
+            .corner_radius(CARD_RADIUS)
+            .inner_margin(Margin::same(10))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 6.0;
+                    match (&self.running_export, &self.export_outcome) {
+                        (Some(run), _) => {
+                            let done = run.done.load(Ordering::Relaxed);
+                            let total = run.total.load(Ordering::Relaxed);
+                            let fraction = if total == 0 {
+                                0.0
+                            } else {
+                                done as f32 / total as f32
+                            };
+                            let elapsed = run.started.elapsed().as_secs_f64();
+                            let left = if done == 0 {
+                                String::from("–")
+                            } else {
+                                duration_label(elapsed / done as f64 * (total - done) as f64)
+                            };
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new(tr_args(
+                                        "export.progress",
+                                        &[
+                                            ("done", &done.to_string()),
+                                            ("total", &total.to_string()),
+                                        ],
+                                    ))
+                                    .size(12.0),
+                                );
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    ui.label(
+                                        RichText::new(tr_args("export.left", &[("left", &left)]))
+                                            .monospace()
+                                            .size(SMALL_SIZE + 1.0)
+                                            .color(theme.text_dim),
+                                    );
+                                });
+                            });
+                            let (bar, _) = ui.allocate_exact_size(
+                                vec2(ui.available_width(), 6.0),
+                                egui::Sense::hover(),
+                            );
+                            ui.painter()
+                                .rect_filled(bar, 3, theme.surfaces.raised_hover);
+                            let filled = bar.with_max_x(bar.left() + bar.width() * fraction);
+                            ui.painter().rect_filled(filled, 3, theme.accent);
+                            let cancelling = run.cancel.load(Ordering::Relaxed);
+                            cancel = ui
+                                .add_enabled(!cancelling, egui::Button::new(tr("dialog.cancel")))
+                                .clicked();
+                        }
+                        (None, Some(ExportState::Done(path))) => {
+                            ui.label(
+                                RichText::new(tr_args(
+                                    "export.done",
+                                    &[("path", &path.display().to_string())],
+                                ))
+                                .size(12.0),
+                            );
+                        }
+                        (None, Some(ExportState::Cancelled)) => {
+                            ui.label(RichText::new(tr("export.cancelled")).size(12.0));
+                        }
+                        (None, Some(ExportState::Failed(message))) => {
+                            ui.label(RichText::new(message).size(12.0).color(theme.error));
+                        }
+                        _ => {
+                            ui.label(
+                                RichText::new(tr("export.progress.idle"))
+                                    .size(12.0)
+                                    .color(theme.surfaces.text_faint),
+                            );
+                        }
+                    }
+                });
+            });
+        if cancel {
             self.cancel_export();
         }
     }
@@ -543,12 +1023,36 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::duration_label;
+    use super::*;
 
     #[test]
     fn durations_read_as_clock_time() {
         assert_eq!(duration_label(0.4), "0:00");
         assert_eq!(duration_label(65.0), "1:05");
         assert_eq!(duration_label(3725.0), "1:02:05");
+    }
+
+    #[test]
+    fn an_odd_size_names_its_odd_side() {
+        assert_eq!(odd_size_note(FormatKind::H264, 1280, 720), None);
+        assert_eq!(odd_size_note(FormatKind::Ffv1, 1281, 721), None);
+        assert_eq!(
+            odd_size_note(FormatKind::H264, 1281, 720).unwrap(),
+            "H.264 needs an even width; 1281 is odd."
+        );
+        assert_eq!(
+            odd_size_note(FormatKind::ProRes, 1281, 721).unwrap(),
+            "ProRes needs an even width and height; 1281×721 is odd."
+        );
+    }
+
+    #[test]
+    fn warmup_reaches_back_as_far_as_the_graph_remembers() {
+        assert_eq!(warmup_before(0, 10), Warmup::None);
+        assert_eq!(warmup_before(30, 0), Warmup::None);
+        assert_eq!(warmup_before(30, 10), Warmup::Frames(10));
+        // Never before the first frame.
+        assert_eq!(warmup_before(4, 10), Warmup::Frames(4));
+        assert_eq!(warmup_before(30, UNBOUNDED_WARMUP), Warmup::FromStart);
     }
 }

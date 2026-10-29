@@ -29,8 +29,8 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use eframe::egui::{
-    self, Align2, CornerRadius, FontId, Key, PointerButton, Rect, Sense, Stroke, TextureId, Ui,
-    UiBuilder, Vec2, pos2, vec2,
+    self, Align2, Color32, CornerRadius, FontId, Key, PointerButton, Rect, Sense, Stroke,
+    TextureId, Ui, UiBuilder, Vec2, pos2, vec2,
 };
 use rastersong_engine::{
     Edge, Item, LoopRegion, ResourceId, Tempo, TimelineMode, TrackKind, Waveform, snap_offset,
@@ -39,35 +39,53 @@ use rastersong_lang::{tr, tr_args};
 
 use crate::name_edit::name_edit;
 use crate::resources::DraggedGraph;
-use crate::theme::Theme;
+use crate::theme::{ItemColors, SMALL_SIZE, Theme};
 
 /// Width of the track header column.
 pub const HEADER_WIDTH: f32 = 220.0;
 /// Gap between the headers and the lanes.
 const GAP: f32 = 6.0;
-/// Width of the name fields in the track headers, leaving room for the buttons beside them.
-const NAME_WIDTH: f32 = HEADER_WIDTH - 136.0;
+/// How far a header's widgets sit from its left edge, past the bar of its kind's colour.
+const KIND_INSET: f32 = 18.0;
+/// Size of a track's name in its header.
+const NAME_SIZE: f32 = 12.5;
+/// Height of a header's name, and of the name with the row of details under it.
+const NAME_HEIGHT: f32 = 18.0;
+const NAME_ROWS_HEIGHT: f32 = 34.0;
+/// Width of a header's M and S buttons.
+const TOGGLE_WIDTH: f32 = 22.0;
 const RULER_HEIGHT: f32 = 22.0;
-/// A track's height until the user changes it: tall enough for a header's two rows of widgets.
-pub const LANE_HEIGHT: f32 = 58.0;
+/// The ruler in tempo mode, in two tiers: bars along the top, beats under them.
+const TEMPO_RULER_HEIGHT: f32 = 38.0;
+/// Where the tempo ruler's beat tier starts, below its top.
+const BEAT_TIER: f32 = 23.0;
+/// Smallest spacing (pixels) between beat labels on the tempo ruler.
+const MIN_BEAT_LABEL_SPACING: f32 = 34.0;
+/// Narrowest a bar can be drawn (pixels) and still be shaded.
+const MIN_SHADED_BAR: f32 = 8.0;
+/// A video track's height until the user changes it: its name over its size and frame rate.
+pub const VIDEO_LANE_HEIGHT: f32 = 52.0;
+/// An audio track's height until the user changes it: its name over its volume.
+pub const AUDIO_LANE_HEIGHT: f32 = 44.0;
 /// A graph track's height.
-pub const GRAPH_LANE_HEIGHT: f32 = 40.0;
+pub const GRAPH_LANE_HEIGHT: f32 = 34.0;
 /// The shortest and tallest a track can be made.
-pub const LANE_HEIGHT_RANGE: std::ops::RangeInclusive<f32> = 46.0..=320.0;
-/// The space between two sections, with the thick line that divides them in its middle.
-const SECTION_GAP: f32 = 10.0;
+pub const LANE_HEIGHT_RANGE: std::ops::RangeInclusive<f32> = 40.0..=320.0;
+/// Height of the row naming a section (GRAPHS, VIDEO, AUDIO) above its tracks. The thick line
+/// between two sections runs along its top.
+const SECTION_LABEL_HEIGHT: f32 = 20.0;
+/// Width of the thick line between two sections.
+const SECTION_LINE: f32 = 2.0;
 /// Height of the bar along the top of each item, which drags it and holds its mute button.
-const ITEM_BAR: f32 = 14.0;
+const ITEM_BAR: f32 = 16.0;
+/// Corner radius of an item.
+const ITEM_RADIUS: u8 = 5;
 /// How close (pixels) to an item's edge the pointer must be to trim it.
 const EDGE_GRAB: f32 = 5.0;
 /// How close (pixels) a dragged edge must come to a snap target to snap to it.
 const SNAP_DISTANCE: f32 = 8.0;
-/// Width of the snapping button in the ruler header.
-const SNAP_WIDTH: f32 = 52.0;
 /// How close (pixels) to the bottom edge of a header the pointer must be to resize the track.
 const RESIZE_GRAB: f32 = 3.0;
-/// Width of the button that switches the ruler between time and tempo.
-const MODE_WIDTH: f32 = 66.0;
 /// Height of the drop zone below an empty section, which names what to drop there.
 const EMPTY_SECTION_HEIGHT: f32 = 30.0;
 /// Height of the space below a section's last track, where a dropped resource's ghost row shows.
@@ -129,7 +147,7 @@ impl TrackView {
             solo: false,
             silenced: false,
             volume: 1.0,
-            height: LANE_HEIGHT,
+            height: lane_height(kind),
             waveform: None,
             bus: String::new(),
             details: None,
@@ -394,10 +412,6 @@ pub struct TimelineResponse {
     pub wanted_thumbnails: Vec<(String, usize)>,
     /// A new loop region (`Some(None)` to remove it).
     pub loop_region: Option<Option<LoopRegion>>,
-    /// The mode button was clicked: switch between the time and tempo rulers.
-    pub toggle_mode: bool,
-    /// The snapping button was clicked: turn snapping on or off.
-    pub toggle_snap: bool,
     /// Screen x where the lanes start, for turning a pointer position into time.
     pub lanes_left: f32,
     /// The row of [`TimelineModel::tracks`] the pointer is over, for dropping a resource on a
@@ -414,8 +428,10 @@ pub struct TimelineResponse {
 }
 
 /// Where the timeline's rows were drawn, in screen space (before clipping to the visible part).
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TimelineLayout {
+    /// The ruler along the top, over the lanes.
+    pub ruler: Rect,
     /// The lane of each graph track, top first.
     pub graph_lanes: Vec<Rect>,
     /// The lane of each video and audio track, as [`TimelineModel::tracks`] lists them.
@@ -424,6 +440,18 @@ pub struct TimelineLayout {
     pub headers: Vec<Rect>,
     /// The space below the Graphs, Video and Audio sections' tracks, across the headers and lanes.
     pub tails: Vec<Rect>,
+}
+
+impl Default for TimelineLayout {
+    fn default() -> Self {
+        Self {
+            ruler: Rect::NOTHING,
+            graph_lanes: Vec::new(),
+            lanes: Vec::new(),
+            headers: Vec::new(),
+            tails: Vec::new(),
+        }
+    }
 }
 
 /// How close (pixels) the pointer must be to a loop edge on the ruler to drag that edge.
@@ -629,6 +657,14 @@ impl RulerGrid {
         }
     }
 
+    /// Whether tick `k` starts a bar (always false in time mode).
+    fn on_bar(&self, k: i64) -> bool {
+        self.bars.is_some_and(|(minor_beats, per_bar)| {
+            let bars = k as f64 * minor_beats / f64::from(per_bar);
+            (bars - bars.round()).abs() < 1e-6
+        })
+    }
+
     /// `seconds` moved to the nearest tick (in tempo mode) or frame (in time mode).
     fn snap(&self, seconds: f64, frame_rate: f64) -> f64 {
         match self.bars {
@@ -638,11 +674,66 @@ impl RulerGrid {
     }
 }
 
+/// The ruler's height in `mode`.
+fn ruler_height(mode: TimelineMode) -> f32 {
+    match mode {
+        TimelineMode::Time => RULER_HEIGHT,
+        TimelineMode::Tempo => TEMPO_RULER_HEIGHT,
+    }
+}
+
+/// Beats from `tempo`'s first beat to `seconds` (negative before it).
+pub fn beats_at(tempo: &Tempo, seconds: f64) -> f64 {
+    let tempo = tempo.sanitized();
+    (seconds - tempo.offset_secs) / tempo.seconds_per_beat()
+}
+
+/// The bar, beat and sixteenth `beats` falls in, each counting from 1.
+fn bar_beat_parts(beats: f64, beats_per_bar: u32) -> (i64, i64, i64) {
+    let sixteenths = (beats * 4.0 + 1e-6).floor() as i64;
+    let per_bar = i64::from(beats_per_bar.max(1)) * 4;
+    let in_bar = sixteenths.rem_euclid(per_bar);
+    (
+        sixteenths.div_euclid(per_bar) + 1,
+        in_bar / 4 + 1,
+        in_bar % 4 + 1,
+    )
+}
+
+/// `seconds` as `bar.beat` at `tempo`, or `bar.beat.sixteenth` when it falls between beats: a
+/// point on the beat grid, like a loop edge.
+pub fn bar_beat(tempo: &Tempo, seconds: f64) -> String {
+    let beats = (beats_at(tempo, seconds) * 4.0).round() / 4.0;
+    match bar_beat_parts(beats, tempo.sanitized().beats_per_bar) {
+        (bar, beat, 1) => format!("{bar}.{beat}"),
+        (bar, beat, sixteenth) => format!("{bar}.{beat}.{sixteenth}"),
+    }
+}
+
+/// `seconds` as `bar.beat.sixteenth` at `tempo`, counting the sixteenth it is in: where the
+/// playhead is.
+pub fn bar_beat_tick(tempo: &Tempo, seconds: f64) -> String {
+    let (bar, beat, sixteenth) =
+        bar_beat_parts(beats_at(tempo, seconds), tempo.sanitized().beats_per_bar);
+    format!("{bar}.{beat}.{sixteenth}")
+}
+
 /// `seconds` as `m:ss.cc`.
 pub fn timecode(seconds: f64) -> String {
     let total = seconds.max(0.0);
     let minutes = (total / 60.0).floor();
     format!("{}:{:05.2}", minutes as u64, total - minutes * 60.0)
+}
+
+/// `seconds` as `m:ss` when it falls on a whole second, else as [`timecode`] does.
+pub fn short_timecode(seconds: f64) -> String {
+    let total = seconds.max(0.0);
+    if (total - total.round()).abs() < 0.005 {
+        let whole = total.round() as u64;
+        format!("{}:{:02}", whole / 60, whole % 60)
+    } else {
+        timecode(total)
+    }
 }
 
 /// Frames to show thumbnails of: one per slot of `slot_secs`, on a grid of power-of-two frame
@@ -692,6 +783,14 @@ impl Section {
     }
 }
 
+/// A track's height until the user changes it.
+pub fn lane_height(kind: TrackKind) -> f32 {
+    match kind {
+        TrackKind::Video => VIDEO_LANE_HEIGHT,
+        TrackKind::Audio => AUDIO_LANE_HEIGHT,
+    }
+}
+
 /// The rectangles a timeline divides into, and where each row starts and ends, measured from
 /// the top of the body before scrolling.
 struct Areas {
@@ -708,6 +807,8 @@ struct Areas {
     sections: [Range<usize>; 3],
     /// The top of the space below each section's tracks.
     tails: [f32; 3],
+    /// The top of each section's label row.
+    labels: [f32; 3],
     /// The thick lines between the sections.
     dividers: [f32; 2],
     /// The bottom of everything.
@@ -715,13 +816,13 @@ struct Areas {
 }
 
 impl Areas {
-    fn new(area: Rect, graph_tracks: usize, tracks: &[TrackView]) -> Self {
+    fn new(area: Rect, ruler_height: f32, graph_tracks: usize, tracks: &[TrackView]) -> Self {
         let headers = Rect::from_min_max(
-            pos2(area.left(), area.top() + RULER_HEIGHT),
+            pos2(area.left(), area.top() + ruler_height),
             pos2(area.left() + HEADER_WIDTH, area.bottom()),
         );
         let lanes = Rect::from_min_max(pos2(headers.right() + GAP, area.top()), area.max);
-        let ruler = Rect::from_min_max(lanes.min, pos2(lanes.right(), area.top() + RULER_HEIGHT));
+        let ruler = Rect::from_min_max(lanes.min, pos2(lanes.right(), area.top() + ruler_height));
         let body = Rect::from_min_max(pos2(area.left(), ruler.bottom()), area.max);
         let videos = tracks
             .iter()
@@ -741,15 +842,22 @@ impl Areas {
         };
         let mut y = 0.0;
         let mut graph_rows = Vec::with_capacity(graph_tracks);
-        for _ in 0..graph_tracks {
-            graph_rows.push((y, y + GRAPH_LANE_HEIGHT));
-            y += GRAPH_LANE_HEIGHT;
-        }
         let mut tails = [0.0; 3];
+        let mut labels = [0.0; 3];
         let mut dividers = [0.0; 2];
         let mut rows = Vec::with_capacity(tracks.len());
         for section in Section::ALL {
             if section != Section::Graphs {
+                dividers[section.index() - 1] = y;
+            }
+            labels[section.index()] = y;
+            y += SECTION_LABEL_HEIGHT;
+            if section == Section::Graphs {
+                for _ in 0..graph_tracks {
+                    graph_rows.push((y, y + GRAPH_LANE_HEIGHT));
+                    y += GRAPH_LANE_HEIGHT;
+                }
+            } else {
                 for track in &tracks[sections[section.index()].clone()] {
                     rows.push((y, y + track.height));
                     y += track.height;
@@ -757,10 +865,6 @@ impl Areas {
             }
             tails[section.index()] = y;
             y += tail_height(section);
-            if section != Section::Audio {
-                dividers[section.index()] = y + SECTION_GAP / 2.0;
-                y += SECTION_GAP;
-            }
         }
         Self {
             headers,
@@ -771,6 +875,7 @@ impl Areas {
             rows,
             sections,
             tails,
+            labels,
             dividers,
             bottom: y,
         }
@@ -909,7 +1014,12 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
     let theme = Theme::of(ui.ctx());
     let area = ui.available_rect_before_wrap();
     let background = ui.allocate_rect(area, Sense::click_and_drag());
-    let areas = Areas::new(area, model.graph_tracks.len(), &model.tracks);
+    let areas = Areas::new(
+        area,
+        ruler_height(model.mode),
+        model.graph_tracks.len(),
+        &model.tracks,
+    );
     let lanes_left = areas.lanes.left();
     response.lanes_left = lanes_left;
     let width = areas.lanes.width().max(1.0);
@@ -960,42 +1070,6 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
     if panning {
         view.left -= f64::from(delta.x) / view.px_per_sec;
         view.scroll_y -= delta.y;
-    }
-    let mode_button = Rect::from_min_size(
-        pos2(area.left() + HEADER_WIDTH - MODE_WIDTH, area.top() + 1.0),
-        vec2(MODE_WIDTH, RULER_HEIGHT - 2.0),
-    );
-    let (icon, name, hover) = match model.mode {
-        TimelineMode::Time => ("⏱", tr("timeline.mode.time"), tr("timeline.mode.time.help")),
-        TimelineMode::Tempo => (
-            "♪",
-            tr("timeline.mode.tempo"),
-            tr("timeline.mode.tempo.help"),
-        ),
-    };
-    if ui
-        .put(
-            mode_button,
-            egui::Button::new(egui::RichText::new(format!("{icon} {name}")).small()),
-        )
-        .on_hover_text(hover)
-        .clicked()
-    {
-        response.toggle_mode = true;
-    }
-    let snap_button = Rect::from_min_size(
-        pos2(mode_button.left() - SNAP_WIDTH - 4.0, mode_button.top()),
-        vec2(SNAP_WIDTH, mode_button.height()),
-    );
-    if ui
-        .put(
-            snap_button,
-            egui::Button::selectable(model.snap, egui::RichText::new(tr("timeline.snap")).small()),
-        )
-        .on_hover_text(tr("timeline.snap.help"))
-        .clicked()
-    {
-        response.toggle_snap = true;
     }
     if over(area) && !ui.ctx().egui_wants_keyboard_input() {
         item_keys(ui, model, &mut response);
@@ -1094,11 +1168,32 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         None => model.loop_region,
     };
     if let Some(region) = shown_loop {
-        paint_loop(&painter, region, x, areas.ruler, body_lanes, theme);
+        // In tempo mode the band keeps to the bar tier, leaving the beats readable.
+        let band = match model.mode {
+            TimelineMode::Time => areas.ruler,
+            TimelineMode::Tempo => areas.ruler.with_max_y(areas.ruler.top() + BEAT_TIER - 4.0),
+        };
+        paint_loop(&painter, region, x, band, body_lanes, theme);
     }
     let first = grid.tick_at_or_before(view.left);
     let last = grid.tick_at_or_before(view.seconds(lanes_left, areas.lanes.right())) + 1;
-    for k in first..=last {
+    if model.mode == TimelineMode::Tempo {
+        let corner = Rect::from_min_max(
+            pos2(area.left(), areas.ruler.top()),
+            pos2(areas.headers.right(), areas.ruler.bottom()),
+        );
+        tempo_ruler(
+            ui,
+            &grid,
+            first..=last,
+            x,
+            (corner, areas.ruler),
+            body_lanes,
+        );
+        let first_beat = model.tempo.sanitized().offset_secs;
+        first_beat_marker(ui, x(first_beat), first_beat, areas.ruler);
+    }
+    for k in (first..=last).filter(|_| model.mode == TimelineMode::Time) {
         let t = grid.time(k);
         let tx = x(t);
         let is_major = k.rem_euclid(i64::from(grid.divisions)) == 0;
@@ -1157,14 +1252,37 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         };
         lane.show(ui, &lane_painter, model, view, theme, &mut response);
     }
-    // The thick lines between the sections, across the headers and the lanes.
+    // The thick lines between the sections, across the headers and the lanes, and the label
+    // under each that names its section.
     let divider_painter = ui.painter_at(areas.body);
     for y in areas.dividers {
-        let y = areas.y(y, view.scroll_y);
+        let y = areas.y(y, view.scroll_y) + SECTION_LINE / 2.0;
         divider_painter.line_segment(
             [pos2(areas.headers.left(), y), pos2(areas.lanes.right(), y)],
-            Stroke::new(3.0, theme.lane_outline),
+            Stroke::new(SECTION_LINE, theme.surfaces.border),
         );
+    }
+    for section in Section::ALL {
+        let top = areas.y(areas.labels[section.index()], view.scroll_y);
+        let row = Rect::from_min_size(
+            pos2(areas.headers.left() + 10.0, top),
+            vec2(HEADER_WIDTH - 10.0, SECTION_LABEL_HEIGHT),
+        );
+        if !row.intersects(areas.headers) {
+            continue;
+        }
+        let (name, color) = match section {
+            Section::Graphs => (tr("timeline.section.graphs"), theme.graph_text),
+            Section::Video => (tr("timeline.section.video"), theme.surfaces.text_faint),
+            Section::Audio => (tr("timeline.section.audio"), theme.ports.audio),
+        };
+        let mut child = ui.new_child(
+            UiBuilder::new()
+                .max_rect(row)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        child.set_clip_rect(areas.headers.intersect(ui.clip_rect()));
+        crate::widgets::section_label_in(&mut child, name, color);
     }
     if let Some(ghost) = &model.drop_ghost
         && let Some(p) = pointer.filter(|p| areas.body.contains(*p))
@@ -1241,7 +1359,11 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         if !rect.intersects(header_clip) {
             continue;
         }
-        header_painter.rect_filled(rect, CornerRadius::same(3), ui.visuals().faint_bg_color);
+        header_painter.hline(
+            rect.x_range(),
+            rect.top() + 0.5,
+            Stroke::new(1.0, theme.surfaces.divider),
+        );
         // The background drags the track among the graph tracks and has the track's menu; it
         // goes under the widgets, so they keep their clicks.
         let grip = ui.interact(
@@ -1279,6 +1401,14 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
                 ui.close();
             }
         });
+        kind_bar(
+            ui,
+            rect,
+            header_clip,
+            theme.graph_block,
+            tr("timeline.graph_track.kind"),
+            ("graph-track-kind", row),
+        );
         header(ui, rect, header_clip, |ui| {
             graph_track_header(ui, track, row, &mut response);
         });
@@ -1288,12 +1418,18 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         if !rect.intersects(header_clip) {
             continue;
         }
-        let fill = if model.selected_track == Some(row) {
-            theme.accent.gamma_multiply(0.18)
-        } else {
-            ui.visuals().faint_bg_color
-        };
-        header_painter.rect_filled(rect, CornerRadius::same(3), fill);
+        if model.selected_track == Some(row) {
+            header_painter.rect_filled(
+                rect,
+                CornerRadius::same(3),
+                theme.accent.gamma_multiply(0.18),
+            );
+        }
+        header_painter.hline(
+            rect.x_range(),
+            rect.top() + 0.5,
+            Stroke::new(1.0, theme.surfaces.divider),
+        );
         // The header's background selects the track, drags it to a new place in its section
         // and has the track menu. It goes under the widgets (which are made after it), so they
         // keep their clicks.
@@ -1334,6 +1470,11 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
             tr("timeline.track.header.help")
         });
         grip.context_menu(|ui| track_menu(ui, model, row, &areas, &mut response));
+        let (color, kind) = match track.kind {
+            TrackKind::Video => (theme.ports.video, tr("timeline.track.kind.video")),
+            TrackKind::Audio => (theme.ports.audio, tr("timeline.track.kind.audio")),
+        };
+        kind_bar(ui, rect, header_clip, color, kind, ("track-kind", row));
         header(ui, rect, header_clip, |ui| {
             track_header(ui, track, &model.buses, row, &mut response);
         });
@@ -1359,7 +1500,7 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         if resize.double_clicked() {
             response
                 .actions
-                .push(TrackAction::SetHeight(row, LANE_HEIGHT));
+                .push(TrackAction::SetHeight(row, lane_height(track.kind)));
         }
         resize.on_hover_text(tr("timeline.track.resize"));
     }
@@ -1381,7 +1522,9 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
             ),
         );
     }
-    // An empty section names what to drop in it.
+    // An empty section names what to drop in it, across its empty lane too, so the hint isn't cut at
+    // the header's edge.
+    let hint_painter = ui.painter_at(header_clip.union(body_lanes));
     for section in Section::ALL {
         let empty = match section {
             Section::Graphs => model.graph_tracks.is_empty(),
@@ -1396,7 +1539,7 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
             Section::Video => tr("timeline.section.video.empty"),
             Section::Audio => tr("timeline.section.audio.empty"),
         };
-        header_painter.text(
+        hint_painter.text(
             pos2(tail.left() + 6.0, tail.center().y),
             Align2::LEFT_CENTER,
             text,
@@ -1406,6 +1549,7 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
     }
 
     response.layout = TimelineLayout {
+        ruler: areas.ruler,
         graph_lanes: (0..model.graph_tracks.len())
             .map(|row| areas.graph_lane(row, view.scroll_y))
             .collect(),
@@ -1452,10 +1596,12 @@ fn track_menu(
     response: &mut TimelineResponse,
 ) {
     let track = &model.tracks[row];
-    if track.height != LANE_HEIGHT && ui.button(tr("timeline.track.reset_height")).clicked() {
+    if track.height != lane_height(track.kind)
+        && ui.button(tr("timeline.track.reset_height")).clicked()
+    {
         response
             .actions
-            .push(TrackAction::SetHeight(row, LANE_HEIGHT));
+            .push(TrackAction::SetHeight(row, lane_height(track.kind)));
         ui.close();
     }
     let section = &areas.sections[Section::of(track.kind).index()];
@@ -1528,6 +1674,133 @@ fn items_in(
         }
     }
     found
+}
+
+/// The ruler in tempo mode, in two tiers: bar numbers bold along the top and beats small under
+/// them, labelled where they have room, with a "bar / beat" key in the `corner` over the
+/// headers. Every other bar is shaded down through the `lanes`, and beat lines are fainter than
+/// bar lines.
+fn tempo_ruler(
+    ui: &Ui,
+    grid: &RulerGrid,
+    ticks: std::ops::RangeInclusive<i64>,
+    x: impl Fn(f64) -> f32,
+    (corner, ruler): (Rect, Rect),
+    lanes: Rect,
+) {
+    let theme = Theme::of(ui.ctx());
+    let Some((minor_beats, per_bar)) = grid.bars else {
+        return;
+    };
+    let painter = ui.painter_at(ruler.union(lanes));
+    let (first, last) = (*ticks.start(), *ticks.end());
+
+    let bar_secs = grid.minor / minor_beats * f64::from(per_bar);
+    let bar_px = x(grid.origin + bar_secs) - x(grid.origin);
+    if bar_px >= MIN_SHADED_BAR {
+        let shade = theme.surfaces.text.gamma_multiply(0.022);
+        let bar_of = |t: f64| ((t - grid.origin) / bar_secs).floor() as i64;
+        for bar in bar_of(grid.time(first))..=bar_of(grid.time(last)) {
+            if bar.rem_euclid(2) == 1 {
+                let start = grid.origin + bar as f64 * bar_secs;
+                let band = Rect::from_x_y_ranges(
+                    x(start)..=x(start + bar_secs),
+                    lanes.top()..=lanes.bottom(),
+                );
+                painter.rect_filled(band, CornerRadius::ZERO, shade);
+            }
+        }
+    }
+
+    let minor_px = x(grid.time(1)) - x(grid.time(0));
+    for k in ticks {
+        let t = grid.time(k);
+        let tx = x(t);
+        let is_major = k.rem_euclid(i64::from(grid.divisions)) == 0;
+        let labelled = t >= -1e-9;
+        if grid.on_bar(k) {
+            painter.line_segment(
+                [
+                    pos2(tx, ruler.top()),
+                    pos2(tx, ruler.top() + BEAT_TIER - 1.0),
+                ],
+                Stroke::new(1.0, theme.tick),
+            );
+            painter.line_segment(
+                [pos2(tx, lanes.top()), pos2(tx, lanes.bottom())],
+                Stroke::new(1.0, theme.tick.gamma_multiply(0.3)),
+            );
+            if is_major && labelled {
+                painter.text(
+                    pos2(tx + 5.0, ruler.top() + 3.0),
+                    Align2::LEFT_TOP,
+                    grid.label(k),
+                    crate::theme::semibold(12.0),
+                    theme.surfaces.text,
+                );
+            }
+        } else {
+            painter.line_segment(
+                [pos2(tx, ruler.top() + BEAT_TIER), pos2(tx, ruler.bottom())],
+                Stroke::new(1.0, theme.tick.gamma_multiply(0.7)),
+            );
+            painter.line_segment(
+                [pos2(tx, lanes.top()), pos2(tx, lanes.bottom())],
+                Stroke::new(1.0, theme.tick.gamma_multiply(0.1)),
+            );
+            if (is_major || minor_px >= MIN_BEAT_LABEL_SPACING) && labelled {
+                painter.text(
+                    pos2(tx + 3.0, ruler.top() + BEAT_TIER),
+                    Align2::LEFT_TOP,
+                    grid.label(k),
+                    FontId::monospace(9.5),
+                    theme.tick_label,
+                );
+            }
+        }
+    }
+
+    let key = ui.painter_at(corner);
+    for (text, y, color) in [
+        (tr("timeline.ruler.bar"), 4.0, theme.tick_label),
+        (
+            tr("timeline.ruler.beat"),
+            BEAT_TIER,
+            theme.surfaces.text_faint,
+        ),
+    ] {
+        key.text(
+            pos2(corner.left() + 10.0, corner.top() + y),
+            Align2::LEFT_TOP,
+            text.to_uppercase(),
+            crate::theme::semibold(9.5),
+            color,
+        );
+    }
+}
+
+/// The first beat on the tempo ruler: an amber marker at `x`, between the bar and beat tiers,
+/// that names its time on hover.
+fn first_beat_marker(ui: &mut Ui, x: f32, seconds: f64, ruler: Rect) {
+    if !ruler.x_range().contains(x) {
+        return;
+    }
+    let theme = Theme::of(ui.ctx());
+    let top = ruler.top() + BEAT_TIER - 6.0;
+    ui.painter_at(ruler).add(egui::Shape::convex_polygon(
+        vec![pos2(x - 5.0, top), pos2(x + 5.0, top), pos2(x, top + 7.0)],
+        theme.beat,
+        Stroke::NONE,
+    ));
+    let zone = Rect::from_center_size(pos2(x, top + 3.5), vec2(12.0, 10.0));
+    let response = ui.interact(zone, ui.id().with("first-beat"), Sense::hover());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Label, true, tr("timeline.first_beat"))
+    });
+    response.on_hover_text(tr_args(
+        "timeline.first_beat.help",
+        &[("time", &timecode(seconds))],
+    ));
 }
 
 /// The ruler's own clicks and drags: a click or drag moves the playhead, Ctrl+drag makes a loop
@@ -1797,20 +2070,12 @@ impl Lane<'_> {
                 });
             },
         );
-        let base = match track.kind {
-            TrackKind::Video => theme.video_block,
-            TrackKind::Audio => theme.audio_block,
-        };
-        let mut fill = if hovered {
-            base.gamma_multiply(1.2)
-        } else {
-            base
+        let colors = match track.kind {
+            TrackKind::Video => &theme.video_item,
+            TrackKind::Audio => &theme.audio_item,
         };
         let dim = item.muted || track.silenced;
-        if dim {
-            fill = fill.gamma_multiply(0.4);
-        }
-        painter.rect_filled(block, CornerRadius::same(3), fill);
+        item_body(painter, block, colors, None, hovered, dim);
         let content = Rect::from_min_max(pos2(block.left(), bar.bottom()), block.max);
         match track.kind {
             TrackKind::Video if track.thumbnails.is_some() => {
@@ -1830,8 +2095,9 @@ impl Lane<'_> {
             TrackKind::Audio => {
                 if let Some(waveform) = &track.waveform {
                     let color = theme
-                        .block_text
-                        .gamma_multiply(if dim { 0.3 } else { 0.55 });
+                        .ports
+                        .audio
+                        .gamma_multiply(if dim { 0.45 } else { 1.0 });
                     draw_waveform(
                         painter,
                         waveform,
@@ -1853,7 +2119,7 @@ impl Lane<'_> {
             ui,
             painter,
             self.clip,
-            theme,
+            (theme, colors),
             bar,
             (visible.left(), &name, item.muted),
             hovered,
@@ -1867,7 +2133,7 @@ impl Lane<'_> {
         if selected {
             painter.rect_stroke(
                 block,
-                CornerRadius::same(3),
+                CornerRadius::same(ITEM_RADIUS),
                 Stroke::new(2.0, theme.accent),
                 egui::StrokeKind::Inside,
             );
@@ -1995,33 +2261,38 @@ fn item_bar(
     ui: &Ui,
     painter: &egui::Painter,
     clip: Rect,
-    theme: &Theme,
+    (theme, colors): (&Theme, &ItemColors),
     bar: Rect,
     (left, name, muted): (f32, &str, bool),
     hovered: bool,
     mute_id: egui::Id,
 ) -> bool {
+    let fill = if hovered {
+        colors.bar.lerp_to_gamma(colors.text, 0.08)
+    } else {
+        colors.bar
+    };
     painter.rect_filled(
-        bar,
+        Rect::from_min_max(bar.min + vec2(1.0, 1.0), bar.max - vec2(1.0, 0.0)),
         CornerRadius {
-            nw: 3,
-            ne: 3,
+            nw: ITEM_RADIUS - 1,
+            ne: ITEM_RADIUS - 1,
             sw: 0,
             se: 0,
         },
-        egui::Color32::from_black_alpha(if hovered { 70 } else { 45 }),
+        fill,
     );
     let text = if muted {
-        theme.block_text.gamma_multiply(0.5)
+        colors.text.gamma_multiply(0.5)
     } else {
-        theme.block_text
+        colors.text
     };
     let painter_bar = painter.with_clip_rect(bar.intersect(clip));
     painter_bar.text(
         pos2(left + 4.0, bar.center().y),
         Align2::LEFT_CENTER,
         name,
-        FontId::proportional(10.0),
+        crate::theme::semibold(SMALL_SIZE),
         text,
     );
     let mute_rect = Rect::from_center_size(
@@ -2046,6 +2317,35 @@ fn item_bar(
         tr("timeline.item.mute")
     });
     clicked
+}
+
+/// An item's body in `block`: its fill, a step lighter while `hovered`, faded while `dim`,
+/// outlined in `edge`, or else in its bar's colour.
+fn item_body(
+    painter: &egui::Painter,
+    block: Rect,
+    colors: &ItemColors,
+    edge: Option<Color32>,
+    hovered: bool,
+    dim: bool,
+) {
+    let mut fill = if hovered {
+        colors.fill.lerp_to_gamma(colors.bar, 0.5)
+    } else {
+        colors.fill
+    };
+    let mut edge = edge.unwrap_or(colors.bar);
+    if dim {
+        fill = fill.gamma_multiply(0.45);
+        edge = edge.gamma_multiply(0.45);
+    }
+    painter.rect(
+        block,
+        CornerRadius::same(ITEM_RADIUS),
+        fill,
+        Stroke::new(1.0, edge),
+        egui::StrokeKind::Inside,
+    );
 }
 
 /// Where a drag of anything can snap when nothing is left out: the timeline's start, the
@@ -2507,7 +2807,7 @@ fn drop_slot(y: f32, boundaries: &[f32]) -> usize {
         .map_or(0, |(i, _)| i)
 }
 
-/// The glyph a track is marked with, in its header and while it is dragged.
+/// The glyph a track is marked with while it is dragged.
 fn track_icon(kind: TrackKind) -> &'static str {
     match kind {
         TrackKind::Video => "▣",
@@ -2518,9 +2818,9 @@ fn track_icon(kind: TrackKind) -> &'static str {
 /// The glyph graph tracks are marked with.
 const GRAPH_ICON: &str = "▤";
 
-/// The widgets of a track's header: name, mute, solo and remove; then the video's size and frame
-/// rate, or an audio track's volume and, when the project has several buses (or the track's is
-/// gone), its bus.
+/// The widgets of a track's header: its name with the M and S buttons beside it, and under the
+/// name the video's size and frame rate, or an audio track's volume and, when the project has
+/// several buses (or the track's is gone), its bus. Removing the track is in the header's menu.
 fn track_header(
     ui: &mut Ui,
     track: &TrackView,
@@ -2531,64 +2831,56 @@ fn track_header(
     // Labels don't select text here, so a drag that starts on one reaches the header below and
     // reorders the track.
     ui.style_mut().interaction.selectable_labels = false;
-    ui.vertical(|ui| {
+    let theme = Theme::of(ui.ctx());
+    let column = vec2(name_width(ui, 2), NAME_ROWS_HEIGHT);
+    ui.allocate_ui_with_layout(column, egui::Layout::top_down(egui::Align::Min), |ui| {
+        ui.set_width(column.x);
         ui.spacing_mut().item_spacing.y = 2.0;
-        ui.horizontal(|ui| {
-            ui.label(track_icon(track.kind));
-            let edit = name_edit(ui, ui.id().with(("track-name", row)), &track.name, |e| {
-                e.desired_width(NAME_WIDTH)
-            });
-            let edit_response = edit.response.on_hover_text(tr("timeline.track.name.help"));
-            if edit_response.gained_focus() {
-                response.actions.push(TrackAction::Select(row));
-            }
-            if let Some(name) = edit.committed {
-                response.actions.push(TrackAction::Rename(row, name));
-            }
-            let mute = egui::Button::new(if track.muted { "🔇" } else { "🔊" }).frame(false);
-            if ui
-                .add(mute)
-                .on_hover_text(if track.muted {
-                    tr("timeline.track.unmute")
-                } else {
-                    tr("timeline.track.mute")
-                })
-                .clicked()
-            {
-                response.actions.push(TrackAction::ToggleMute(row));
-            }
-            if ui
-                .add(egui::Button::selectable(track.solo, "S"))
-                .on_hover_text(tr("timeline.track.solo"))
-                .clicked()
-            {
-                response.actions.push(TrackAction::ToggleSolo(row));
-            }
-            if ui
-                .add(egui::Button::new("×").frame(false))
-                .on_hover_text(tr("timeline.track.remove"))
-                .clicked()
-            {
-                response.actions.push(TrackAction::Remove(row));
-            }
-        });
+        let edit = header_name(ui, ui.id().with(("track-name", row)), &track.name);
+        let edit_response = edit.response.on_hover_text(tr("timeline.track.name.help"));
+        if edit_response.gained_focus() {
+            response.actions.push(TrackAction::Select(row));
+        }
+        if let Some(name) = edit.committed {
+            response.actions.push(TrackAction::Rename(row, name));
+        }
         ui.horizontal(|ui| match track.kind {
-            _ if track.empty => {
-                ui.weak(tr("timeline.track.empty"));
-            }
+            _ if track.empty => detail(ui, tr("timeline.track.empty")),
             TrackKind::Video => {
                 if let Some(details) = &track.details {
-                    ui.add(
-                        egui::Label::new(egui::RichText::new(details).weak().small()).truncate(),
-                    );
+                    detail(ui, details);
                 }
             }
             TrackKind::Audio => audio_controls(ui, track, buses, row, response),
         });
     });
+    ui.add_space(6.0 - ui.spacing().item_spacing.x);
+    let mute_help = if track.muted {
+        tr("timeline.track.unmute")
+    } else {
+        tr("timeline.track.mute")
+    };
+    if track_toggle(ui, track.muted, "M", theme.text_dim)
+        .on_hover_text(mute_help)
+        .clicked()
+    {
+        response.actions.push(TrackAction::ToggleMute(row));
+    }
+    if track_toggle(ui, track.solo, "S", theme.solo)
+        .on_hover_text(tr("timeline.track.solo"))
+        .clicked()
+    {
+        response.actions.push(TrackAction::ToggleSolo(row));
+    }
 }
 
-/// The widgets of a graph track's header: its name, mute and remove.
+/// A header's small, faint line under the name.
+fn detail(ui: &mut Ui, text: &str) {
+    ui.add(egui::Label::new(egui::RichText::new(text).weak().small()).truncate());
+}
+
+/// The widgets of a graph track's header: its name and the M button. Removing the track is in
+/// the header's menu.
 fn graph_track_header(
     ui: &mut Ui,
     track: &GraphTrackView,
@@ -2596,40 +2888,35 @@ fn graph_track_header(
     response: &mut TimelineResponse,
 ) {
     ui.style_mut().interaction.selectable_labels = false;
-    ui.label(GRAPH_ICON);
-    let edit = name_edit(
-        ui,
-        ui.id().with(("graph-track-name", row)),
-        &track.name,
-        |e| e.desired_width(NAME_WIDTH),
+    let theme = Theme::of(ui.ctx());
+    let column = vec2(name_width(ui, 1), NAME_HEIGHT);
+    ui.allocate_ui_with_layout(
+        column,
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            let edit = header_name(ui, ui.id().with(("graph-track-name", row)), &track.name);
+            edit.response
+                .on_hover_text(tr("timeline.graph_track.name.help"));
+            if let Some(name) = edit.committed {
+                response.graph_actions.push(GraphAction::Rename(row, name));
+            }
+        },
     );
-    edit.response
-        .on_hover_text(tr("timeline.graph_track.name.help"));
-    if let Some(name) = edit.committed {
-        response.graph_actions.push(GraphAction::Rename(row, name));
-    }
-    let mute = egui::Button::new(if track.muted { "🔇" } else { "🔊" }).frame(false);
-    if ui
-        .add(mute)
-        .on_hover_text(if track.muted {
-            tr("timeline.graph_track.unmute")
-        } else {
-            tr("timeline.graph_track.mute")
-        })
+    ui.add_space(6.0 - ui.spacing().item_spacing.x);
+    let mute_help = if track.muted {
+        tr("timeline.graph_track.unmute")
+    } else {
+        tr("timeline.graph_track.mute")
+    };
+    if track_toggle(ui, track.muted, "M", theme.text_dim)
+        .on_hover_text(mute_help)
         .clicked()
     {
         response.graph_actions.push(GraphAction::ToggleMute(row));
     }
-    if ui
-        .add(egui::Button::new("×").frame(false))
-        .on_hover_text(tr("timeline.track.remove"))
-        .clicked()
-    {
-        response.graph_actions.push(GraphAction::Remove(row));
-    }
 }
 
-/// An audio track's volume, and its bus when there is a choice to make.
+/// An audio track's volume bar and level, and its bus when there is a choice to make.
 fn audio_controls(
     ui: &mut Ui,
     track: &TrackView,
@@ -2637,26 +2924,35 @@ fn audio_controls(
     row: usize,
     response: &mut TimelineResponse,
 ) {
-    let mut percent = f64::from(track.volume) * 100.0;
-    if ui
-        .add(
-            crate::value_box::ValueBox::new(&mut percent)
-                .range(0.0..=100.0)
-                .speed(0.5)
-                .max_decimals(0)
-                .suffix(tr("timeline.track.volume.suffix")),
-        )
-        .on_hover_text(tr("timeline.track.volume.help"))
-        .changed()
-    {
-        response
-            .actions
-            .push(TrackAction::SetVolume(row, (percent / 100.0) as f32));
+    const READOUT: f32 = 32.0;
+    const BUS: f32 = 64.0;
+    ui.spacing_mut().interact_size.y = 14.0;
+    let theme = Theme::of(ui.ctx());
+    let with_bus = buses.len() > 1 || !buses.contains(&track.bus);
+    let gaps = ui.spacing().item_spacing.x * if with_bus { 2.0 } else { 1.0 };
+    let used = READOUT + gaps + if with_bus { BUS + 20.0 } else { 0.0 };
+    let width = (ui.available_width() - used).max(24.0);
+    if let Some(volume) = volume_bar(ui, track.volume, width) {
+        response.actions.push(TrackAction::SetVolume(row, volume));
     }
-    if buses.len() > 1 || !buses.contains(&track.bus) {
+    let level = format!(
+        "{:.0}{}",
+        f64::from(track.volume) * 100.0,
+        tr("timeline.track.volume.suffix")
+    );
+    ui.add_sized(
+        vec2(READOUT, 14.0),
+        egui::Label::new(
+            egui::RichText::new(level)
+                .monospace()
+                .size(crate::theme::SMALL_SIZE)
+                .color(theme.text_dim),
+        ),
+    );
+    if with_bus {
         let mut bus = track.bus.clone();
         egui::ComboBox::from_id_salt(("track-bus", row))
-            .width(64.0)
+            .width(BUS)
             .selected_text(&bus)
             .show_ui(ui, |ui| {
                 for name in buses {
@@ -2813,21 +3109,21 @@ impl GraphLane<'_> {
             None => block,
         };
         let bar = bar_of(shown);
-        let base = theme.graph_block;
-        let mut fill = if hovered {
-            base.gamma_multiply(1.2)
-        } else {
-            base
-        };
-        if item.muted || track.muted {
-            fill = fill.gamma_multiply(0.4);
-        }
-        painter.rect_filled(shown, CornerRadius::same(3), fill);
+        let colors = &theme.graph_item;
+        let edge = (!selected).then_some(theme.graph_block);
+        item_body(
+            painter,
+            shown,
+            colors,
+            edge,
+            hovered,
+            item.muted || track.muted,
+        );
         if item_bar(
             ui,
             painter,
             self.clip,
-            theme,
+            (theme, colors),
             bar,
             (shown.intersect(self.clip).left(), &item.name, item.muted),
             hovered,
@@ -2841,7 +3137,7 @@ impl GraphLane<'_> {
         if selected {
             painter.rect_stroke(
                 shown,
-                CornerRadius::same(3),
+                CornerRadius::same(ITEM_RADIUS),
                 Stroke::new(2.0, theme.accent),
                 egui::StrokeKind::Inside,
             );
@@ -2900,15 +3196,124 @@ fn header(ui: &mut Ui, rect: Rect, clip: Rect, contents: impl FnOnce(&mut Ui)) {
     }
     let top = Rect::from_min_size(
         rect.min,
-        vec2(rect.width(), rect.height().min(LANE_HEIGHT - 4.0)),
+        vec2(rect.width(), rect.height().min(VIDEO_LANE_HEIGHT - 4.0)),
     );
+    let inner = Rect::from_min_max(top.min + vec2(KIND_INSET, 3.0), top.max - vec2(8.0, 3.0));
     let mut child = ui.new_child(
         UiBuilder::new()
-            .max_rect(top.shrink2(vec2(6.0, 3.0)))
+            .max_rect(inner)
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
     child.set_clip_rect(clip.intersect(ui.clip_rect()));
+    child.spacing_mut().item_spacing.x = 4.0;
     contents(&mut child);
+}
+
+/// The bar of a track's kind colour at the left of its header, named `label` for screen readers
+/// (and tests). It only senses hovering, so a drag that starts on it reaches the header below.
+fn kind_bar(
+    ui: &mut Ui,
+    rect: Rect,
+    clip: Rect,
+    color: Color32,
+    label: &str,
+    id: impl std::hash::Hash + std::fmt::Debug,
+) {
+    let top = rect.height().min(VIDEO_LANE_HEIGHT - 4.0);
+    let height = (top * 0.7).round().clamp(16.0, 34.0);
+    let bar = Rect::from_center_size(
+        pos2(rect.left() + 9.5, rect.top() + top / 2.0),
+        vec2(3.0, height),
+    );
+    ui.painter_at(clip)
+        .rect_filled(bar, CornerRadius::same(2), color);
+    let zone = bar.expand2(vec2(3.0, 0.0)).intersect(clip);
+    if zone.is_positive() {
+        ui.interact(zone, ui.id().with(id), Sense::hover())
+            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label));
+    }
+}
+
+/// A header's name: plain text that is edited in place, outlined while hovered or edited.
+fn header_name(ui: &mut Ui, id: egui::Id, name: &str) -> crate::name_edit::NameEdit {
+    let width = ui.available_width();
+    let edit = name_edit(ui, id, name, |e| {
+        e.frame(egui::Frame::NONE)
+            .margin(egui::Margin::ZERO)
+            .font(crate::theme::medium(NAME_SIZE))
+            .desired_width(width)
+    });
+    let theme = Theme::of(ui.ctx());
+    let outline = if edit.response.has_focus() {
+        Some(theme.accent)
+    } else if edit.response.hovered() {
+        Some(theme.surfaces.border)
+    } else {
+        None
+    };
+    if let Some(color) = outline {
+        ui.painter().rect_stroke(
+            edit.response.rect.expand2(vec2(3.0, 1.0)),
+            3,
+            Stroke::new(1.0, color),
+            egui::StrokeKind::Outside,
+        );
+    }
+    edit
+}
+
+/// A header's M or S button: outlined, and filled with `fill` while on.
+fn track_toggle(ui: &mut Ui, on: bool, letter: &str, fill: Color32) -> egui::Response {
+    let ink_on = Theme::of(ui.ctx()).surfaces.ground;
+    crate::widgets::toggle_box(ui, on, fill, letter, |painter, rect, ink, on| {
+        if on {
+            painter.rect_filled(rect, 4, fill);
+        }
+        painter.text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            letter,
+            crate::theme::semibold(11.0),
+            if on { ink_on } else { ink },
+        );
+    })
+}
+
+/// The width left for a header's name once `toggles` M and S buttons are beside it.
+fn name_width(ui: &Ui, toggles: usize) -> f32 {
+    let buttons = toggles as f32 * (TOGGLE_WIDTH + ui.spacing().item_spacing.x);
+    (ui.available_width() - buttons - 6.0).max(0.0)
+}
+
+/// An audio track's volume as a slim bar: drag or click along it to set the level, double-click
+/// for full. Returns the new volume when it changes.
+fn volume_bar(ui: &mut Ui, volume: f32, width: f32) -> Option<f32> {
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 14.0), Sense::click_and_drag());
+    let enabled = ui.is_enabled();
+    response.widget_info(|| {
+        egui::WidgetInfo::slider(enabled, f64::from(volume), tr("timeline.track.volume"))
+    });
+    let theme = Theme::of(ui.ctx());
+    let groove = Rect::from_center_size(rect.center(), vec2(rect.width(), 4.0));
+    let level = groove.with_max_x(groove.left() + groove.width() * volume.clamp(0.0, 1.0));
+    let painter = ui.painter();
+    painter.rect_filled(groove, 2, theme.surfaces.raised_active);
+    painter.rect_filled(level, 2, theme.ports.audio);
+    if response.hovered() || response.dragged() {
+        painter.circle_filled(level.right_center(), 4.0, theme.surfaces.text);
+    }
+    let response = response.on_hover_text(tr("timeline.track.volume.bar.help"));
+    if response.double_clicked() {
+        return (volume != 1.0).then_some(1.0);
+    }
+    if (response.dragged() || response.clicked())
+        && let Some(p) = response.interact_pointer_pos()
+    {
+        let at = ((p.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
+        let at = (at * 100.0).round() / 100.0;
+        return (at != volume).then_some(at);
+    }
+    None
 }
 
 #[cfg(test)]
@@ -2935,20 +3340,24 @@ mod tests {
         let tracks = [TrackView::new("a", TrackKind::Video), tall];
         let areas = Areas::new(
             Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 400.0)),
+            RULER_HEIGHT,
             1,
             &tracks,
         );
         let body = RULER_HEIGHT;
-        // The graph track, its "+" row and the gap, then the video track.
-        let video = GRAPH_LANE_HEIGHT + TAIL_HEIGHT + SECTION_GAP;
-        assert_eq!(areas.graph_row_at(0.0, body + 10.0), Some(0));
-        assert_eq!(areas.row_at(0.0, body + 10.0), None);
+        // The graphs' label, the graph track and its "+" row, then the video label and track.
+        let video = SECTION_LABEL_HEIGHT * 2.0 + GRAPH_LANE_HEIGHT + TAIL_HEIGHT;
+        assert_eq!(areas.dividers[0], video - SECTION_LABEL_HEIGHT);
+        assert_eq!(areas.graph_row_at(0.0, body + 10.0), None, "on the label");
+        let graph = body + SECTION_LABEL_HEIGHT;
+        assert_eq!(areas.graph_row_at(0.0, graph + 10.0), Some(0));
+        assert_eq!(areas.row_at(0.0, graph + 10.0), None);
         assert_eq!(areas.row_at(0.0, body + video + 10.0), Some(0));
-        // The audio track comes after the video's "+" row and the second gap.
-        let audio = video + LANE_HEIGHT + TAIL_HEIGHT + SECTION_GAP;
+        // The audio track comes after the video's "+" row and the audio label.
+        let audio = video + VIDEO_LANE_HEIGHT + TAIL_HEIGHT + SECTION_LABEL_HEIGHT;
         assert_eq!(areas.lane(1, 0.0).top(), body + audio + 2.0);
         assert_eq!(areas.lane(1, 0.0).height(), 96.0);
-        assert_eq!(areas.row_at(0.0, body + audio - 5.0), None, "in the gap");
+        assert_eq!(areas.row_at(0.0, body + audio - 5.0), None, "on the label");
         assert_eq!(areas.row_at(0.0, body + audio + 90.0), Some(1));
         assert_eq!(areas.row_at(20.0, body + audio - 10.0), Some(1));
         assert_eq!(areas.sections, [0..0, 0..1, 1..2]);
@@ -3063,10 +3472,31 @@ mod tests {
         assert_eq!(grid.label(0), "1");
         assert_eq!(grid.label(4), "1.2");
         assert_eq!(grid.label(16), "2");
+        // Bar ticks are told from beat ticks, either side of the first beat.
+        assert!(grid.on_bar(0) && grid.on_bar(16) && grid.on_bar(-16));
+        assert!(!grid.on_bar(4));
         // Snapping lands on ticks; in time mode, on frames.
         assert!((grid.snap(0.77, 30.0) - 0.75).abs() < 1e-12);
         let time = RulerGrid::new(&model(TimelineMode::Time), 360.0);
         assert!((time.snap(0.77, 30.0) - 23.0 / 30.0).abs() < 1e-12);
+        assert!(!time.on_bar(0));
+    }
+
+    #[test]
+    fn positions_read_as_bars_and_beats() {
+        // 120 bpm in 4/4 with the first beat at 0.25 s: a beat is half a second.
+        let tempo = Tempo {
+            offset_secs: 0.25,
+            ..Tempo::default()
+        };
+        assert_eq!(bar_beat(&tempo, 0.25), "1.1");
+        assert_eq!(bar_beat(&tempo, 2.25), "2.1");
+        assert_eq!(bar_beat(&tempo, 3.25), "2.3");
+        assert_eq!(bar_beat(&tempo, 3.375), "2.3.2");
+        assert_eq!(bar_beat(&tempo, 0.0), "0.4.3", "before the first beat");
+        assert_eq!(bar_beat_tick(&tempo, 0.25), "1.1.1");
+        assert_eq!(bar_beat_tick(&tempo, 3.74), "2.3.4");
+        assert_eq!(beats_at(&tempo, 1.25), 2.0);
     }
 
     #[test]
@@ -3089,6 +3519,9 @@ mod tests {
         assert_eq!(timecode(0.0), "0:00.00");
         assert_eq!(timecode(61.5), "1:01.50");
         assert_eq!(timecode(-3.0), "0:00.00");
+        assert_eq!(short_timecode(3.0), "0:03");
+        assert_eq!(short_timecode(125.0), "2:05");
+        assert_eq!(short_timecode(1.25), "0:01.25");
     }
 
     #[test]

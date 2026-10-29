@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RasterSong: timeline in tempo mode</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0E0F11}
+a{color:#A9B6FF}a:hover{color:#CDD5FF}
+.rs button,.rs input{font-family:inherit}
+.btn{height:30px;padding:0 10px;border-radius:6px;border:1px solid #2A2C31;background:#1C1D21;color:#ECEDEF;font-size:12.5px;font-weight:500;display:inline-flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap}
+.ghost{background:transparent;border-color:transparent;color:#C3C6CD}
+.ib{width:30px;padding:0;justify-content:center}
+.kbd{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#A1A4AC;border:1px solid #33353B;border-bottom-width:2px;border-radius:4px;padding:0 4px;line-height:15px}
+.lbl{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:#868A94;font-weight:600}
+.mono{font-family:'JetBrains Mono',monospace}
+.seg{display:inline-flex;background:#0E0F11;border:1px solid #2A2C31;border-radius:7px;padding:2px;gap:2px}
+.seg button{height:24px;border:0;border-radius:5px;background:transparent;color:#A1A4AC;font-size:12px;font-weight:500;padding:0 9px;cursor:pointer}
+.tog{height:22px;min-width:22px;border-radius:4px;border:1px solid #33353B;background:transparent;color:#A1A4AC;font-size:11px;font-weight:700;padding:0 5px;cursor:pointer;font-family:'JetBrains Mono',monospace}
+.dot{width:8px;height:8px;border-radius:50%;flex:none}
+.item{position:absolute;top:3px;bottom:3px;border-radius:5px;overflow:hidden;border:1px solid rgba(255,255,255,.08)}
+.ibar{height:16px;display:flex;align-items:center;gap:6px;padding:0 6px;font-size:10.5px;font-weight:600;white-space:nowrap}
+.tf{display:flex;align-items:center;gap:6px;height:28px;padding:0 8px;border-radius:6px;background:#0E0F11;border:1px solid #2A2C31;font-size:12px;color:#A1A4AC;white-space:nowrap}
+.tf input{background:transparent;border:0;color:#ECEDEF;font-family:'JetBrains Mono',monospace;font-size:12px;text-align:right;padding:0;cursor:ew-resize}
+</style>
+</helmet>
+<div class="rs" style="width: 1280px; height: 600px; background: #0E0F11; color: #ECEDEF; font-family: Inter, system-ui, sans-serif; font-size: 13px; display: flex; flex-direction: column; gap: 8px; padding: 8px; box-sizing: border-box">
+
+  <section aria-label="Timeline" style="flex: 1; min-height: 0; background: #16171A; border: 1px solid #24262B; border-radius: 8px; display: flex; flex-direction: column; overflow: hidden">
+    <!-- TOOLBAR: the tempo group appears only in Tempo mode, attached to the switch that reveals it -->
+    <div style="min-height: 44px; display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 12px; border-bottom: 1px solid #202227; box-sizing: border-box; white-space: nowrap">
+      <span style="font-weight: 600; margin-right: 4px">Timeline</span>
+      <div style="display: flex; align-items: center; gap: 6px; padding: 3px 6px 3px 3px; border-radius: 9px; background: #1A1B20; border: 1px solid #2C2F3A">
+        <div class="seg" role="group" aria-label="Ruler"><button>Time</button><button aria-pressed="true" style="background: {{accent}}; color: #0E0F11">Tempo</button></div>
+        <label class="tf" title="Drag to change, double-click to type"><span style="position: absolute; left: -9999px">Tempo</span><input value="128.00" aria-label="Tempo in beats per minute" style="width: 50px"><span>bpm</span></label>
+        <label class="tf"><input value="4" aria-label="Beats per bar" style="width: 14px"><span>beats / bar</span></label>
+        <label class="tf"><span>first beat</span><input value="0:00.12" aria-label="First beat" style="width: 54px"></label>
+        <button class="btn" aria-pressed="true" style="height: 28px; border-color: #6E5420; background: #26231B; color: #F4E3BD">
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="none" stroke="#F2B544" stroke-width="1.4" stroke-linejoin="round"><path d="M4.5 1.5h5l2.5 11H2zM7 9.5l3-6"></path></svg>Metronome
+          <span style="display: flex; gap: 3px; margin-left: 2px" aria-hidden="true"><span class="dot" style="width: 6px; height: 6px; background: #F2B544"></span><span class="dot" style="width: 6px; height: 6px; background: #4A4130"></span><span class="dot" style="width: 6px; height: 6px; background: #F2B544; box-shadow: 0 0 6px #F2B544"></span><span class="dot" style="width: 6px; height: 6px; background: #4A4130"></span></span>
+        </button>
+      </div>
+      <button class="btn" aria-pressed="true" style="color: {{accent}}; border-color: {{accent}}; height: 28px">Snap · beats</button>
+      <span style="font-size: 11.5px; color: #A1A4AC; margin-left: 4px">Loop <span class="mono" style="color: #ECEDEF">2.1 – 4.1</span></span>
+      <button class="btn ghost ib" aria-label="Show whole project (F)" style="margin-left: auto"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 5V2h3M11 2h3v3M14 11v3h-3M5 14H2v-3"></path></svg></button>
+    </div>
+
+    <div style="flex: 1; display: flex; min-height: 0">
+      <div style="flex: 0 0 212px; border-right: 1px solid #202227; display: flex; flex-direction: column">
+        <div style="height: 40px; border-bottom: 1px solid #202227; display: flex; flex-direction: column; justify-content: center; padding: 0 10px; gap: 2px">
+          <span class="lbl" style="font-size: 9.5px">bar</span><span class="lbl" style="font-size: 9.5px; color: #6B6F78">beat</span>
+        </div>
+        <div style="height: 20px; display: flex; align-items: center; padding: 0 10px"><span class="lbl" style="color: #B9A9FF">Graphs</span></div>
+        <div style="height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 10px; border-top: 1px solid #1E2024"><span style="width: 3px; height: 20px; border-radius: 2px; background: #9C86FF"></span><span style="font-size: 12.5px; font-weight: 500; flex: 1">Graph track 1</span><button class="tog">M</button></div>
+        <div style="height: 20px; display: flex; align-items: center; padding: 0 10px; border-top: 2px solid #2A2C31"><span class="lbl">Video</span></div>
+        <div style="height: 52px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 10px; border-top: 1px solid #1E2024"><span style="width: 3px; height: 34px; border-radius: 2px; background: #C9CCD3"></span><span style="display: flex; flex-direction: column; flex: 1"><span style="font-size: 12.5px; font-weight: 500">clip.mp4</span><span style="font-size: 10.5px; color: #868A94">320×180 · 30 fps</span></span><button class="tog">M</button><button class="tog">S</button></div>
+        <div style="height: 20px; display: flex; align-items: center; padding: 0 10px; border-top: 2px solid #2A2C31"><span class="lbl" style="color: #3FC7B4">Audio</span></div>
+        <div style="height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 10px; border-top: 1px solid #1E2024"><span style="width: 3px; height: 28px; border-radius: 2px; background: #3FC7B4"></span><span style="display: flex; flex-direction: column; flex: 1"><span style="font-size: 12.5px; font-weight: 500">song</span><span style="font-size: 10.5px; color: #868A94">−3 dB · Main</span></span><button class="tog">M</button><button class="tog">S</button></div>
+        <div style="height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 10px; border-top: 1px solid #1E2024"><span style="width: 3px; height: 28px; border-radius: 2px; background: #3FC7B4"></span><span style="display: flex; flex-direction: column; flex: 1"><span style="font-size: 12.5px; font-weight: 500">drums</span><span style="font-size: 10.5px; color: #868A94">0 dB · Main</span></span><button class="tog">M</button><button class="tog">S</button></div>
+      </div>
+
+      <div style="flex: 1; min-width: 0; position: relative; display: flex; flex-direction: column">
+        <!-- bar shading and grid behind every lane -->
+        <div aria-hidden="true" style="position: absolute; inset: 40px 0 0 0">
+          <sc-for list="{{bars}}" as="b" hint-placeholder-count="5"><span style="position: absolute; top: 0; bottom: 0; left: {{b.left}}; width: {{b.width}}; background: {{b.shade}}; border-left: 1px solid #3A3D45"></span></sc-for>
+          <sc-for list="{{beats}}" as="t" hint-placeholder-count="15"><span style="position: absolute; top: 0; bottom: 0; left: {{t.left}}; border-left: 1px solid #22242A"></span></sc-for>
+        </div>
+
+        <!-- two-tier ruler: bars above, beats below -->
+        <div style="height: 40px; border-bottom: 1px solid #202227; position: relative; background: #131417">
+          <div style="position: absolute; left: {{loopL}}; width: {{loopW}}; top: 0; height: 18px; background: rgba(143,162,255,.18); border-left: 2px solid {{accent}}; border-right: 2px solid {{accent}}; box-sizing: border-box"></div>
+          <sc-for list="{{bars}}" as="b" hint-placeholder-count="5"><span class="mono" style="position: absolute; left: {{b.left}}; top: 0; height: 22px; padding-left: 5px; border-left: 1px solid #6B6F78; font-size: 12px; font-weight: 600; line-height: 20px; color: #ECEDEF">{{b.label}}</span></sc-for>
+          <sc-for list="{{beats}}" as="t" hint-placeholder-count="15"><span class="mono" style="position: absolute; left: {{t.left}}; top: 24px; height: 14px; padding-left: 3px; border-left: 1px solid #3A3D45; font-size: 9.5px; line-height: 14px; color: #868A94">{{t.label}}</span></sc-for>
+          <span title="First beat" style="position: absolute; left: 1.2%; top: 18px; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 7px solid #F2B544; margin-left: -5px"></span>
+          <div style="position: absolute; left: 0; width: 62%; bottom: 0; height: 2px; background: #4ED37A"></div>
+        </div>
+
+        <div style="height: 20px"></div>
+        <div style="height: 34px; position: relative; border-top: 1px solid #1E2024">
+          <div class="item" style="left: 1.2%; width: 59.4%; background: rgba(45,38,80,.92)"><div class="ibar" style="background: #3F3570; color: #E4DDFF">am_bands</div></div>
+        </div>
+        <div style="height: 20px; border-top: 2px solid #2A2C31"></div>
+        <div style="height: 52px; position: relative; border-top: 1px solid #1E2024">
+          <div class="item" style="left: 0; width: 100%; background: #1E2433; display: flex; flex-direction: column"><div class="ibar" style="background: #2A3247; color: #D6DBE8">clip.mp4</div><div style="flex: 1; display: flex"><sc-for list="{{thumbs}}" as="th" hint-placeholder-count="16"><span style="flex: 1; background: {{th.c}}; border-right: 1px solid #0E0F11"></span></sc-for></div></div>
+        </div>
+        <div style="height: 20px; border-top: 2px solid #2A2C31"></div>
+        <div style="height: 44px; position: relative; border-top: 1px solid #1E2024">
+          <div class="item" style="left: 1.2%; width: 79.2%; background: rgba(16,48,44,.92); display: flex; flex-direction: column"><div class="ibar" style="background: #17423D; color: #C9F1EA">song</div><div style="flex: 1; display: flex; align-items: center; gap: 1px; padding: 0 2px"><sc-for list="{{wave}}" as="w" hint-placeholder-count="80"><span style="flex: 1; height: {{w.h}}; background: #3FC7B4; border-radius: 1px"></span></sc-for></div></div>
+        </div>
+        <div style="height: 44px; position: relative; border-top: 1px solid #1E2024">
+          <div class="item" style="left: 1.2%; width: 79.2%; background: rgba(16,48,44,.92)"><div class="ibar" style="background: #17423D; color: #C9F1EA">drums · hits land on the beat lines</div></div>
+          <sc-for list="{{hits}}" as="h" hint-placeholder-count="16"><span aria-hidden="true" style="position: absolute; left: {{h.left}}; bottom: 6px; width: 3px; height: {{h.h}}; background: #3FC7B4; border-radius: 1px"></span></sc-for>
+        </div>
+        <div aria-hidden="true" style="position: absolute; left: 50.7%; top: 0; bottom: 0; width: 2px; background: #ECEDEF; margin-left: -1px"><span style="position: absolute; top: 0; left: -5px; width: 12px; height: 10px; background: #ECEDEF; clip-path: polygon(0 0, 100% 0, 50% 100%)"></span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- the transport under the preview, in Tempo mode -->
+  <div style="display: flex; gap: 8px; flex: none">
+    <section aria-label="Transport in tempo mode" style="width: 460px; background: #16171A; border: 1px solid #24262B; border-radius: 8px; padding: 10px 12px; box-sizing: border-box; display: flex; flex-direction: column; gap: 10px; white-space: nowrap">
+      <div style="display: flex; align-items: center; gap: 6px">
+        <button class="btn ghost ib" aria-label="Jump to start (Home)"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3v10M12 3 6 8l6 5z"></path></svg></button>
+        <button class="btn ib" aria-label="Pause (Space)" style="width: 40px; height: 36px; background: {{accent}}; border-color: {{accent}}; color: #0E0F11"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><rect x="4" y="3" width="3" height="10" rx="1"></rect><rect x="9" y="3" width="3" height="10" rx="1"></rect></svg></button>
+        <button class="btn ib" aria-label="Loop region on (R)" aria-pressed="true" style="color: {{accent}}; border-color: {{accent}}"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a4 4 0 0 1 4-4h5l-2-2M13 9a4 4 0 0 1-4 4H4l2 2"></path></svg></button>
+        <div style="flex: 1; display: flex; align-items: baseline; gap: 8px; padding: 0 12px; height: 36px; border-radius: 7px; background: #0E0F11; border: 1px solid #2A2C31; margin-left: 4px; min-width: 0">
+          <span class="mono" style="font-size: 18px; font-weight: 600; line-height: 34px">3.3.1</span>
+          <span class="mono" style="font-size: 11px; color: #868A94">bar.beat</span>
+          <span class="mono" style="font-size: 12px; color: #A1A4AC; margin-left: auto">0:04.27</span>
+        </div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px; font-size: 11.5px; color: #A1A4AC">
+        <span style="display: flex; gap: 4px" aria-label="Beat 3 of 4"><span style="width: 22px; height: 6px; border-radius: 3px; background: #4A4130"></span><span style="width: 22px; height: 6px; border-radius: 3px; background: #4A4130"></span><span style="width: 22px; height: 6px; border-radius: 3px; background: #F2B544"></span><span style="width: 22px; height: 6px; border-radius: 3px; background: #4A4130"></span></span>
+        <span class="mono">128 bpm · 4/4</span>
+        <span style="margin-left: auto">Time mode shows <span class="mono" style="color: #ECEDEF">0:04.27</span> large instead</span>
+      </div>
+    </section>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#8FA2FF","options":["#8FA2FF","#F2B544","#3FC7B4","#ECEDEF"]},"$preview":{"width":1280,"height":600}}'>
+class Component extends DCLogic {
+  renderVals() {
+    // 5 bars across the view, the first beat a little after zero
+    const off = 1.2, bar = 19.8, beat = bar / 4;
+    const bars = [], beats = [], hits = [];
+    for (let i = 0; i < 5; i++) {
+      bars.push({ left: (off + i * bar) + '%', width: bar + '%', label: String(i + 1), shade: i % 2 ? 'rgba(255,255,255,.018)' : 'transparent' });
+      for (let j = 1; j < 4; j++) beats.push({ left: (off + i * bar + j * beat) + '%', label: (i + 1) + '.' + (j + 1) });
+    }
+    for (let k = 0; k < 16; k++) hits.push({ left: 'calc(' + (off + k * beat) + '% + 2px)', h: (k % 4 === 0 ? 22 : 15) + 'px' });
+    const thumbs = [];
+    for (let i = 0; i < 16; i++) { const t = i / 15; thumbs.push({ c: 'rgb(' + Math.round(10 + t * 130) + ',10,' + Math.round(170 - t * 40) + ')' }); }
+    const wave = [];
+    for (let i = 0; i < 80; i++) wave.push({ h: Math.round(18 + Math.abs(Math.sin(i * 0.9 + 3) * 0.6 + Math.sin(i * 0.23 + 6) * 0.4) * 70) + '%' });
+    return { accent: this.props.accent ?? '#8FA2FF', bars, beats, hits, thumbs, wave, loopL: (off + bar) + '%', loopW: (2 * bar) + '%' };
+  }
+}
+</script>
+</body>
+</html>

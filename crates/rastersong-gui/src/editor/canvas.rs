@@ -8,7 +8,7 @@
 //! - Right-click empty space to add a node there; right-click a node for its menu.
 //! - Delete removes the selection, Ctrl+D duplicates it, F frames the whole graph.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use eframe::egui::epaint::CubicBezierShape;
 use eframe::egui::{
@@ -25,18 +25,36 @@ use super::{GraphEditor, NodeKey};
 use rastersong_lang::{tr, tr_args};
 
 use crate::effects::Glow;
-use crate::theme::{Theme, WireStyle};
+use crate::theme::{CARD_RADIUS, SMALL_SIZE, Theme, WireStyle, semibold};
 
-const HEADER: f32 = 24.0;
-const ROW: f32 = 20.0;
+/// The category colour strip along a node's top edge, and the header it starts (strip and
+/// title row).
+const STRIP: f32 = 5.0;
+const HEADER: f32 = 28.0;
+const ROW: f32 = 22.0;
+/// Space above the first port row and below the last.
+const BODY_PAD: f32 = 6.0;
 const PIN_RADIUS: f32 = 4.5;
 /// How close (in screen pixels) the pointer must be to grab a pin.
 const PIN_GRAB: f32 = 10.0;
-const MIN_WIDTH: f32 = 110.0;
+const MIN_WIDTH: f32 = 116.0;
 const PAD: f32 = 10.0;
-const FONT: f32 = 13.0;
-const LABEL_FONT: f32 = 11.5;
+const FONT: f32 = 12.0;
+const LABEL_FONT: f32 = 11.0;
+/// Height of a line of text under a node (latency and warmup, processing time), at zoom 1.
+pub(super) const NODE_TEXT_LINE: f32 = LABEL_FONT + 6.0;
+/// BYPASSED in a bypassed node's title row.
+const TAG_FONT: f32 = 10.0;
+/// The badge on a node's top-right corner.
+const BADGE: f32 = 16.0;
+/// How wide the note under a node with a warning wraps.
+const NOTE_WIDTH: f32 = 230.0;
+/// Height of the error bar along the bottom of the canvas.
+const ERROR_BAR: f32 = 30.0;
 const MIN_ZOOM: f32 = 0.2;
+/// Fitting the graph zooms out no further than this, so its text stays as readable as the
+/// rest of the window; what doesn't fit is a pan away.
+const MIN_FIT_ZOOM: f32 = 0.85;
 const MAX_ZOOM: f32 = 3.0;
 /// Pointer movement (screen pixels) that turns a right-click into a pan.
 const DRAG_THRESHOLD: f32 = 4.0;
@@ -57,6 +75,8 @@ pub struct CanvasContext<'a> {
     pub costs: &'a [NodeCost],
     /// Whether to show node processing times and tint the slow nodes.
     pub show_performance: bool,
+    /// The graph's totals in the canvas's corner, when they are shown.
+    pub graph_stats: Option<super::StatsContext>,
     /// How inspecting a connection works; none in tests that have no engine.
     pub inspect: Option<super::inspect::InspectContext<'a>>,
 }
@@ -127,13 +147,9 @@ pub fn wire_width(rms: Option<f32>) -> f32 {
 impl GraphEditor {
     /// Lays out every node (graph space). Sizes follow the text they hold.
     pub(super) fn geometry(&self, ui: &Ui) -> Vec<Geometry> {
-        let measure = |text: &str, size: f32| {
+        let measure = |text: &str, font: FontId| {
             ui.painter()
-                .layout_no_wrap(
-                    text.to_owned(),
-                    FontId::proportional(size),
-                    Color32::PLACEHOLDER,
-                )
+                .layout_no_wrap(text.to_owned(), font, Color32::PLACEHOLDER)
                 .size()
                 .x
         };
@@ -142,16 +158,7 @@ impl GraphEditor {
             .map(|i| {
                 let node = &self.nodes[i];
                 let kind = self.registry.get(&node.kind);
-                let title = node
-                    .label
-                    .clone()
-                    .or_else(|| self.port_title(node))
-                    .unwrap_or_else(|| {
-                        kind.map_or_else(
-                            || tr_args("editor.node.unknown_kind", &[("kind", &node.kind)]),
-                            |k| k.label().to_owned(),
-                        )
-                    });
+                let title = self.node_title(node);
                 // (name, required, port, parameter): inputs, then exposed parameters.
                 let mut inputs: Vec<(&'static str, bool, usize, bool)> = kind
                     .map(|k| {
@@ -188,7 +195,9 @@ impl GraphEditor {
                 let labelled_outputs = outputs.len() > 1;
 
                 let widest = |names: &mut dyn Iterator<Item = &str>| {
-                    names.map(|n| measure(n, LABEL_FONT)).fold(0.0, f32::max)
+                    names
+                        .map(|n| measure(n, FontId::proportional(LABEL_FONT)))
+                        .fold(0.0, f32::max)
                 };
                 let in_width = widest(&mut inputs.iter().map(|i| i.0));
                 let out_width = if labelled_outputs {
@@ -196,19 +205,14 @@ impl GraphEditor {
                 } else {
                     0.0
                 };
-                // Room for the warning badge after the title.
-                let badge = if self.diagnostics(node.key).is_empty() {
-                    0.0
-                } else {
-                    14.0 + PAD * 0.5
-                };
-                let width = (measure(&title, FONT) + 2.0 * PAD + badge)
+                // Bypassing doesn't widen the node: BYPASSED shortens the title instead.
+                let width = (measure(&title, semibold(FONT)) + 2.0 * PAD)
                     .max(in_width + out_width + 4.0 * PAD + 12.0)
                     .max(MIN_WIDTH);
                 let rows = inputs.len().max(outputs.len()).max(1);
-                let rect =
-                    Rect::from_min_size(node.pos, vec2(width, HEADER + rows as f32 * ROW + 6.0));
-                let row_y = |i: usize| node.pos.y + HEADER + ROW * (i as f32 + 0.5) + 3.0;
+                let height = HEADER + rows as f32 * ROW + 2.0 * BODY_PAD;
+                let rect = Rect::from_min_size(node.pos, vec2(width, height));
+                let row_y = |i: usize| node.pos.y + HEADER + BODY_PAD + ROW * (i as f32 + 0.5);
                 Geometry {
                     key: node.key,
                     rect,
@@ -393,12 +397,14 @@ impl GraphEditor {
             .and_then(|f| f.node.as_deref())
             .and_then(|id| self.key_of(id));
         let hovered_pin = pointer.and_then(|p| self.pin_at(&geometry, rect, p));
+        // The lines of text under each node (latency and warmup, then processing time), so a
+        // warning goes below them.
+        let mut lines_below: BTreeMap<NodeKey, u8> = BTreeMap::new();
         for g in &geometry {
-            if ctx.show_stats
-                && let Some(stats) = self.compiled(g.key)
-            {
-                self.draw_node_stats(&painter, &visuals, theme, g, to_screen, stats);
-            }
+            let with_stats = ctx.show_stats
+                && self.compiled(g.key).is_some_and(|stats| {
+                    self.draw_node_stats(&painter, &visuals, theme, g, to_screen, stats)
+                });
             self.draw_node(
                 &painter,
                 &visuals,
@@ -409,22 +415,49 @@ impl GraphEditor {
                 hovered_pin,
                 &output_colors,
             );
-            if ctx.show_performance {
-                self.draw_performance(&painter, theme, g, to_screen, visuals.weak_text_color());
+            let with_cost = ctx.show_performance
+                && self.draw_performance(
+                    &painter,
+                    theme,
+                    g,
+                    to_screen,
+                    visuals.weak_text_color(),
+                    with_stats,
+                );
+            let lines = u8::from(with_stats) + u8::from(with_cost);
+            if lines > 0 {
+                lines_below.insert(g.key, lines);
             }
         }
-        // Compile notes and warnings: a badge on the node, the messages in its tooltip. Notes
-        // (a signal used as something it wasn't made as, often on purpose) get a quiet badge.
+        // Compile notes and warnings: a badge on the node's corner, the messages in its tooltip,
+        // and a warning's message in a note under the node too. Notes (a signal used as
+        // something it wasn't made as, often on purpose) get a quiet badge and no note.
         for g in &geometry {
+            if self.view.zoom <= 0.35 {
+                break;
+            }
+            if failed == Some(g.key) {
+                draw_badge(&painter, theme, self.badge_rect(g, to_screen), Badge::Error);
+                continue;
+            }
             let warnings = self.diagnostics(g.key);
             let Some(severity) = warnings.iter().map(|d| d.severity).max() else {
                 continue;
             };
-            if self.view.zoom <= 0.35 {
-                continue;
+            if severity == Severity::Warning && self.view.zoom > 0.45 {
+                let lines = lines_below.get(&g.key).copied().unwrap_or(0);
+                self.draw_warning_note(&painter, theme, g, to_screen, lines, warnings);
             }
             let badge = self.badge_rect(g, to_screen);
-            draw_badge(&painter, theme, badge, severity);
+            draw_badge(
+                &painter,
+                theme,
+                badge,
+                match severity {
+                    Severity::Note => Badge::Note,
+                    Severity::Warning => Badge::Warning,
+                },
+            );
             let response = ui.interact(
                 badge.intersect(rect),
                 ui.id().with(("node-warning", g.key)),
@@ -480,6 +513,18 @@ impl GraphEditor {
             );
         }
 
+        {
+            // Above the error bar when there is one.
+            let bottom = if ctx.failure.is_some() {
+                ERROR_BAR
+            } else {
+                0.0
+            };
+            draw_legend(ui, rect, bottom, theme);
+            if let Some(stats) = ctx.graph_stats {
+                self.draw_graph_stats(ui, rect, bottom, theme, stats);
+            }
+        }
         if let Some(failure) = ctx.failure {
             self.error_bar(ui, rect, failure, &geometry, theme);
         }
@@ -672,6 +717,22 @@ impl GraphEditor {
         }
     }
 
+    /// Opens the node search at `p` when Tab is pressed and no text field has focus. Called
+    /// before anything is drawn in the frame: egui moves the keyboard focus with Tab, into
+    /// whichever field comes first, and the canvas is drawn after the other panels.
+    pub fn search_on_tab(&mut self, ui: &Ui, p: Pos2) {
+        if self.search.is_some() || self.node_menu.is_some() || ui.ctx().egui_wants_keyboard_input()
+        {
+            return;
+        }
+        if !ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Tab)) {
+            return;
+        }
+        ui.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
+        let graph = ((p - self.last_canvas.min - self.view.offset) / self.view.zoom).to_pos2();
+        self.search = Some(SearchMenu::new(p, graph, None));
+    }
+
     /// Copy, cut and paste, whenever no text field has focus. The platform turns Ctrl+C, Ctrl+X and
     /// Ctrl+V into these events.
     fn handle_clipboard(&mut self, ui: &Ui, rect: Rect) {
@@ -782,15 +843,28 @@ impl GraphEditor {
             return;
         };
         let margin = 40.0;
-        let zoom = ((rect.width() - 2.0 * margin) / bounds.width())
-            .min((rect.height() - 2.0 * margin) / bounds.height())
-            .clamp(0.65, 1.0);
+        let room = rect.size() - egui::Vec2::splat(2.0 * margin);
+        let zoom = (room.x / bounds.width())
+            .min(room.y / bounds.height())
+            .clamp(MIN_FIT_ZOOM, 1.0);
         self.view.zoom = zoom;
-        self.view.offset = rect.size() / 2.0 - bounds.center().to_vec2() * zoom;
+        // Centred when it fits; a graph too big for the canvas starts from its top left, where
+        // the inputs are, and the rest is a pan away.
+        let place = |room: f32, size: f32, centre: f32, start: f32, min: f32| {
+            if size * zoom <= room {
+                centre / 2.0 - (min + size / 2.0) * zoom
+            } else {
+                start - min * zoom
+            }
+        };
+        self.view.offset = vec2(
+            place(room.x, bounds.width(), rect.width(), margin, bounds.left()),
+            place(room.y, bounds.height(), rect.height(), margin, bounds.top()),
+        );
     }
 
     fn draw_grid(&self, painter: &egui::Painter, rect: Rect, theme: &Theme) {
-        let spacing = 24.0 * self.view.zoom;
+        let spacing = 20.0 * self.view.zoom;
         if spacing < 8.0 {
             return;
         }
@@ -822,8 +896,12 @@ impl GraphEditor {
     ) {
         let zoom = self.view.zoom;
         let rect = Rect::from_min_max(to_screen(g.rect.min), to_screen(g.rect.max));
-        let rounding = CornerRadius::same((6.0 * zoom).round().clamp(1.0, 12.0) as u8);
-        let color = theme.category(g.category);
+        let radius = (f32::from(CARD_RADIUS) * zoom).round().clamp(1.0, 12.0);
+        let rounding = CornerRadius::same(radius as u8);
+        let bypassed = self.node(g.key).is_some_and(|n| n.bypass);
+        // A bypassed node is faded on a hatched fill: still there, but out of the signal path.
+        let fade = |c: Color32| if bypassed { c.gamma_multiply(0.7) } else { c };
+        let color = fade(theme.category(g.category));
 
         painter.rect_filled(
             rect.translate(vec2(0.0, 3.0 * zoom)),
@@ -831,32 +909,46 @@ impl GraphEditor {
             theme.node_shadow,
         );
         painter.rect_filled(rect, rounding, theme.node_body);
-        let bypassed = self.node(g.key).is_some_and(|n| n.bypass);
+        if bypassed {
+            draw_hatch(painter, rect, radius, theme.node_hatch, zoom);
+        }
+        // The category colour strip, then the title row under it, so colour and text don't
+        // compete. The strip is the node's own rounded shape cut to its top, so it keeps to the
+        // outline's corners: a rect as short as the strip would have its corners clamped to
+        // half its height, and poke out past the outline.
+        let strip = Rect::from_min_size(rect.min, vec2(rect.width(), STRIP * zoom));
+        painter
+            .with_clip_rect(strip.intersect(painter.clip_rect()))
+            .rect_filled(rect, rounding, color);
         let header = Rect::from_min_size(rect.min, vec2(rect.width(), HEADER * zoom));
-        painter.rect_filled(
-            header,
-            CornerRadius {
-                nw: rounding.nw,
-                ne: rounding.ne,
-                sw: 0,
-                se: 0,
-            },
-            color.gamma_multiply(0.35),
-        );
-        painter.rect_filled(
-            Rect::from_min_size(header.left_bottom(), vec2(header.width(), zoom.max(1.0))),
-            CornerRadius::ZERO,
-            color.gamma_multiply(0.8),
+        let title_row = Rect::from_min_max(header.min + vec2(0.0, STRIP * zoom), header.max);
+        painter.hline(
+            rect.x_range(),
+            header.bottom(),
+            Stroke::new(zoom.clamp(0.5, 1.0), theme.surfaces.border),
         );
 
+        let warned = self
+            .diagnostics(g.key)
+            .iter()
+            .any(|d| d.severity == Severity::Warning);
+        if failed {
+            // A ring outside the outline, so the failing node is found at a glance.
+            painter.rect_stroke(
+                rect.expand(1.0),
+                CornerRadius::same((radius + 1.0) as u8),
+                Stroke::new(2.0, theme.error.gamma_multiply(0.5)),
+                StrokeKind::Outside,
+            );
+        }
         let outline = if failed {
-            Stroke::new(2.0, theme.error)
+            Stroke::new(1.0, theme.error)
         } else if self.active == Some(g.key) {
             Stroke::new(2.0, theme.accent)
         } else if self.selected.contains(&g.key) {
             Stroke::new(1.5, theme.accent.gamma_multiply(0.7))
-        } else if bypassed {
-            Stroke::new(2.0, visuals.weak_text_color())
+        } else if warned {
+            Stroke::new(1.0, theme.warning_outline)
         } else {
             Stroke::new(1.0, theme.node_outline)
         };
@@ -864,27 +956,29 @@ impl GraphEditor {
 
         let text = visuals.text_color();
         if zoom > 0.35 {
-            painter.text(
-                header.left_center() + vec2(PAD * zoom, 0.0),
-                Align2::LEFT_CENTER,
-                g.title.clone(),
-                FontId::proportional(FONT * zoom),
-                if bypassed {
-                    text.gamma_multiply(0.6)
-                } else {
-                    text
-                },
-            );
+            let mut room = title_row.width() - 2.0 * PAD * zoom;
             if bypassed {
-                painter.text(
-                    rect.left_top() - vec2(-PAD * zoom * 0.5, 4.0 * zoom),
-                    Align2::LEFT_BOTTOM,
-                    tr("editor.node.bypassed"),
-                    FontId::proportional(LABEL_FONT * zoom * 1.1),
-                    text.gamma_multiply(0.75),
+                let tag = painter.text(
+                    title_row.right_center() - vec2(PAD * zoom, 0.0),
+                    Align2::RIGHT_CENTER,
+                    bypassed_tag(),
+                    FontId::proportional(TAG_FONT * zoom),
+                    theme.bypassed,
                 );
+                room -= tag.width() + PAD * zoom * 0.5;
             }
+            let color = if bypassed { theme.text_dim } else { text };
+            let mut title = egui::text::LayoutJob::simple_singleline(
+                g.title.clone(),
+                semibold(FONT * zoom),
+                color,
+            );
+            title.wrap = egui::text::TextWrapping::truncate_at_width(room.max(0.0));
+            let galley = painter.layout_job(title);
+            let at = title_row.left_center() + vec2(PAD * zoom, -galley.size().y * 0.5);
+            painter.galley(at, galley, color);
         }
+        let text = fade(text);
         let labels = zoom > 0.45;
         // With several inputs, the main one (which sets the output's length and layout) gets a ring.
         let several_inputs = g.inputs.iter().filter(|pin| !pin.param).count() > 1;
@@ -903,13 +997,13 @@ impl GraphEditor {
                     let ring = PIN_RADIUS * zoom.clamp(0.7, 1.6) + 2.5 * zoom.min(1.0);
                     painter.circle_stroke(p, ring, Stroke::new(1.2, theme.pin_required));
                 }
-                draw_pin(painter, theme, p, fill, hovered, zoom);
+                draw_pin(painter, theme, p, fade(fill), hovered, zoom);
             }
             if labels {
                 let color = if pin.required {
                     text
                 } else {
-                    visuals.weak_text_color()
+                    fade(visuals.weak_text_color())
                 };
                 painter.text(
                     p + vec2(PAD * zoom, 0.0),
@@ -923,7 +1017,9 @@ impl GraphEditor {
         for (i, &(p, name)) in g.outputs.iter().enumerate() {
             let p = to_screen(p);
             let hovered = hovered_pin == Some(Pin::Out(g.key, i));
-            let fill = output_colors.get(&(g.key, i)).map_or(color, |c| c.solid());
+            let fill = output_colors
+                .get(&(g.key, i))
+                .map_or(color, |c| fade(c.solid()));
             draw_pin(painter, theme, p, fill, hovered, zoom);
             if labels && !name.is_empty() {
                 painter.text(
@@ -937,17 +1033,52 @@ impl GraphEditor {
         }
     }
 
-    /// Where a node's warning badge goes, in screen space: the right end of its header.
+    /// Where a node's badge goes, in screen space: on its top-right corner.
     fn badge_rect(&self, g: &Geometry, to_screen: impl Fn(Pos2) -> Pos2) -> Rect {
+        let size = BADGE * self.view.zoom.clamp(0.6, 1.4);
+        Rect::from_center_size(to_screen(g.rect.right_top()), vec2(size, size))
+    }
+
+    /// A warning's messages in a note under the node, below the `lines` of text under it
+    /// (latency and warmup, processing time).
+    fn draw_warning_note(
+        &self,
+        painter: &egui::Painter,
+        theme: &Theme,
+        g: &Geometry,
+        to_screen: impl Fn(Pos2) -> Pos2,
+        lines: u8,
+        diagnostics: &[rastersong_engine::Diagnostic],
+    ) {
         let zoom = self.view.zoom;
-        let size = 14.0 * zoom;
-        let center = to_screen(pos2(g.rect.right(), g.rect.top() + HEADER * 0.5))
-            - vec2(PAD * zoom * 0.5 + size * 0.5, 0.0);
-        Rect::from_center_size(center, vec2(size, size))
+        let text = diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Warning)
+            .map(|d| d.message.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let pad = vec2(9.0, 7.0) * zoom;
+        let galley = painter.layout(
+            text,
+            FontId::proportional(LABEL_FONT * zoom),
+            theme.warning_note_text,
+            NOTE_WIDTH * zoom - 2.0 * pad.x,
+        );
+        let text = f32::from(lines) * NODE_TEXT_LINE * zoom;
+        let top_left = to_screen(g.rect.left_bottom()) + vec2(0.0, 8.0 * zoom + text);
+        let note = Rect::from_min_size(top_left, galley.size() + 2.0 * pad);
+        painter.rect(
+            note,
+            CornerRadius::same((6.0 * zoom).round().clamp(1.0, 8.0) as u8),
+            theme.warning_note,
+            Stroke::new(1.0, theme.warning_note_border),
+            StrokeKind::Inside,
+        );
+        painter.galley(note.min + pad, galley, theme.warning_note_text);
     }
 
     /// The node's latency and warmup in small text under it, in the warning colour when the warmup
-    /// hit the limit.
+    /// hit the limit. Returns whether there was any to show.
     fn draw_node_stats(
         &self,
         painter: &egui::Painter,
@@ -956,9 +1087,9 @@ impl GraphEditor {
         g: &Geometry,
         to_screen: impl Fn(Pos2) -> Pos2,
         stats: &NodeStats,
-    ) {
+    ) -> bool {
         if self.view.zoom <= 0.45 || (stats.latency_frames <= 0.0 && stats.warmup_frames == 0) {
-            return;
+            return false;
         }
         let mut parts = Vec::new();
         if stats.latency_frames > 0.0 {
@@ -998,6 +1129,40 @@ impl GraphEditor {
             FontId::proportional(LABEL_FONT * self.view.zoom),
             color,
         );
+        true
+    }
+
+    /// The name a node shows in its title bar: its label, the port it stands for, or its kind.
+    pub(super) fn node_title(&self, node: &super::EditorNode) -> String {
+        node.label
+            .clone()
+            .or_else(|| self.port_title(node))
+            .unwrap_or_else(|| {
+                self.registry.get(&node.kind).map_or_else(
+                    || tr_args("editor.node.unknown_kind", &[("kind", &node.kind)]),
+                    |k| k.label().to_owned(),
+                )
+            })
+    }
+
+    /// Why the graph can't render, naming the node at fault as the user sees it ("Pack: …")
+    /// rather than by its id. A failure with no node of this graph keeps the engine's message.
+    pub fn failure_message(&self, failure: &Failure) -> String {
+        match failure
+            .node
+            .as_deref()
+            .and_then(|id| self.key_of(id))
+            .and_then(|key| self.node(key))
+        {
+            Some(node) => tr_args(
+                "editor.error_bar.node_message",
+                &[
+                    ("node", &self.node_title(node)),
+                    ("detail", &failure.detail),
+                ],
+            ),
+            None => failure.message.clone(),
+        }
     }
 
     fn error_bar(
@@ -1008,8 +1173,7 @@ impl GraphEditor {
         geometry: &[Geometry],
         theme: &Theme,
     ) {
-        let height = 30.0;
-        let bar = Rect::from_min_max(pos2(rect.left(), rect.bottom() - height), rect.max);
+        let bar = Rect::from_min_max(pos2(rect.left(), rect.bottom() - ERROR_BAR), rect.max);
         let response = ui.interact(bar, ui.id().with("graph-error"), Sense::click());
         let fill = if response.hovered() {
             theme.error_bar_hover
@@ -1018,17 +1182,7 @@ impl GraphEditor {
         };
         ui.painter().rect_filled(bar, CornerRadius::ZERO, fill);
         let node = failure.node.as_deref().and_then(|id| self.key_of(id));
-        // Name the node as the user sees it rather than by its id.
-        let message = match (
-            failure.node.as_deref(),
-            node.and_then(|k| geometry.iter().find(|g| g.key == k)),
-        ) {
-            (Some(_), Some(g)) => tr_args(
-                "editor.error_bar.node_message",
-                &[("node", &g.title), ("detail", &failure.detail)],
-            ),
-            _ => failure.message.clone(),
-        };
+        let message = self.failure_message(failure);
         let text = egui::RichText::new(tr_args("editor.error_bar", &[("message", &message)]))
             .color(theme.error_bar_text);
         // Not selectable, so a click on the message reaches the bar under it.
@@ -1073,12 +1227,23 @@ fn draw_pin(
     painter.circle(p, radius, fill, Stroke::new(1.0, theme.pin_outline));
 }
 
-/// A node's diagnostic badge: an "i" on a quiet disc for notes, an exclamation mark on a
-/// warning-coloured one for warnings.
-fn draw_badge(painter: &egui::Painter, theme: &Theme, rect: Rect, severity: Severity) {
-    let (fill, stroke, mark, text) = match severity {
-        Severity::Note => (theme.node_body, theme.text_dim, "i", theme.text_dim),
-        Severity::Warning => (theme.warning, theme.pin_outline, "!", theme.block_text),
+/// What a node's corner badge says.
+#[derive(Debug, Clone, Copy)]
+enum Badge {
+    Note,
+    Warning,
+    /// The node the graph can't render because of.
+    Error,
+}
+
+/// A node's badge: an "i" on a quiet disc for notes, an exclamation mark on a warning-coloured
+/// one for warnings, a cross on a red one for the failing node.
+fn draw_badge(painter: &egui::Painter, theme: &Theme, rect: Rect, badge: Badge) {
+    let ground = theme.surfaces.ground;
+    let (fill, stroke, mark, text) = match badge {
+        Badge::Note => (theme.node_body, theme.text_dim, "i", theme.text_dim),
+        Badge::Warning => (theme.warning, ground, "!", ground),
+        Badge::Error => (theme.error, ground, "×", ground),
     };
     painter.circle(
         rect.center(),
@@ -1092,6 +1257,116 @@ fn draw_badge(painter: &egui::Painter, theme: &Theme, rect: Rect, severity: Seve
         mark,
         FontId::proportional(rect.height() * 0.85),
         text,
+    );
+}
+
+/// BYPASSED, as a bypassed node's title row shows it.
+fn bypassed_tag() -> String {
+    tr("editor.node.bypassed").to_uppercase()
+}
+
+/// Diagonal stripes over a node's rounded `rect`. They are opaque, so they are drawn in two
+/// overlapping crosses of the rect that leave its rounded corners out.
+fn draw_hatch(painter: &egui::Painter, rect: Rect, radius: f32, color: Color32, zoom: f32) {
+    let spacing = 16.0 * zoom;
+    if spacing < 4.0 {
+        return;
+    }
+    let stroke = Stroke::new(spacing * 0.5, color);
+    for clip in [
+        rect.shrink2(vec2(radius, 0.0)),
+        rect.shrink2(vec2(0.0, radius)),
+    ] {
+        let painter = painter.with_clip_rect(clip.intersect(painter.clip_rect()));
+        let mut x = rect.left() - rect.height();
+        while x < rect.right() {
+            painter.line_segment(
+                [pos2(x, rect.bottom()), pos2(x + rect.height(), rect.top())],
+                stroke,
+            );
+            x += spacing;
+        }
+    }
+}
+
+/// The key to the wire colours, in the canvas's bottom-right corner `bottom` above its edge:
+/// what each colour carries and that thickness is level. Left out when the canvas is too small
+/// to spare the room.
+fn draw_legend(ui: &Ui, canvas: Rect, bottom: f32, theme: &Theme) {
+    let p = &theme.ports;
+    let icon = Rect::from_min_size(
+        canvas.right_bottom() - vec2(10.0, 10.0 + bottom) - egui::Vec2::splat(LEGEND_ICON),
+        egui::Vec2::splat(LEGEND_ICON),
+    );
+    let response = ui.interact(icon, ui.id().with("wire-legend"), Sense::hover());
+    let title = tr("editor.legend.title");
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, title));
+    let painter = ui.painter_at(canvas);
+    let visuals = ui.style().interact(&response);
+    painter.rect(
+        icon,
+        CornerRadius::same(crate::theme::CONTROL_RADIUS),
+        visuals.weak_bg_fill,
+        visuals.bg_stroke,
+        StrokeKind::Inside,
+    );
+    // The icon: three wires, video, audio and a split one in R G B.
+    let left = icon.left() + 7.0;
+    let width = icon.width() - 14.0;
+    for (i, colors) in [&[p.video][..], &[p.audio], &[p.red, p.green, p.blue]]
+        .into_iter()
+        .enumerate()
+    {
+        let y = icon.top() + 8.5 + 4.5 * i as f32;
+        let part = (width - 2.0 * (colors.len() - 1) as f32) / colors.len() as f32;
+        for (j, &color) in colors.iter().enumerate() {
+            let x = left + j as f32 * (part + 2.0);
+            painter.line_segment([pos2(x, y), pos2(x + part, y)], Stroke::new(2.0, color));
+        }
+    }
+    response.on_hover_ui(|ui| legend_key(ui, theme));
+}
+
+/// Side of the wire legend's icon.
+const LEGEND_ICON: f32 = 26.0;
+
+/// The key the legend's icon opens: what each wire colour carries, and that thickness is level.
+fn legend_key(ui: &mut Ui, theme: &Theme) {
+    let p = &theme.ports;
+    // Each row: its swatches (one long one, or a short one per part) and its words.
+    let rows: [(&[Color32], &str); 5] = [
+        (&[p.video], "editor.legend.video"),
+        (&[p.audio], "editor.legend.audio"),
+        (&[p.red, p.green, p.blue], "editor.legend.rgb"),
+        (&[p.left, p.right], "editor.legend.stereo"),
+        (&[p.low, p.mid, p.high], "editor.legend.bands"),
+    ];
+    ui.spacing_mut().item_spacing.y = 2.0;
+    ui.label(
+        egui::RichText::new(tr("editor.legend.title").to_uppercase())
+            .size(SMALL_SIZE)
+            .color(theme.surfaces.text_faint),
+    );
+    for (swatches, words) in rows {
+        ui.horizontal(|ui| {
+            let width = if swatches.len() == 1 { 16.0 } else { 8.0 };
+            let size = vec2(swatches.len() as f32 * (width + 2.0) + 2.0, 14.0);
+            let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+            for (i, &color) in swatches.iter().enumerate() {
+                let x = rect.left() + i as f32 * (width + 2.0);
+                ui.painter().rect_filled(
+                    Rect::from_min_size(pos2(x, rect.center().y - 1.5), vec2(width, 3.0)),
+                    CornerRadius::same(1),
+                    color,
+                );
+            }
+            ui.label(egui::RichText::new(tr(words)).size(11.0));
+        });
+    }
+    ui.label(
+        egui::RichText::new(tr("editor.legend.thickness"))
+            .size(11.0)
+            .color(theme.surfaces.text_faint),
     );
 }
 

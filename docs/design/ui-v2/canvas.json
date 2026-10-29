@@ -1,0 +1,21 @@
+{
+  "v": 3,
+  "createdOnFiles": {"v": 1, "at": "2026-10-28T12:00:00Z"},
+  "title": "RasterSong UI Redesign",
+  "launch": {"view": "canvas"},
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {"x": 0, "y": 0, "w": 1440, "h": 900, "title": "Edit workspace: node selected", "expand": "fill"},
+    "GraphDetail.dc.html": {"x": 1520, "y": 0, "w": 1120, "h": 720, "title": "Graph editor: probe, search, diagnostics", "is_interactive": true},
+    "Export.dc.html": {"x": 0, "y": 1020, "w": 800, "h": 760, "title": "Export sheet"},
+    "Tempo.dc.html": {"x": 880, "y": 1020, "w": 1280, "h": 600, "title": "Timeline in Tempo mode"}
+  },
+  "order": ["Main.dc.html", "GraphDetail.dc.html", "Export.dc.html", "Tempo.dc.html"],
+  "notes": {
+    "title": {"x": 0, "y": -300, "text": "RasterSong: a redesign of the editor", "kind": "title1", "maxW": 2640},
+    "p1": {"x": 2720, "y": 0, "w": 360, "text": "Priorities\n1. Transport sits under the preview, next to where you work.\n2. Readable graph: 12-13px node text, a category color strip on top of each node.\n3. Inspector follows the selection: node, graph item, track.\n4. Resources show Media and Graphs together, no tab switch.\n5. Destructive actions (remove track) move into menus.\n6. Status bar teaches the hidden gestures (Alt, Shift, Ctrl+drag).\n7. Wire probe views on a wrap-around drum: scroll it, the middle one shows.", "fill": "blue"},
+    "p3": {"x": 2240, "y": 1020, "w": 360, "text": "Tempo mode\n- Tempo, beats per bar, first beat and Metronome sit in one group attached to the Time/Tempo switch; in Time mode the group collapses away.\n- Two-tier ruler: bars bold on top, beats small below; every other bar shaded.\n- Amber marker on the ruler = first beat.\n- Snap and loop regions follow the beat grid; Shift drags freely.\n- Transport under the preview reads bar.beat large, seconds small, with a beat light.\n- File > Settings > Project edits the same fields.", "fill": "orange"},
+    "p2": {"x": 2720, "y": 560, "w": 360, "text": "Kept as-is: every feature in docs/app.md. Nothing is cut; the redesign changes where it lives and how it reads.", "fill": "gray"}
+  },
+  "designSystems": []
+}

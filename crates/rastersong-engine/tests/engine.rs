@@ -214,6 +214,18 @@ fn renders_without_audio_and_reports_cached_ranges() {
 }
 
 #[test]
+fn reports_the_memory_rendered_frames_take() {
+    let engine = engine();
+    assert_eq!(engine.cache_use().bytes, 0);
+    set_tracks(&engine, &[]);
+    engine.set_graph(GraphDesc::from_json(FINITE).unwrap());
+    wait_until("all frames", || engine.buffered_from(0) == FRAMES);
+    let used = engine.cache_use();
+    assert!(used.bytes > 0);
+    assert_eq!(used.budget, EngineConfig::default().cache_bytes);
+}
+
+#[test]
 fn audio_offset_changes_the_render_and_back() {
     let engine = engine();
     load(&engine, FINITE);
@@ -310,6 +322,27 @@ fn frames_carry_output_levels() {
             .iter()
             .all(|l| l.rms.is_finite() && l.rms >= 0.0)
     );
+}
+
+#[test]
+fn reports_the_renders_latency_and_warmup_until_a_graph_fails() {
+    let engine = engine();
+    assert_eq!(engine.delays(), None);
+    load(&engine, FINITE);
+    wait_until("the build", || engine.status() == EngineStatus::Ready);
+    let delays = engine.delays().expect("a compiled graph has delays");
+    assert!(delays.warmup_frames >= 2, "the delay needs history");
+    engine.set_graph(
+        GraphDesc::from_json(
+            r#"{ "version": 0, "nodes": [ { "id": "b", "type": "bogus" }, { "id": "o", "type": "output" } ],
+                "connections": [ { "from": "b", "to": "o" } ] }"#,
+        )
+        .unwrap(),
+    );
+    wait_until("the failure", || {
+        matches!(engine.status(), EngineStatus::Failed(_))
+    });
+    assert_eq!(engine.delays(), None);
 }
 
 #[test]
