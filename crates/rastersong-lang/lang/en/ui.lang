@@ -134,12 +134,13 @@ tempo.first_beat.help = Seconds from the start of the video to the first beat
 tempo.metronome = Metronome
 tempo.metronome.help = Click on every beat while playing, higher on the first beat of each bar,
   to check the tempo and first beat by ear
+tempo.metronome.time_mode = The metronome plays in Tempo mode
 
 # --- Timeline ---
 timeline.mode.time = Time
-timeline.mode.time.help = The ruler shows minutes and seconds. Click to show bars and beats and edit the tempo.
+timeline.mode.time.help = The ruler shows minutes and seconds
 timeline.mode.tempo = Tempo
-timeline.mode.tempo.help = The ruler shows bars and beats. Click to show minutes and seconds.
+timeline.mode.tempo.help = The ruler shows bars and beats, and the metronome can click along
 timeline.ruler.help = Click or drag to move the playhead. Ctrl+drag makes a loop region, or moves its edges.
   Right-click for looping options.
 timeline.loop.hint = Ctrl+drag along the ruler to make a loop region
@@ -460,6 +461,26 @@ menu.view.performance = Show performance
 settings.performance = Show node processing time
 settings.performance.help = Under each node, show how long it took to process the frame at the playhead and its share of the whole graph; slower nodes are tinted. Times are for the preview resolution and are never part of the render.
 editor.node.cost = {ms} ms · {share}%
+menu.view.graph_stats = Show graph statistics
+settings.graph_stats = Show graph statistics
+settings.graph_stats.help = In the graph editor's corner, show the graph's nodes and connections, the samples its outputs hold per block (one frame), how long the nodes took for the frame at the playhead and how many samples that is a millisecond, and how late the render is and how many frames it renders after a seek. Times and samples are for the preview resolution.
+editor.stats.title = Graph statistics
+editor.stats.help = Samples and times are for the preview resolution. The render time adds up each node's own time, smoothed, for the frame at the playhead.
+editor.stats.nodes = Nodes
+editor.stats.connections = Connections
+editor.stats.samples_block = Samples / block
+editor.stats.render = Render
+editor.stats.ms = {ms} ms
+editor.stats.share = Of a frame
+editor.stats.percent = {n}%
+editor.stats.samples_ms = Samples / ms
+editor.stats.latency = Latency
+editor.stats.warmup = Warmup
+editor.stats.frames = {frames} fr
+editor.stats.none = –
+editor.stats.kilo = {n} k
+editor.stats.mega = {n} M
+editor.stats.giga = {n} G
 meter.peak = Peak
 meter.range = Range
 meter.reduction = Gain reduction

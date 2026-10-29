@@ -185,7 +185,8 @@ Board: [Tempo](design/ui-v2/Tempo.dc.html).
 
 - **The tempo fields live in one group attached to the Time/Tempo switch**: bpm (drag to scrub, double-click to
   type), beats per bar, first beat, and the **Metronome** toggle with four beat lights showing the current beat.
-  In Time mode the group collapses away. File → Settings → Project still edits the same fields.
+  Unlike the board, the group stays in Time mode (the Metronome greyed out), so switching modes moves nothing
+  on the toolbar. File → Settings → Project still edits the same fields.
 - **The ruler has two tiers**: bar numbers bold on top, beats small below (2.2, 2.3, …).
 - **Every other bar is shaded** down through the lanes, and beat lines are fainter than bar lines.
 - An **amber marker** on the ruler shows the first beat.

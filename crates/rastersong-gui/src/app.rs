@@ -36,7 +36,7 @@ const AUDIO_RATES: [u32; 4] = [44_100, 48_000, 88_200, 96_000];
 /// One track as playback mixes it: its name, items and gain.
 /// A track as playback mixes it: name, items, level, and whether it is routed to the master bus.
 type MixEntry = (String, Vec<Item>, f32, bool);
-use crate::editor::{CanvasContext, GraphEditor, InspectorContext, without_layout};
+use crate::editor::{CanvasContext, GraphEditor, InspectorContext, StatsContext, without_layout};
 use crate::history::History;
 use crate::item_inspector::{ItemEdit, graph_item_inspector};
 use crate::preview::{Feed, PreviewView, clamp_split, split_rects, split_sides};
@@ -73,6 +73,8 @@ const MIN_GRAPH_ITEM_SECONDS: f64 = 5.0;
 /// The length of the timeline before anything is loaded, in frames of [`EMPTY_TIMELINE_RATE`].
 const EMPTY_TIMELINE_FRAMES: usize = 300;
 const EMPTY_TIMELINE_RATE: f64 = 30.0;
+/// Height of the timeline's toolbar, the same in time and tempo mode.
+const TIMELINE_TOOLBAR_HEIGHT: f32 = DENSE_HEIGHT + 4.0;
 /// What copying timeline items puts on the system clipboard. The items themselves stay in the app.
 pub const ITEM_CLIPBOARD_MARKER: &str = "RasterSong timeline items";
 
@@ -1173,6 +1175,13 @@ impl App {
                 show_stats: self.settings.node_stats,
                 costs,
                 show_performance: self.settings.show_performance,
+                graph_stats: self.settings.graph_stats.then(|| StatsContext {
+                    frame_rate: self
+                        .engine
+                        .info()
+                        .map_or(EMPTY_TIMELINE_RATE, |info| info.frame_rate.as_f64()),
+                    delays: self.engine.delays(),
+                }),
                 inspect: Some(crate::editor::InspectContext {
                     frame: self.clock.frame(),
                     tap: &tap,
@@ -1872,6 +1881,7 @@ impl App {
                     &mut self.settings.show_performance,
                     tr("menu.view.performance"),
                 );
+                ui.checkbox(&mut self.settings.graph_stats, tr("menu.view.graph_stats"));
             });
             ui.menu_button(tr("menu.help"), |ui| {
                 if ui.button(tr("menu.help.about")).clicked() {
@@ -2568,7 +2578,7 @@ impl App {
             .map_or((EMPTY_TIMELINE_FRAMES, EMPTY_TIMELINE_RATE), |info| {
                 (info.frames, info.frame_rate.as_f64())
             });
-        self.tempo_bar(ui);
+        self.timeline_toolbar(ui);
         self.tidy_item_selection();
         let loaded = self.engine.loaded_tracks();
         self.update_thumbnails(ui.ctx());
@@ -2638,15 +2648,6 @@ impl App {
         }
         if let Some(region) = response.loop_region {
             self.project.loop_region = region;
-        }
-        if response.toggle_snap {
-            self.settings.snap = !self.settings.snap;
-        }
-        if response.toggle_mode {
-            self.project.timeline_mode = match self.project.timeline_mode {
-                TimelineMode::Time => TimelineMode::Tempo,
-                TimelineMode::Tempo => TimelineMode::Time,
-            };
         }
         if let Some(frame) = response.seek {
             self.clock.seek(frame);
@@ -2976,19 +2977,42 @@ impl App {
         }
     }
 
-    /// In tempo mode, the tempo of the music that beat and bar units follow. Time mode shows
-    /// nothing: the mode button lives in the timeline's ruler header.
-    fn tempo_bar(&mut self, ui: &mut Ui) {
-        if self.project.timeline_mode != TimelineMode::Tempo {
-            return;
-        }
-        let tempo = &mut self.project.tempo;
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
-            settings_window::tempo_fields(ui, tempo);
-            ui.toggle_value(&mut self.settings.metronome, tr("tempo.metronome"))
-                .on_hover_text(tr("tempo.metronome.help"));
-        });
+    /// The timeline's toolbar: the Time / Tempo switch, the tempo that beat and bar units follow,
+    /// the metronome (heard in tempo mode), and snapping at the right. It holds the same things
+    /// in both modes, so switching moves nothing.
+    fn timeline_toolbar(&mut self, ui: &mut Ui) {
+        let size = vec2(ui.available_width(), TIMELINE_TOOLBAR_HEIGHT);
+        ui.allocate_ui_with_layout(
+            size,
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.set_min_size(size);
+                ui.spacing_mut().item_spacing.x = 6.0;
+                let modes = [
+                    (tr("timeline.mode.time"), tr("timeline.mode.time.help")),
+                    (tr("timeline.mode.tempo"), tr("timeline.mode.tempo.help")),
+                ];
+                let tempo_mode = self.project.timeline_mode == TimelineMode::Tempo;
+                if let Some(choice) = segmented(ui, &modes, usize::from(tempo_mode)) {
+                    self.project.timeline_mode = if choice == 0 {
+                        TimelineMode::Time
+                    } else {
+                        TimelineMode::Tempo
+                    };
+                }
+                ui.separator();
+                settings_window::tempo_fields(ui, &mut self.project.tempo);
+                ui.add_enabled_ui(tempo_mode, |ui| {
+                    ui.toggle_value(&mut self.settings.metronome, tr("tempo.metronome"))
+                        .on_hover_text(tr("tempo.metronome.help"))
+                        .on_disabled_hover_text(tr("tempo.metronome.time_mode"));
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.toggle_value(&mut self.settings.snap, tr("timeline.snap"))
+                        .on_hover_text(tr("timeline.snap.help"));
+                });
+            },
+        );
     }
 
     /// The stream of a file a video track plays, which thumbnails are made of.

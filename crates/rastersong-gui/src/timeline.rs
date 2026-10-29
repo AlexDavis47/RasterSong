@@ -62,12 +62,8 @@ const ITEM_BAR: f32 = 14.0;
 const EDGE_GRAB: f32 = 5.0;
 /// How close (pixels) a dragged edge must come to a snap target to snap to it.
 const SNAP_DISTANCE: f32 = 8.0;
-/// Width of the snapping button in the ruler header.
-const SNAP_WIDTH: f32 = 52.0;
 /// How close (pixels) to the bottom edge of a header the pointer must be to resize the track.
 const RESIZE_GRAB: f32 = 3.0;
-/// Width of the button that switches the ruler between time and tempo.
-const MODE_WIDTH: f32 = 66.0;
 /// Height of the drop zone below an empty section, which names what to drop there.
 const EMPTY_SECTION_HEIGHT: f32 = 30.0;
 /// Height of the space below a section's last track, where a dropped resource's ghost row shows.
@@ -394,10 +390,6 @@ pub struct TimelineResponse {
     pub wanted_thumbnails: Vec<(String, usize)>,
     /// A new loop region (`Some(None)` to remove it).
     pub loop_region: Option<Option<LoopRegion>>,
-    /// The mode button was clicked: switch between the time and tempo rulers.
-    pub toggle_mode: bool,
-    /// The snapping button was clicked: turn snapping on or off.
-    pub toggle_snap: bool,
     /// Screen x where the lanes start, for turning a pointer position into time.
     pub lanes_left: f32,
     /// The row of [`TimelineModel::tracks`] the pointer is over, for dropping a resource on a
@@ -985,42 +977,6 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
     if panning {
         view.left -= f64::from(delta.x) / view.px_per_sec;
         view.scroll_y -= delta.y;
-    }
-    let mode_button = Rect::from_min_size(
-        pos2(area.left() + HEADER_WIDTH - MODE_WIDTH, area.top() + 1.0),
-        vec2(MODE_WIDTH, RULER_HEIGHT - 2.0),
-    );
-    let (icon, name, hover) = match model.mode {
-        TimelineMode::Time => ("⏱", tr("timeline.mode.time"), tr("timeline.mode.time.help")),
-        TimelineMode::Tempo => (
-            "♪",
-            tr("timeline.mode.tempo"),
-            tr("timeline.mode.tempo.help"),
-        ),
-    };
-    if ui
-        .put(
-            mode_button,
-            egui::Button::new(egui::RichText::new(format!("{icon} {name}")).small()),
-        )
-        .on_hover_text(hover)
-        .clicked()
-    {
-        response.toggle_mode = true;
-    }
-    let snap_button = Rect::from_min_size(
-        pos2(mode_button.left() - SNAP_WIDTH - 4.0, mode_button.top()),
-        vec2(SNAP_WIDTH, mode_button.height()),
-    );
-    if ui
-        .put(
-            snap_button,
-            egui::Button::selectable(model.snap, egui::RichText::new(tr("timeline.snap")).small()),
-        )
-        .on_hover_text(tr("timeline.snap.help"))
-        .clicked()
-    {
-        response.toggle_snap = true;
     }
     if over(area) && !ui.ctx().egui_wants_keyboard_input() {
         item_keys(ui, model, &mut response);

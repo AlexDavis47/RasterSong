@@ -395,6 +395,8 @@ impl App {
             tr("settings.performance"),
         );
         help(ui, tr("settings.performance.help"));
+        ui.checkbox(&mut self.settings.graph_stats, tr("settings.graph_stats"));
+        help(ui, tr("settings.graph_stats.help"));
         ui.checkbox(
             &mut self.settings.keep_connections,
             tr("settings.keep_connections"),

@@ -685,6 +685,39 @@ fn tempo_bar_with_metronome() {
     }
 }
 
+/// The graph statistics card, with each node's latency and warmup and its time under it.
+#[test]
+#[ignore = "needs a GPU; run explicitly to look at the UI"]
+fn graph_stats_screenshots() {
+    for (theme, name) in [(ThemeChoice::Dark, "dark"), (ThemeChoice::Light, "light")] {
+        let app = app_edited(theme, 1, TimelineMode::Time, |project| {
+            project.graph = GraphDesc::from_json(
+                r#"{ "version": 0,
+                    "nodes": [
+                        { "id": "video", "type": "video_input", "position": [0, 0] },
+                        { "id": "delay", "type": "delay", "position": [200, 0],
+                          "params": { "time": 2, "unit": "frame" } },
+                        { "id": "out", "type": "output", "position": [400, 0] }
+                    ],
+                    "connections": [ { "from": "video", "to": "delay" }, { "from": "delay", "to": "out" } ] }"#,
+            )
+            .unwrap();
+            let graph = project.graph_id;
+            let track = project.add_graph_track("Graphs");
+            project.place_graph(&track, graph, 0.0, 4.0);
+        });
+        let mut harness = gpu_harness(app);
+        wait_for_frames(&mut harness, 30);
+        let mut settings = harness.state().settings().clone();
+        settings.node_stats = true;
+        settings.show_performance = true;
+        settings.graph_stats = true;
+        harness.state_mut().set_settings(settings);
+        harness.run_steps(6);
+        save(&mut harness, &format!("{name}-graph-stats"));
+    }
+}
+
 /// The wire tooltip and the inspector's meters, on a graph with a compressor.
 #[test]
 #[ignore = "needs a GPU; run explicitly to look at the UI"]

@@ -258,6 +258,11 @@ Renames, merges, splits and removals need **no migration** while the format is v
   advisory and never part of the cache key. Feeds the benchmarks workflow in [benchmarks.md](benchmarks.md).
 - [x] **chore** Profiling: samply as the documented sampling profiler, and `rastersong-cli render --trace` for a
   per-frame, per-node timeline of an export ([Development](development.md#profiling)).
+- [x] **feature** Graph statistics (View → Show graph statistics): a card in the graph editor's corner with the
+  nodes and connections, the samples the outputs hold per block, the render time and its share of a frame,
+  samples per millisecond, and the render's latency and warmup.
+- [x] **bug** With node latency and warmup and performance both shown, a narrow node's processing time was drawn
+  over its warmup. It now goes on the line below, and a warning note below both.
 
 Found by profiling 1080p exports (see [Benchmarks](benchmarks.md#2026-10-22-where-an-export-spends-its-time)),
 roughly in order of payoff:
@@ -329,6 +334,9 @@ Reusable widgets, built once in `rastersong-gui` (a `widgets/` module) and used 
 
 - [x] Reaper-style track headers, grab-scroll, scroll-zoom, tick lines, tempo ruler, thumbnails and waveforms
 - [x] **chore** Removed the Fit button (its tooltip was wrong and F already fits the view).
+- [x] **bug** Switching to Tempo mode added the tempo bar above the timeline and pushed it down. A toolbar is
+  always there now, with the Time / Tempo switch, the tempo, the Metronome (heard in Tempo mode) and Snap, which
+  left the ruler's corner.
 - Automation clips and the multi-clip timeline are now part of
   [Timeline, resources and routing](#timeline-resources-and-routing).
 

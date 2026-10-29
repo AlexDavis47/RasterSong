@@ -467,6 +467,21 @@ fn time_x(harness: &Harness<'_, App>, seconds: f64) -> f32 {
     harness.state().timeline_view().x(lanes_left, seconds)
 }
 
+/// Half a second into the timeline, below its last track and above its bottom edge: off every
+/// lane, where a dropped resource makes a track of its own.
+fn below_the_tracks(harness: &Harness<'_, App>) -> Pos2 {
+    let last = harness
+        .state()
+        .timeline_layout()
+        .lanes
+        .last()
+        .unwrap()
+        .bottom();
+    let bottom = harness.state().timeline_area().bottom();
+    assert!(bottom - last > 8.0, "no room below the tracks");
+    pos2(time_x(harness, 0.5), (last + bottom) / 2.0)
+}
+
 /// Screen x of `seconds` in the timeline's lanes, and the vertical middle of lane `row` (0 is
 /// the video).
 fn timeline_point(harness: &Harness<'_, App>, seconds: f64, row: usize) -> Pos2 {
@@ -2122,15 +2137,41 @@ fn right_clicking_the_ruler_offers_looping_options() {
 }
 
 #[test]
-fn clicking_the_ruler_mode_switches_between_time_and_tempo() {
+fn the_toolbar_switches_modes_without_moving_the_timeline() {
     let mut harness = loaded();
     assert_eq!(harness.state().project().timeline_mode, TimelineMode::Time);
-    harness.get_by_label("⏱ Time").click();
+    let lanes = harness.state().timeline_area();
+    let metronome = harness.get_by_label("Metronome").rect();
+    harness.get_by_label("Tempo").click();
     harness.run_steps(2);
     assert_eq!(harness.state().project().timeline_mode, TimelineMode::Tempo);
-    harness.get_by_label("♪ Tempo").click();
+    assert_eq!(harness.state().timeline_area(), lanes);
+    assert_eq!(harness.get_by_label("Metronome").rect(), metronome);
+    harness.get_by_label("Time").click();
     harness.run_steps(2);
     assert_eq!(harness.state().project().timeline_mode, TimelineMode::Time);
+    assert_eq!(harness.state().timeline_area(), lanes);
+}
+
+#[test]
+fn the_toolbar_holds_snapping_and_the_metronome_plays_only_in_tempo_mode() {
+    let mut harness = loaded();
+    assert!(harness.state().settings().snap);
+    harness.get_by_label("Snap").click();
+    harness.run_steps(2);
+    assert!(!harness.state().settings().snap);
+    // The snap button sits right of the tempo, at the toolbar's end.
+    let snap = harness.get_by_label("Snap").rect();
+    assert!(snap.left() > harness.get_by_label("Metronome").rect().right());
+
+    harness.get_by_label("Metronome").click();
+    harness.run_steps(2);
+    assert!(!harness.state().settings().metronome, "off in time mode");
+    harness.get_by_label("Tempo").click();
+    harness.run_steps(2);
+    harness.get_by_label("Metronome").click();
+    harness.run_steps(2);
+    assert!(harness.state().settings().metronome);
 }
 
 /// A primary click with `modifiers` held.
@@ -2211,8 +2252,7 @@ fn dragging_a_media_card_onto_the_timeline_makes_a_track() {
         .rect()
         .center();
     // Below the tracks, off every lane.
-    let mut to = timeline_point(&harness, 0.5, 1);
-    to.y += LANE_HEIGHT * 1.5;
+    let to = below_the_tracks(&harness);
     drag(&mut harness, card, to);
     harness.run_steps(2);
     assert_eq!(harness.state().project().videos().len(), 2);
@@ -2295,8 +2335,7 @@ fn selected_cards_are_dragged_into_the_timeline_together() {
     let fourth = card_center(&harness, "stem2");
     ctrl_click(&mut harness, fourth);
     // The ghost of the drag shows a row for each.
-    let mut to = timeline_point(&harness, 0.5, 1);
-    to.y += LANE_HEIGHT * 1.5;
+    let to = below_the_tracks(&harness);
     drag(&mut harness, fourth, to);
     harness.run_steps(2);
     let project = harness.state().project();
@@ -2315,8 +2354,7 @@ fn an_unselected_card_drags_alone() {
     let first = card_center(&harness, "stem1");
     click(&mut harness, first, PointerButton::Primary);
     let fifth = card_center(&harness, "stem2");
-    let mut to = timeline_point(&harness, 0.5, 1);
-    to.y += LANE_HEIGHT * 1.5;
+    let to = below_the_tracks(&harness);
     drag(&mut harness, fifth, to);
     harness.run_steps(2);
     let names: Vec<String> = harness
@@ -2928,8 +2966,7 @@ fn a_dragged_card_shows_the_bubble_which_blooms_where_it_is_dropped() {
         .unwrap()
         .rect()
         .center();
-    let mut to = timeline_point(&harness, 0.5, 1);
-    to.y += LANE_HEIGHT * 1.5;
+    let to = below_the_tracks(&harness);
     drag_to(&mut harness, card, to);
     assert!(matches!(
         bubble_phase(&harness.ctx),
@@ -3475,4 +3512,109 @@ fn the_inspector_renames_a_node_when_the_name_is_committed() {
     harness.run_steps(2);
     let label = harness.state().editor().node(bands).unwrap().label.clone();
     assert_eq!(label.as_deref(), Some("Lows"));
+}
+
+// --- Graph statistics and the text under nodes ---
+
+/// Video through a two-frame delay to the output: the delay has warmup to show.
+const DELAYED: &str = r#"{ "version": 0,
+  "nodes": [
+    { "id": "video", "type": "video_input" },
+    { "id": "delay", "type": "delay", "params": { "time": 2, "unit": "frame" } },
+    { "id": "out", "type": "output" }
+  ],
+  "connections": [ { "from": "video", "to": "delay" }, { "from": "delay", "to": "out" } ] }"#;
+
+/// [`DELAYED`] placed on the timeline, so it renders.
+fn delayed_app() -> App {
+    app_with_project(|project| {
+        project.graph = GraphDesc::from_json(DELAYED).unwrap();
+        let graph = project.graph_id;
+        let track = project.add_graph_track("Graphs");
+        project.place_graph(&track, graph, 0.0, 2.0);
+    })
+}
+
+/// The rects of the text painted this frame that `matches` picks.
+fn text_rects(harness: &Harness<'_, App>, matches: impl Fn(&str) -> bool) -> Vec<egui::Rect> {
+    harness
+        .output()
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(t) if matches(t.galley.text()) => {
+                Some(egui::Rect::from_min_size(t.pos, t.galley.size()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_nodes_processing_time_goes_under_its_latency_and_warmup() {
+    let mut harness = loaded_with(delayed_app());
+    let mut settings = harness.state().settings().clone();
+    settings.node_stats = true;
+    settings.show_performance = true;
+    harness.state_mut().set_settings(settings);
+    harness.run_steps(3);
+    // Only the delay has warmup; every node has a time.
+    let stats = text_rects(&harness, |t| t.starts_with("warmup"));
+    assert_eq!(stats.len(), 1, "{stats:?}");
+    let delay = harness
+        .state()
+        .editor()
+        .node_screen_rect(key(&harness, "delay"))
+        .unwrap();
+    let cost: Vec<_> = text_rects(&harness, |t| t.contains(" ms · "))
+        .into_iter()
+        .filter(|r| r.x_range().intersects(delay.x_range()))
+        .collect();
+    assert_eq!(cost.len(), 1, "{cost:?}");
+    assert!(!stats[0].intersects(cost[0]), "{stats:?} overlaps {cost:?}");
+    assert!(cost[0].top() >= stats[0].bottom());
+    // A node with no latency or warmup keeps its time on the first line, at the right.
+    let video = harness
+        .state()
+        .editor()
+        .node_screen_rect(key(&harness, "video"))
+        .unwrap();
+    let video_cost = text_rects(&harness, |t| t.contains(" ms · "))
+        .into_iter()
+        .find(|r| r.x_range().intersects(video.x_range()))
+        .unwrap();
+    assert!((video_cost.right() - (video.right() - 5.0)).abs() < 1.0);
+    assert!(video_cost.top() - video.bottom() < 8.0);
+}
+
+#[test]
+fn graph_statistics_show_in_the_editors_corner_when_turned_on() {
+    let mut harness = loaded_with(delayed_app());
+    assert!(harness.query_by_label("Graph statistics").is_none());
+    let mut settings = harness.state().settings().clone();
+    settings.graph_stats = true;
+    harness.state_mut().set_settings(settings);
+    harness.run_steps(3);
+    let card = harness.get_by_label("Graph statistics").rect();
+    let canvas = harness.state().editor().canvas_rect();
+    assert!(canvas.contains_rect(card));
+    assert!(
+        card.left() - canvas.left() < 20.0,
+        "in the bottom-left corner"
+    );
+    let painted = |text: &str| !text_rects(&harness, |t| t == text).is_empty();
+    for label in [
+        "Nodes",
+        "Connections",
+        "Samples / block",
+        "Render",
+        "Samples / ms",
+    ] {
+        assert!(painted(label), "no {label}");
+    }
+    // Three nodes, two connections, and a delay that needs history after a seek.
+    let values = text_rects(&harness, |t| t == "3" || t == "2");
+    assert!(values.iter().any(|r| card.contains_rect(*r)));
+    assert!(painted("Of a frame"));
+    assert!(!text_rects(&harness, |t| t.ends_with(" ms")).is_empty());
 }

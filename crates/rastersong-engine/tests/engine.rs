@@ -325,6 +325,27 @@ fn frames_carry_output_levels() {
 }
 
 #[test]
+fn reports_the_renders_latency_and_warmup_until_a_graph_fails() {
+    let engine = engine();
+    assert_eq!(engine.delays(), None);
+    load(&engine, FINITE);
+    wait_until("the build", || engine.status() == EngineStatus::Ready);
+    let delays = engine.delays().expect("a compiled graph has delays");
+    assert!(delays.warmup_frames >= 2, "the delay needs history");
+    engine.set_graph(
+        GraphDesc::from_json(
+            r#"{ "version": 0, "nodes": [ { "id": "b", "type": "bogus" }, { "id": "o", "type": "output" } ],
+                "connections": [ { "from": "b", "to": "o" } ] }"#,
+        )
+        .unwrap(),
+    );
+    wait_until("the failure", || {
+        matches!(engine.status(), EngineStatus::Failed(_))
+    });
+    assert_eq!(engine.delays(), None);
+}
+
+#[test]
 fn graph_failures_keep_the_video_info() {
     let engine = engine();
     load(

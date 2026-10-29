@@ -168,9 +168,10 @@ write a graph as its own file.
 ## Timeline
 
 The timeline has three **sections** under a ruler, divided by a thick line: **Graphs** on top, then **Video**, then
-**Audio**. Tracks stay in their section and reorder within it. The ruler's corner has the **Time** / **Tempo**
-button (minutes and seconds, or bars and beats with the tempo bar and its **Metronome** toggle) and the Snap
-button. The timeline shows from launch, over a default ten seconds, with each empty section naming what to drop
+**Audio**. Tracks stay in their section and reorder within it. A **toolbar** above them is the same in both
+modes, so switching moves nothing: the **Time** / **Tempo** switch (a ruler of minutes and seconds, or of bars and
+beats), the tempo (bpm, beats per bar, first beat; beat and bar units in nodes follow it in either mode), the
+**Metronome** toggle, which plays only in Tempo mode, and **Snap** at the right. The timeline shows from launch, over a default ten seconds, with each empty section naming what to drop
 in it. Each track is a lane of **items**, the stretches of its file (or, in the Graphs section, graphs) placed on
 the timeline.
 
@@ -311,7 +312,7 @@ With several buses, each audio track's header shows the bus it is routed to, wit
 
 **File → Settings…** (Ctrl+,) opens a window with two pages. **Application** is remembered on this computer:
 **Appearance** (theme, wire style, language), the **graph editor** (node latency and warmup display, node
-processing time, keeping input connections when duplicating and pasting), the view hovering an audio connection or
+processing time, graph statistics, keeping input connections when duplicating and pasting), the view hovering an audio connection or
 any other connection shows, and **Rendering** (the default preview resolution, the cache size in MiB and how many
 seconds to render ahead, each with a reset button).
 **Project** is saved in the project file: the **picture** (resolution and frame rate, from 23.976 to 60 fps with
@@ -319,7 +320,7 @@ NTSC rates as exact fractions; until one is set the fields show the first video'
 goes back to following it), tempo (bpm, beats per bar, first beat), *Max warmup frames* (how much
 is pre-rendered after a jump in the timeline; the page warns when the graph needs more), the update rate for
 inspecting connections, the Audio Output rate and the **output buses** (below). Each setting has a line of help.
-The tempo bar in the timeline edits the same tempo fields. The preview resolution and volume are also on the
+The timeline's toolbar edits the same tempo fields. The preview resolution and volume are also on the
 transport bar, where they are used while playing.
 
 **Output buses** lists the project's buses, master first, each with a name and a channel count (mono, stereo, 3 to
@@ -376,7 +377,12 @@ Project files are described in [Graph files](graph-format.md#projects).
 - **Theme:** File → Settings → Application → Theme picks Dark (the default), Light or Follow system. Every colour the
   app paints itself comes from `crates/rastersong-gui/src/theme.rs`. The theme, preview resolution and volume are
   remembered between sessions.
-- **View** shows node latency and warmup, and node performance (processing time), under each node.
+- **View** shows node latency and warmup, and node performance (processing time), under each node; with both,
+  the time goes on the line under the latency and warmup. **Show graph statistics** puts a card in the graph
+  editor's bottom-left corner: the nodes and connections, the samples every node's outputs hold per block (one
+  frame), the time the nodes took for the frame at the playhead (smoothed) and its share of a frame at the project
+  rate, the samples that is per millisecond, and the render's latency and the frames it renders after a seek.
+  Samples and times are at the preview resolution.
 - **Help → About RasterSong** credits FFmpeg and links the text of the LGPL version the loaded build is under
   (2.1 or later for the release build, 3 for the development build) and lists the loaded FFmpeg libraries and build
   configuration.

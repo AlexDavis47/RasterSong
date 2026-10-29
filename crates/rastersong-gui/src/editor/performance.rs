@@ -5,7 +5,7 @@ use rastersong_engine::NodeCost;
 use rastersong_lang::tr_args;
 
 use super::GraphEditor;
-use super::canvas::Geometry;
+use super::canvas::{Geometry, NODE_TEXT_LINE};
 use crate::theme::Theme;
 
 /// How much of each new frame's time goes into the smoothed value.
@@ -25,7 +25,8 @@ impl GraphEditor {
     }
 
     /// Tints a node's body by how slow it is against the slowest node, and writes its time and
-    /// its share of the graph's total under it, at the right.
+    /// its share of the graph's total under it: at the right, or on the line under its latency
+    /// and warmup when `below_stats`, so the two never overlap. Returns whether it wrote any.
     pub(super) fn draw_performance(
         &self,
         painter: &egui::Painter,
@@ -33,12 +34,13 @@ impl GraphEditor {
         g: &Geometry,
         to_screen: impl Fn(Pos2) -> Pos2,
         text_color: Color32,
-    ) {
+        below_stats: bool,
+    ) -> bool {
         let Some(node) = self.node(g.key) else {
-            return;
+            return false;
         };
         let Some(&micros) = self.costs.get(node.id.as_str()) else {
-            return;
+            return false;
         };
         let total: f32 = self.costs.values().sum();
         let slowest = self.costs.values().copied().fold(0.0, f32::max);
@@ -51,8 +53,9 @@ impl GraphEditor {
             rounding,
             theme.warning.gamma_multiply(0.35 * heat * heat),
         );
-        if self.view.zoom <= 0.45 {
-            return;
+        let zoom = self.view.zoom;
+        if zoom <= 0.45 {
+            return false;
         }
         let share = if total > 0.0 {
             micros / total * 100.0
@@ -66,13 +69,25 @@ impl GraphEditor {
                 ("share", &format!("{share:.0}")),
             ],
         );
+        let (pos, align) = if below_stats {
+            (
+                rect.left_bottom() + vec2(5.0 * zoom, (5.0 + NODE_TEXT_LINE) * zoom),
+                Align2::LEFT_TOP,
+            )
+        } else {
+            (
+                rect.right_bottom() + vec2(-5.0 * zoom, 5.0 * zoom),
+                Align2::RIGHT_TOP,
+            )
+        };
         painter.text(
-            rect.right_bottom() + vec2(-5.0 * self.view.zoom, 5.0 * self.view.zoom),
-            Align2::RIGHT_TOP,
+            pos,
+            align,
             text,
-            FontId::proportional(11.5 * self.view.zoom),
+            FontId::proportional(11.5 * zoom),
             text_color,
         );
+        true
     }
 }
 

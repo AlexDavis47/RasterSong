@@ -2,6 +2,7 @@
 //! canvas. The project's [`GraphDesc`] stays the model; the editor converts to and from it.
 
 mod canvas;
+mod graph_stats;
 mod inspect;
 mod inspector;
 mod modulation;
@@ -21,6 +22,7 @@ use rastersong_engine::{
 };
 
 pub use canvas::CanvasContext;
+pub use graph_stats::StatsContext;
 pub use inspect::{InspectContext, InspectMode, ViewChoice, changing_view, listening};
 pub use inspector::InspectorContext;
 pub use modulation::{PARAM_PORT, as_param, param_port};

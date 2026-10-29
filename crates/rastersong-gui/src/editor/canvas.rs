@@ -8,7 +8,7 @@
 //! - Right-click empty space to add a node there; right-click a node for its menu.
 //! - Delete removes the selection, Ctrl+D duplicates it, F frames the whole graph.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use eframe::egui::epaint::CubicBezierShape;
 use eframe::egui::{
@@ -41,6 +41,8 @@ const MIN_WIDTH: f32 = 116.0;
 const PAD: f32 = 10.0;
 const FONT: f32 = 12.0;
 const LABEL_FONT: f32 = 11.0;
+/// Height of a line of text under a node (latency and warmup, processing time), at zoom 1.
+pub(super) const NODE_TEXT_LINE: f32 = LABEL_FONT + 6.0;
 /// BYPASSED in a bypassed node's title row.
 const TAG_FONT: f32 = 10.0;
 /// The badge on a node's top-right corner.
@@ -73,6 +75,8 @@ pub struct CanvasContext<'a> {
     pub costs: &'a [NodeCost],
     /// Whether to show node processing times and tint the slow nodes.
     pub show_performance: bool,
+    /// The graph's totals in the canvas's corner, when they are shown.
+    pub graph_stats: Option<super::StatsContext>,
     /// How inspecting a connection works; none in tests that have no engine.
     pub inspect: Option<super::inspect::InspectContext<'a>>,
 }
@@ -393,15 +397,14 @@ impl GraphEditor {
             .and_then(|f| f.node.as_deref())
             .and_then(|id| self.key_of(id));
         let hovered_pin = pointer.and_then(|p| self.pin_at(&geometry, rect, p));
-        // The nodes with their latency and warmup under them, so a warning goes below that.
-        let mut with_stats = BTreeSet::new();
+        // The lines of text under each node (latency and warmup, then processing time), so a
+        // warning goes below them.
+        let mut lines_below: BTreeMap<NodeKey, u8> = BTreeMap::new();
         for g in &geometry {
-            if ctx.show_stats
-                && let Some(stats) = self.compiled(g.key)
-                && self.draw_node_stats(&painter, &visuals, theme, g, to_screen, stats)
-            {
-                with_stats.insert(g.key);
-            }
+            let with_stats = ctx.show_stats
+                && self.compiled(g.key).is_some_and(|stats| {
+                    self.draw_node_stats(&painter, &visuals, theme, g, to_screen, stats)
+                });
             self.draw_node(
                 &painter,
                 &visuals,
@@ -412,8 +415,18 @@ impl GraphEditor {
                 hovered_pin,
                 &output_colors,
             );
-            if ctx.show_performance {
-                self.draw_performance(&painter, theme, g, to_screen, visuals.weak_text_color());
+            let with_cost = ctx.show_performance
+                && self.draw_performance(
+                    &painter,
+                    theme,
+                    g,
+                    to_screen,
+                    visuals.weak_text_color(),
+                    with_stats,
+                );
+            let lines = u8::from(with_stats) + u8::from(with_cost);
+            if lines > 0 {
+                lines_below.insert(g.key, lines);
             }
         }
         // Compile notes and warnings: a badge on the node's corner, the messages in its tooltip,
@@ -432,8 +445,8 @@ impl GraphEditor {
                 continue;
             };
             if severity == Severity::Warning && self.view.zoom > 0.45 {
-                let below_stats = with_stats.contains(&g.key);
-                self.draw_warning_note(&painter, theme, g, to_screen, below_stats, warnings);
+                let lines = lines_below.get(&g.key).copied().unwrap_or(0);
+                self.draw_warning_note(&painter, theme, g, to_screen, lines, warnings);
             }
             let badge = self.badge_rect(g, to_screen);
             draw_badge(
@@ -508,6 +521,9 @@ impl GraphEditor {
                 0.0
             };
             draw_legend(ui, rect, bottom, theme);
+            if let Some(stats) = ctx.graph_stats {
+                self.draw_graph_stats(ui, rect, bottom, theme, stats);
+            }
         }
         if let Some(failure) = ctx.failure {
             self.error_bar(ui, rect, failure, &geometry, theme);
@@ -1023,15 +1039,15 @@ impl GraphEditor {
         Rect::from_center_size(to_screen(g.rect.right_top()), vec2(size, size))
     }
 
-    /// A warning's messages in a note under the node, below its latency and warmup when those
-    /// are shown.
+    /// A warning's messages in a note under the node, below the `lines` of text under it
+    /// (latency and warmup, processing time).
     fn draw_warning_note(
         &self,
         painter: &egui::Painter,
         theme: &Theme,
         g: &Geometry,
         to_screen: impl Fn(Pos2) -> Pos2,
-        below_stats: bool,
+        lines: u8,
         diagnostics: &[rastersong_engine::Diagnostic],
     ) {
         let zoom = self.view.zoom;
@@ -1048,12 +1064,8 @@ impl GraphEditor {
             theme.warning_note_text,
             NOTE_WIDTH * zoom - 2.0 * pad.x,
         );
-        let stats = if below_stats {
-            (LABEL_FONT + 6.0) * zoom
-        } else {
-            0.0
-        };
-        let top_left = to_screen(g.rect.left_bottom()) + vec2(0.0, 8.0 * zoom + stats);
+        let text = f32::from(lines) * NODE_TEXT_LINE * zoom;
+        let top_left = to_screen(g.rect.left_bottom()) + vec2(0.0, 8.0 * zoom + text);
         let note = Rect::from_min_size(top_left, galley.size() + 2.0 * pad);
         painter.rect(
             note,
