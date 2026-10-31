@@ -2,7 +2,7 @@ use std::f64::consts::TAU;
 
 use crate::dsp::{HILBERT_TAPS, Hilbert, mix};
 use crate::nodes::support::{SampleClock, settle_frames};
-use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
+use crate::nodes::{Category, Measure, NodeKind, NodeSpec};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Frequency shifter: moves every frequency in the signal up or down by the same amount, in Hz
@@ -15,10 +15,8 @@ use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 #[derive(Debug)]
 pub struct FrequencyShifter {
     shift: f64,
-    unit: Unit,
+    unit: Measure,
     mix: f32,
-    /// Cycles per sample of one unit of shift, set in `prepare`.
-    scale: f64,
     hilbert: Hilbert,
     clock: SampleClock,
     /// The oscillator's phase in cycles, or `None` until the first block after a reset.
@@ -29,9 +27,9 @@ params! { FrequencyShifter {
     SHIFT: ParamSpec::number("shift", 100.0,
         -1000.0,
         1000.0)
+    .rate("second")
     .exposed()
     .limits(-1e9, 1e9),
-    UNIT: Unit::freq_param("second"),
     MIX: ParamSpec::mix(),
 } }
 
@@ -41,18 +39,17 @@ impl NodeKind for FrequencyShifter {
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
-        r#"{ "shift": 5, "unit": "row" }"#,
+        r#"{ "shift": 5, "shift.unit": "row" }"#,
         r#"{ "shift": -300, "mix": 0.5 }"#,
-        r#"{ "shift": 2, "unit": "frame", "mix": 0.8 }"#,
+        r#"{ "shift": 2, "shift.unit": "frame", "mix": 0.8 }"#,
     ];
     const BENCH: Option<&'static str> = Some("{}");
 
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
             shift: params.number_at(Self::SHIFT)?,
-            unit: params.choice_as(Self::UNIT)?,
+            unit: params.measure_at(Self::SHIFT)?,
             mix: params.float_at(Self::MIX)?,
-            scale: 0.0,
             hilbert: Hilbert::default(),
             clock: SampleClock::default(),
             phase: None,
@@ -62,7 +59,7 @@ impl NodeKind for FrequencyShifter {
 
 impl Node for FrequencyShifter {
     fn prepare(&mut self, ctx: &PrepareContext) {
-        self.scale = self.unit.per_sample(1.0, ctx);
+        self.unit.prepare(ctx);
     }
 
     fn process(&mut self, ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
@@ -73,13 +70,13 @@ impl Node for FrequencyShifter {
         // accumulate from its first block.
         let mut phase = self
             .phase
-            .unwrap_or_else(|| (start as f64 * self.shift * self.scale).rem_euclid(1.0));
+            .unwrap_or_else(|| (start as f64 * self.unit.per_sample(self.shift)).rem_euclid(1.0));
         for (i, (out, &x)) in outputs[0].data.iter_mut().zip(&inputs[0].data).enumerate() {
             let (real, imag) = self.hilbert.push(x);
             let (sin, cos) = (TAU * phase).sin_cos();
             let shifted = real * cos as f32 - imag * sin as f32;
             *out = mix(real, shifted, amount.at(i));
-            phase = (phase + shift.at64(i) * self.scale).rem_euclid(1.0);
+            phase = (phase + self.unit.per_sample(shift.at64(i))).rem_euclid(1.0);
         }
         self.phase = Some(phase);
     }

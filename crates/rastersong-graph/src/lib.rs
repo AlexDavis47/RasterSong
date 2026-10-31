@@ -26,10 +26,11 @@ pub use graph::{
 };
 pub use node::{
     Diagnostic, InputSpec, LayoutContext, Node, OutputSpec, PrepareContext, ProcessContext,
-    Severity, Sources, Tempo, Value,
+    Severity, Sources, Span, Tempo, Value,
 };
 pub use nodes::{
-    Category, Choice, MAX_METERS, Meter, MeterKind, NodeKind, NodeSpec, NodeType, Registry,
+    Category, Choice, MAX_METERS, Measure, Meter, MeterKind, NodeKind, NodeSpec, NodeType,
+    Registry, Unit,
 };
-pub use params::{ParamKind, ParamSpec, Params, ShownWhen, range_span};
+pub use params::{ParamKind, ParamSpec, Params, Reading, ShownWhen, Timing, range_span};
 pub use signal::{ChannelMap, Kind, Layout, Part, Range, Signal, Tag, TagRule};

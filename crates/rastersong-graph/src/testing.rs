@@ -3,7 +3,9 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::{Layout, Node, ParamValue, PrepareContext, ProcessContext, Registry, Signal, Tempo};
+use crate::{
+    Layout, Node, ParamValue, PrepareContext, ProcessContext, Registry, Signal, Span, Tempo,
+};
 
 /// Creates `kind` with `params` (JSON) and prepares it for mono blocks of `len` samples at
 /// `rate` samples per second, with the given inputs connected.
@@ -20,6 +22,30 @@ pub fn node_with_tempo(
     connected: &[bool],
     tempo: Tempo,
 ) -> Box<dyn Node> {
+    node_in(kind, params, len, rate, connected, tempo, Span::default())
+}
+
+/// Like [`node`] at a given tempo, for a graph item playing `span` of the graph's own time.
+pub fn node_with_span(
+    kind: &str,
+    params: &str,
+    len: usize,
+    rate: f64,
+    tempo: Tempo,
+    span: Span,
+) -> Box<dyn Node> {
+    node_in(kind, params, len, rate, &[], tempo, span)
+}
+
+fn node_in(
+    kind: &str,
+    params: &str,
+    len: usize,
+    rate: f64,
+    connected: &[bool],
+    tempo: Tempo,
+    span: Span,
+) -> Box<dyn Node> {
     let params: BTreeMap<String, ParamValue> = serde_json::from_str(params).unwrap();
     let registry = Registry::shared();
     let mut node = registry.create(kind, &params).unwrap().unwrap();
@@ -28,6 +54,7 @@ pub fn node_with_tempo(
     node.prepare(&PrepareContext {
         frame_rate: rate / len as f64,
         tempo,
+        span,
         inputs: &vec![layout; spec.inputs.len()],
         outputs: &vec![layout; spec.outputs.len()],
         connected,

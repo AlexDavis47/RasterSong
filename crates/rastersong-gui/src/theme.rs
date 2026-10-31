@@ -3,7 +3,7 @@
 //! here, so nothing else holds a colour literal.
 
 use eframe::egui::{self, Color32, CornerRadius};
-use rastersong_engine::{Category, Kind, Part, Tag, TagRule};
+use rastersong_engine::{Category, Kind, LabelColor, Part, Tag, TagRule, TrackKind};
 use rastersong_lang::tr;
 use serde::{Deserialize, Serialize};
 
@@ -33,6 +33,20 @@ impl ThemeChoice {
             Self::Light => egui::ThemePreference::Light,
             Self::System => egui::ThemePreference::System,
         }
+    }
+}
+
+/// The name of an item label colour, as menus show it.
+pub fn label_color_name(color: LabelColor) -> &'static str {
+    match color {
+        LabelColor::Red => tr("label_color.red"),
+        LabelColor::Orange => tr("label_color.orange"),
+        LabelColor::Yellow => tr("label_color.yellow"),
+        LabelColor::Green => tr("label_color.green"),
+        LabelColor::Teal => tr("label_color.teal"),
+        LabelColor::Blue => tr("label_color.blue"),
+        LabelColor::Violet => tr("label_color.violet"),
+        LabelColor::Pink => tr("label_color.pink"),
     }
 }
 
@@ -169,6 +183,8 @@ pub struct Theme {
     pub video_item: ItemColors,
     pub audio_item: ItemColors,
     pub graph_item: ItemColors,
+    /// The item label colours, in the order of [`LabelColor::ALL`].
+    pub item_labels: [ItemColors; 8],
     /// Graph tracks' kind: the bar in their headers, a graph item's outline.
     pub graph_block: Color32,
     /// Text in the graph kind's colour: the GRAPHS section label.
@@ -265,6 +281,48 @@ impl Theme {
             bar: Color32::from_rgb(0x3f, 0x35, 0x70),
             text: Color32::from_rgb(0xe4, 0xdd, 0xff),
         },
+        item_labels: [
+            ItemColors {
+                fill: Color32::from_rgb(0x3a, 0x1f, 0x22),
+                bar: Color32::from_rgb(0x5a, 0x2a, 0x2f),
+                text: Color32::from_rgb(0xff, 0xd9, 0xdc),
+            },
+            ItemColors {
+                fill: Color32::from_rgb(0x3a, 0x28, 0x17),
+                bar: Color32::from_rgb(0x5c, 0x3d, 0x1f),
+                text: Color32::from_rgb(0xff, 0xe2, 0xc7),
+            },
+            ItemColors {
+                fill: Color32::from_rgb(0x35, 0x31, 0x1a),
+                bar: Color32::from_rgb(0x54, 0x4d, 0x22),
+                text: Color32::from_rgb(0xff, 0xf3, 0xc2),
+            },
+            ItemColors {
+                fill: Color32::from_rgb(0x1e, 0x33, 0x20),
+                bar: Color32::from_rgb(0x2c, 0x4f, 0x2f),
+                text: Color32::from_rgb(0xd3, 0xf5, 0xd6),
+            },
+            ItemColors {
+                fill: Color32::from_rgb(0x14, 0x2f, 0x38),
+                bar: Color32::from_rgb(0x1d, 0x48, 0x56),
+                text: Color32::from_rgb(0xc9, 0xee, 0xf9),
+            },
+            ItemColors {
+                fill: Color32::from_rgb(0x1c, 0x27, 0x47),
+                bar: Color32::from_rgb(0x29, 0x3a, 0x6b),
+                text: Color32::from_rgb(0xd6, 0xe1, 0xff),
+            },
+            ItemColors {
+                fill: Color32::from_rgb(0x2e, 0x23, 0x47),
+                bar: Color32::from_rgb(0x45, 0x34, 0x6b),
+                text: Color32::from_rgb(0xe6, 0xdc, 0xff),
+            },
+            ItemColors {
+                fill: Color32::from_rgb(0x3a, 0x1e, 0x33),
+                bar: Color32::from_rgb(0x5a, 0x2c, 0x4e),
+                text: Color32::from_rgb(0xff, 0xd6, 0xf0),
+            },
+        ],
         graph_block: Color32::from_rgb(0x9c, 0x86, 0xff),
         graph_text: Color32::from_rgb(0xb9, 0xa9, 0xff),
         cached: Color32::from_rgb(0x4e, 0xd3, 0x7a),
@@ -359,6 +417,48 @@ impl Theme {
             bar: Color32::from_rgb(0xd8, 0xd0, 0xf8),
             text: Color32::from_rgb(0x3a, 0x2c, 0x86),
         },
+        item_labels: [
+            ItemColors {
+                fill: Color32::from_rgb(0xfb, 0xe1, 0xe1),
+                bar: Color32::from_rgb(0xf5, 0xc5, 0xc5),
+                text: Color32::from_rgb(0x7a, 0x1f, 0x24),
+            },
+            ItemColors {
+                fill: Color32::from_rgb(0xfd, 0xe9, 0xd6),
+                bar: Color32::from_rgb(0xf8, 0xd0, 0xaa),
+                text: Color32::from_rgb(0x7a, 0x3d, 0x0e),
+            },
+            ItemColors {
+                fill: Color32::from_rgb(0xfb, 0xf3, 0xcf),
+                bar: Color32::from_rgb(0xf1, 0xe1, 0x9a),
+                text: Color32::from_rgb(0x5e, 0x4a, 0x06),
+            },
+            ItemColors {
+                fill: Color32::from_rgb(0xe0, 0xf3, 0xe0),
+                bar: Color32::from_rgb(0xc4, 0xe6, 0xc4),
+                text: Color32::from_rgb(0x1f, 0x5a, 0x24),
+            },
+            ItemColors {
+                fill: Color32::from_rgb(0xd9, 0xf0, 0xf6),
+                bar: Color32::from_rgb(0xb6, 0xe1, 0xec),
+                text: Color32::from_rgb(0x0f, 0x4b, 0x5c),
+            },
+            ItemColors {
+                fill: Color32::from_rgb(0xe0, 0xe7, 0xfb),
+                bar: Color32::from_rgb(0xc5, 0xd2, 0xf6),
+                text: Color32::from_rgb(0x1f, 0x34, 0x73),
+            },
+            ItemColors {
+                fill: Color32::from_rgb(0xeb, 0xe3, 0xfb),
+                bar: Color32::from_rgb(0xd6, 0xc8, 0xf6),
+                text: Color32::from_rgb(0x44, 0x28, 0x7f),
+            },
+            ItemColors {
+                fill: Color32::from_rgb(0xfb, 0xe0, 0xf0),
+                bar: Color32::from_rgb(0xf4, 0xc4, 0xe2),
+                text: Color32::from_rgb(0x7a, 0x1f, 0x5a),
+            },
+        ],
         graph_block: Color32::from_rgb(0x7a, 0x62, 0xe6),
         graph_text: Color32::from_rgb(0x5a, 0x44, 0xc4),
         cached: Color32::from_rgb(0x2c, 0x9e, 0x3c),
@@ -376,6 +476,20 @@ impl Theme {
             &Self::DARK
         } else {
             &Self::LIGHT
+        }
+    }
+
+    /// How label colour `label` is drawn.
+    pub fn label_colors(&self, label: LabelColor) -> &ItemColors {
+        &self.item_labels[label as usize]
+    }
+
+    /// How an item on a track of `kind` is drawn: in its resource's label colour when it has one.
+    pub fn item_colors(&self, kind: TrackKind, label: Option<LabelColor>) -> &ItemColors {
+        match (label, kind) {
+            (Some(label), _) => self.label_colors(label),
+            (None, TrackKind::Video) => &self.video_item,
+            (None, TrackKind::Audio) => &self.audio_item,
         }
     }
 
@@ -686,7 +800,8 @@ mod tests {
                 assert!(contrast(theme.accent, bg) >= 3.0);
             }
             // Item names on their bars.
-            for item in [&theme.video_item, &theme.audio_item, &theme.graph_item] {
+            let kinds = [&theme.video_item, &theme.audio_item, &theme.graph_item];
+            for item in kinds.into_iter().chain(&theme.item_labels) {
                 assert!(contrast(item.text, item.bar) >= 4.5);
             }
         }

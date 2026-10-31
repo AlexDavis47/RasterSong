@@ -4,7 +4,7 @@ use super::compressor::Compressor;
 use super::equalizer::Shape;
 use crate::dsp::{AttackRelease, Biquad, BiquadKind, gain_to_db};
 use crate::nodes::support::settle_frames;
-use crate::nodes::{Category, Meter, NodeKind, NodeSpec, Unit};
+use crate::nodes::{Category, Measure, Meter, NodeKind, NodeSpec};
 use crate::{InputSpec, Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// An equaliser band whose gain follows the level of the signal (or of a sidechain). Above the
@@ -14,7 +14,9 @@ use crate::{InputSpec, Node, ParamSpec, Params, PrepareContext, ProcessContext, 
 #[derive(Debug)]
 pub struct DynamicEq {
     shape: Shape,
-    unit: Unit,
+    frequency_unit: Measure,
+    attack_unit: Measure,
+    release_unit: Measure,
     frequency: f64,
     q: f64,
     gain: f64,
@@ -23,9 +25,7 @@ pub struct DynamicEq {
     attack_time: f64,
     release_time: f64,
     /// Set in `prepare`.
-    per_sample: f64,
     times: AttackRelease,
-    unit_samples: f64,
     slowest_samples: f64,
     slowest_frequency: f64,
     sidechain: bool,
@@ -40,9 +40,9 @@ pub struct DynamicEq {
 params! { DynamicEq {
     BAND: ParamSpec::choice("band", &["peak", "low_shelf", "high_shelf"], "peak"),
     FREQUENCY: ParamSpec::number("frequency", 1000.0, 20.0, 20000.0)
+    .rate("second")
         .exposed()
         .limits(1e-06, 1e9),
-    UNIT: Unit::freq_param("second"),
     Q: ParamSpec::number("q", 1.0, 0.1, 20.0)
         .limits(0.05, 100.0),
     GAIN: ParamSpec::number("gain", -9.0, -24.0, 24.0)
@@ -56,8 +56,10 @@ params! { DynamicEq {
     RATIO: ParamSpec::number("ratio", 4.0, 1.0, 20.0)
         .limits(1.0, 1000.0),
     ATTACK: ParamSpec::number("attack", 0.01, 0.0001, 1.0)
+    .length("second")
         .limits(0.0, 1e6),
     RELEASE: ParamSpec::number("release", 0.1, 0.001, 5.0)
+    .length("second")
         .limits(0.0, 1e6),
 } }
 
@@ -79,7 +81,9 @@ impl NodeKind for DynamicEq {
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
             shape: params.choice_as(Self::BAND)?,
-            unit: params.choice_as(Self::UNIT)?,
+            frequency_unit: params.measure_at(Self::FREQUENCY)?,
+            attack_unit: params.measure_at(Self::ATTACK)?,
+            release_unit: params.measure_at(Self::RELEASE)?,
             frequency: params.number_at(Self::FREQUENCY)?,
             q: params.number_at(Self::Q)?,
             gain: params.number_at(Self::GAIN)?,
@@ -87,9 +91,7 @@ impl NodeKind for DynamicEq {
             ratio: params.number_at(Self::RATIO)?,
             attack_time: params.number_at(Self::ATTACK)?,
             release_time: params.number_at(Self::RELEASE)?,
-            per_sample: 0.0,
             times: AttackRelease::default(),
-            unit_samples: 1.0,
             slowest_samples: 0.0,
             slowest_frequency: 0.0,
             sidechain: false,
@@ -102,14 +104,14 @@ impl NodeKind for DynamicEq {
 }
 
 impl DynamicEq {
-    /// The band at `frequency` (this node's unit), quality factor `q` and gain `gain_db`.
+    /// The band at `frequency` (in its unit), quality factor `q` and gain `gain_db`.
     fn design(&self, frequency: f64, q: f64, gain_db: f64) -> Biquad {
         let kind = match self.shape {
             Shape::LowShelf => BiquadKind::LowShelf { gain_db },
             Shape::HighShelf => BiquadKind::HighShelf { gain_db },
             _ => BiquadKind::Peak { gain_db },
         };
-        Biquad::design(kind, frequency * self.per_sample, q)
+        Biquad::design(kind, self.frequency_unit.per_sample(frequency), q)
     }
 
     /// How far toward `gain` the band is for a level (dB): the compressor's curve, held to
@@ -122,14 +124,27 @@ impl DynamicEq {
 
 impl Node for DynamicEq {
     fn prepare(&mut self, ctx: &PrepareContext) {
-        self.per_sample = self.unit.per_sample(1.0, ctx);
-        self.unit_samples = self.unit.samples(ctx);
-        self.times = AttackRelease::new(self.attack_time, self.release_time, self.unit_samples);
-        self.slowest_samples = ctx
-            .param_max(Self::ATTACK, self.attack_time)
-            .max(ctx.param_max(Self::RELEASE, self.release_time))
-            * self.unit_samples;
-        self.slowest_frequency = ctx.param_min(Self::FREQUENCY, self.frequency) * self.per_sample;
+        for unit in [
+            &mut self.frequency_unit,
+            &mut self.attack_unit,
+            &mut self.release_unit,
+        ] {
+            unit.prepare(ctx);
+        }
+        self.times = AttackRelease::new(
+            (self.attack_time, self.attack_unit.unit_samples()),
+            (self.release_time, self.release_unit.unit_samples()),
+        );
+        self.slowest_samples = self
+            .attack_unit
+            .samples(ctx.param_max(Self::ATTACK, self.attack_time))
+            .max(
+                self.release_unit
+                    .samples(ctx.param_max(Self::RELEASE, self.release_time)),
+            );
+        self.slowest_frequency = self
+            .frequency_unit
+            .slowest(ctx, Self::FREQUENCY, self.frequency);
         self.sidechain = ctx.connected[1];
         self.moving =
             ctx.modulation(Self::FREQUENCY).is_some() || ctx.modulation(Self::Q).is_some();

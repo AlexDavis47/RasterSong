@@ -1,14 +1,15 @@
 //! Graph tracks: the Graphs section above the video tracks, holding graph items.
 //!
 //! Items on one graph track never overlap: placing or moving one trims what it lands on. At each
-//! frame the topmost active item's outputs are the master; each item picks a [`Source`] for each
-//! input port. See [Composition](../../../../docs/engine.md#composition).
+//! frame the topmost active item's outputs are the master. What a graph reads is set on its input
+//! nodes, not on its items. See [Composition](../../../../docs/engine.md#composition).
 
-use rastersong_graph::GraphDesc;
+use rastersong_graph::nodes::{AUDIO_SOURCE, SOURCE_PARAM, VIDEO_SOURCE};
+use rastersong_graph::{GraphDesc, ParamValue};
 use serde::{Deserialize, Serialize};
 
 use super::{Edge, MIN_ITEM_LENGTH, Project};
-use crate::composition::{ComposedGraphTrack, Composition, MediaTrack, extra_ports, port_of};
+use crate::composition::{ComposedGraphTrack, Composition, MediaTrack};
 use crate::timeline::{GraphItem, Source};
 
 /// A track of graph items.
@@ -57,10 +58,9 @@ impl Project {
             .any(|t| !t.muted && t.items.iter().any(|i| !i.muted))
     }
 
-    /// Whether the preview skips every graph and plays the mix: graphs are bypassed, or no
-    /// graph item plays.
+    /// Whether the preview skips every graph and plays the mix: no graph item plays.
     pub fn plays_track_mix(&self) -> bool {
-        self.bypass_graph || !self.has_graph_items()
+        !self.has_graph_items()
     }
 
     /// The graph track called `name`.
@@ -110,20 +110,11 @@ impl Project {
     }
 
     /// Places graph `graph` on graph track `track` from `at` for `length` seconds, trimming
-    /// whatever it lands on. Its main ports read what is below; its other ports read the track
-    /// of the same name when there is one. Returns the item's index, or `None` for a track or
-    /// graph that doesn't exist.
+    /// whatever it lands on. Returns the item's index, or `None` for a track or graph that
+    /// doesn't exist.
     pub fn place_graph(&mut self, track: &str, graph: u32, at: f64, length: f64) -> Option<usize> {
-        let desc = self.graph_desc(graph)?;
-        let sources = extra_ports(desc)
-            .into_iter()
-            .filter(|port| self.has_media_track(port))
-            .map(|port| (port.clone(), Source::Track(port)))
-            .collect();
-        let item = GraphItem {
-            sources,
-            ..GraphItem::new(graph, at.max(0.0), length.max(MIN_ITEM_LENGTH))
-        };
+        self.graph_desc(graph)?;
+        let item = GraphItem::new(graph, at.max(0.0), length.max(MIN_ITEM_LENGTH));
         let track = self.graph_track_mut(track)?;
         Some(insert_over(&mut track.items, item))
     }
@@ -213,7 +204,7 @@ impl Project {
     }
 
     /// Pastes a copy of `item` on graph track `track` from `at` seconds, trimming whatever it
-    /// lands on, and returns its index. The copy keeps the item's graph, trim and sources.
+    /// lands on, and returns its index. The copy keeps the item's graph and trim.
     pub fn paste_graph_item(&mut self, track: &str, item: &GraphItem, at: f64) -> Option<usize> {
         let item = GraphItem {
             position: at.max(0.0),
@@ -242,32 +233,9 @@ impl Project {
         self.graph_track_mut(track)?.items.get_mut(item)
     }
 
-    /// Sets what fills input port `port` of an item.
-    pub fn set_graph_source(&mut self, track: &str, item: usize, port: &str, source: Source) {
-        if let Some(it) = self.graph_item_mut(track, item) {
-            it.sources.insert(port.to_owned(), source);
-        }
-    }
-
-    /// Replaces the open graph with `graph`, its edited version. An input node whose port was
-    /// renamed takes the items' sources with it, unless another node still reads the old name
-    /// or one already read the new one.
+    /// Replaces the open graph with `graph`, its edited version.
     pub fn set_open_graph(&mut self, graph: GraphDesc) {
-        let renamed = renamed_ports(&self.graph, &graph);
         self.graph = graph;
-        let id = self.graph_id;
-        for (old, new) in renamed {
-            for item in self
-                .graph_tracks
-                .iter_mut()
-                .flat_map(|t| &mut t.items)
-                .filter(|i| i.graph == id)
-            {
-                if let Some(source) = item.sources.remove(&old) {
-                    item.sources.insert(new.clone(), source);
-                }
-            }
-        }
     }
 
     /// Removes every item that places graph `graph`; used when the graph is deleted.
@@ -277,42 +245,33 @@ impl Project {
         }
     }
 
-    /// The sources naming tracks that don't exist, or graph tracks that aren't below the item:
-    /// (graph track, item, port).
-    pub fn dangling_sources(&self) -> Vec<(String, usize, String)> {
-        let mut found = Vec::new();
-        for (t, track) in self.graph_tracks.iter().enumerate() {
-            for (i, item) in track.items.iter().enumerate() {
-                for (port, source) in &item.sources {
-                    let ok = match source {
-                        Source::Track(name) => self.has_media_track(name),
-                        Source::Graph { track, .. } => self.graph_tracks[t + 1..]
-                            .iter()
-                            .any(|below| below.name == *track),
-                        _ => true,
-                    };
-                    if !ok {
-                        found.push((track.name.clone(), i, port.clone()));
-                    }
-                }
-            }
+    /// Whether `source` names something the project has: a track for a stem, a graph track for
+    /// a graph track's output. Whether a graph track is below the item reading it depends on
+    /// where the item is, so it isn't checked.
+    pub fn source_exists(&self, source: &Source) -> bool {
+        match source {
+            Source::Track(name) => self.has_media_track(name),
+            Source::Graph { track, .. } => self.graph_track(track).is_some(),
+            _ => true,
         }
-        found
     }
 
-    /// Points every source reading track `old` (a stem or a graph track) at `new`.
+    /// Points every Video Source and Audio Source reading track `old` (a stem or a graph
+    /// track), in every graph, at `new`.
     pub(super) fn rename_sources(&mut self, old: &str, new: &str) {
-        for source in self
-            .graph_tracks
-            .iter_mut()
-            .flat_map(|t| &mut t.items)
-            .flat_map(|i| i.sources.values_mut())
+        let graphs =
+            std::iter::once(&mut self.graph).chain(self.graphs.iter_mut().map(|g| &mut g.graph));
+        for node in graphs
+            .flat_map(|g| &mut g.nodes)
+            .filter(|n| n.kind == VIDEO_SOURCE || n.kind == AUDIO_SOURCE)
         {
-            match source {
-                Source::Track(name) | Source::Graph { track: name, .. } if name == old => {
-                    *name = new.to_owned();
+            let Some(ParamValue::Text(source)) = node.params.get_mut(SOURCE_PARAM) else {
+                continue;
+            };
+            for prefix in ["track:", "graph:"] {
+                if source.strip_prefix(prefix) == Some(old) {
+                    *source = format!("{prefix}{new}");
                 }
-                _ => {}
             }
         }
     }
@@ -332,18 +291,15 @@ impl Project {
                 bus: t.bus.clone(),
             })
             .collect();
-        let graph_tracks = if self.bypass_graph {
-            Vec::new()
-        } else {
-            self.graph_tracks
-                .iter()
-                .filter(|t| !t.muted)
-                .map(|t| ComposedGraphTrack {
-                    name: t.name.clone(),
-                    items: t.items.iter().filter(|i| !i.muted).cloned().collect(),
-                })
-                .collect()
-        };
+        let graph_tracks = self
+            .graph_tracks
+            .iter()
+            .filter(|t| !t.muted)
+            .map(|t| ComposedGraphTrack {
+                name: t.name.clone(),
+                items: t.items.iter().filter(|i| !i.muted).cloned().collect(),
+            })
+            .collect();
         Composition {
             tracks,
             graph_tracks,
@@ -405,40 +361,10 @@ pub(super) fn sanitize(tracks: &mut [GraphTrack]) {
     }
 }
 
-/// The ports renamed from `old` to `new`, (old name, new name): an input node kept its id but
-/// reads another port, no node of `new` reads the old name, and none of `old` read the new one.
-fn renamed_ports(old: &GraphDesc, new: &GraphDesc) -> Vec<(String, String)> {
-    let ports = |desc: &GraphDesc| -> Vec<(String, String)> {
-        desc.nodes
-            .iter()
-            .filter_map(|n| port_of(&n.kind, &n.params).map(|(p, _)| (n.id.clone(), p.to_owned())))
-            .collect()
-    };
-    let (before, after) = (ports(old), ports(new));
-    let mut renamed: Vec<(String, String)> = Vec::new();
-    for (id, from) in &before {
-        let Some((_, to)) = after.iter().find(|(other, _)| other == id) else {
-            continue;
-        };
-        if from == to
-            || after.iter().any(|(_, p)| p == from)
-            || before.iter().any(|(_, p)| p == to)
-            || renamed.iter().any(|(f, _)| f == from)
-        {
-            continue;
-        }
-        renamed.push((from.clone(), to.clone()));
-    }
-    renamed
-}
-
 #[cfg(test)]
 mod tests {
-    use rastersong_graph::ParamValue;
-    use rastersong_graph::nodes::PORT_PARAM;
-
     use super::*;
-    use crate::project::ResourceKind;
+    use crate::composition::input_ports;
     use crate::timeline::TrackKind;
 
     fn project() -> Project {
@@ -446,7 +372,7 @@ mod tests {
             r#"{ "version": 0, "nodes": [
                 { "id": "v", "type": "video_input" },
                 { "id": "a", "type": "audio_input" },
-                { "id": "k", "type": "audio_input", "params": { "port": "Kick" } },
+                { "id": "k", "type": "audio_source", "params": { "source": "track:kick" } },
                 { "id": "o", "type": "output" } ] }"#,
         )
         .unwrap();
@@ -478,43 +404,28 @@ mod tests {
     }
 
     #[test]
-    fn a_pasted_graph_item_keeps_its_trim_and_sources_and_trims_what_it_lands_on() {
+    fn a_pasted_graph_item_keeps_its_trim_and_trims_what_it_lands_on() {
         let mut project = project();
         let id = project.graph_id;
         project.place_graph("Graphs", id, 0.0, 4.0).unwrap();
         let mut copied = project.graph_tracks[0].items[0].clone();
         copied.start = 0.5;
         copied.length = 1.0;
-        copied.sources.insert("Kick".into(), Source::Mix);
         let at = project.paste_graph_item("Graphs", &copied, 2.0).unwrap();
         let pasted = &project.graph_tracks[0].items[at];
         assert_eq!(
             (pasted.position, pasted.start, pasted.length),
             (2.0, 0.5, 1.0)
         );
-        assert_eq!(pasted.sources["Kick"], Source::Mix);
         assert_eq!(spans(&project), [(0.0, 2.0), (2.0, 3.0), (3.0, 4.0)]);
         assert!(project.paste_graph_item("Nope", &copied, 0.0).is_none());
     }
 
     #[test]
-    fn main_ports_read_below_and_named_ports_the_track_of_their_name() {
+    fn placing_needs_the_track_and_the_graph() {
         let mut project = project();
         let id = project.graph_id;
-        let at = project.place_graph("Graphs", id, 1.0, 2.0).unwrap();
-        let item = &project.graph_tracks[0].items[at];
-        // Nothing named Kick yet: nothing is stored, and the defaults apply.
-        assert!(item.sources.is_empty());
-        assert_eq!(item.source("Video", true), Source::Below);
-        assert_eq!(item.source("Audio", false), Source::Below);
-        assert_eq!(item.source("Kick", false), Source::Nothing);
-        let kick = project.add_resource(ResourceKind::Audio, "Kick", "kick.wav", None);
-        project.add_track_for(kick, 0.0);
-        let at = project.place_graph("Graphs", id, 5.0, 1.0).unwrap();
-        assert_eq!(
-            project.graph_tracks[0].items[at].source("Kick", false),
-            Source::Track("Kick".into())
-        );
+        assert!(project.place_graph("Graphs", id, 1.0, 2.0).is_some());
         assert!(project.place_graph("Graphs", 99, 0.0, 1.0).is_none());
         assert!(project.place_graph("Nope", id, 0.0, 1.0).is_none());
     }
@@ -577,95 +488,63 @@ mod tests {
     }
 
     #[test]
-    fn splitting_keeps_sources_and_graph_time() {
+    fn splitting_keeps_graph_time() {
         let mut project = project();
         let id = project.graph_id;
         project.place_graph("Graphs", id, 1.0, 4.0);
-        project.set_graph_source("Graphs", 0, "Video", Source::Mix);
         assert_eq!(project.split_graph_item("Graphs", 0, 0.5), None);
         let second = project.split_graph_item("Graphs", 0, 2.0).unwrap();
         let items = &project.graph_tracks[0].items;
         assert_eq!((items[0].length, items[second].start), (1.0, 1.0));
-        assert_eq!(items[second].sources, items[0].sources);
     }
 
     #[test]
-    fn renaming_a_port_keeps_its_sources() {
+    fn renaming_a_track_follows_through_to_the_source_nodes_of_every_graph() {
         let mut project = project();
-        let id = project.graph_id;
-        project.add_track(TrackKind::Audio, "kick", "kick.wav");
-        project.place_graph("Graphs", id, 0.0, 1.0);
-        project.set_graph_source("Graphs", 0, "Kick", Source::Track("kick".into()));
-        let with_port = |project: &Project, port: &str| {
-            let mut graph = project.graph.clone();
-            let k = graph.nodes.iter_mut().find(|n| n.id == "k").unwrap();
-            k.params
-                .insert(PORT_PARAM.to_owned(), ParamValue::Text(port.to_owned()));
-            graph
-        };
-        // Typed a character at a time.
-        for port in ["Kic", "Kick drum"] {
-            let graph = with_port(&project, port);
-            project.set_open_graph(graph);
-        }
-        let sources = &project.graph_tracks[0].items[0].sources;
-        assert_eq!(
-            sources.get("Kick drum"),
-            Some(&Source::Track("kick".into()))
-        );
-        assert!(!sources.contains_key("Kick"));
-        // Renamed to a port another node reads, it takes that port's source.
-        let graph = with_port(&project, "Audio");
-        project.set_open_graph(graph);
-        let sources = &project.graph_tracks[0].items[0].sources;
-        assert_eq!(
-            sources.get("Kick drum"),
-            Some(&Source::Track("kick".into()))
-        );
-        assert!(!sources.contains_key("Audio"));
-    }
-
-    #[test]
-    fn renaming_a_track_follows_through_to_sources_and_dangling_ones_are_found() {
-        let mut project = project();
-        let id = project.graph_id;
         project.add_track(TrackKind::Audio, "kick", "kick.wav");
         let lower = project.add_graph_track("Lower");
-        project.move_graph_track(0, 2);
-        assert_eq!(project.graph_tracks[1].name, lower);
-        project.place_graph("Graphs", id, 0.0, 1.0);
-        project.set_graph_source("Graphs", 0, "Kick", Source::Track("kick".into()));
-        project.set_graph_source(
-            "Graphs",
-            0,
-            "Video",
-            Source::Graph {
-                track: lower.clone(),
-                port: "Video".into(),
-            },
+        let stored = project.add_graph("B", None);
+        let mut b = project.graph_desc(stored).unwrap().clone();
+        b.nodes
+            .push(rastersong_graph::NodeDesc::new("g".into(), VIDEO_SOURCE));
+        b.nodes.last_mut().unwrap().params.insert(
+            SOURCE_PARAM.to_owned(),
+            ParamValue::Text(format!("graph:{lower}")),
         );
-        assert!(project.dangling_sources().is_empty());
+        project
+            .graphs
+            .iter_mut()
+            .find(|g| g.id == stored)
+            .unwrap()
+            .graph = b;
+        let kick = Source::Track("kick".into());
+        assert!(project.source_exists(&kick));
         assert!(project.rename_track("kick", "drum"));
         assert!(project.rename_track(&lower, "Bottom"));
-        let item = &project.graph_tracks[0].items[0];
-        assert_eq!(item.sources["Kick"], Source::Track("drum".into()));
+        assert!(!project.source_exists(&kick));
+        let sources = |desc: &GraphDesc| -> Vec<Source> {
+            input_ports(desc)
+                .into_iter()
+                .map(|p| p.source)
+                .filter(|s| *s != Source::Below)
+                .collect()
+        };
+        assert_eq!(sources(&project.graph), [Source::Track("drum".into())]);
         assert_eq!(
-            item.sources["Video"],
-            Source::Graph {
+            sources(project.graph_desc(stored).unwrap()),
+            [Source::Graph {
                 track: "Bottom".into(),
                 port: "Video".into()
-            }
+            }]
         );
-        // A graph track above isn't a source.
-        project.move_graph_track(1, 0);
-        assert_eq!(
-            project.dangling_sources(),
-            [("Graphs".to_owned(), 0, "Video".to_owned())]
-        );
+        assert!(project.source_exists(&Source::Graph {
+            track: "Bottom".into(),
+            port: "Video".into()
+        }));
     }
 
     #[test]
-    fn the_composition_leaves_out_muted_graph_tracks_and_items_and_bypass_leaves_out_all() {
+    fn the_composition_leaves_out_muted_graph_tracks_and_items() {
         let mut project = project();
         let id = project.graph_id;
         project.place_graph("Graphs", id, 0.0, 2.0);
@@ -683,7 +562,7 @@ mod tests {
         assert_eq!(lens(&project), [1, 1]);
         project.graph_tracks[0].muted = true;
         assert_eq!(lens(&project), [1]);
-        project.bypass_graph = true;
+        project.graph_tracks[1].muted = true;
         assert!(lens(&project).is_empty());
         assert!(project.plays_track_mix());
     }

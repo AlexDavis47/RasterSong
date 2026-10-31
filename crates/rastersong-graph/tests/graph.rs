@@ -19,6 +19,7 @@ fn options() -> CompileOptions {
         ]),
         output: Layout::rgb(W, H),
         pixel_scale: 1.0,
+        span: rastersong_graph::Span::default(),
         audio_bus: "Main".to_owned(),
     }
 }
@@ -123,7 +124,7 @@ fn modulators_are_resampled_to_the_carrier() {
 fn unused_nodes_are_not_run() {
     // A node reading a source the host doesn't provide is fine as long as it doesn't feed the output.
     let json = graph_json(
-        r#"{ "id": "video", "type": "video_input" }, { "id": "other", "type": "video_input", "params": { "port": "nope" } },
+        r#"{ "id": "video", "type": "video_input" }, { "id": "other", "type": "video_source", "params": { "source": "track:nope" } },
            { "id": "out", "type": "output" }"#,
         r#"{ "from": "video", "to": "out" }"#,
     );
@@ -159,6 +160,17 @@ const CHAIN: &str = r#"{ "version": 0,
         { "id": "out", "type": "output" }
     ],
     "connections": [ { "from": "video", "to": "d" }, { "from": "d", "to": "out" } ] }"#;
+
+#[test]
+fn render_form_spells_a_graph_one_way() {
+    let short = r#"{ "version": 0,
+        "nodes": [ { "id": "v", "type": "video_input" }, { "id": "o", "type": "output" } ],
+        "connections": [ { "from": "v", "to": "o" } ] }"#;
+    let long = r#"{ "version": 0,
+        "nodes": [ { "id": "o", "type": "output" }, { "id": "v", "type": "video_input" } ],
+        "connections": [ { "from": "v.out", "to": "o.in" } ] }"#;
+    assert_eq!(render_form_of(short), render_form_of(long));
+}
 
 #[test]
 fn render_form_ignores_nodes_that_do_not_feed_the_output() {
@@ -556,7 +568,7 @@ fn separate_channels_work_on_stereo() {
         graph_json(
             &format!(
                 r#"{{ "id": "audio", "type": "audio_input" }},
-                   {{ "id": "d", "type": "delay", "params": {{ "time": 1, "unit": "row" }}, "channels": "{channels}" }},
+                   {{ "id": "d", "type": "delay", "params": {{ "time": 1, "time.unit": "row" }}, "channels": "{channels}" }},
                    {{ "id": "v", "type": "video_input" }}, {{ "id": "am", "type": "am" }}, {{ "id": "out", "type": "output" }}"#
             ),
             r#"{ "from": "audio", "to": "d" }, { "from": "v", "to": "am.carrier" },
@@ -963,7 +975,7 @@ fn time_units_mean_the_same_together_and_separate() {
         graph_json(
             &format!(
                 r#"{{ "id": "video", "type": "video_input" }},
-                   {{ "id": "d", "type": "delay", "params": {{ "time": 1, "unit": "row" }}, "channels": "{channels}" }},
+                   {{ "id": "d", "type": "delay", "params": {{ "time": 1, "time.unit": "row" }}, "channels": "{channels}" }},
                    {{ "id": "out", "type": "output" }}"#
             ),
             r#"{ "from": "video", "to": "d" }, { "from": "d", "to": "out" }"#,
@@ -1267,4 +1279,31 @@ fn modulation_stays_within_the_slider_range_the_user_set() {
     };
     assert_eq!(render(""), Some(24.0), "the usual range, 1 to 24");
     assert_eq!(render(r#", "ranges": { "bits": [1, 6] }"#), Some(6.0));
+}
+
+#[test]
+fn named_outputs_are_read_by_name_and_must_be_unique() {
+    // Two named outputs beside the main one; an unconnected one is left out.
+    let json = graph_json(
+        r#"{ "id": "video", "type": "video_input" }, { "id": "out", "type": "output" },
+           { "id": "a", "type": "named_output", "params": { "name": "Glow" } },
+           { "id": "b", "type": "named_output", "params": { "name": "Mask" } },
+           { "id": "idle", "type": "named_output", "params": { "name": "Glow" } }"#,
+        r#"{ "from": "video", "to": "out" }, { "from": "video", "to": "a" }, { "from": "video", "to": "b" }"#,
+    );
+    let mut graph = compile(&json).unwrap();
+    let names: Vec<&str> = graph.named_layouts().map(|(name, _)| name).collect();
+    assert_eq!(names, ["Glow", "Mask"]);
+    graph.process(0, &sources(|_| 0.25, |_| 0.0)).unwrap();
+    let glow = graph.named_output("Glow").unwrap();
+    assert!(glow.data.iter().all(|&x| x == 0.25));
+    assert!(graph.named_output("Nope").is_none());
+
+    let json = graph_json(
+        r#"{ "id": "video", "type": "video_input" }, { "id": "out", "type": "output" },
+           { "id": "a", "type": "named_output" }, { "id": "b", "type": "named_output" }"#,
+        r#"{ "from": "video", "to": "out" }, { "from": "video", "to": "a" }, { "from": "video", "to": "b" }"#,
+    );
+    let error = compile(&json).unwrap_err().to_string();
+    assert!(error.contains("Out"), "{error}");
 }

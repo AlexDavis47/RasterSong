@@ -31,10 +31,10 @@ pub(super) struct GraphTotals {
 }
 
 impl GraphTotals {
-    /// Samples processed a millisecond, once there is a time to divide by.
-    pub fn samples_per_ms(&self) -> Option<f64> {
+    /// Samples processed a second, once there is a time to divide by.
+    pub fn samples_per_second(&self) -> Option<f64> {
         let micros = self.micros.filter(|m| *m > 0.0)?;
-        Some(self.samples_per_block as f64 / (f64::from(micros) / 1000.0))
+        Some(self.samples_per_block as f64 / (f64::from(micros) / 1_000_000.0))
     }
 }
 
@@ -101,8 +101,8 @@ impl GraphEditor {
             (tr("editor.stats.render"), render),
             (tr("editor.stats.share"), share),
             (
-                tr("editor.stats.samples_ms"),
-                totals.samples_per_ms().map_or_else(none, compact_count),
+                tr("editor.stats.samples_second"),
+                totals.samples_per_second().map_or_else(none, compact_count),
             ),
             (
                 tr("editor.stats.latency"),
@@ -212,7 +212,7 @@ mod tests {
         );
         let totals = editor.graph_totals();
         assert_eq!(totals.micros, None);
-        assert_eq!(totals.samples_per_ms(), None);
+        assert_eq!(totals.samples_per_second(), None);
         assert!(totals.nodes > 0 && totals.connections > 0);
 
         let layout = |samples_per_pixel| rastersong_engine::Layout {
@@ -247,6 +247,6 @@ mod tests {
         let totals = editor.graph_totals();
         assert_eq!(totals.samples_per_block, 6000);
         assert_eq!(totals.micros, Some(2000.0));
-        assert_eq!(totals.samples_per_ms(), Some(3000.0));
+        assert_eq!(totals.samples_per_second(), Some(3_000_000.0));
     }
 }

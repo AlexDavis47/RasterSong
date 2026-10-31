@@ -5,20 +5,22 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use rastersong_graph::nodes::{DEFAULT_AUDIO, DEFAULT_VIDEO};
-use rastersong_graph::{CompileOptions, GraphDesc, Layout, OutputLevel, Registry, Signal, Tempo};
+use rastersong_graph::{
+    CompileOptions, GraphDesc, Layout, OutputLevel, Registry, Signal, Span, Tempo,
+};
 use rastersong_media::{MediaBackend, MediaError, Rational, VideoSource};
 
 use crate::EngineError;
 use crate::audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE, SinkResampler};
 use crate::compose::{Compose, ComposePlan, MediaInfo, MediaReader, Stream, mix_layout};
-use crate::composition::{ComposedGraphTrack, Composition, MediaTrack, input_ports};
+use crate::composition::{ComposedGraphTrack, Composition, MediaTrack};
 use crate::project::{DEFAULT_MAX_WARMUP_FRAMES, MAX_WARMUP_FRAMES_LIMIT};
 use crate::sources::{Modulator, fill_video, to_rgb8};
-use crate::timeline::{Bus, GraphItem, Item, Source, Timebase, TrackKind, item_at, items_end};
+use crate::timeline::{Bus, GraphItem, Item, Timebase, TrackKind, item_at, items_end};
 
-/// The source a video input reads by default.
+/// The name the CLI and the tests give a lone video track.
 pub const VIDEO_SOURCE: &str = DEFAULT_VIDEO;
-/// The node type that reads audio tracks, and the track it reads by default.
+/// The name the CLI and the tests give a lone audio track.
 pub const DEFAULT_AUDIO_TRACK: &str = DEFAULT_AUDIO;
 
 /// What a track plays.
@@ -256,16 +258,9 @@ impl std::fmt::Debug for Renderer {
 }
 
 /// The composition of a render of one graph: every track, and `graph` (id 0) on one graph track
-/// for the whole timeline, its ports named after tracks reading those tracks (the main ones
-/// too, so a track called `Audio` is read as it is) and the other main ports reading the mix.
-pub fn single_composition(tracks: &[RenderTrack], graph: &GraphDesc) -> Composition {
-    let mut item = GraphItem::new(0, 0.0, f64::INFINITY);
-    item.sources = input_ports(graph)
-        .into_iter()
-        .map(|port| port.name)
-        .filter(|port| tracks.iter().any(|t| t.name == *port))
-        .map(|port| (port.clone(), Source::Track(port)))
-        .collect();
+/// for the whole timeline, its main inputs reading the mix.
+pub fn single_composition(tracks: &[RenderTrack]) -> Composition {
+    let item = GraphItem::new(0, 0.0, f64::INFINITY);
     Composition {
         tracks: tracks
             .iter()
@@ -292,9 +287,9 @@ pub fn single_composition(tracks: &[RenderTrack], graph: &GraphDesc) -> Composit
 impl Renderer {
     /// Opens the video tracks at `size` and renders `graph` over the project's `tracks` on its
     /// `timebase`, with the sound of output bus `bus`: the graph plays over the whole timeline,
-    /// its main ports reading the mix and its ports named after tracks reading those tracks (see
-    /// [`single_composition`]). Without a timebase the first video track sets it, or
-    /// [`Timebase::DEFAULT`] when there is none. Ports that name no track read zeros.
+    /// its main inputs reading the mix (see [`single_composition`]) and its sources the tracks
+    /// they name. Without a timebase the first video track sets it, or [`Timebase::DEFAULT`]
+    /// when there is none. Sources naming no track read zeros.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         backend: &dyn MediaBackend,
@@ -306,7 +301,7 @@ impl Renderer {
         registry: &Registry,
         size: OutputSize,
     ) -> Result<Self, EngineError> {
-        let composition = single_composition(tracks, graph);
+        let composition = single_composition(tracks);
         Self::build(
             backend,
             timebase,
@@ -438,6 +433,11 @@ impl Renderer {
         let options = CompileOptions {
             frame_rate: fps,
             tempo,
+            // A graph placed nowhere, or over the whole project, plays the project.
+            span: Span {
+                start: 0.0,
+                length: end,
+            },
             sources,
             output: video_layout,
             pixel_scale: f64::from(width) / f64::from(timebase.width),

@@ -310,42 +310,53 @@ pub fn smoothing_coefficient(samples: f64) -> f64 {
 
 /// The attack and release of a one-pole follower (Envelope, Gate, Compressor, Limiter): the
 /// smoothing coefficients for the constant times, and for times a signal modulates per sample.
-/// Times are in a unit of `unit_samples` samples; which side counts as attack is up to the node.
+/// Each time is in its own unit; which side counts as attack is up to the node.
 #[derive(Debug, Clone, Copy)]
 pub struct AttackRelease {
-    unit_samples: f64,
+    /// Samples in one unit of the attack and of the release time.
+    attack_unit: f64,
+    release_unit: f64,
     attack: f64,
     release: f64,
 }
 
 impl Default for AttackRelease {
     fn default() -> Self {
-        Self::new(0.0, 0.0, 1.0)
+        Self::new((0.0, 1.0), (0.0, 1.0))
     }
 }
 
 impl AttackRelease {
-    pub fn new(attack_time: f64, release_time: f64, unit_samples: f64) -> Self {
+    /// From the attack and release times, each with the samples in one of its units.
+    pub fn new(
+        (attack_time, attack_unit): (f64, f64),
+        (release_time, release_unit): (f64, f64),
+    ) -> Self {
         Self {
-            unit_samples,
-            attack: smoothing_coefficient(attack_time * unit_samples),
-            release: smoothing_coefficient(release_time * unit_samples),
+            attack_unit,
+            release_unit,
+            attack: smoothing_coefficient(attack_time * attack_unit),
+            release: smoothing_coefficient(release_time * release_unit),
         }
     }
 
-    /// The coefficient of a time, in units (negative counts as zero).
-    pub fn coefficient(&self, time: f64) -> f64 {
-        smoothing_coefficient(time.max(0.0) * self.unit_samples)
+    /// The coefficient of a time of `samples` (negative counts as zero).
+    fn coefficient(samples: f64) -> f64 {
+        smoothing_coefficient(samples.max(0.0))
     }
 
     /// The attack coefficient at sample `i`: from the stream when the time is modulated.
     pub fn attack(&self, stream: Option<&[f32]>, i: usize) -> f64 {
-        stream.map_or(self.attack, |s| self.coefficient(f64::from(s[i])))
+        stream.map_or(self.attack, |s| {
+            Self::coefficient(f64::from(s[i]) * self.attack_unit)
+        })
     }
 
     /// The release coefficient at sample `i`: from the stream when the time is modulated.
     pub fn release(&self, stream: Option<&[f32]>, i: usize) -> f64 {
-        stream.map_or(self.release, |s| self.coefficient(f64::from(s[i])))
+        stream.map_or(self.release, |s| {
+            Self::coefficient(f64::from(s[i]) * self.release_unit)
+        })
     }
 }
 

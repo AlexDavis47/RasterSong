@@ -49,8 +49,8 @@ use crate::theme::{
 };
 use crate::timeline::{
     DropGhost, GhostItem, GhostRow, GraphAction, GraphDrop, GraphItemView, GraphTrackView,
-    Thumbnail, TimelineLayout, TimelineModel, TimelineView, TrackAction, TrackThumbnails,
-    TrackView, bar_beat, bar_beat_tick, beats_at, lane_height, timecode, timeline,
+    LANE_HEIGHT, LANE_HEIGHT_RANGE, Thumbnail, TimelineLayout, TimelineModel, TimelineView,
+    TrackAction, TrackThumbnails, TrackView, bar_beat, bar_beat_tick, beats_at, timecode, timeline,
 };
 use crate::track_inspector::track_inspector;
 use crate::widgets::{
@@ -196,6 +196,9 @@ pub struct App {
     /// The feed the preview shows; with the split on, the one on the right.
     preview_feed: Feed,
     preview_split: bool,
+    /// The preview fills the window, the window the screen; `Some(whether the window was
+    /// fullscreen before)` while it does.
+    preview_fullscreen: Option<bool>,
     /// The split's position across the preview, 0..1.
     split_position: f32,
     error: Option<String>,
@@ -290,6 +293,7 @@ impl App {
             preview_view: PreviewView::default(),
             preview_feed: Feed::default(),
             preview_split: false,
+            preview_fullscreen: None,
             split_position: 0.5,
             error: None,
             show_about: false,
@@ -342,6 +346,11 @@ impl App {
     }
 
     /// The selected timeline items.
+    /// The selected video or audio track, by name.
+    pub fn selected_track(&self) -> Option<&str> {
+        self.selected_track.as_deref()
+    }
+
     pub fn selected_items(&self) -> &[ItemRef] {
         &self.selected_items
     }
@@ -769,6 +778,9 @@ impl App {
             ResourceAction::Rename(id, name) => {
                 self.project.rename_resource(id, &name);
             }
+            ResourceAction::SetColor(id, color) => {
+                self.project.set_resource_color(id, color);
+            }
             ResourceAction::Remove(id) => {
                 if self.project.resource_users(id).is_empty() {
                     self.remove_resource(id);
@@ -1001,6 +1013,32 @@ impl App {
             self.editor.search_on_tab(ui, p);
         }
 
+        if self.preview_fullscreen.is_some() {
+            self.fullscreen_preview(ui);
+        } else {
+            self.panels(ui);
+        }
+
+        self.sync();
+        self.record_history(ui);
+        self.tick(ui);
+        self.import_dropped_files(ui);
+        self.windows(ui);
+        self.resource_dialogs(ui);
+        self.confirm_dialog(ui);
+        self.update_title(ui);
+        let hint = self.pointer_hint(ui);
+        if hint != self.hint {
+            self.hint = hint;
+            ui.ctx().request_repaint();
+        }
+        // Last, once every drop target has had its chance at a dragged payload.
+        crate::widgets::paint_bubble(ui.ctx());
+    }
+
+    /// The window's panels: the bars, the preview, the inspector, the timeline with Resources,
+    /// and the graph.
+    fn panels(&mut self, ui: &mut Ui) {
         // The top bar and the status bar run the window's width; every other panel is a card
         // on the ground, CARD_GAP from its neighbours and the window's edge. Between two cards
         // each side takes half the gap, so the resize handle on the edge sits in its middle.
@@ -1047,8 +1085,13 @@ impl App {
                 };
                 card_panel(ui, resources, gaps, |ui| {
                     card(ui, |ui| {
-                        let actions =
-                            resources_panel(ui, &self.project, &self.missing, &self.streams);
+                        let actions = resources_panel(
+                            ui,
+                            &self.project,
+                            &self.missing,
+                            &self.streams,
+                            self.settings.open_graphs_on_click,
+                        );
                         for action in actions {
                             self.resource_action(action);
                         }
@@ -1114,8 +1157,17 @@ impl App {
                         item_edits = graph_item_inspector(ui, &self.project, track, *item);
                         return;
                     }
-                    let buses: Vec<String> =
-                        self.project.buses.iter().map(|b| b.name.clone()).collect();
+                    let buses: Vec<(String, String)> = self
+                        .project
+                        .buses
+                        .iter()
+                        .map(|b| (b.name.clone(), b.name.clone()))
+                        .collect();
+                    let (video_sources, audio_sources) = (
+                        source_choices(&self.project, TrackKind::Video),
+                        source_choices(&self.project, TrackKind::Audio),
+                    );
+                    let graph_outputs = graph_outputs(&self.project);
                     let frame = self.inspected_frame();
                     let params = frame.as_ref().map_or(&[][..], |f| &f.params[..]);
                     let meters = frame.as_ref().map_or(&[][..], |f| &f.meters[..]);
@@ -1123,6 +1175,9 @@ impl App {
                         ui,
                         &InspectorContext {
                             buses: &buses,
+                            video_sources: &video_sources,
+                            audio_sources: &audio_sources,
+                            graph_outputs: &graph_outputs,
                             params,
                             meters,
                         },
@@ -1141,22 +1196,42 @@ impl App {
         egui::CentralPanel::default()
             .frame(card_space(ui, upper))
             .show(ui, |ui| card(ui, |ui| self.graph(ui)));
+    }
 
-        self.sync();
-        self.record_history(ui);
-        self.tick(ui);
-        self.import_dropped_files(ui);
-        self.windows(ui);
-        self.resource_dialogs(ui);
-        self.confirm_dialog(ui);
-        self.update_title(ui);
-        let hint = self.pointer_hint(ui);
-        if hint != self.hint {
-            self.hint = hint;
-            ui.ctx().request_repaint();
+    /// Only the preview, filling the window. Escape, or the button in its header, goes back.
+    fn fullscreen_preview(&mut self, ui: &mut Ui) {
+        if !ui.ctx().egui_wants_keyboard_input()
+            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            self.set_preview_fullscreen(ui.ctx(), false);
         }
-        // Last, once every drop target has had its chance at a dragged payload.
-        crate::widgets::paint_bubble(ui.ctx());
+        egui::CentralPanel::default()
+            .frame(card_space(ui, Margin::same(CARD_GAP)))
+            .show(ui, |ui| card(ui, |ui| self.preview_column(ui)));
+    }
+
+    /// Makes the preview fill the screen, or puts it back in its pane. The window goes fullscreen
+    /// with it, and back to how it was.
+    fn set_preview_fullscreen(&mut self, ctx: &egui::Context, on: bool) {
+        match (on, self.preview_fullscreen) {
+            (true, None) => {
+                let was = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
+                self.preview_fullscreen = Some(was);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
+            }
+            (false, Some(was)) => {
+                self.preview_fullscreen = None;
+                if !was {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Whether the preview fills the window.
+    pub fn preview_is_fullscreen(&self) -> bool {
+        self.preview_fullscreen.is_some()
     }
 
     /// The frame at the playhead, for its levels, params, costs and meters: only while they are
@@ -1183,6 +1258,9 @@ impl App {
     fn graph(&mut self, ui: &mut Ui) {
         self.editor.keep_connections = self.settings.keep_connections;
         self.editor.max_warmup_frames = self.project.max_warmup_frames;
+        if self.editor.master_bus != self.project.buses[0].name {
+            self.editor.master_bus = self.project.buses[0].name.clone();
+        }
         let frame = self.inspected_frame();
         let failure = self.failure();
         let levels = frame.as_ref().map_or(&[][..], |f| &f.levels[..]);
@@ -1295,20 +1373,25 @@ impl App {
     }
 
     /// The row over the canvas: the open graph's name, where it plays on the timeline, how many
-    /// errors and warnings it has, and Add node, Bypass graphs and Frame graph.
+    /// errors and warnings it has, and Add node and Frame graph.
     fn graph_header(&mut self, ui: &mut Ui, failure: Option<&rastersong_engine::Failure>) {
         let theme = Theme::of(ui.ctx());
         card_header(ui, |ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 self.graph_header_buttons(ui);
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    self.graph_header_title(ui, failure, theme);
-                });
+                let switch = ui
+                    .with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        self.graph_header_title(ui, failure, theme)
+                    })
+                    .inner;
+                if let Some(id) = switch {
+                    self.open_graph(id);
+                }
             });
         });
     }
 
-    /// The canvas header's buttons, from the right: Frame graph, Bypass graphs, Add node.
+    /// The canvas header's buttons, from the right: Frame graph, Add node.
     fn graph_header_buttons(&mut self, ui: &mut Ui) {
         ui.spacing_mut().item_spacing.x = 6.0;
         let height = HEADER_BUTTON_HEIGHT;
@@ -1318,18 +1401,6 @@ impl App {
             .clicked()
         {
             self.editor.frame_graph();
-        }
-        let on = self.project.bypass_graph;
-        if ui
-            .add(
-                egui::Button::new(tr("editor.bypass_graph"))
-                    .selected(on)
-                    .min_size(vec2(0.0, height)),
-            )
-            .on_hover_text(tr("editor.bypass_graph.help"))
-            .clicked()
-        {
-            self.project.bypass_graph = !on;
         }
         if ui
             .add(
@@ -1344,116 +1415,95 @@ impl App {
         }
     }
 
-    /// "Graph › name", where it plays, and how many errors and warnings it has.
+    /// "Graph › name", where it plays, and how many errors and warnings it has. Clicking the name
+    /// lists the project's graphs; returns the one picked, to open in its place.
     fn graph_header_title(
         &self,
         ui: &mut Ui,
         failure: Option<&rastersong_engine::Failure>,
         theme: &Theme,
-    ) {
-        {
-            ui.label(
-                egui::RichText::new(tr("editor.header.kind")).color(theme.surfaces.text_faint),
-            );
-            // The chevron between the kind and the name.
-            let (r, _) = ui.allocate_exact_size(vec2(8.0, 10.0), egui::Sense::hover());
-            ui.painter().add(egui::Shape::line(
-                vec![
-                    r.left_top() + vec2(2.0, 1.0),
-                    r.left_top() + vec2(6.0, 5.0),
-                    r.left_top() + vec2(2.0, 9.0),
-                ],
-                Stroke::new(1.4, theme.tick),
-            ));
-            card_title(ui, &self.project.graph_name);
-            let errors = usize::from(
-                failure.is_some_and(|f| f.graph.is_none_or(|g| g == self.project.graph_id)),
-            );
-            let count =
-                problem_count(errors, self.editor.warning_count(), theme).map(|(text, color)| {
-                    let galley =
-                        ui.painter()
-                            .layout_no_wrap(text, egui::FontId::proportional(12.0), color);
-                    (galley, color)
-                });
-            // The count always shows; the chip gets what's left of the row, shortened to fit.
-            let spacing = ui.spacing().item_spacing.x;
-            let count_width = count
-                .as_ref()
-                .map_or(0.0, |(g, _)| 6.0 + 8.0 + 2.0 * spacing + g.size().x);
-            let room = ui.available_width() - count_width - spacing - 16.0;
-            if room >= MIN_CHIP_TEXT {
-                self.placement_chip(ui, theme, room);
-            }
-            if let Some((galley, color)) = count {
-                ui.add_space(6.0);
-                let (dot, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
-                ui.painter().circle_filled(dot.center(), 4.0, color);
-                ui.label(galley);
-            }
-        }
-    }
-
-    /// The pill that says where the open graph plays, its text cut short to `room` if it must
-    /// be.
-    fn placement_chip(&self, ui: &mut Ui, theme: &Theme, room: f32) {
-        let (chip, help) = self.graph_placement();
-        let mut job = egui::text::LayoutJob::simple_singleline(
-            chip.clone(),
-            egui::FontId::proportional(11.5),
-            theme.text_dim,
-        );
-        job.wrap = egui::text::TextWrapping::truncate_at_width(room);
-        let text = ui.painter().layout_job(job);
-        let (pill, response) = ui.allocate_exact_size(
-            vec2(text.size().x + 16.0, text.size().y + 4.0),
-            egui::Sense::hover(),
-        );
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &chip));
-        ui.painter().rect(
-            pill,
-            pill.height() / 2.0,
-            theme.surfaces.raised,
-            Stroke::new(1.0, theme.surfaces.border),
-            egui::StrokeKind::Inside,
-        );
-        ui.painter()
-            .galley(pill.center() - text.size() / 2.0, text, theme.text_dim);
-        response.on_hover_text(help);
-    }
-
-    /// Where the open graph plays, as the canvas header's chip says it, and the chip's hover
-    /// text.
-    fn graph_placement(&self) -> (String, &'static str) {
-        let id = self.project.graph_id;
-        let mut placed = self.project.graph_tracks.iter().flat_map(|t| {
-            t.items
-                .iter()
-                .filter(|i| i.graph == id)
-                .map(move |i| (t, i))
-        });
-        let Some((track, item)) = placed.next() else {
-            return (
-                tr("editor.header.unplaced").to_owned(),
-                tr("editor.header.unplaced.help"),
-            );
-        };
-        let first = tr_args(
-            "editor.header.placed",
-            &[
-                ("track", &track.name),
-                ("start", &crate::timeline::short_timecode(item.position)),
-                ("end", &crate::timeline::short_timecode(item.end())),
+    ) -> Option<u32> {
+        ui.label(egui::RichText::new(tr("editor.header.kind")).color(theme.surfaces.text_faint));
+        // The chevron between the kind and the name.
+        let (r, _) = ui.allocate_exact_size(vec2(8.0, 10.0), egui::Sense::hover());
+        ui.painter().add(egui::Shape::line(
+            vec![
+                r.left_top() + vec2(2.0, 1.0),
+                r.left_top() + vec2(6.0, 5.0),
+                r.left_top() + vec2(2.0, 9.0),
             ],
+            Stroke::new(1.4, theme.tick),
+        ));
+        let picked = self.graph_switcher(ui, theme);
+        let errors = usize::from(
+            failure.is_some_and(|f| f.graph.is_none_or(|g| g == self.project.graph_id)),
         );
-        let text = match placed.count() {
-            0 => first,
-            more => tr_args(
-                "editor.header.placed_more",
-                &[("placed", &first), ("count", &more.to_string())],
-            ),
-        };
-        (text, tr("editor.header.placed.help"))
+        let count =
+            problem_count(errors, self.editor.warning_count(), theme).map(|(text, color)| {
+                let galley =
+                    ui.painter()
+                        .layout_no_wrap(text, egui::FontId::proportional(12.0), color);
+                (galley, color)
+            });
+        if let Some((galley, color)) = count {
+            ui.add_space(6.0);
+            let (dot, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+            ui.painter().circle_filled(dot.center(), 4.0, color);
+            ui.label(galley);
+        }
+        picked
+    }
+
+    /// The open graph's name with a ▾, which opens a menu of the project's graphs. Returns the
+    /// one clicked, unless it is the open one.
+    fn graph_switcher(&self, ui: &mut Ui, theme: &Theme) -> Option<u32> {
+        let name = &self.project.graph_name;
+        let font = crate::theme::semibold(crate::theme::TITLE_SIZE);
+        let galley = ui
+            .painter()
+            .layout_no_wrap(name.clone(), font, theme.surfaces.text);
+        let size = vec2(galley.size().x + 26.0, HEADER_BUTTON_HEIGHT);
+        let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, name.as_str())
+        });
+        let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&response));
+        if response.hovered() || open {
+            ui.painter().rect_filled(
+                rect,
+                crate::theme::CONTROL_RADIUS,
+                theme.surfaces.raised_hover,
+            );
+        }
+        let text = egui::pos2(rect.left() + 6.0, rect.center().y - galley.size().y / 2.0);
+        ui.painter().galley(text, galley, theme.surfaces.text);
+        // The ▾ at the end.
+        let c = egui::pos2(rect.right() - 10.0, rect.center().y);
+        ui.painter().add(egui::Shape::line(
+            vec![
+                c + vec2(-3.5, -1.5),
+                c + vec2(0.0, 2.0),
+                c + vec2(3.5, -1.5),
+            ],
+            Stroke::new(1.4, theme.surfaces.text_soft),
+        ));
+        let response = response.on_hover_text(tr("editor.header.switch.help"));
+        let mut picked = None;
+        egui::Popup::menu(&response).show(|ui| {
+            ui.set_min_width(rect.width().max(160.0));
+            for entry in self.project.graph_entries() {
+                if ui
+                    .add(egui::Button::new(&entry.name).selected(entry.open))
+                    .clicked()
+                {
+                    if !entry.open {
+                        picked = Some(entry.id);
+                    }
+                    ui.close();
+                }
+            }
+        });
+        picked
     }
 
     /// Whether the preview needs the original video.
@@ -2076,6 +2126,27 @@ impl App {
         card_header(ui, |ui| {
             card_title(ui, tr("preview.title"));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let fullscreen = self.preview_fullscreen.is_some();
+                let (icon, label, help) = if fullscreen {
+                    (
+                        Icon::ExitFullscreen,
+                        tr("preview.exit_fullscreen"),
+                        tr("preview.exit_fullscreen.help"),
+                    )
+                } else {
+                    (
+                        Icon::Fullscreen,
+                        tr("preview.fullscreen"),
+                        tr("preview.fullscreen.help"),
+                    )
+                };
+                if ui
+                    .add(IconButton::new(icon, label))
+                    .on_hover_text(help)
+                    .clicked()
+                {
+                    self.set_preview_fullscreen(ui.ctx(), !fullscreen);
+                }
                 if ui
                     .add(IconButton::new(Icon::Fit, tr("preview.fit")))
                     .on_hover_text(tr("preview.fit.help"))
@@ -2519,9 +2590,7 @@ impl App {
                 egui::pos2(frame_pos.x - 10.0, rect.center().y + 3.0),
             );
             let lit = self.beat_in_bar();
-            ui.place(lights, |ui: &mut Ui| {
-                beat_lights(ui, beats, lit, vec2(14.0, 5.0), 3.0)
-            });
+            ui.place(lights, |ui: &mut Ui| beat_lights(ui, beats, lit, 6.0, 3.0));
         }
     }
 
@@ -2646,6 +2715,7 @@ impl App {
             mode: self.project.timeline_mode,
             buses: self.project.buses.iter().map(|b| b.name.clone()).collect(),
             snap: self.settings.snap,
+            open_graphs_on_click: self.settings.open_graphs_on_click,
             resources: self
                 .project
                 .resources
@@ -2717,9 +2787,10 @@ impl App {
             solo: t.solo,
             silenced: !self.project.in_mix(i),
             volume: t.volume,
-            height: t.height.unwrap_or(lane_height(t.kind)),
+            height: t.height.unwrap_or(LANE_HEIGHT),
             bus: t.bus.clone(),
             missing: t.resource.is_some_and(|r| self.missing.contains(&r)),
+            color: self.project.track_resource(t).and_then(|r| r.color),
             selected_items: self
                 .selected_items
                 .iter()
@@ -2788,6 +2859,7 @@ impl App {
             .map(|t| GraphTrackView {
                 name: t.name.clone(),
                 muted: t.muted,
+                height: t.height.unwrap_or(LANE_HEIGHT),
                 items: t
                     .items
                     .iter()
@@ -2930,12 +3002,17 @@ impl App {
                     self.select_graph_item(track, item);
                 }
             }
-            GraphAction::MoveItem { track, item, delta } => {
-                let Some(track) = name(self, track) else {
+            GraphAction::MoveItem {
+                track,
+                item,
+                to,
+                delta,
+            } => {
+                let (Some(track), Some(to)) = (name(self, track), name(self, to)) else {
                     return;
                 };
-                if let Some(moved) = self.project.move_graph_item(&track, item, delta) {
-                    self.select_graph_item(track, moved);
+                if let Some(moved) = self.project.move_graph_item_to(&track, item, &to, delta) {
+                    self.select_graph_item(to, moved);
                 }
             }
             GraphAction::TrimItem {
@@ -2946,6 +3023,11 @@ impl App {
             } => {
                 if let Some(track) = name(self, track) {
                     self.project.trim_graph_item(&track, item, edge, to);
+                }
+            }
+            GraphAction::SetHeight(row, height) => {
+                if let Some(track) = self.project.graph_tracks.get_mut(row) {
+                    track.height = (height != LANE_HEIGHT).then_some(height);
                 }
             }
             GraphAction::ToggleItemMute { track, item } => {
@@ -3013,9 +3095,6 @@ impl App {
                 if let Some(it) = self.project.graph_item_mut(&track, item) {
                     it.pre_roll = on;
                 }
-            }
-            ItemEdit::Source { port, source } => {
-                self.project.set_graph_source(&track, item, &port, source);
             }
         }
     }
@@ -3089,7 +3168,7 @@ impl App {
                         ui,
                         self.project.tempo.sanitized().beats_per_bar,
                         lit,
-                        Vec2::splat(6.0),
+                        6.0,
                         3.0,
                     );
                 });
@@ -3504,7 +3583,28 @@ impl App {
             }
             TrackAction::SetHeight(row, height) => {
                 if let Some(track) = self.track_at(row) {
-                    track.height = (height != lane_height(track.kind)).then_some(height);
+                    track.height = (height != LANE_HEIGHT).then_some(height);
+                }
+            }
+            TrackAction::ScaleHeights(factor) => {
+                let scaled = |height: Option<f32>| {
+                    let height = (height.unwrap_or(LANE_HEIGHT) * factor)
+                        .clamp(*LANE_HEIGHT_RANGE.start(), *LANE_HEIGHT_RANGE.end());
+                    (height != LANE_HEIGHT).then_some(height)
+                };
+                for track in &mut self.project.tracks {
+                    track.height = scaled(track.height);
+                }
+                for track in &mut self.project.graph_tracks {
+                    track.height = scaled(track.height);
+                }
+            }
+            TrackAction::ResetHeights => {
+                for track in &mut self.project.tracks {
+                    track.height = None;
+                }
+                for track in &mut self.project.graph_tracks {
+                    track.height = None;
                 }
             }
             TrackAction::SetBus(row, bus) => {
@@ -3620,8 +3720,6 @@ impl App {
 
 /// Height of the buttons in the row over the graph canvas.
 const HEADER_BUTTON_HEIGHT: f32 = 30.0;
-/// The narrowest the placement chip's text is cut to before the chip is left out.
-const MIN_CHIP_TEXT: f32 = 40.0;
 
 /// The canvas header's count of problems ("1 error · 1 warning") in the colour of the worst,
 /// or `None` with none.
@@ -3716,10 +3814,76 @@ fn busy_badge(ui: &mut Ui, rect: egui::Rect, text: &str, theme: &Theme) {
         });
 }
 
-/// An editor for the project's open graph, with its output in place.
+/// What a Video Source (`kind` video) or an Audio Source can read in `project`, as (`source`
+/// setting, label): the mix, every track of its kind, every graph track, nothing.
+fn source_choices(project: &Project, kind: TrackKind) -> Vec<(String, String)> {
+    let video = kind == TrackKind::Video;
+    let input = if video {
+        rastersong_engine::InputKind::Video
+    } else {
+        rastersong_engine::InputKind::Audio
+    };
+    let entry =
+        |source: rastersong_engine::Source, label: String| (source.settings(video).0, label);
+    let mut choices = vec![entry(
+        rastersong_engine::Source::Mix,
+        crate::editor::source_label(&rastersong_engine::Source::Mix, input),
+    )];
+    for t in project.tracks_of(kind) {
+        choices.push(entry(
+            rastersong_engine::Source::Track(t.name.clone()),
+            tr_args("source.track", &[("track", &t.name)]),
+        ));
+    }
+    for t in &project.graph_tracks {
+        choices.push(entry(
+            rastersong_engine::Source::Graph {
+                track: t.name.clone(),
+                port: String::new(),
+            },
+            tr_args("source.graph", &[("track", &t.name)]),
+        ));
+    }
+    choices.push((String::new(), tr("source.nothing").to_owned()));
+    choices
+}
+
+/// Each graph track's `graph:` source setting, with the names of the Named Outputs the graphs
+/// placed on it offer, each once.
+fn graph_outputs(project: &Project) -> Vec<(String, Vec<String>)> {
+    project
+        .graph_tracks
+        .iter()
+        .map(|t| {
+            let mut names: Vec<String> = Vec::new();
+            for item in &t.items {
+                let Some(desc) = project.graph_desc(item.graph) else {
+                    continue;
+                };
+                for node in desc
+                    .nodes
+                    .iter()
+                    .filter(|n| n.kind == rastersong_engine::NAMED_OUTPUT)
+                {
+                    let name = match node.params.get(rastersong_engine::NAME_PARAM) {
+                        Some(rastersong_engine::ParamValue::Text(name)) => name.clone(),
+                        _ => "Out".to_owned(),
+                    };
+                    if !names.contains(&name) {
+                        names.push(name);
+                    }
+                }
+            }
+            (format!("graph:{}", t.name), names)
+        })
+        .collect()
+}
+
+/// An editor for the project's open graph, with its base nodes in place.
 fn graph_editor(project: &Project) -> GraphEditor {
     let mut editor = GraphEditor::new(&project.graph);
-    editor.ensure_output();
+    editor.master_bus = project.buses[0].name.clone();
+    editor.ensure_ports();
     editor
 }
 

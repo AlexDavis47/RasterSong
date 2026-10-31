@@ -3,7 +3,7 @@
 Two rows: along the bottom, the **Resources** panel and the **timeline** beside it; above them three columns: the
 **preview** with its playback controls underneath, the **node graph**, and the **inspector**. Each panel is a
 rounded card, set 6 px apart on the window's darker ground; the preview and the graph have a title row across the
-top. Drag the gap between two cards to resize them. The app only holds UI state; everything is decoded, rendered and cached by the [engine](engine.md) on its render thread.
+top. Drag the gap between two cards to resize them. The app only holds UI state; everything is decoded, rendered and cached by the [engine](engine.md) on its render threads.
 
 The **top bar** holds the menus, the project's name (with "edited" while there are unsaved changes), a Settings
 button and **Export…**. The **status bar** along the bottom says whether the graph compiled (or why it didn't, in the words of the graph's error bar), names
@@ -18,7 +18,9 @@ This describes the app as it is. Changes planned from hands-on testing are in th
 The header chooses what the picture shows: **Result** (the processed video), **Original** (the video mix before the
 graphs: the top video track playing at each frame, as the Video section mixes it; processing carries on) or **Split**, both side by side with the original on the left and a draggable
 divider; clicking Split again swaps the sides. **Fit** (or F) fits the picture again after the scroll wheel zooms
-it or middle-drag pans it. The size the preview renders at, out of the project's, sits in the picture's corner.
+it or middle-drag pans it. **Fullscreen** makes the preview fill the window and the window fill the screen, with
+nothing else showing; **Exit fullscreen** in the same place (or Esc) puts it back in its pane and the window back
+as it was. The size the preview renders at, out of the project's, sits in the picture's corner.
 With no video loaded, the preview offers an Open Video button.
 
 The transport sits under the picture in two rows that don't wrap:
@@ -26,7 +28,7 @@ The transport sits under the picture in two rows that don't wrap:
 1. Go to start, play/pause (the accent button), **Loop** (lit while the loop region repeats), and the timecode:
    the position large, the length small and the frame number at the right. In Tempo mode it reads the position
    as **bar.beat.sixteenth** ("3.3.1"), then a beat light with a segment for each beat of the bar (up to eight),
-   the playhead's lit in amber, and the time at the right.
+   the playhead's lit in amber (round lights, always), and the time at the right.
 2. **Ahead**: how far ahead of the playhead is rendered, as seconds over a bar that fills toward the render-ahead
    setting ("to the end" or "whole loop" once there's nothing left to render). It turns amber and names the speed
    when rendering can't keep up and playback slows, and shows the warm-up's progress after a seek. Then the
@@ -36,9 +38,9 @@ The transport sits under the picture in two rows that don't wrap:
 
 Our own editor, drawn on a pannable, zoomable canvas (see [Decisions](decisions.md#own-node-graph)).
 
-A header over the canvas names the open graph and where it plays on the timeline ("on Graphs · 0:00–0:04", with
-how many more places it plays, or "not on the timeline", cut short when the row is narrow), counts its problems
-("1 error · 1 warning"), and holds **+ Add node**, **Bypass graphs** and **Frame graph** (as F). Each node has a
+A header over the canvas names the open graph (**Graph › name ▾**: click the name for a menu of the project's
+graphs, and pick one to edit it instead), counts its problems
+("1 error · 1 warning"), and holds **+ Add node** and **Frame graph** (as F). Each node has a
 strip in its category's colour along its top edge, with its title under it. Opening a graph frames it, zooming out
 no further than 85%: a graph wider than that starts from its inputs on the left, and the rest is a pan away.
 
@@ -47,19 +49,26 @@ no further than 85%: a graph wider than that starts from its inputs on the left,
   Ctrl+ or Shift+click adds or removes it; drag to move the selection. Ctrl+A selects every node, Esc clears the
   selection.
 - **Alt+click** a node bypasses it (or the whole selection, if it is selected): a bypassed node passes its main
-  input through, and is drawn faded on a striped fill with BYPASSED in its title row. **Bypass graphs**, in the
-  canvas header, skips every graph track and shows and plays the mix, to compare with the original.
+  input through, and is drawn faded on a striped fill with BYPASSED in its title row. To compare with the
+  original, the preview's **Original** shows the mix without any graph.
 - Drag from a pin to connect. An input takes one connection; a new one replaces the old. Dragging a connected
   input picks its wire up to move it. Dropping a wire on empty space opens the node search, connected.
 - Exposed parameters show as diamond pins under a node's inputs; a wire into one modulates that parameter.
   Each node type exposes its main parameters by default (e.g. Delay's time and feedback); the inspector's
   diamond toggles show or hide the others. Hiding a connected parameter disconnects it.
-- A graph's inputs are **ports**: **Video In** and **Audio In** nodes, each reading the port its *Port* setting
-  names (titled `▣ In: Video`, `♪ In: Audio`, … unless renamed). `Video` and `Audio` are the main ports; any other
-  name is a port of its own, and several nodes can read one port. Whoever uses the graph fills the ports: each
-  graph item on the timeline picks a source for every port ([Graph tracks](#graph-tracks)), so tracks add no nodes
-  and renaming a track leaves the graph alone. Ports are added and deleted like any node. Every graph has one
-  **Output**, which can't be deleted or copied; a graph missing one gets one when opened.
+- **Every graph has four base nodes**: **Video In** and **Audio In**, which read what is below the graph's item
+  on the timeline (titled `▣ In: Video`, `♪ In: Audio` unless renamed), and **Output** and an **Audio Output** on
+  the master bus, which pass the result up. They can't be deleted or copied (a second Video In, say, is an
+  ordinary node), a graph missing one gets it back when opened, and the base Audio Output's bus can't be changed.
+- **To read anything else, add a source node**: **Video Source** or **Audio Source**, and pick in its inspector
+  what it reads: the video or audio mix, a track's stem (**Track: kick**, read before its volume and mute), a
+  graph track's output (**Graph track: FX**, then which output: the main Video or Audio, or a Named Output its
+  graphs offer), or **Nothing**. Each is titled after what it reads (`♪ In: kick`). A graph track must be below
+  the one the graph plays on, or it reads zeros. Renaming a track updates the source nodes that read it, in every
+  graph; one whose track is gone says *missing* in red and reads nothing.
+- **Outputs**: add a **Named Output** to offer a signal to graphs on higher graph tracks without adding it to this
+  graph's picture or sound (names are unique within a graph), and an **Audio Output** for each bus other than the
+  master.
 - Right-click empty space, or press **Tab** over it, to add a node there; **+ Add node** adds one in the middle of
   the canvas. The node search opens with its field focused: type, use ↑/↓, and press Enter (or click). Results
   are grouped under their categories, best match first, each with its one-line description. Opened from a
@@ -68,7 +77,7 @@ no further than 85%: a graph wider than that starts from its inputs on the left,
   the wires around it, Ctrl+D duplicates it.
 - **Inspecting a connection.** Resting the pointer on a wire or an output pin shows what it carries at the
   playhead in the **probe**: the wire's ends and what it carries, the view, a meter and the mean, min, max and
-  RMS. Beside the view is the **drum**, a wheel of the views with the one shown in the middle; it wraps around,
+  RMS. Like a tooltip, the probe opens once the pointer has stopped on the wire or pin and rested there for the tooltip delay (sliding along a wire doesn't open it), and not while another window is over the canvas. While the next answer is on its way the probe keeps showing the last one, so a connection that isn't rendered doesn't flash back to "Looking…" as the playhead moves. Beside the view is the **drum**, a wheel of the views with the one shown in the middle; it wraps around,
   so past Readings comes Picture again. The probe stays open while the pointer moves onto it: click a view on
   the drum, scroll over it, or click it and use ↑/↓. The view is a **picture** (the signal stretched over the project's shape, the way Video Output does), a **scope**
   (the waveform), a **spectrum** (an FFT on a logarithmic frequency axis, smoothed between updates) or
@@ -116,7 +125,7 @@ an audio track's Volume (a slider and box like a parameter's), Mute, Solo, and a
 A **node** shows its name (shown on the node instead of its type; it changes on Enter or clicking away, and the type's own name unnames it), "Kind · id — description", its notes and
 warnings, what each output carries (port, colour, tag, size) with its meters, its shared settings (Resampling, Grouping, Channels, and
 Layout for generators; see
-[Node behavior](node-behavior.md#shared-node-settings)) and its parameters, with units, sliders (always linear) reset-to-default buttons, and an `int` toggle on numbers that are not whole-only (which rounds the value and, when a signal modulates it, every sample). Parameters that only make sense whole (Beat numerator, denominator and steps, Pack channels, Chorus voices, Phaser stages, Noise seed, Sample & Hold levels, Resample width and height) are declared `.integer()` in their spec: the slider handle jumps between whole values, typed numbers round, and they have no toggle. Each slider covers the parameter's
+[Node behavior](node-behavior.md#shared-node-settings)) and its parameters, with units, sliders (always linear) reset-to-default buttons, and an `int` toggle on numbers that are not whole-only (on lengths and rates, **Free / Sync** at the top of the unit menu each carries on its value box, with **Per / Every** for a rate) (which rounds the value and, when a signal modulates it, every sample). Parameters that only make sense whole (Beat numerator, denominator and steps, Pack channels, Chorus voices, Phaser stages, Noise seed, Sample & Hold levels, Resample width and height) are declared `.integer()` in their spec: the slider handle jumps between whole values, typed numbers round, and they have no toggle. Each slider covers the parameter's
 usual range; typing (or dragging the value box) past it, up to the node's limits, widens the slider to match. Right-click a slider to set its range; the range is saved with the node in the graph (`"ranges"`), and it is also what a modulating signal is held to. Each
 parameter takes two lines: its pin toggle, name, `int` toggle, value box and reset button, then the slider across
 the inspector's width. Values left at their default aren't written to files.
@@ -140,14 +149,18 @@ A connected (modulated) parameter is set in a card and shows, in the wire's colo
 
 ## Resources
 
-The **Resources** panel, left of the timeline, holds everything the project uses as two labelled groups with
-counts, **Media · 4** and **Graphs · 2**: side by side when the panel is wide enough (it opens that wide), one above
-the other when it's narrowed. The title row holds a **Filter** field, which narrows both groups to the names that
-contain it (case doesn't matter), and **Import…**. Every resource is a row drawn by one shared component
+The **Resources** panel, left of the timeline, holds everything the project uses under two tabs with counts,
+**Media · 4** and **Graphs · 2**. The title row holds a **Filter** field, which narrows both tabs to the names that
+contain it (case doesn't matter), and **Import…**; **+ New** sits at the right of the tab row while Graphs is open.
+Each tab lays its resources out as **cards** in a grid that wraps: as many columns as fit at about 104 px, widened
+to fill the panel, each card 4:3 (wider than high, so names have room). Every card is drawn by one shared component
 (`resource_card`), so media and graphs look, drag and open menus the same way: a picture of its kind, the name, and
 a line under it: the stream's shape for media (*video · 320×180 · 30 fps*, *audio · stereo · 48 kHz*, read once
 from the file), whether it's open and how many graph items place it for a graph (*open · 1 item*, *not placed*). A
-hint under the lists names the drag and double-click gestures. Each media resource is one stream of a
+hint under the cards names the drag and double-click gestures. Click a card to select it (Ctrl or Shift+click adds
+media cards to the selection). **Renaming** is in place: double-click a card's name, press **F2** over the panel
+(it renames the selected card of the open tab) or pick **Rename** in its right-click menu, and the name becomes a
+text field with the whole name selected; Enter or clicking away commits, Esc cancels. Each media resource is one stream of a
 linked file (embedding comes later on the [roadmap](roadmap.md#timeline-resources-and-routing)): a video stream
 or an audio stream with any number of channels. **Import…** (or File → Import Media…, or dropping files onto the
 window) adds files. A file with one video or audio stream becomes a resource at once; a file with more, such as a
@@ -158,21 +171,26 @@ and data streams aren't listed.
 Resources are named after their file (video keeps the extension, audio drops it, and a stream's title is added),
 made unique with `_2`, `_3`, …. Nothing reaches the timeline until it is placed: **drag a resource onto the
 timeline** to add a track playing it from where it is dropped, or double-click it (or right-click → Add to
-Timeline) to add one at the playhead. The track is named after the resource. Right-click a card renames a resource (its tracks keep their names, since
-graph sources read tracks by name) or removes it; removing a resource that tracks play asks first and removes those tracks with it. A resource
-whose file is missing is drawn in red and says *missing*, with its path in the tooltip and a **Relocate…** button at the row's end, outside the drag area so it always takes the click (also in the
+Timeline) to add one at the playhead; a double-click on the name renames instead. The track is named after the
+resource. Renaming a resource leaves its tracks' names alone, since graph sources read tracks by name.
+Right-click → **Color** labels a media resource with one of eight colours, Red to Pink, each with its swatch, to
+tell resources apart: the card shows it as a band along the top of its picture, and every item of the resource on
+the timeline is drawn in it. **Default** goes back to the track kind's own colour. It changes nothing in the render.
+Right-click → Remove removes it; removing a resource that tracks play asks first and removes those tracks with it. A resource
+whose file is missing is drawn in red and says *missing*, with its path in the tooltip and a **Relocate…** button over its picture, which takes the click from the card under it (also in the
 right-click menu, for any resource): pick where the file is now, and the other streams of the same file follow.
 Until it is found, the tracks that play it read as gaps and say so in their lanes. The panel checks about once a
 second, so a file that comes back (a drive plugged in) is picked up by itself.
 
-**Graphs** are resources too, in their own group. A project can hold any number; **+ New** adds the template (the
+**Graphs** are resources too, in their own tab. A project can hold any number; **+ New** adds the template (the
 video wired to Video Output, the sound to Audio Output) and opens it. Double-click a graph (or right-click → Open in
-editor) to open it in the node editor, which swaps it with the open one. The open graph is shown in bold, its row
-raised. A graph
+editor, or pick it from the canvas header's graph menu) to open it in the node editor, which swaps it with the open
+one; with **Open graphs with a single click** on in Settings, one click opens it. The open graph is shown in bold,
+its card raised. A graph
 applies only where it is placed as a **graph item** on a [graph track](#graph-tracks): with none placed, the preview
 and the CLI play the plain mixes, and the open graph is only a description to edit. Right-click also renames,
 duplicates or removes a graph (the open graph can't be removed; removing one removes its graph items). Drag a graph
-row into the Graphs section of the timeline to place it. **File → Import Graph…** and **Export Graph…** read and
+card into the Graphs section of the timeline to place it. **File → Import Graph…** and **Export Graph…** read and
 write a graph as its own file.
 
 ## Timeline
@@ -180,15 +198,15 @@ write a graph as its own file.
 The timeline has three **sections** under a ruler, each named in a label above its tracks and divided by a thick
 line: **Graphs** on top, then **Video**, then **Audio**. Tracks stay in their section and reorder within it. The timeline's title row is the same in both
 modes, so switching moves nothing: one group holds the **Time** / **Tempo** switch (a ruler of minutes and seconds,
-or of bars and beats), the tempo (bpm, beats per bar, first beat; beat and bar units in nodes follow it in either
+or of bars and beats), the tempo (bpm counting the time signature's beat, the time signature as `4 / 4` in the shared time signature field, first beat; note-length units in nodes follow it in either
 mode) and the **Metronome** toggle, which plays only in Tempo mode, amber while on, with a light for each beat of
 the bar. At the right are the **loop region** ("Loop 0:01.00 – 0:03.00", or in bars, "2.1 – 4.1", in Tempo mode;
 bright while looping; click it to turn looping on or off, like R) and **Snap** ("Snap · beats" in Tempo mode).
 Without a loop region it says how to make one.
 
 In Tempo mode the ruler has **two tiers**: bar numbers bold along the top, beats small under them ("2.2", "2.3", …,
-labelled where they have room), with a *bar / beat* key over the headers. Every other bar is shaded down through
-the lanes, beat lines are fainter than bar lines, and an **amber marker** between the tiers shows the first beat
+labelled where they have room). Every other bar is shaded down through
+the lanes, and the tick lines run over the items so what lines up can be seen (beat lines are fainter than bar lines), and an **amber marker** between the tiers shows the first beat
 (hover it for its time). The timeline shows from launch, over a default ten seconds, with each empty section naming what to drop
 in it. Each track is a lane of **items**, the stretches of its file (or, in the Graphs section, graphs) placed on
 the timeline.
@@ -201,8 +219,10 @@ the timeline.
 - **Every track is also a stem.** A graph can read any track on its own, before its volume, mute and solo.
 - **Graph tracks** hold graph items; see [Graph tracks](#graph-tracks).
 
-Each header starts with a bar in its kind's colour (graph purple, video grey, audio teal) and the track's name,
-edited in place (renaming a track updates the sources that read it). Under the name, a video header shows the
+Each header starts with a bar in its kind's colour (graph purple, video grey, audio teal) and the track's name.
+Clicking the name selects the track; double-clicking it, or **F2** over the timeline for the selected track, turns
+it into a text field to rename it in place (Enter or clicking away commits, Esc cancels; renaming a track updates
+the sources that read it). Under the name, a video header shows the
 file's size and frame rate; an audio header its **volume** as a slim bar (drag or click along it, double-click for
 100%) and, when the project has several buses, its bus. Every header has **M** (mute) and, for video and audio,
 **S** (solo, yellow while on); removing a track is in the header's right-click menu. Each
@@ -233,7 +253,7 @@ tracks of one resource share a decoder), so any number of video tracks, includin
 their length and thumbnails. The unprocessed feed (a graph's source side by side with the result) still shows only the
 first video track.
 
-Every item has a **header bar** along its top with the track's name and a mute button (a muted item reads as a gap,
+Every item has a **header bar** along its top with the track's name (cut short before the mute button) and a mute button (a muted item reads as a gap,
 for graphs too). Drag the bar to move the item; the area below it shows the item's content, thumbnails of the
 source video (decoded by a separate small decoder so they never slow rendering and survive graph edits) or the
 audio's waveform, and behaves like empty lane space. Items can't start before the timeline does.
@@ -261,15 +281,16 @@ audio's waveform, and behaves like empty lane space. Items can't start before th
   trimming takes the group's edges at the same time, so a video and its sound stay together. A grouped item's bar
   shows 🔗. Splitting a group leaves a group on each side; pasted copies make a new group. Opening a video with
   sound groups the picture's item with its sound's.
+- Items are drawn in their resource's label colour, when it has one (see [Resources](#resources)).
 - **Snapping** is on by default (the Snap button in the ruler's corner): moves and edges snap to the ruler's
   ticks (beats and bars in tempo mode), the edges of other items, the playhead and the timeline's start, within
   a few pixels. Hold **Shift** to drag freely.
 - Every edit undoes as one step.
 
-Right-click a header for its menu: **Default height** resets its height, **New track above** / **New track below**
+Right-click a header for its menu: **Reset track height** and **Reset all track heights** (each off when there is nothing to reset), **New track above** / **New track below**
 (see above) add a track and **Remove track** removes it; a graph track's menu has **Remove track**. Drag the
 bottom edge of a
-header to change the track's **height**; double-clicking the edge, or the header's menu, resets it. Drag a header
+header to change the track's **height**; double-clicking the edge, or the header's menu, resets it. **Ctrl+scroll** over the timeline changes every track's height together. All tracks, graph tracks too, start at the same height. A short track leaves out the line under its name, and a shorter one the thumbnails or waveform. Drag a header
 by its free space, its kind bar or its details (not its name, buttons, volume bar or bus) to **reorder** the track **within its
 section**; a marker line shows where it goes. Frames rendered so far are marked in green along the bottom of the
 ruler. Item groups, heights, solo and mutes are saved with the project and undo like any edit.
@@ -291,26 +312,22 @@ The **Graphs** section holds **graph tracks**, and each holds **graph items**: a
 like an adjustment layer in a video editor. How they render is described in
 [Composition](engine.md#composition).
 
-- **Drag a graph row** from the Resources panel's Graphs group into the Graphs section: onto a graph track it goes
+- **Drag a graph card** from the Resources panel's Graphs tab into the Graphs section: onto a graph track it goes
   on that track from the drop point, on the line between two graph tracks (or below the last) it gets a new graph
   track there, anywhere else a new track on top. An empty section says *Drag a graph here to make a graph track*.
 - **The topmost graph item playing is the master.** At each frame the picture and sound you see and hear are the
   Video Output and Audio Output of the item on the highest graph track that has one there, or the plain mixes where
   none does. Items on one track never overlap: placing or moving one trims what it lands on. A muted graph track
-  or item is skipped, so what is below it shows through. **Bypass graphs** (on the canvas) skips every graph track
-  to compare with the original.
+  or item is skipped, so what is below it shows through. The preview's **Original** shows the mix without any
+  graph, to compare.
 - **Items** have the same bar, trim, split, mute, copy, paste and group commands as other items, and **pre-roll**
   (on by default): the graph warms up as if it had run before the item, so trimming the left edge changes nothing
-  after it. Dragging a graph item moves it within its own track, applied when you let go; it doesn't move between
-  tracks yet. Double-click an item to open its graph in the editor.
-- **The graph item inspector.** Selecting a graph item shows one row per input port of its graph, each with a
-  source picker: **Below** (the graph playing under this one, or the mix with none; the default for `Video` and
-  `Audio`), **Video mix** or **Audio mix**, **Track: name** (a track's stem, read before its volume and mute, so a
-  muted kick can still drive an effect), **Graph track: name** (an output of a graph track below this one), or
-  **Nothing** (zeros). Other ports start on the track of the same name, if one exists. A source that has gone
-  (a removed track, a graph track no longer below) says so and reads nothing until another is picked. Renaming a
-  track updates the sources that read it, and renaming a port (an input node's *Port*) keeps the sources its items
-  picked for it. Sources only point down, so graphs can't loop.
+  after it. Dragging a graph item moves it along its track, or up or down onto another graph track, applied when
+  you let go. Double-click an item to open its graph in the editor, or click it once with **Open graphs with a
+  single click** on in Settings.
+- **The graph item inspector** shows the item's graph and track and its **Pre-roll**. What a graph reads is set
+  on its own source nodes ([Node graph](#node-graph)), so every item of a graph reads the same things. Sources
+  only point down, so graphs can't loop.
 - A new graph starts as a visible template (`In: Video` into Video Output, `In: Audio` into Audio Output), so a
   fresh graph item changes nothing. The starter graph of a new project (`am_bands`) also wires `In: Audio` to an
   Audio Output, so its sound plays. A graph placed over graphs below it chains them unless a source is changed.
@@ -332,7 +349,8 @@ With several buses, each audio track's header shows the bus it is routed to, wit
 
 **File → Settings…** (Ctrl+,) opens a window with two pages. **Application** is remembered on this computer:
 **Appearance** (theme, wire style, language), the **graph editor** (node latency and warmup display, node
-processing time, graph statistics, keeping input connections when duplicating and pasting), the view hovering an audio connection or
+processing time, graph statistics, keeping input connections when duplicating and pasting, opening graphs with a
+single click in Resources and on the timeline), the view hovering an audio connection or
 any other connection shows, and **Rendering** (the default preview resolution, the cache size in MiB and how many
 seconds to render ahead, each with a reset button).
 **Project** is saved in the project file: the **picture** (resolution and frame rate, from 23.976 to 60 fps with
@@ -341,7 +359,7 @@ goes back to following it), tempo (bpm, beats per bar, first beat), *Max warmup 
 is pre-rendered after a jump in the timeline; the page warns when the graph needs more), the update rate for
 inspecting connections, the Audio Output rate and the **output buses** (below). Each setting has a line of help.
 The timeline's toolbar edits the same tempo fields. The preview resolution and volume are also on the
-transport bar, where they are used while playing.
+transport bar, where they are used while playing. A page taller than the window scrolls.
 
 **Output buses** lists the project's buses, master first, each with a name and a channel count (mono, stereo, 3 to
 8 channels; 5.1 is six). *+ Add bus* adds one; renaming a bus renames it on its tracks and Audio Outputs too. The
@@ -369,8 +387,8 @@ progress and the Export… button.
   size first.
 
 The **summary** lists the file, the picture size, the rate, the length written and the **warm-up**: none, the
-frames rendered first before the loop region, or *from start* when the graph has feedback, with the reason under
-it. *Export…* asks where to save, next to the project and named after it. While it runs the settings are locked,
+frames rendered first before the loop region, or *from start* when the graph has feedback, with a bar under it
+that fills as those warm-up frames render. *Export…* asks where to save, next to the project and named after it. While it runs the settings are locked,
 the **latest frame** written shows above the summary with its frame number and time, and the progress card shows
 the frames done, the time left and *Cancel*, which stops it and removes the unfinished file. Closing the window
 doesn't stop an export; opening it again shows the progress. When it ends the card says where the file went, or
@@ -386,7 +404,9 @@ the connections between them; pasted nodes land at the pointer. The **Edit** men
 and Paste also keep the node's input connections, unless **File → Settings → Keep input connections when duplicating and pasting** is off. Holding Shift
 (Ctrl+Shift+D, Ctrl+Shift+V) does the opposite for one action. Connections to nodes that don't exist in the target
 project are skipped. Over the timeline, S splits, Delete removes the selected items, Ctrl+C, Ctrl+X and Ctrl+V
-copy, cut and paste them, and Ctrl+G and Ctrl+Shift+G group and ungroup them (see [Timeline](#timeline)).
+copy, cut and paste them, and Ctrl+G and Ctrl+Shift+G group and ungroup them (see [Timeline](#timeline)). F2
+renames the selected track over the timeline, and the selected card over the Resources panel. Esc leaves the
+fullscreen preview.
 
 ## Undo
 
@@ -405,7 +425,7 @@ Project files are described in [Graph files](graph-format.md#projects).
   the time goes on the line under the latency and warmup. **Show graph statistics** puts a card in the graph
   editor's bottom-left corner: the nodes and connections, the samples every node's outputs hold per block (one
   frame), the time the nodes took for the frame at the playhead (smoothed) and its share of a frame at the project
-  rate, the samples that is per millisecond, and the render's latency and the frames it renders after a seek.
+  rate, the samples that is per second, and the render's latency and the frames it renders after a seek.
   Samples and times are at the preview resolution.
 - **Help → About RasterSong** credits FFmpeg and links the text of the LGPL version the loaded build is under
   (2.1 or later for the release build, 3 for the development build) and lists the loaded FFmpeg libraries and build

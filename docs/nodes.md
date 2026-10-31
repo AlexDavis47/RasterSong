@@ -6,12 +6,26 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 
 | Node | What it does |
 |---|---|
-| [Audio In](#audio_input) | An input port for sound, one frame's worth per block, -1 to 1, channels interleaved. Audio is the main port, which a graph item reads from what is below it unless set otherwise; other names are ports of their own |
-| [Video In](#video_input) | An input port for pictures, as RGB from 0 to 1. Video is the main port, which a graph item reads from what is below it unless set otherwise; other names are ports of their own |
+| [Audio In](#audio_input) | The graph's main sound: what is below its item on the timeline, one frame's worth per block, -1 to 1, channels interleaved |
+| [Audio Source](#audio_source) | Sound from elsewhere in the project: the audio mix, one audio track on its own, or a graph track's output |
+| [Video In](#video_input) | The graph's main picture: what is below its item on the timeline, as RGB from 0 to 1 |
+| [Video Source](#video_source) | A picture from elsewhere in the project: the video mix, one video track on its own, or a graph track's output |
 
 ### `audio_input`
 
-**Audio In**: An input port for sound, one frame's worth per block, -1 to 1, channels interleaved. Audio is the main port, which a graph item reads from what is below it unless set otherwise; other names are ports of their own
+**Audio In**: The graph's main sound: what is below its item on the timeline, one frame's worth per block, -1 to 1, channels interleaved
+
+Every graph has one, which can't be removed. Below the lowest graph track it is the audio mix; above another graph track it is that track's sound where one of its items plays. Use an Audio Source to read anything else.
+
+**Outputs**
+
+- `out` (audio, -1 to 1): The sound, one frame's worth per block, from -1 to 1; stereo comes as L, R, L, R, …
+
+### `audio_source`
+
+**Audio Source**: Sound from elsewhere in the project: the audio mix, one audio track on its own, or a graph track's output
+
+A track is read before its volume and mute, so a muted kick can still drive an effect. A graph track must be below the one this graph plays on, or it reads silence; where none of its items plays it reads what is below that track. Nothing picked reads silence.
 
 **Outputs**
 
@@ -21,11 +35,24 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `port` (Port) | `Audio` | text | no | The port's name. Audio is the main port; any other name is a port of its own |
+| `source` (Source) | `` | text | no | What this node reads: the audio mix, a track's stem, or a graph track below this one |
+| `output` (Output) | `` | text | no | Which output of the graph track to read: its main Audio, or one of its graphs' Named Outputs |
 
 ### `video_input`
 
-**Video In**: An input port for pictures, as RGB from 0 to 1. Video is the main port, which a graph item reads from what is below it unless set otherwise; other names are ports of their own
+**Video In**: The graph's main picture: what is below its item on the timeline, as RGB from 0 to 1
+
+Every graph has one, which can't be removed. Below the lowest graph track it is the video mix; above another graph track it is that track's picture where one of its items plays. Use a Video Source to read anything else.
+
+**Outputs**
+
+- `out` (video, 0 to 1): The picture, as RGB from 0 to 1
+
+### `video_source`
+
+**Video Source**: A picture from elsewhere in the project: the video mix, one video track on its own, or a graph track's output
+
+A track is read before its mute. A graph track must be below the one this graph plays on, or it reads black; where none of its items plays it reads what is below that track. Nothing picked reads black.
 
 **Outputs**
 
@@ -35,7 +62,8 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `port` (Port) | `Video` | text | no | The port's name. Video is the main port; any other name is a port of its own |
+| `source` (Source) | `` | text | no | What this node reads: the video mix, a track's stem, or a graph track below this one |
+| `output` (Output) | `` | text | no | Which output of the graph track to read: its main Video, or one of its graphs' Named Outputs |
 
 ## Generators
 
@@ -43,6 +71,7 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 |---|---|
 | [Beat](#beat) | A 0 to 1 signal locked to the project's beats, restarting every note length: phase, decay, pulse or steps |
 | [Constant](#constant) | The same value in every sample: a flat colour, or silence |
+| [Graph Progress](#graph_progress) | How far through its graph item the render is: 0 at the item's start, rising evenly to 1 at its end |
 | [Noise](#noise) | Random values in a chosen colour: grain in video, hiss in audio |
 | [Oscillator](#oscillator) | A sine, triangle, square or saw wave: stripes in video, a tone in audio |
 
@@ -78,6 +107,16 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 |---|---|---|---|---|
 | `value` (Value) | 0 | -1 to 1 (up to -10 to 10) | yes | The value of every sample |
 
+### `graph_progress`
+
+**Graph Progress**: How far through its graph item the render is: 0 at the item's start, rising evenly to 1 at its end
+
+Stretching the item makes it rise more slowly. It is 0 during pre-roll. A graph rendered over the whole project goes from 0 to 1 over the project.
+
+**Outputs**
+
+- `out`: The item's progress, 0 to 1
+
 ### `noise`
 
 **Noise**: Random values in a chosen colour: grain in video, hiss in audio
@@ -108,8 +147,7 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
 | `wave` (Wave) | `sine` | `sine`, `triangle`, `square`, `saw` | no | The shape of one cycle |
-| `freq` (Frequency) | 8 | 0.01 to 100 (up to 0 to 1000000) | yes | Cycles per unit of time or space: how many stripes fit in a row, or how high the tone is |
-| `unit` (Cycles per) | `row` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the frequency (cycles per unit): Row keeps the look at any resolution |
+| `freq` (Frequency) | 8 `row` | 0.01 to 100 (up to 0 to 1000000) | yes | Cycles per unit of time or space: how many stripes fit in a row, or how high the tone is. Cycles per unit in `freq.unit`, or one cycle every so many units in `freq.every`. |
 | `phase` (Phase) | 0 | 0 to 1 (up to -1000 to 1000) | yes | Where in the cycle the wave starts, as a fraction of a cycle |
 | `amplitude` (Amplitude) | 0.5 | 0 to 1 (up to -10 to 10) | yes | Half the peak-to-peak height; with the offset it places the wave in the signal's range |
 | `offset` (Offset) | 0.5 | -1 to 1 (up to -10 to 10) | yes | Added to the wave: 0.5 with amplitude 0.5 fills the video range 0 to 1, 0 suits audio |
@@ -449,8 +487,7 @@ Can process R, G and B separately.
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `time` (Time) | 20 | 0 to 50 (up to 0 to 1000) | yes | Delay of the copies; wire an oscillator in here to make them drift |
-| `unit` (Unit) | `ms` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the time |
+| `time` (Time) | 20 `ms` | 0 to 50 (up to 0 to 1000) | yes | Delay of the copies; wire an oscillator in here to make them drift. Unit in `time.unit`. |
 | `voices` (Voices) | 2 | 1 to 4 | yes | How many delayed copies are mixed in |
 | `spread` (Spread) | 0.3 | 0 to 0.6 | yes | How far apart the copies' delays are, as a fraction of the time |
 | `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
@@ -497,9 +534,8 @@ Can process R, G and B separately.
 |---|---|---|---|---|
 | `threshold` (Threshold) | -18 dB | -60 to 0 (up to -200 to 60) | yes | Level above which the signal is turned down |
 | `ratio` (Ratio) | 4 | 1 to 20 (up to 1 to 1000) | yes | How much is taken off above the threshold: 4 lets 1 dB through for every 4 dB over |
-| `attack` (Attack) | 10 | 0.01 to 1000 (up to 0 to 1000000) | yes | How quickly the compressor turns the signal down once it goes over |
-| `release` (Release) | 100 | 0.1 to 5000 (up to 0 to 1000000) | yes | How quickly it lets go once the signal falls back |
-| `unit` (Unit) | `ms` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for attack and release |
+| `attack` (Attack) | 10 `ms` | 0.01 to 1000 (up to 0 to 1000000) | yes | How quickly the compressor turns the signal down once it goes over. Unit in `attack.unit`. |
+| `release` (Release) | 100 `ms` | 0.1 to 5000 (up to 0 to 1000000) | yes | How quickly it lets go once the signal falls back. Unit in `release.unit`. |
 | `knee` (Knee) | 6 dB | 0 to 24 (up to 0 to 100) | yes | Width of the soft transition around the threshold; 0 is a hard knee |
 | `makeup` (Makeup) | 0 dB | -24 to 24 (up to -96 to 96) | yes | Gain applied after compression |
 
@@ -543,8 +579,7 @@ Can process R, G and B separately.
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `cutoff` (Cutoff) | 10 | 0.1 to 100 (up to 0.000001 to 1000000000) | yes | Below this frequency the signal is removed. Keep it far below anything you want to keep; the default suits audio |
-| `unit` (Cycles per) | `second` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the cutoff |
+| `cutoff` (Cutoff) | 10 `second` | 0.1 to 100 (up to 0.000001 to 1000000000) | yes | Below this frequency the signal is removed. Keep it far below anything you want to keep; the default suits audio. Cycles per unit in `cutoff.unit`, or one cycle every so many units in `cutoff.every`. |
 
 ### `delay`
 
@@ -564,8 +599,7 @@ Can process R, G and B separately.
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `time` (Time) | 0.05 | 0 to 100 (up to 0 to 1000) | yes | Delay length, in rows or frames. Small fractions of a row give the finest waves |
-| `unit` (Unit) | `row` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the time |
+| `time` (Time) | 0.05 `row` | 0 to 100 (up to 0 to 1000) | yes | Delay length, in rows or frames. Small fractions of a row give the finest waves. Unit in `time.unit`. |
 | `feedback` (Feedback) | 0 | 0 to 0.99 | yes | How much of the delayed signal is fed back in |
 | `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
 
@@ -612,14 +646,13 @@ Can process R, G and B separately.
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
 | `band` (Type) | `peak` | `peak`, `low_shelf`, `high_shelf` | no | peak, low_shelf or high_shelf |
-| `frequency` (Frequency) | 1000 | 20 to 20000 (up to 0.000001 to 1000000000) | yes | Centre of a peak, or the corner of a shelf |
-| `unit` (Unit) | `second` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the frequency (cycles per unit) and for attack and release |
+| `frequency` (Frequency) | 1000 `second` | 20 to 20000 (up to 0.000001 to 1000000000) | yes | Centre of a peak, or the corner of a shelf. Cycles per unit in `frequency.unit`, or one cycle every so many units in `frequency.every`. |
 | `q` (Q) | 1 | 0.1 to 20 (up to 0.05 to 100) | yes | Width of the band: higher is narrower |
 | `gain` (Gain) | -9 dB | -24 to 24 (up to -48 to 48) | yes | The most the band moves, in decibels. Negative turns the band down when the signal is loud; positive turns it up |
 | `threshold` (Threshold) | -18 dB | -60 to 0 (up to -200 to 60) | yes | Level above which the band starts to move |
 | `ratio` (Ratio) | 4 | 1 to 20 (up to 1 to 1000) | yes | How quickly the band moves toward its gain as the level rises past the threshold |
-| `attack` (Attack) | 0.01 | 0.0001 to 1 (up to 0 to 1000000) | yes | How fast the band moves away from flat |
-| `release` (Release) | 0.1 | 0.001 to 5 (up to 0 to 1000000) | yes | How fast the band returns to flat |
+| `attack` (Attack) | 0.01 `second` | 0.0001 to 1 (up to 0 to 1000000) | yes | How fast the band moves away from flat. Unit in `attack.unit`. |
+| `release` (Release) | 0.1 `second` | 0.001 to 5 (up to 0 to 1000000) | yes | How fast the band returns to flat. Unit in `release.unit`. |
 
 ### `equalizer`
 
@@ -640,8 +673,7 @@ Can process R, G and B separately.
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
 | `band` (Type) | `peak` | `peak`, `low_shelf`, `high_shelf`, `low_cut`, `high_cut`, `notch`, `band_pass` | no | What the band does: peak, low_shelf and high_shelf boost or cut by the gain; low_cut and high_cut remove one side; notch removes a narrow range; band_pass keeps only a range |
-| `frequency` (Frequency) | 30 | 0.01 to 500 (up to 0.000001 to 1000000000) | yes | Centre of a peak, notch or band pass, or the corner of a shelf or cut |
-| `unit` (Cycles per) | `row` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the frequency |
+| `frequency` (Frequency) | 30 `row` | 0.01 to 500 (up to 0.000001 to 1000000000) | yes | Centre of a peak, notch or band pass, or the corner of a shelf or cut. Cycles per unit in `frequency.unit`, or one cycle every so many units in `frequency.every`. |
 | `q` (Q) | 0.707 | 0.1 to 20 (up to 0.05 to 100) | yes | Width of the band: higher is narrower. On a cut, higher adds a resonant peak at the corner; 0.707 is flat |
 | `gain` (Gain) | 0 dB | -24 to 24 (up to -48 to 48) | yes | Boost or cut in decibels. Used when `band` is `peak` or `low_shelf` or `high_shelf`. |
 | `slope` (Slope (dB/oct)) | `12` | `12`, `24`, `48` | no | How sharply a cut falls off past its corner. Used when `band` is `low_cut` or `high_cut`. |
@@ -665,9 +697,8 @@ Can process R, G and B separately.
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
 | `detector` (Detector) | `peak` | `peak`, `rms` | no | peak follows each sample's magnitude, rms follows average power and is smoother |
-| `attack` (Attack) | 5 | 0 to 1000 (up to 0 to 1000000) | yes | How quickly the output rises when the input gets stronger |
-| `release` (Release) | 50 | 0 to 5000 (up to 0 to 1000000) | yes | How quickly the output falls when the input gets weaker |
-| `unit` (Unit) | `ms` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for attack and release |
+| `attack` (Attack) | 5 `ms` | 0 to 1000 (up to 0 to 1000000) | yes | How quickly the output rises when the input gets stronger. Unit in `attack.unit`. |
+| `release` (Release) | 50 `ms` | 0 to 5000 (up to 0 to 1000000) | yes | How quickly the output falls when the input gets weaker. Unit in `release.unit`. |
 
 ### `fm`
 
@@ -688,8 +719,7 @@ Can process R, G and B separately.
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `depth` (Depth) | 0.5 | 0 to 10 (up to 0 to 1000) | yes | How far the modulator pushes the carrier, in rows or frames: the modulator at +1 reads twice this far back, at -1 not at all |
-| `unit` (Unit) | `row` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the depth |
+| `depth` (Depth) | 0.5 `row` | 0 to 10 (up to 0 to 1000) | yes | How far the modulator pushes the carrier, in rows or frames: the modulator at +1 reads twice this far back, at -1 not at all. Unit in `depth.unit`. |
 | `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
 
 ### `filter`
@@ -712,8 +742,7 @@ Can process R, G and B separately.
 |---|---|---|---|---|
 | `response` (Type) | `lowpass` | `lowpass`, `highpass`, `bandpass`, `allpass`, `tilt`, `comb` | no | lowpass, highpass, bandpass, allpass, tilt (gain dB of low-versus-high balance) or comb (echo every cutoff cycle) |
 | `slope` (Slope (dB/oct)) | `12` | `6`, `12`, `24`, `48` | no | How sharply the cut falls off past the cutoff: 6 is a gentle one-pole roll-off, 48 a brick wall. Used when `response` is `lowpass` or `highpass`. |
-| `cutoff` (Cutoff) | 40 | 0.01 to 200 (up to 0.000001 to 1000000000) | yes | Frequency of the filter's corner or centre |
-| `unit` (Cycles per) | `row` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the cutoff |
+| `cutoff` (Cutoff) | 40 `row` | 0.01 to 200 (up to 0.000001 to 1000000000) | yes | Frequency of the filter's corner or centre. Cycles per unit in `cutoff.unit`, or one cycle every so many units in `cutoff.every`. |
 | `q` (Resonance) | 0.707 | 0.1 to 20 (up to 0.05 to 100) | yes | Sharpness: 0.707 is flat (no resonance), higher rings or narrows. For a comb, higher repeats more. The 6 dB slope has none |
 | `gain` (Gain) | 0 dB | -24 to 24 (up to -48 to 48) | yes | For tilt: dB boost of lows and cut of highs (negative reverses) |
 
@@ -735,8 +764,7 @@ Can process R, G and B separately.
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `time` (Time) | 2 | 0 to 10 (up to 0 to 1000) | yes | Delay length; wire an oscillator in here to sweep the comb |
-| `unit` (Unit) | `ms` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the time |
+| `time` (Time) | 2 `ms` | 0 to 10 (up to 0 to 1000) | yes | Delay length; wire an oscillator in here to sweep the comb. Unit in `time.unit`. |
 | `feedback` (Feedback) | 0.5 | -0.95 to 0.95 | yes | How much of the delayed signal is fed back in; negative flips its sign |
 | `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
 
@@ -760,8 +788,7 @@ Can process R, G and B separately.
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `shift` (Shift) | 100 | -1000 to 1000 (up to -1000000000 to 1000000000) | yes | How far every frequency moves: positive shifts up, negative down |
-| `unit` (Cycles per) | `second` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the shift |
+| `shift` (Shift) | 100 `second` | -1000 to 1000 (up to -1000000000 to 1000000000) | yes | How far every frequency moves: positive shifts up, negative down. Cycles per unit in `shift.unit`, or one cycle every so many units in `shift.every`. |
 | `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
 
 ### `gain`
@@ -804,10 +831,9 @@ Can process R, G and B separately.
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
 | `threshold` (Threshold) | -40 dB | -80 to 0 (up to -200 to 60) | yes | Level the signal must reach to open the gate |
-| `attack` (Attack) | 1 | 0.01 to 1000 (up to 0 to 1000000) | yes | How quickly the gate opens |
-| `hold` (Hold) | 50 | 0 to 5000 (up to 0 to 1000000) | yes | How long the gate stays open after the signal drops below the threshold |
-| `release` (Release) | 100 | 0.1 to 5000 (up to 0 to 1000000) | yes | How quickly the gate closes |
-| `unit` (Unit) | `ms` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for attack, hold and release |
+| `attack` (Attack) | 1 `ms` | 0.01 to 1000 (up to 0 to 1000000) | yes | How quickly the gate opens. Unit in `attack.unit`. |
+| `hold` (Hold) | 50 `ms` | 0 to 5000 (up to 0 to 1000000) | yes | How long the gate stays open after the signal drops below the threshold. Unit in `hold.unit`. |
+| `release` (Release) | 100 `ms` | 0.1 to 5000 (up to 0 to 1000000) | yes | How quickly the gate closes. Unit in `release.unit`. |
 | `range` (Range) | -80 dB | -80 to 0 | yes | How far a closed gate turns the signal down; -80 dB is silence |
 
 ### `invert`
@@ -850,8 +876,7 @@ Can process R, G and B separately.
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
 | `ceiling` (Ceiling) | -6 dB | -48 to 0 (up to -120 to 24) | yes | The loudest any sample may get: 0 dB is full scale, 1.0 |
-| `release` (Release) | 50 | 0 to 1000 (up to 0 to 1000000) | yes | How slowly the gain recovers after a peak; longer is smoother |
-| `unit` (Unit) | `ms` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the release |
+| `release` (Release) | 50 `ms` | 0 to 1000 (up to 0 to 1000000) | yes | How slowly the gain recovers after a peak; longer is smoother. Unit in `release.unit`. |
 
 ### `offset`
 
@@ -894,8 +919,7 @@ Can process R, G and B separately.
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
 | `stages` (Stages) | 4 | 1 to 12 | yes | How many allpass filters are chained; every two add a notch |
-| `freq` (Frequency) | 1000 | 20 to 5000 (up to 0.000001 to 1000000000) | yes | Where the notches sit; wire an oscillator in here to sweep them |
-| `unit` (Cycles per) | `second` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the frequency |
+| `freq` (Frequency) | 1000 `second` | 20 to 5000 (up to 0.000001 to 1000000000) | yes | Where the notches sit; wire an oscillator in here to sweep them. Cycles per unit in `freq.unit`, or one cycle every so many units in `freq.every`. |
 | `feedback` (Feedback) | 0.3 | -0.95 to 0.95 | yes | How much of the chain's output is fed back in, which sharpens the notches |
 | `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
 
@@ -989,8 +1013,7 @@ Can process R, G and B separately.
 |---|---|---|---|---|
 | `size` (Size) | 0.5 | 0 to 1 | yes | How long the tail rings: higher is longer |
 | `damping` (Damping) | 0.5 | 0 to 1 | yes | How quickly the tail loses its fast detail: higher is duller |
-| `predelay` (Pre-delay) | 0 | 0 to 100 (up to 0 to 10000) | yes | Gap before the reverb starts |
-| `unit` (Unit) | `ms` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the pre-delay |
+| `predelay` (Pre-delay) | 0 `ms` | 0 to 100 (up to 0 to 10000) | yes | Gap before the reverb starts. Unit in `predelay.unit`. |
 | `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
 
 ### `ring_mod`
@@ -1032,8 +1055,7 @@ Can process R, G and B separately.
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `period` (Period) | 0.25 | 0 to 4 (up to 0 to 1000000) | yes | How long each sampled value is held; 0 samples every sample (no hold) |
-| `unit` (Unit) | `row` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the period |
+| `period` (Period) | 0.25 `row` | 0 to 4 (up to 0 to 1000000) | yes | How long each sampled value is held; 0 samples every sample (no hold). Unit in `period.unit`. |
 | `levels` (Levels) | 0 | 0 to 32 (up to 0 to 65536) | yes | Rounds each value to this many evenly spaced levels between 0 and 1; 0 or 1 leaves values alone |
 
 ### `slew`
@@ -1054,9 +1076,8 @@ Can process R, G and B separately.
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `rise` (Rise) | 0.25 | 0 to 4 (up to 0 to 1000000) | yes | Time to climb a full 0 to 1 when the input jumps up; 0 is instant |
-| `fall` (Fall) | 0.25 | 0 to 4 (up to 0 to 1000000) | yes | Time to fall a full 1 to 0 when the input jumps down; 0 is instant |
-| `unit` (Unit) | `row` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for rise and fall |
+| `rise` (Rise) | 0.25 `row` | 0 to 4 (up to 0 to 1000000) | yes | Time to climb a full 0 to 1 when the input jumps up; 0 is instant. Unit in `rise.unit`. |
+| `fall` (Fall) | 0.25 `row` | 0 to 4 (up to 0 to 1000000) | yes | Time to fall a full 1 to 0 when the input jumps down; 0 is instant. Unit in `fall.unit`. |
 
 ### `three_band`
 
@@ -1078,9 +1099,8 @@ Can process R, G and B separately.
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `low_hz` (Low / mid) | 250 | 1 to 100000 (up to 0.001 to 1000000000) | yes | Crossover between the low and mid bands |
-| `high_hz` (Mid / high) | 4000 | 1 to 100000 (up to 0.001 to 1000000000) | yes | Crossover between the mid and high bands |
-| `unit` (Cycles per) | `second` | `pixel`, `sample`, `row`, `frame`, `ms`, `second`, `beat`, `bar` | no | Unit for the crossovers |
+| `low_hz` (Low / mid) | 250 `second` | 1 to 100000 (up to 0.001 to 1000000000) | yes | Crossover between the low and mid bands. Cycles per unit in `low_hz.unit`, or one cycle every so many units in `low_hz.every`. |
+| `high_hz` (Mid / high) | 4000 `second` | 1 to 100000 (up to 0.001 to 1000000000) | yes | Crossover between the mid and high bands. Cycles per unit in `high_hz.unit`, or one cycle every so many units in `high_hz.every`. |
 | `slope` (Slope (dB/oct)) | `12` | `12`, `24`, `48` | no | How sharply each crossover separates the bands. The mid band is what remains, so the three bands always add back up to the input at any slope |
 
 ## Output
@@ -1088,13 +1108,14 @@ Can process R, G and B separately.
 | Node | What it does |
 |---|---|
 | [Audio Output](#audio_output) | The rendered sound of one output bus: replaces that bus's track mix in the preview and the export |
+| [Named Output](#named_output) | An output other graphs read by its name, without adding to this graph's picture or sound |
 | [Output](#output) | The rendered result: RGB, or mono shown as grayscale |
 
 ### `audio_output`
 
 **Audio Output**: The rendered sound of one output bus: replaces that bus's track mix in the preview and the export
 
-Optional, and at most one per bus. Without one, or with nothing connected, the bus plays its track mix: the audio tracks routed to it, at their volumes; a track wired straight in is also used as it is. A mono signal is written to every channel of the bus; any other signal is written as interleaved samples across the bus's channels (a stereo signal to a stereo bus as it is). Each frame's block is resampled from its own rate to the project's audio rate, and clipped to -1 to 1.
+Every graph has one on the master bus, which can't be removed; add one for each other bus. With nothing connected, the bus plays its track mix: the audio tracks routed to it, at their volumes; a track wired straight in is also used as it is. A mono signal is written to every channel of the bus; any other signal is written as interleaved samples across the bus's channels (a stereo signal to a stereo bus as it is). Each frame's block is resampled from its own rate to the project's audio rate, and clipped to -1 to 1.
 
 **Inputs**
 
@@ -1110,6 +1131,26 @@ Optional, and at most one per bus. Without one, or with nothing connected, the b
 |---|---|---|---|---|
 | `volume` (Volume) | 0 dB | -48 to 12 (up to -120 to 60) | yes | Louder or quieter, in decibels, before the sound is clipped to -1 to 1. 0 changes nothing; the meter shows the peak after the volume, so a peak above 0 dB will clip. |
 | `bus` (Bus) | `Main` | text | no | The output bus this sound goes to, from the buses in Project settings. The project's first bus (Main unless renamed) is the one the preview plays and the export writes. An output naming a bus the project doesn't have is not rendered. |
+
+### `named_output`
+
+**Named Output**: An output other graphs read by its name, without adding to this graph's picture or sound
+
+A Video Source or Audio Source in a graph on a higher graph track reads it by picking this graph's track and the name. Any signal goes in and comes out as it is. Names are unique within a graph.
+
+**Inputs**
+
+- `in` (main, required): The signal to offer to other graphs
+
+**Outputs**
+
+- `out`: The signal as offered
+
+**Parameters**
+
+| Name | Default | Range | Modulation | What it does |
+|---|---|---|---|---|
+| `name` (Name) | `Out` | text | no | What other graphs pick it by |
 
 ### `output`
 

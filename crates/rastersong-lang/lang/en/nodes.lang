@@ -3,6 +3,8 @@
 
 param.mix.label = Mix
 param.mix.help = 0 is the dry input, 1 is only the processed signal; in between crossfades the two
+param.time_signature.label = Time signature
+param.time_signature.help = A note length written as a time signature: the numerator counts notes of the denominator's length, a quarter note (4) being one beat. 1/4 is a beat, 4/4 four beats, 3/8 three eighths
 
 node.am.label = Amplitude Modulation
 node.am.description = Scales the carrier by the modulator
@@ -13,14 +15,22 @@ node.am.param.depth.label = Depth
 node.am.param.depth.help = How strongly the modulator scales the carrier: carrier × (1 + depth × modulator)
 
 node.audio_input.label = Audio In
-node.audio_input.description = An input port for sound, one frame's worth per block, -1 to 1, channels interleaved. Audio is the main port, which a graph item reads from what is below it unless set otherwise; other names are ports of their own
+node.audio_input.description = The graph's main sound: what is below its item on the timeline, one frame's worth per block, -1 to 1, channels interleaved
+node.audio_input.doc = Every graph has one, which can't be removed. Below the lowest graph track it is the audio mix; above another graph track it is that track's sound where one of its items plays. Use an Audio Source to read anything else.
 node.audio_input.output.out = The sound, one frame's worth per block, from -1 to 1; stereo comes as L, R, L, R, …
-node.audio_input.param.port.label = Port
-node.audio_input.param.port.help = The port's name. Audio is the main port; any other name is a port of its own
+
+node.audio_source.label = Audio Source
+node.audio_source.description = Sound from elsewhere in the project: the audio mix, one audio track on its own, or a graph track's output
+node.audio_source.doc = A track is read before its volume and mute, so a muted kick can still drive an effect. A graph track must be below the one this graph plays on, or it reads silence; where none of its items plays it reads what is below that track. Nothing picked reads silence.
+node.audio_source.output.out = The sound, one frame's worth per block, from -1 to 1; stereo comes as L, R, L, R, …
+node.audio_source.param.source.label = Source
+node.audio_source.param.source.help = What this node reads: the audio mix, a track's stem, or a graph track below this one
+node.audio_source.param.output.label = Output
+node.audio_source.param.output.help = Which output of the graph track to read: its main Audio, or one of its graphs' Named Outputs
 
 node.audio_output.label = Audio Output
 node.audio_output.description = The rendered sound of one output bus: replaces that bus's track mix in the preview and the export
-node.audio_output.doc = Optional, and at most one per bus. Without one, or with nothing connected, the bus plays its track mix: the audio tracks routed to it, at their volumes; a track wired straight in is also used as it is. A mono signal is written to every channel of the bus; any other signal is written as interleaved samples across the bus's channels (a stereo signal to a stereo bus as it is). Each frame's block is resampled from its own rate to the project's audio rate, and clipped to -1 to 1.
+node.audio_output.doc = Every graph has one on the master bus, which can't be removed; add one for each other bus. With nothing connected, the bus plays its track mix: the audio tracks routed to it, at their volumes; a track wired straight in is also used as it is. A mono signal is written to every channel of the bus; any other signal is written as interleaved samples across the bus's channels (a stereo signal to a stereo bus as it is). Each frame's block is resampled from its own rate to the project's audio rate, and clipped to -1 to 1.
 node.audio_output.input.in = The sound to output, from -1 to 1: mono, stereo, or any signal read as samples
 node.audio_output.output.out = The sound as written
 node.audio_output.param.volume.label = Volume
@@ -65,8 +75,6 @@ node.chorus.input.in = The signal to process
 node.chorus.output.out = The processed signal
 node.chorus.param.time.label = Time
 node.chorus.param.time.help = Delay of the copies; wire an oscillator in here to make them drift
-node.chorus.param.unit.label = Unit
-node.chorus.param.unit.help = Unit for the time
 node.chorus.param.voices.label = Voices
 node.chorus.param.voices.help = How many delayed copies are mixed in
 node.chorus.param.spread.label = Spread
@@ -107,8 +115,6 @@ node.compressor.param.attack.label = Attack
 node.compressor.param.attack.help = How quickly the compressor turns the signal down once it goes over
 node.compressor.param.release.label = Release
 node.compressor.param.release.help = How quickly it lets go once the signal falls back
-node.compressor.param.unit.label = Unit
-node.compressor.param.unit.help = Unit for attack and release
 node.compressor.param.knee.label = Knee
 node.compressor.param.knee.help = Width of the soft transition around the threshold; 0 is a hard knee
 node.compressor.param.makeup.label = Makeup
@@ -136,8 +142,6 @@ node.delay.input.in = The signal to process
 node.delay.output.out = The processed signal
 node.delay.param.time.label = Time
 node.delay.param.time.help = Delay length, in rows or frames. Small fractions of a row give the finest waves
-node.delay.param.unit.label = Unit
-node.delay.param.unit.help = Unit for the time
 node.delay.param.feedback.label = Feedback
 node.delay.param.feedback.help = How much of the delayed signal is fed back in
 
@@ -162,8 +166,6 @@ node.envelope.param.attack.label = Attack
 node.envelope.param.attack.help = How quickly the output rises when the input gets stronger
 node.envelope.param.release.label = Release
 node.envelope.param.release.help = How quickly the output falls when the input gets weaker
-node.envelope.param.unit.label = Unit
-node.envelope.param.unit.help = Unit for attack and release
 
 node.equalizer.label = EQ Band
 node.equalizer.description = One equalizer band: a peak, shelf, cut, notch or band pass. Chain several for a full equalizer
@@ -173,8 +175,6 @@ node.equalizer.param.band.label = Type
 node.equalizer.param.band.help = What the band does: peak, low_shelf and high_shelf boost or cut by the gain; low_cut and high_cut remove one side; notch removes a narrow range; band_pass keeps only a range
 node.equalizer.param.frequency.label = Frequency
 node.equalizer.param.frequency.help = Centre of a peak, notch or band pass, or the corner of a shelf or cut
-node.equalizer.param.unit.label = Cycles per
-node.equalizer.param.unit.help = Unit for the frequency
 node.equalizer.param.q.label = Q
 node.equalizer.param.q.help = Width of the band: higher is narrower. On a cut, higher adds a resonant peak at the corner; 0.707 is flat
 node.equalizer.param.gain.label = Gain
@@ -192,8 +192,6 @@ node.filter.param.slope.label = Slope (dB/oct)
 node.filter.param.slope.help = How sharply the cut falls off past the cutoff: 6 is a gentle one-pole roll-off, 48 a brick wall
 node.filter.param.cutoff.label = Cutoff
 node.filter.param.cutoff.help = Frequency of the filter's corner or centre
-node.filter.param.unit.label = Cycles per
-node.filter.param.unit.help = Unit for the cutoff
 node.filter.param.q.label = Resonance
 node.filter.param.q.help = Sharpness: 0.707 is flat (no resonance), higher rings or narrows. For a comb, higher repeats more. The 6 dB slope has none
 node.filter.param.gain.label = Gain
@@ -205,8 +203,6 @@ node.flanger.input.in = The signal to process
 node.flanger.output.out = The processed signal
 node.flanger.param.time.label = Time
 node.flanger.param.time.help = Delay length; wire an oscillator in here to sweep the comb
-node.flanger.param.unit.label = Unit
-node.flanger.param.unit.help = Unit for the time
 node.flanger.param.feedback.label = Feedback
 node.flanger.param.feedback.help = How much of the delayed signal is fed back in; negative flips its sign
 
@@ -224,8 +220,6 @@ node.fm.input.modulator = The signal that sets how far back the carrier is read
 node.fm.output.out = The processed signal
 node.fm.param.depth.label = Depth
 node.fm.param.depth.help = How far the modulator pushes the carrier, in rows or frames: the modulator at +1 reads twice this far back, at -1 not at all
-node.fm.param.unit.label = Unit
-node.fm.param.unit.help = Unit for the depth
 
 node.frequency_shifter.label = Frequency Shifter
 node.frequency_shifter.description = Moves every frequency up or down by a fixed amount, giving inharmonic tones
@@ -234,8 +228,6 @@ node.frequency_shifter.input.in = The signal to process
 node.frequency_shifter.output.out = The processed signal
 node.frequency_shifter.param.shift.label = Shift
 node.frequency_shifter.param.shift.help = How far every frequency moves: positive shifts up, negative down
-node.frequency_shifter.param.unit.label = Cycles per
-node.frequency_shifter.param.unit.help = Unit for the shift
 
 node.dynamic_eq.label = Dynamic EQ Band
 node.dynamic_eq.description = An equalizer band whose gain follows the level of the signal: tame a range only when it gets loud
@@ -246,8 +238,6 @@ node.dynamic_eq.param.band.label = Type
 node.dynamic_eq.param.band.help = peak, low_shelf or high_shelf
 node.dynamic_eq.param.frequency.label = Frequency
 node.dynamic_eq.param.frequency.help = Centre of a peak, or the corner of a shelf
-node.dynamic_eq.param.unit.label = Unit
-node.dynamic_eq.param.unit.help = Unit for the frequency (cycles per unit) and for attack and release
 node.dynamic_eq.param.q.label = Q
 node.dynamic_eq.param.q.help = Width of the band: higher is narrower
 node.dynamic_eq.param.gain.label = Gain
@@ -266,14 +256,17 @@ node.dc_filter.input.in = The signal to process
 node.dc_filter.output.out = The signal with its offset removed
 node.dc_filter.param.cutoff.label = Cutoff
 node.dc_filter.param.cutoff.help = Below this frequency the signal is removed. Keep it far below anything you want to keep; the default suits audio
-node.dc_filter.param.unit.label = Cycles per
-node.dc_filter.param.unit.help = Unit for the cutoff
 node.gain.label = Gain
 node.gain.description = Makes the signal louder or quieter, in decibels
 node.gain.input.in = The signal to process
 node.gain.output.out = The processed signal
 node.gain.param.gain.label = Gain
 node.gain.param.gain.help = How much louder (or brighter) the signal gets; negative is quieter, 0 changes nothing
+
+node.graph_progress.label = Graph Progress
+node.graph_progress.description = How far through its graph item the render is: 0 at the item's start, rising evenly to 1 at its end
+node.graph_progress.output.out = The item's progress, 0 to 1
+node.graph_progress.doc = Stretching the item makes it rise more slowly. It is 0 during pre-roll. A graph rendered over the whole project goes from 0 to 1 over the project.
 
 node.gate.label = Gate
 node.gate.description = Silences the signal while it, or a sidechain, is quiet
@@ -288,8 +281,6 @@ node.gate.param.hold.label = Hold
 node.gate.param.hold.help = How long the gate stays open after the signal drops below the threshold
 node.gate.param.release.label = Release
 node.gate.param.release.help = How quickly the gate closes
-node.gate.param.unit.label = Unit
-node.gate.param.unit.help = Unit for attack, hold and release
 node.gate.param.range.label = Range
 node.gate.param.range.help = How far a closed gate turns the signal down; -80 dB is silence
 
@@ -315,8 +306,6 @@ node.limiter.param.ceiling.label = Ceiling
 node.limiter.param.ceiling.help = The loudest any sample may get: 0 dB is full scale, 1.0
 node.limiter.param.release.label = Release
 node.limiter.param.release.help = How slowly the gain recovers after a peak; longer is smoother
-node.limiter.param.unit.label = Unit
-node.limiter.param.unit.help = Unit for the release
 
 node.noise.label = Noise
 node.noise.description = Random values in a chosen colour: grain in video, hiss in audio
@@ -344,8 +333,6 @@ node.oscillator.param.wave.label = Wave
 node.oscillator.param.wave.help = The shape of one cycle
 node.oscillator.param.freq.label = Frequency
 node.oscillator.param.freq.help = Cycles per unit of time or space: how many stripes fit in a row, or how high the tone is
-node.oscillator.param.unit.label = Cycles per
-node.oscillator.param.unit.help = Unit for the frequency (cycles per unit): Row keeps the look at any resolution
 node.oscillator.param.phase.label = Phase
 node.oscillator.param.phase.help = Where in the cycle the wave starts, as a fraction of a cycle
 node.oscillator.param.amplitude.label = Amplitude
@@ -357,6 +344,14 @@ node.oscillator.param.pulse_width.help = For the square wave, the fraction of th
 
 node.output.label = Output
 node.output.description = The rendered result: RGB, or mono shown as grayscale
+
+node.named_output.label = Named Output
+node.named_output.description = An output other graphs read by its name, without adding to this graph's picture or sound
+node.named_output.doc = A Video Source or Audio Source in a graph on a higher graph track reads it by picking this graph's track and the name. Any signal goes in and comes out as it is. Names are unique within a graph.
+node.named_output.input.in = The signal to offer to other graphs
+node.named_output.output.out = The signal as offered
+node.named_output.param.name.label = Name
+node.named_output.param.name.help = What other graphs pick it by
 node.output.input.in = The picture to render: RGB, or mono for grayscale
 node.output.output.out = The rendered picture
 
@@ -377,8 +372,6 @@ node.phaser.param.stages.label = Stages
 node.phaser.param.stages.help = How many allpass filters are chained; every two add a notch
 node.phaser.param.freq.label = Frequency
 node.phaser.param.freq.help = Where the notches sit; wire an oscillator in here to sweep them
-node.phaser.param.unit.label = Cycles per
-node.phaser.param.unit.help = Unit for the frequency
 node.phaser.param.feedback.label = Feedback
 node.phaser.param.feedback.help = How much of the chain's output is fed back in, which sharpens the notches
 
@@ -455,8 +448,6 @@ node.reverb.param.damping.label = Damping
 node.reverb.param.damping.help = How quickly the tail loses its fast detail: higher is duller
 node.reverb.param.predelay.label = Pre-delay
 node.reverb.param.predelay.help = Gap before the reverb starts
-node.reverb.param.unit.label = Unit
-node.reverb.param.unit.help = Unit for the pre-delay
 
 node.ring_mod.label = Ring Modulation
 node.ring_mod.description = Multiplies the carrier by the modulator, leaving sum and difference tones
@@ -470,8 +461,6 @@ node.sample_hold.input.in = The signal to process
 node.sample_hold.output.out = The processed signal
 node.sample_hold.param.period.label = Period
 node.sample_hold.param.period.help = How long each sampled value is held; 0 samples every sample (no hold)
-node.sample_hold.param.unit.label = Unit
-node.sample_hold.param.unit.help = Unit for the period
 node.sample_hold.param.levels.label = Levels
 node.sample_hold.param.levels.help = Rounds each value to this many evenly spaced levels between 0 and 1; 0 or 1 leaves values alone
 
@@ -483,8 +472,6 @@ node.slew.param.rise.label = Rise
 node.slew.param.rise.help = Time to climb a full 0 to 1 when the input jumps up; 0 is instant
 node.slew.param.fall.label = Fall
 node.slew.param.fall.help = Time to fall a full 1 to 0 when the input jumps down; 0 is instant
-node.slew.param.unit.label = Unit
-node.slew.param.unit.help = Unit for rise and fall
 
 node.split.label = Split Channels
 node.split.description = Each channel of an interleaved signal on its own: R, G, B of video or L, R of stereo
@@ -516,8 +503,6 @@ node.three_band.param.low_hz.label = Low / mid
 node.three_band.param.low_hz.help = Crossover between the low and mid bands
 node.three_band.param.high_hz.label = Mid / high
 node.three_band.param.high_hz.help = Crossover between the mid and high bands
-node.three_band.param.unit.label = Cycles per
-node.three_band.param.unit.help = Unit for the crossovers
 
 node.to_audio.label = Video to Audio
 node.to_audio.description = Video's 0 to 1 as audio's -1 to 1, as written to an 8-bit file
@@ -539,10 +524,18 @@ node.transpose.input.in = The signal to process
 node.transpose.output.out = The processed signal
 
 node.video_input.label = Video In
-node.video_input.description = An input port for pictures, as RGB from 0 to 1. Video is the main port, which a graph item reads from what is below it unless set otherwise; other names are ports of their own
+node.video_input.description = The graph's main picture: what is below its item on the timeline, as RGB from 0 to 1
+node.video_input.doc = Every graph has one, which can't be removed. Below the lowest graph track it is the video mix; above another graph track it is that track's picture where one of its items plays. Use a Video Source to read anything else.
 node.video_input.output.out = The picture, as RGB from 0 to 1
-node.video_input.param.port.label = Port
-node.video_input.param.port.help = The port's name. Video is the main port; any other name is a port of its own
+
+node.video_source.label = Video Source
+node.video_source.description = A picture from elsewhere in the project: the video mix, one video track on its own, or a graph track's output
+node.video_source.doc = A track is read before its mute. A graph track must be below the one this graph plays on, or it reads black; where none of its items plays it reads what is below that track. Nothing picked reads black.
+node.video_source.output.out = The picture, as RGB from 0 to 1
+node.video_source.param.source.label = Source
+node.video_source.param.source.help = What this node reads: the video mix, a track's stem, or a graph track below this one
+node.video_source.param.output.label = Output
+node.video_source.param.output.help = Which output of the graph track to read: its main Video, or one of its graphs' Named Outputs
 
 node.three_band.param.slope.label = Slope (dB/oct)
 node.three_band.param.slope.help = How sharply each crossover separates the bands. The mid band is what remains, so the three bands always add back up to the input at any slope

@@ -3,7 +3,7 @@ use std::f64::consts::PI;
 use super::filter::Slope;
 use crate::dsp::{Biquad, BiquadKind, MAX_STAGES, butterworth_cascade};
 use crate::nodes::support::UNBOUNDED_WARMUP;
-use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
+use crate::nodes::{Category, Measure, NodeKind, NodeSpec};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 choice! {
@@ -32,12 +32,10 @@ choice! {
 pub struct Equalizer {
     band: Shape,
     slope: Slope,
-    unit: Unit,
+    unit: Measure,
     frequency: f64,
     q: f64,
     gain: f64,
-    /// Set in `prepare`: cycles per sample for one unit, and whether any parameter is modulated.
-    per_sample: f64,
     modulated: bool,
     /// Slowest frequency in cycles per sample and highest Q, for warmup.
     slowest: f64,
@@ -48,9 +46,9 @@ pub struct Equalizer {
 params! { Equalizer {
     BAND: ParamSpec::choice("band", Shape::OPTIONS, "peak"),
     FREQUENCY: ParamSpec::number("frequency", 30.0, 0.01, 500.0)
+    .rate("row")
         .exposed()
         .limits(1e-06, 1e9),
-    UNIT: Unit::freq_param("row"),
     Q: ParamSpec::number("q", 0.707, 0.1, 20.0)
         .limits(0.05, 100.0),
     GAIN: ParamSpec::number("gain", 0.0, -24.0, 24.0)
@@ -84,11 +82,10 @@ impl NodeKind for Equalizer {
         Ok(Self {
             band: params.choice_as(Self::BAND)?,
             slope: params.choice_as(Self::SLOPE)?,
-            unit: params.choice_as(Self::UNIT)?,
+            unit: params.measure_at(Self::FREQUENCY)?,
             frequency: params.number_at(Self::FREQUENCY)?,
             q: params.number_at(Self::Q)?,
             gain: params.number_at(Self::GAIN)?,
-            per_sample: 0.0,
             modulated: false,
             slowest: 0.0,
             sharpest: 1.0,
@@ -108,7 +105,7 @@ impl Equalizer {
 
     /// The sections for a frequency (in this node's unit), quality factor and gain (dB).
     fn design(&self, frequency: f64, q: f64, gain: f64) -> [Biquad; MAX_STAGES] {
-        let f = frequency * self.per_sample;
+        let f = self.unit.per_sample(frequency);
         let one = |kind| {
             let mut sections = [Biquad::default(); MAX_STAGES];
             sections[0] = Biquad::design(kind, f, q);
@@ -128,11 +125,11 @@ impl Equalizer {
 
 impl Node for Equalizer {
     fn prepare(&mut self, ctx: &PrepareContext) {
-        self.per_sample = self.unit.per_sample(1.0, ctx);
+        self.unit.prepare(ctx);
         self.modulated = [Self::FREQUENCY, Self::Q, Self::GAIN]
             .iter()
             .any(|&p| ctx.modulation(p).is_some());
-        self.slowest = ctx.param_min(Self::FREQUENCY, self.frequency) * self.per_sample;
+        self.slowest = self.unit.slowest(ctx, Self::FREQUENCY, self.frequency);
         self.sharpest = ctx.param_max(Self::Q, self.q);
         self.sections = self.design(self.frequency, self.q, self.gain);
     }

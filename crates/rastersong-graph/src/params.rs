@@ -3,7 +3,7 @@
 use rastersong_lang::tr_args;
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::nodes::Choice;
+use crate::nodes::{Choice, Measure, Unit};
 use crate::{MODULATION_AMOUNT_LIMITS, ModMode, Modulation, ParamValue};
 
 /// One parameter of a node type.
@@ -24,9 +24,35 @@ pub struct ParamSpec {
     /// Whether a signal is barred from modulating it (set by [`Self::fixed`]); the reason is in the
     /// node's text, under `locked`.
     pub locked: bool,
+    /// Whether the value is counted in a unit of its own, as a length or a rate. Its unit is saved
+    /// next to it: `"time.unit": "frame"`, or for a rate read as a period, `"rate.every": "bar"`.
+    pub timing: Timing,
+    /// The unit a length or rate is in until one is picked: one of [`Unit::OPTIONS`].
+    pub default_unit: &'static str,
     /// When the parameter means something: the editor hides it (and the docs say so) while
     /// the rule fails. A hidden parameter keeps its value and still saves.
     pub when: Option<ShownWhen>,
+}
+
+/// Whether a number is measured in a unit: the editor puts the unit on the value's box.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Timing {
+    /// Not measured in the unit.
+    #[default]
+    None,
+    /// A length: the value counts units (3 sixteenths, 20 ms).
+    Length,
+    /// A rate: the value is cycles per unit (2 per bar, 440 per second), or read as a period, one
+    /// cycle every so many units (every 2 bars).
+    Rate,
+}
+
+/// How a rate's number is read: cycles per unit, or one cycle every so many units.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Reading {
+    #[default]
+    Per,
+    Every,
 }
 
 /// A parameter that only matters while another, a choice, has one of some values.
@@ -84,6 +110,8 @@ impl ParamSpec {
             exposed: false,
             integer: false,
             locked: false,
+            timing: Timing::None,
+            default_unit: "",
             when: None,
         }
     }
@@ -108,6 +136,8 @@ impl ParamSpec {
             exposed: false,
             integer: false,
             locked: false,
+            timing: Timing::None,
+            default_unit: "",
             when: None,
         }
     }
@@ -121,6 +151,8 @@ impl ParamSpec {
             exposed: false,
             integer: false,
             locked: false,
+            timing: Timing::None,
+            default_unit: "",
             when: None,
         }
     }
@@ -129,6 +161,61 @@ impl ParamSpec {
     pub const fn exposed(mut self) -> Self {
         self.exposed = true;
         self
+    }
+
+    /// A length counted in `unit` until another is picked (see [`Timing`]).
+    pub const fn length(mut self, unit: &'static str) -> Self {
+        self.timing = Timing::Length;
+        self.default_unit = unit;
+        self
+    }
+
+    /// A rate in cycles per `unit` until another is picked (see [`Timing`]).
+    pub const fn rate(mut self, unit: &'static str) -> Self {
+        self.timing = Timing::Rate;
+        self.default_unit = unit;
+        self
+    }
+
+    /// The graph key that holds this number's unit, read as `reading`.
+    pub fn unit_key(&self, reading: Reading) -> String {
+        match reading {
+            Reading::Per => format!("{}.unit", self.name),
+            Reading::Every => format!("{}.every", self.name),
+        }
+    }
+
+    /// This number's unit and how it is read, from `values` or by default; `None` for a number
+    /// not measured in one. An option that isn't a unit reads as the default (loading reports it).
+    pub fn measure_of(
+        &self,
+        values: &BTreeMap<String, ParamValue>,
+    ) -> Option<(&'static str, Reading)> {
+        if self.timing == Timing::None {
+            return None;
+        }
+        let set = |reading| match values.get(&self.unit_key(reading)) {
+            Some(ParamValue::Text(u)) => Unit::OPTIONS.iter().find(|o| **o == u).copied(),
+            _ => None,
+        };
+        Some(match set(Reading::Every) {
+            Some(u) if self.timing == Timing::Rate => (u, Reading::Every),
+            _ => (set(Reading::Per).unwrap_or(self.default_unit), Reading::Per),
+        })
+    }
+
+    /// Sets this number's unit in `values`, leaving it out when it is the default.
+    pub fn set_measure(
+        &self,
+        values: &mut BTreeMap<String, ParamValue>,
+        unit: &str,
+        reading: Reading,
+    ) {
+        values.remove(&self.unit_key(Reading::Per));
+        values.remove(&self.unit_key(Reading::Every));
+        if unit != self.default_unit || reading == Reading::Every {
+            values.insert(self.unit_key(reading), ParamValue::Text(unit.to_owned()));
+        }
     }
 
     /// A number that can only be whole. The usual range and limits should be whole too.
@@ -327,7 +414,15 @@ impl<'a> Params<'a> {
         specs: &'static [ParamSpec],
         values: &'a BTreeMap<String, ParamValue>,
     ) -> Result<Self, String> {
-        let known: BTreeSet<&str> = specs.iter().map(|s| s.name).collect();
+        let mut known: BTreeSet<String> = specs.iter().map(|s| s.name.to_owned()).collect();
+        for s in specs {
+            if s.timing != Timing::None {
+                known.insert(s.unit_key(Reading::Per));
+            }
+            if s.timing == Timing::Rate {
+                known.insert(s.unit_key(Reading::Every));
+            }
+        }
         if let Some(unknown) = values.keys().find(|k| !known.contains(k.as_str())) {
             return Err(tr_args("error.param.unknown", &[("name", unknown)]));
         }
@@ -443,6 +538,48 @@ impl<'a> Params<'a> {
                 &[("name", self.specs[index].name), ("option", option)],
             )
         })
+    }
+
+    /// The unit the number at `index` is measured in, and how it is read. An option that isn't a
+    /// unit, or both readings set at once, is an error.
+    pub fn measure_at(&self, index: usize) -> Result<Measure, String> {
+        let spec = &self.specs[index];
+        assert!(
+            spec.timing != Timing::None,
+            "parameter `{}` is not declared as a length or a rate",
+            spec.name
+        );
+        let read = |reading| -> Result<Option<Unit>, String> {
+            let key = spec.unit_key(reading);
+            match self.values.get(&key) {
+                None => Ok(None),
+                Some(ParamValue::Text(u)) if Unit::from_option(u).is_some() => {
+                    Ok(Unit::from_option(u))
+                }
+                Some(other) => Err(tr_args(
+                    "error.param.choice",
+                    &[
+                        ("name", &key),
+                        ("options", &format!("{:?}", Unit::OPTIONS)),
+                        ("got", &format!("{other:?}")),
+                    ],
+                )),
+            }
+        };
+        let (per, every) = (read(Reading::Per)?, read(Reading::Every)?);
+        let default = || {
+            Unit::from_option(spec.default_unit).unwrap_or_else(|| {
+                panic!(
+                    "parameter `{}` defaults to `{}`, which isn't a unit",
+                    spec.name, spec.default_unit
+                )
+            })
+        };
+        match (per, every) {
+            (Some(_), Some(_)) => Err(tr_args("error.param.two_units", &[("name", spec.name)])),
+            (_, Some(unit)) => Ok(Measure::new(unit, Reading::Every)),
+            (unit, None) => Ok(Measure::new(unit.unwrap_or_else(default), Reading::Per)),
+        }
     }
 
     pub fn text_at(&self, index: usize) -> Result<String, String> {
@@ -564,6 +701,41 @@ mod tests {
         assert_eq!(spec.modulation_amount_for_sweep(5.0, (3.0, 3.0)), 0.0);
         assert_eq!(spec.default_modulation_amount(), 25.0);
         assert_eq!(spec.default_modulation().mode, ModMode::Unipolar);
+    }
+
+    #[test]
+    fn each_length_and_rate_has_its_own_unit() {
+        const TIMED: &[ParamSpec] = &[
+            ParamSpec::number("attack", 1.0, 0.0, 10.0).length("ms"),
+            ParamSpec::number("rate", 1.0, 0.0, 10.0).rate("second"),
+        ];
+        let v = values(r#"{ "attack.unit": "16th", "rate.every": "bar" }"#);
+        let p = Params::new(TIMED, &v).unwrap();
+        assert_eq!(
+            p.measure_at(0).unwrap(),
+            Measure::new(Unit::Sixteenth, Reading::Per)
+        );
+        assert_eq!(
+            p.measure_at(1).unwrap(),
+            Measure::new(Unit::Bar, Reading::Every)
+        );
+        assert_eq!(TIMED[1].measure_of(&v), Some(("bar", Reading::Every)));
+        let empty = values("{}");
+        let p = Params::new(TIMED, &empty).unwrap();
+        assert_eq!(
+            p.measure_at(0).unwrap(),
+            Measure::new(Unit::Ms, Reading::Per)
+        );
+        // A length has no period reading, and a rate can't have both.
+        assert!(Params::new(TIMED, &values(r#"{ "attack.every": "bar" }"#)).is_err());
+        let both = values(r#"{ "rate.unit": "bar", "rate.every": "bar" }"#);
+        assert!(Params::new(TIMED, &both).unwrap().measure_at(1).is_err());
+        let bad = values(r#"{ "attack.unit": "parsec" }"#);
+        assert!(Params::new(TIMED, &bad).unwrap().measure_at(0).is_err());
+        // Setting the default leaves the key out.
+        let mut v = values(r#"{ "rate.every": "bar" }"#);
+        TIMED[1].set_measure(&mut v, "second", Reading::Per);
+        assert!(v.is_empty());
     }
 
     #[test]

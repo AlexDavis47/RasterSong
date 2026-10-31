@@ -51,6 +51,7 @@ fn nodes(c: &mut Criterion) {
             connected: &vec![true; inputs],
             modulated: &[],
             pixel_scale: 1.0,
+            span: rastersong_graph::Span::default(),
         });
         let signals = [
             Signal::from_data(layout, ramp(layout.len(), 1.0)),
@@ -105,6 +106,7 @@ fn graphs(c: &mut Criterion) {
                 ]),
                 output: video,
                 pixel_scale: 1.0,
+                span: rastersong_graph::Span::default(),
                 audio_bus: "Main".to_owned(),
             },
         )

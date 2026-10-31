@@ -7,9 +7,10 @@
 use std::collections::BTreeMap;
 
 use proptest::prelude::*;
+use rastersong_graph::nodes::Choice;
 use rastersong_graph::{
     Category, GraphDesc, Layout, MAX_PARAMS, Node, ParamKind, ParamSpec, ParamValue,
-    PrepareContext, ProcessContext, Registry, Signal,
+    PrepareContext, ProcessContext, Registry, Signal, Timing, Unit,
 };
 
 /// Samples per row. Blocks are whole rows, so "rows" units mean the same thing in every block.
@@ -87,6 +88,7 @@ impl Harness {
             connected: &vec![true; inputs],
             modulated: &modulated,
             pixel_scale: 1.0,
+            span: rastersong_graph::Span::default(),
         });
         Self {
             node,
@@ -414,27 +416,35 @@ fn modulatable_numbers_have_a_span_to_take_a_percentage_of() {
     assert!(problems.is_empty(), "no span to modulate: {problems:?}");
 }
 
-/// Every `unit` parameter offers the one list of units (`Unit`), so no node can grow its own list
-/// or its own wording.
+/// Every length and rate is a number that starts in one of the shared units (`Unit`), so no node
+/// can grow its own list or its own wording, and no node keeps a `unit` of its own beside them.
 #[test]
-fn every_unit_parameter_offers_the_shared_units() {
-    let mut shared: Option<&'static [&'static str]> = None;
+fn every_length_and_rate_starts_in_a_shared_unit() {
     let mut count = 0;
     for t in Registry::shared().types() {
-        for spec in t.spec.params.iter().filter(|s| s.name == "unit") {
-            let ParamKind::Choice { options, .. } = spec.kind else {
-                panic!("{}.unit is not a choice", t.kind);
-            };
+        assert!(
+            t.spec.params.iter().all(|s| s.name != "unit"),
+            "{} has a node-wide `unit`; each number carries its own",
+            t.kind
+        );
+        for spec in t.spec.params.iter().filter(|s| s.timing != Timing::None) {
             count += 1;
-            assert_eq!(
-                *shared.get_or_insert(options),
-                options,
-                "{}.unit has its own list of units",
-                t.kind
+            assert!(
+                matches!(spec.kind, ParamKind::Number { .. }),
+                "{}.{} is measured in a unit but isn't a number",
+                t.kind,
+                spec.name
+            );
+            assert!(
+                Unit::from_option(spec.default_unit).is_some(),
+                "{}.{} starts in `{}`, which isn't a unit",
+                t.kind,
+                spec.name,
+                spec.default_unit
             );
         }
     }
-    assert!(count > 10, "only {count} unit parameters found");
+    assert!(count > 20, "only {count} lengths and rates found");
 }
 
 /// The lang files hold every node's text and nothing stale: each node, port and parameter has its

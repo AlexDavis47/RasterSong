@@ -162,6 +162,15 @@ fn odd_size_note(kind: FormatKind, width: u32, height: u32) -> Option<String> {
 
 /// The frames before `start` an export renders first, for a graph whose nodes need up to
 /// `needed` frames of warmup.
+/// How much of the `warm` warmup frames an export that has rendered `done` frames has covered.
+fn warmup_fraction(done: usize, warm: usize) -> f32 {
+    if warm == 0 {
+        0.0
+    } else {
+        done.min(warm) as f32 / warm as f32
+    }
+}
+
 fn warmup_before(start: usize, needed: u32) -> Warmup {
     if start == 0 || needed == 0 {
         Warmup::None
@@ -785,19 +794,23 @@ impl App {
             };
             summary_row(ui, tr("export.summary.warmup"), &warmup_text);
         });
-        let why = match warmup {
-            Warmup::None => None,
-            Warmup::Frames(n) => Some(tr_args(
-                "export.warmup.frames.why",
-                &[("frames", &n.to_string())],
-            )),
-            Warmup::FromStart => Some(tr("export.warmup.from_start.why").to_owned()),
+        let warm_frames = match warmup {
+            Warmup::None => 0,
+            Warmup::Frames(n) => n,
+            Warmup::FromStart => frames.start,
         };
-        if let Some(why) = why {
-            ui.label(
-                RichText::new(why)
-                    .size(11.5)
-                    .color(theme.surfaces.text_faint),
+        if warm_frames > 0 {
+            let fraction = self.running_export.as_ref().map_or(0.0, |run| {
+                warmup_fraction(run.done.load(Ordering::Relaxed), warm_frames)
+            });
+            let (bar, _) =
+                ui.allocate_exact_size(vec2(ui.available_width(), 4.0), egui::Sense::hover());
+            ui.painter()
+                .rect_filled(bar, 2, theme.surfaces.raised_hover);
+            ui.painter().rect_filled(
+                bar.with_max_x(bar.left() + bar.width() * fraction),
+                2,
+                theme.accent,
             );
         }
 
@@ -862,34 +875,23 @@ impl App {
             Stroke::new(1.0, theme.surfaces.border),
             egui::StrokeKind::Outside,
         );
-        match &self.export.frame {
-            Some(frame) => {
-                let aspect = frame.width as f32 / frame.height.max(1) as f32;
-                let size = if aspect > rect.aspect_ratio() {
-                    vec2(rect.width(), rect.width() / aspect)
-                } else {
-                    vec2(rect.height() * aspect, rect.height())
-                };
-                let fit = Rect::from_center_size(rect.center(), size);
-                let mut inner = ui.new_child(UiBuilder::new().max_rect(fit));
-                picture(
-                    &mut inner,
-                    ui.id().with("export-frame"),
-                    self.export.frame_version,
-                    [frame.width, frame.height],
-                    &frame.rgb,
-                    fit.width(),
-                );
-            }
-            None => {
-                ui.painter().text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    tr("export.latest.empty"),
-                    egui::FontId::proportional(11.5),
-                    theme.surfaces.text_faint,
-                );
-            }
+        if let Some(frame) = &self.export.frame {
+            let aspect = frame.width as f32 / frame.height.max(1) as f32;
+            let size = if aspect > rect.aspect_ratio() {
+                vec2(rect.width(), rect.width() / aspect)
+            } else {
+                vec2(rect.height() * aspect, rect.height())
+            };
+            let fit = Rect::from_center_size(rect.center(), size);
+            let mut inner = ui.new_child(UiBuilder::new().max_rect(fit));
+            picture(
+                &mut inner,
+                ui.id().with("export-frame"),
+                self.export.frame_version,
+                [frame.width, frame.height],
+                &frame.rgb,
+                fit.width(),
+            );
         }
         let corner = rect.shrink(6.0);
         if self.running_export.is_some() {
@@ -1044,6 +1046,14 @@ mod tests {
             odd_size_note(FormatKind::ProRes, 1281, 721).unwrap(),
             "ProRes needs an even width and height; 1281×721 is odd."
         );
+    }
+
+    #[test]
+    fn warmup_bar_fills_while_the_warmup_frames_render() {
+        assert_eq!(warmup_fraction(0, 10), 0.0);
+        assert_eq!(warmup_fraction(5, 10), 0.5);
+        assert_eq!(warmup_fraction(40, 10), 1.0);
+        assert_eq!(warmup_fraction(3, 0), 0.0);
     }
 
     #[test]

@@ -9,12 +9,13 @@ use crate::desc::{
 };
 use crate::dsp::{DelayLine, resample, resample_split};
 use crate::nodes::{
-    AUDIO_INPUT, AUDIO_OUTPUT, BUS_PARAM, DEFAULT_BUS, MAX_METERS, Meter, OUTPUT, Registry,
+    AUDIO_INPUT, AUDIO_OUTPUT, AUDIO_SOURCE, BUS_PARAM, DEFAULT_BUS, MAX_METERS, Meter, NAME_PARAM,
+    NAMED_OUTPUT, OUTPUT, Registry,
 };
 
 use crate::{
     Diagnostic, GraphError, InputSpec, Layout, LayoutContext, Node, OutputSpec, ParamSpec,
-    ParamValue, PrepareContext, ProcessContext, Range, Severity, Signal, Sources, Tag, Tempo,
+    ParamValue, PrepareContext, ProcessContext, Range, Severity, Signal, Sources, Span, Tag, Tempo,
 };
 
 /// The node type that fills unconnected inputs.
@@ -39,6 +40,8 @@ pub struct CompileOptions {
     pub frame_rate: f64,
     /// The project's tempo, for beat and bar units.
     pub tempo: Tempo,
+    /// What the graph's item plays of the graph's own time, for Graph Progress.
+    pub span: Span,
     /// Layouts of the signals the host will supply each frame, by source name.
     pub sources: HashMap<String, Layout>,
     /// The layout the output node must produce (the project's RGB frame).
@@ -123,6 +126,8 @@ pub struct Graph {
     output_step: usize,
     /// The audio output's step, if the graph has one.
     audio_step: Option<usize>,
+    /// The named outputs' steps, by name.
+    named_steps: Vec<(String, usize)>,
     /// The source the audio output reads directly, when nothing processes it on the way.
     audio_passthrough: Option<String>,
     frame_rate: f64,
@@ -441,7 +446,8 @@ impl Graph {
         let bypassed = apply_bypass(desc, registry);
         let desc = bypassed.as_ref().unwrap_or(desc);
         check_audio_outputs(desc)?;
-        let active = without_inactive_audio_outputs(desc, &options.audio_bus);
+        check_named_outputs(desc)?;
+        let active = without_idle_outputs(desc, &options.audio_bus);
         let desc = active.as_ref().unwrap_or(desc);
         let filled = fill_missing_inputs(desc, registry);
         let desc = filled.as_ref().unwrap_or(desc);
@@ -457,8 +463,12 @@ impl Graph {
         let &[output] = outputs.as_slice() else {
             return Err(GraphError::OutputCount(outputs.len()));
         };
-        let audio_outputs = of_kind(AUDIO_OUTPUT);
-        let sinks: Vec<usize> = std::iter::once(output).chain(audio_outputs).collect();
+        let audio_output = of_kind(AUDIO_OUTPUT).first().copied();
+        let named_outputs = of_kind(NAMED_OUTPUT);
+        let sinks: Vec<usize> = std::iter::once(output)
+            .chain(audio_output)
+            .chain(named_outputs.iter().copied())
+            .collect();
         // Sinks are the ends of the graph: nothing may read them, so they can be compiled last.
         if let Some(reader) = pending
             .iter()
@@ -487,18 +497,28 @@ impl Graph {
                     .get("volume")
                     .is_none_or(|v| matches!(v, ParamValue::Number(n) if *n == 0.0))
         };
-        let audio_passthrough = sinks
-            .get(1)
-            .filter(|&&audio| unity(&pending[audio]))
-            .and_then(|&audio| pending[audio].wires[0])
-            .filter(|&(src, _)| pending[src].kind == AUDIO_INPUT)
+        let audio_passthrough = audio_output
+            .filter(|&audio| unity(&pending[audio]))
+            .and_then(|audio| pending[audio].wires[0])
+            .filter(|&(src, _)| matches!(&*pending[src].kind, AUDIO_INPUT | AUDIO_SOURCE))
             .and_then(|(src, _)| pending[src].node.source().map(str::to_owned));
+        let names: Vec<(String, usize)> = named_outputs
+            .iter()
+            .map(|&n| (output_name(&pending[n].params).to_owned(), n))
+            .collect();
 
         let mut compiler = Compiler::new(registry, options, pending, sinks);
         for &n in &order {
             compiler.add_step(n)?;
         }
+        let audio_step = audio_output.map(|a| compiler.step_of[a]);
+        let named_steps = names
+            .into_iter()
+            .map(|(name, n)| (name, compiler.step_of[n]))
+            .collect();
         let mut graph = compiler.finish();
+        graph.audio_step = audio_step;
+        graph.named_steps = named_steps;
         graph.audio_passthrough = audio_passthrough;
         Ok(graph)
     }
@@ -609,6 +629,22 @@ impl Graph {
     /// with the frame [`Self::process`] returned: both have [`Self::latency_frames`].
     pub fn audio_output(&self) -> Option<&Signal> {
         self.audio_step.map(|s| &self.steps[s].outputs[0])
+    }
+
+    /// The named outputs' names and layouts, in the order they come in the graph.
+    pub fn named_layouts(&self) -> impl Iterator<Item = (&str, Layout)> {
+        self.named_steps
+            .iter()
+            .map(|(name, s)| (name.as_str(), self.steps[*s].outputs[0].layout))
+    }
+
+    /// The named output called `name`'s signal for the last processed frame, if the graph has
+    /// one. It lines up with [`Self::output`].
+    pub fn named_output(&self, name: &str) -> Option<&Signal> {
+        self.named_steps
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, s)| &self.steps[*s].outputs[0])
     }
 
     /// What output `output` of node `node` produced in the last processed frame, or `None` if the
@@ -819,8 +855,8 @@ struct Compiler<'a> {
     registry: &'a Registry,
     options: &'a CompileOptions,
     pending: Vec<Pending>,
-    /// The sinks, by pending index: the video output, then the audio output if there is one.
-    /// They are compiled last, and all line up at the same latency.
+    /// The sinks, by pending index: the video output, then the audio output if there is one,
+    /// then the named outputs. They are compiled last, and all line up at the same latency.
     sinks: Vec<usize>,
     /// The latency every sink lines up at, in whole frames, once worked out.
     sink_latency: Option<f64>,
@@ -866,7 +902,8 @@ impl<'a> Compiler<'a> {
         Graph {
             node_stats: self.node_stats,
             output_step: self.step_of[self.sinks[0]],
-            audio_step: self.sinks.get(1).map(|&a| self.step_of[a]),
+            audio_step: None,
+            named_steps: Vec::new(),
             audio_passthrough: None,
             steps: self.steps,
             frame_rate: self.options.frame_rate,
@@ -1067,6 +1104,7 @@ impl<'a> Compiler<'a> {
         let ctx = PrepareContext {
             frame_rate: self.options.frame_rate,
             tempo: self.options.tempo,
+            span: self.options.span,
             inputs: &matched,
             outputs: &shape.node_outputs,
             connected: &connected,
@@ -1490,7 +1528,48 @@ pub fn render_form(desc: &GraphDesc, registry: &Registry) -> GraphDesc {
         node.modulation
             .retain(|param, _| connected.contains(&(node.id.clone(), param.clone())));
     }
+    // Spelled one way: nodes by id, connections by where they end, and a port left out named.
+    form.nodes.sort_by(|a, b| a.id.cmp(&b.id));
+    let kinds: HashMap<&str, &str> = form
+        .nodes
+        .iter()
+        .map(|n| (n.id.as_str(), n.kind.as_str()))
+        .collect();
+    let named: Vec<Connection> = form
+        .connections
+        .iter()
+        .map(|c| Connection {
+            from: with_port(&c.from, false, &kinds, registry),
+            to: with_port(&c.to, true, &kinds, registry),
+        })
+        .collect();
+    form.connections = named;
+    form.connections
+        .sort_by(|a, b| (&a.to, &a.from).cmp(&(&b.to, &b.from)));
     form
+}
+
+/// `endpoint` as `node.port`: a bare node id names its first output (or first input, when
+/// `input`).
+fn with_port(
+    endpoint: &str,
+    input: bool,
+    kinds: &HashMap<&str, &str>,
+    registry: &Registry,
+) -> String {
+    let (id, port) = split_endpoint(endpoint);
+    if port.is_some() {
+        return endpoint.to_owned();
+    }
+    let Some(kind) = kinds.get(id).and_then(|k| registry.get(k)) else {
+        return endpoint.to_owned();
+    };
+    let first = if input {
+        kind.spec.inputs.first().map(|i| i.name)
+    } else {
+        kind.spec.outputs.first().map(|o| o.name)
+    };
+    first.map_or_else(|| endpoint.to_owned(), |name| format!("{id}.{name}"))
 }
 
 /// Whether anything is connected to node `id`'s inputs or parameters.
@@ -1506,6 +1585,32 @@ pub fn audio_output_bus(node: &NodeDesc) -> &str {
         Some(ParamValue::Text(bus)) => bus,
         _ => DEFAULT_BUS,
     }
+}
+
+/// The name of a named output with `params`.
+fn output_name(params: &BTreeMap<String, ParamValue>) -> &str {
+    match params.get(NAME_PARAM) {
+        Some(ParamValue::Text(name)) => name,
+        _ => "Out",
+    }
+}
+
+/// Fails when two named outputs with something connected share a name.
+fn check_named_outputs(desc: &GraphDesc) -> Result<(), GraphError> {
+    let mut seen: Vec<&str> = Vec::new();
+    for node in &desc.nodes {
+        if node.kind == NAMED_OUTPUT && is_fed(desc, &node.id) {
+            let name = output_name(&node.params);
+            if seen.contains(&name) {
+                return Err(GraphError::Node {
+                    node: node.id.clone(),
+                    message: tr_args("error.named_output.duplicate", &[("name", name)]),
+                });
+            }
+            seen.push(name);
+        }
+    }
+    Ok(())
 }
 
 /// Fails when two audio outputs with something connected write to the same bus.
@@ -1529,12 +1634,14 @@ fn check_audio_outputs(desc: &GraphDesc) -> Result<(), GraphError> {
     }
 }
 
-/// `desc` without the audio outputs that aren't rendered: those writing to another bus than
-/// `bus`, and those with nothing connected, which leave the bus's track mix as it is rather than
-/// outputting silence. `None` when there are none.
-fn without_inactive_audio_outputs(desc: &GraphDesc, bus: &str) -> Option<GraphDesc> {
-    let idle = |n: &NodeDesc| {
-        n.kind == AUDIO_OUTPUT && (!is_fed(desc, &n.id) || audio_output_bus(n) != bus)
+/// `desc` without the outputs that aren't rendered: audio outputs writing to another bus than
+/// `bus`, and audio and named outputs with nothing connected (an unconnected audio output leaves
+/// the bus's track mix as it is rather than outputting silence). `None` when there are none.
+fn without_idle_outputs(desc: &GraphDesc, bus: &str) -> Option<GraphDesc> {
+    let idle = |n: &NodeDesc| match n.kind.as_str() {
+        AUDIO_OUTPUT => !is_fed(desc, &n.id) || audio_output_bus(n) != bus,
+        NAMED_OUTPUT => !is_fed(desc, &n.id),
+        _ => false,
     };
     let removed: HashSet<&str> = desc
         .nodes

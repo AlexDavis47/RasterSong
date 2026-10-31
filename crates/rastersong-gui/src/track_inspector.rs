@@ -39,7 +39,7 @@ pub fn track_inspector(
             &track.name,
             name_style,
         );
-        edit.response.on_hover_text(tr("timeline.track.name.help"));
+        edit.response.on_hover_text(tr("inspector.track.name.help"));
         if let Some(name) = edit.committed {
             actions.push(TrackAction::Rename(row, name));
         }
@@ -88,6 +88,7 @@ pub fn track_inspector(
                             RichText::new(tr("timeline.track.volume.suffix")).color(theme.text_dim),
                         );
                     },
+                    |_| {},
                     |_| {},
                 );
                 if field.changed {

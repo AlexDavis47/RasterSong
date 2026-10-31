@@ -201,10 +201,11 @@ pub enum EngineStatus {
 type Callback = Arc<dyn Fn() + Send + Sync>;
 
 /// The render service. Cheap calls that only record what the user wants; all decoding and
-/// rendering happens on a background thread.
+/// rendering happens on background threads: one renders ahead into the cache, the other answers
+/// taps and listening, so looking at or listening to a connection never holds the render up.
 pub struct Engine {
     shared: Arc<Shared>,
-    worker: Option<JoinHandle<()>>,
+    workers: Vec<JoinHandle<()>>,
 }
 
 impl std::fmt::Debug for Engine {
@@ -237,6 +238,8 @@ struct Shared {
     listen_frame: AtomicUsize,
     /// Bumped whenever the connection listened to changes.
     listen_serial: AtomicU64,
+    /// Decoded audio by file, shared by both threads so a file is decoded once.
+    audio: Mutex<DecodedFiles>,
 }
 
 /// A tap's answer and the project version it was made for.
@@ -393,18 +396,22 @@ impl Engine {
             listened: Mutex::new(Listened::default()),
             listen_frame: AtomicUsize::new(0),
             listen_serial: AtomicU64::new(0),
+            audio: Mutex::new(HashMap::new()),
         });
-        let worker = std::thread::Builder::new()
-            .name("rastersong-render".into())
-            .spawn({
-                let shared = shared.clone();
-                move || Worker::new(shared).run()
-            })
-            .expect("failed to start the render thread");
-        Self {
-            shared,
-            worker: Some(worker),
-        }
+        let workers = [
+            ("rastersong-render", Role::Render),
+            ("rastersong-probe", Role::Probe),
+        ]
+        .into_iter()
+        .map(|(name, role)| {
+            let shared = shared.clone();
+            std::thread::Builder::new()
+                .name(name.into())
+                .spawn(move || Worker::new(shared, role).run())
+                .expect("failed to start a render thread")
+        })
+        .collect();
+        Self { shared, workers }
     }
 
     /// Changes the cache budget and lookahead while running. Rendered frames are kept; a smaller
@@ -726,7 +733,7 @@ impl Drop for Engine {
     fn drop(&mut self) {
         lock(&self.shared.state).shutdown = true;
         self.shared.changed.notify_all();
-        if let Some(worker) = self.worker.take() {
+        for worker in self.workers.drain(..) {
             let _ = worker.join();
         }
     }
@@ -832,8 +839,18 @@ struct DecodedAudio {
     waveform: Arc<Waveform>,
 }
 
+/// What a worker thread does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Role {
+    /// Builds the renderer and renders ahead into the cache.
+    Render,
+    /// Answers taps and renders the sound of the connection listened to, on its own renderer.
+    Probe,
+}
+
 struct Worker {
     shared: Arc<Shared>,
+    role: Role,
     built: Option<Built>,
     /// The renderer taps are answered by, apart from the one filling the cache.
     tap_built: Option<Built>,
@@ -841,7 +858,6 @@ struct Worker {
     tap_failed: Option<BuildId>,
     /// Turns the listened connection's signal into sound, for the connection it was made for.
     listen_sink: Option<ListenSink>,
-    audio: DecodedFiles,
     /// The `changes` count when the project last failed; nothing is retried until it moves.
     failed_at: Option<u64>,
 }
@@ -878,14 +894,14 @@ enum Job {
 }
 
 impl Worker {
-    fn new(shared: Arc<Shared>) -> Self {
+    fn new(shared: Arc<Shared>, role: Role) -> Self {
         Self {
             shared,
+            role,
             built: None,
             tap_built: None,
             tap_failed: None,
             listen_sink: None,
-            audio: HashMap::new(),
             failed_at: None,
         }
     }
@@ -906,82 +922,98 @@ impl Worker {
         }
     }
 
-    /// Waits until there's a project to work on. `None` means shut down.
+    /// Waits until there's something to do. `None` means shut down.
     fn next_job(&mut self) -> Option<Job> {
-        let mut state = lock(&self.shared.state);
+        let shared = self.shared.clone();
+        let mut state = lock(&shared.state);
         loop {
             if state.shutdown {
                 return None;
             }
-            let stuck = self.failed_at == Some(state.changes);
-            if state.tap.is_none()
-                && state.listen.is_none()
-                && self
-                    .tap_built
-                    .as_ref()
-                    .is_some_and(|b| b.id != state.build_id())
-            {
-                // Nothing is asking, and what it would answer with is out of date.
-                self.tap_built = None;
-            }
-            if let (false, Some(graph), false) =
-                (state.timeline.tracks.is_empty(), &state.graph, stuck)
-            {
-                if (state.tap.is_some() || state.listen.is_some())
-                    && self.tap_failed != Some(state.build_id())
-                {
-                    if self
-                        .tap_built
-                        .as_ref()
-                        .is_some_and(|b| b.id == state.build_id())
-                    {
-                        if let Some(request) = state.tap.clone() {
-                            return Some(Job::Tap {
-                                request,
-                                serial: self.shared.tap_serial.load(Ordering::SeqCst),
-                            });
-                        }
-                        if let Some(frame) = self.next_listen_frame(&state) {
-                            return Some(Job::Listen {
-                                frame,
-                                serial: self.shared.listen_serial.load(Ordering::SeqCst),
-                            });
-                        }
-                    } else {
-                        return Some(Job::BuildTap {
-                            id: state.build_id(),
-                            edits: self.shared.edits.load(Ordering::SeqCst),
-                            project: Self::snapshot(&state, graph),
-                        });
-                    }
-                }
-                if self
-                    .built
-                    .as_ref()
-                    .is_some_and(|b| b.id == state.build_id())
-                {
-                    return Some(Job::Render {
-                        seen: state.changes,
-                    });
-                }
-                let job = Job::Build {
-                    id: state.build_id(),
-                    edits: self.shared.edits.load(Ordering::SeqCst),
-                    project: Self::snapshot(&state, graph),
-                };
-                state.status = EngineStatus::Loading;
-                return Some(job);
-            }
-            if state.timeline.tracks.is_empty() || state.graph.is_none() {
-                state.status = EngineStatus::Idle;
+            let job = match self.role {
+                Role::Render => self.render_job(&mut state),
+                Role::Probe => self.probe_job(&state),
+            };
+            if job.is_some() {
+                return job;
             }
             let seen = state.changes;
-            state = self
-                .shared
+            state = shared
                 .changed
                 .wait_while(state, |s| s.changes == seen && !s.shutdown)
                 .unwrap_or_else(|p| p.into_inner());
         }
+    }
+
+    /// The render thread's next job: build the renderer, or render ahead.
+    fn render_job(&self, state: &mut State) -> Option<Job> {
+        let stuck = self.failed_at == Some(state.changes);
+        if let (false, Some(graph), false) = (state.timeline.tracks.is_empty(), &state.graph, stuck)
+        {
+            if self
+                .built
+                .as_ref()
+                .is_some_and(|b| b.id == state.build_id())
+            {
+                return Some(Job::Render {
+                    seen: state.changes,
+                });
+            }
+            let job = Job::Build {
+                id: state.build_id(),
+                edits: self.shared.edits.load(Ordering::SeqCst),
+                project: Self::snapshot(state, graph),
+            };
+            state.status = EngineStatus::Loading;
+            return Some(job);
+        }
+        if state.timeline.tracks.is_empty() || state.graph.is_none() {
+            state.status = EngineStatus::Idle;
+        }
+        None
+    }
+
+    /// The probe thread's next job: build its renderer, answer the tap, or render the sound of
+    /// the connection listened to.
+    fn probe_job(&mut self, state: &State) -> Option<Job> {
+        if state.tap.is_none()
+            && state.listen.is_none()
+            && self
+                .tap_built
+                .as_ref()
+                .is_some_and(|b| b.id != state.build_id())
+        {
+            // Nothing is asking, and what it would answer with is out of date.
+            self.tap_built = None;
+        }
+        let graph = state.graph.as_ref()?;
+        if state.timeline.tracks.is_empty()
+            || (state.tap.is_none() && state.listen.is_none())
+            || self.tap_failed == Some(state.build_id())
+        {
+            return None;
+        }
+        if !self
+            .tap_built
+            .as_ref()
+            .is_some_and(|b| b.id == state.build_id())
+        {
+            return Some(Job::BuildTap {
+                id: state.build_id(),
+                edits: self.shared.edits.load(Ordering::SeqCst),
+                project: Self::snapshot(state, graph),
+            });
+        }
+        if let Some(request) = state.tap.clone() {
+            return Some(Job::Tap {
+                request,
+                serial: self.shared.tap_serial.load(Ordering::SeqCst),
+            });
+        }
+        self.next_listen_frame(state).map(|frame| Job::Listen {
+            frame,
+            serial: self.shared.listen_serial.load(Ordering::SeqCst),
+        })
     }
 
     /// The parts of the project a renderer is built from.
@@ -1091,7 +1123,7 @@ impl Worker {
             (composition, bypass) => {
                 let composition = composition
                     .clone()
-                    .unwrap_or_else(|| single_composition(tracks, &project.graph));
+                    .unwrap_or_else(|| single_composition(tracks));
                 let composition = if bypass {
                     composition.without_graphs()
                 } else {
@@ -1284,8 +1316,9 @@ impl Worker {
         &mut self,
         specs: &[TrackSpec],
     ) -> Result<(Vec<RenderTrack>, Vec<LoadedTrack>), Failure> {
+        let mut audio = lock(&self.shared.audio);
         // Forget files no track uses any more.
-        self.audio.retain(|(path, stream), _| {
+        audio.retain(|(path, stream), _| {
             specs
                 .iter()
                 .any(|s| s.kind == TrackKind::Audio && &s.path == path && s.stream == *stream)
@@ -1299,7 +1332,7 @@ impl Worker {
                     stream: spec.stream,
                 },
                 TrackKind::Audio => {
-                    let decoded = self.decode(spec)?;
+                    let decoded = self.decode(&mut audio, spec)?;
                     loaded.push(LoadedTrack {
                         name: spec.name.clone(),
                         clip: decoded.clip,
@@ -1319,9 +1352,9 @@ impl Worker {
     }
 
     /// The audio of an audio track, decoded once per file.
-    fn decode(&mut self, spec: &TrackSpec) -> Result<DecodedAudio, Failure> {
+    fn decode(&self, audio: &mut DecodedFiles, spec: &TrackSpec) -> Result<DecodedAudio, Failure> {
         let key = (spec.path.clone(), spec.stream);
-        if let Some(cached) = self.audio.get(&key) {
+        if let Some(cached) = audio.get(&key) {
             return Ok(cached.clone());
         }
         let backend = self.shared.backend.as_ref();
@@ -1342,7 +1375,7 @@ impl Worker {
             waveform: Arc::new(Waveform::new(&clip)),
             clip: Arc::new(clip),
         };
-        self.audio.insert(key, entry.clone());
+        audio.insert(key, entry.clone());
         Ok(entry)
     }
 
@@ -1367,10 +1400,12 @@ impl Worker {
                     });
                     info.frame_count as f64 / info.frame_rate.as_f64()
                 }
-                TrackKind::Audio => match self.audio.get(&(track.path.clone(), track.stream)) {
-                    Some(decoded) => decoded.clip.duration_secs(),
-                    None => continue,
-                },
+                TrackKind::Audio => {
+                    match lock(&self.shared.audio).get(&(track.path.clone(), track.stream)) {
+                        Some(decoded) => decoded.clip.duration_secs(),
+                        None => continue,
+                    }
+                }
             };
             end = end.max(items_end(&track.items, duration));
         }

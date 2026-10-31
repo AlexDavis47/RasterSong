@@ -1,22 +1,22 @@
-//! The Resources panel, listing the media and the graphs the project uses, and the dialog that
-//! picks which streams of a file to import.
+//! The Resources panel, the media and the graphs the project uses as cards under two tabs, and
+//! the dialog that picks which streams of a file to import.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use eframe::egui::{
-    self, Color32, FontId, Galley, Id, Margin, Painter, Rect, RichText, Sense, Stroke, StrokeKind,
-    Ui, Vec2, pos2, vec2,
+    self, Color32, CornerRadius, FontId, Galley, Id, Margin, Painter, Rect, RichText, Sense,
+    Stroke, StrokeKind, Ui, Vec2, pos2, vec2,
 };
 use rastersong_engine::{
-    GraphEntry, Project, Resource, ResourceId, ResourceKind, StreamInfo, StreamKind,
+    GraphEntry, LabelColor, Project, Resource, ResourceId, ResourceKind, StreamInfo, StreamKind,
 };
 use rastersong_lang::{tr, tr_args};
 
-use crate::name_edit::name_edit;
+use crate::name_edit::{is_renaming, rename_field, start_rename};
 use crate::theme::{self, CONTROL_RADIUS, DENSE_HEIGHT, SMALL_SIZE, Theme};
-use crate::widgets::{Icon, card_header, card_title, channels_label, section_label};
+use crate::widgets::{Icon, card_header, card_title, channels_label};
 
 /// What the user did in the Resources panel.
 #[derive(Debug, Clone, PartialEq)]
@@ -26,6 +26,8 @@ pub enum ResourceAction {
     /// Add a track playing the resource, at the playhead.
     AddToTimeline(ResourceId),
     Rename(ResourceId, String),
+    /// Give the resource a label colour (`None` for its kind's own), which its items take too.
+    SetColor(ResourceId, Option<LabelColor>),
     /// Remove the resource (and, once confirmed, its tracks).
     Remove(ResourceId),
     /// Pick the file again, for a resource whose file moved.
@@ -118,16 +120,19 @@ pub fn stream_label(stream: &StreamInfo, n: usize) -> String {
     parts.join(" · ")
 }
 
-/// Height of one row in the resource lists.
-pub const ROW_HEIGHT: f32 = 44.0;
-/// The panel shows Media and Graphs side by side from this width, one above the other below it.
-pub const TWO_COLUMNS: f32 = 360.0;
-/// The picture at the start of a media row.
-const THUMB: Vec2 = vec2(40.0, 24.0);
-/// Space inside a row, around the picture and the text.
-const ROW_PAD: f32 = 6.0;
+/// The narrowest a card gets: the grid fits as many columns as allow this, then widens them to
+/// fill the panel.
+pub const CARD_MIN_WIDTH: f32 = 104.0;
+/// A card's height for its width: 4:3, wider than high so names have room.
+const CARD_ASPECT: f32 = 0.75;
+/// Space between cards.
+const CARD_GAP: f32 = 8.0;
+/// Space inside a card, around the picture and the text.
+const CARD_PAD: f32 = 6.0;
+/// Height of a card's text under its picture: the name and the detail line.
+const CARD_TEXT_HEIGHT: f32 = 32.0;
 
-/// The picture at the start of a row: what kind of resource it is.
+/// The picture at the top of a card: what kind of resource it is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Thumb {
     Video,
@@ -147,28 +152,36 @@ pub struct Card<'a> {
     /// The line under the name: the stream's shape, or where a graph is used.
     pub detail: String,
     pub hover: String,
-    /// The file is gone: the row is drawn in the error color.
+    /// The file is gone: the card is drawn in the error color.
     pub missing: bool,
     /// The graph is the one open in the editor.
     pub highlighted: bool,
-    /// The row is part of the selection a drag takes along.
+    /// The card is selected: a drag takes the selection along, and F2 renames it.
     pub selected: bool,
-    /// How many rows a drag of this one carries (the selection, when it is in it).
+    /// How many cards a drag of this one carries (the selection, when it is in it).
     pub drag_count: usize,
-    /// Shown as a button at the row's end when it is set (Relocate for a missing file): label,
-    /// help.
+    /// Shown as a button over the card's picture when it is set (Relocate for a missing file):
+    /// label, help.
     pub fix_button: Option<(&'a str, &'a str)>,
+    /// The label colour, drawn as a band along the top of the picture.
+    pub color: Option<LabelColor>,
 }
 
 /// What the user did to a card this frame.
 #[derive(Debug, Default)]
 pub struct CardResponse {
+    /// Double-clicked away from the name (a double-click on the name renames).
     pub double_clicked: bool,
     /// Clicked (a double-click counts as two).
     pub clicked: bool,
     pub renamed: Option<String>,
     /// The card's fix button was clicked.
     pub fixed: bool,
+}
+
+/// The id of the name on the card `card`: [`start_rename`] with it renames the card in place.
+pub fn card_name_id(card: Id) -> Id {
+    card.with("name")
 }
 
 /// Like [`Ui::dnd_drag_source`] over `rect`, but it also senses clicks (egui's version only
@@ -208,10 +221,10 @@ fn one_line(ui: &Ui, text: &str, font: FontId, color: Color32, width: f32) -> Ar
 /// Paints the picture for `thumb` in `rect`: a frame for video, a waveform for sound, two joined
 /// nodes for a graph, a warning sign for a missing file.
 fn paint_thumb(painter: &Painter, rect: Rect, thumb: Thumb, missing: bool, theme: &Theme) {
-    let square = Rect::from_center_size(rect.center(), Vec2::splat(rect.height()));
+    let square = Rect::from_center_size(rect.center(), Vec2::splat(rect.height().min(30.0)));
     if missing {
-        painter.rect_filled(rect, 3, theme.error.gamma_multiply(0.15));
-        let sign = square.shrink(5.0);
+        painter.rect_filled(rect, 4, theme.error.gamma_multiply(0.15));
+        let sign = square.shrink(4.0);
         let stroke = Stroke::new(1.5, theme.error);
         let at = |x: f32, y: f32| sign.lerp_inside(vec2(x, y));
         painter.add(egui::Shape::closed_line(
@@ -219,21 +232,22 @@ fn paint_thumb(painter: &Painter, rect: Rect, thumb: Thumb, missing: bool, theme
             stroke,
         ));
         painter.line_segment([at(0.5, 0.35), at(0.5, 0.6)], stroke);
-        painter.circle_filled(at(0.5, 0.78), 0.9, theme.error);
+        painter.circle_filled(at(0.5, 0.78), 1.1, theme.error);
         return;
     }
     match thumb {
         Thumb::Video => {
-            painter.rect_filled(rect, 3, theme.video_item.fill);
+            painter.rect_filled(rect, 4, theme.video_item.fill);
             crate::widgets::paint_icon(painter, square, Icon::Picture, theme.surfaces.text_soft);
         }
         Thumb::Audio => {
-            painter.rect_filled(rect, 3, theme.ports.audio.gamma_multiply(0.14));
-            // A still waveform: the same shape on every row, standing for sound.
-            const LEVELS: [f32; 12] = [
-                0.0, 0.6, -0.8, 0.9, -0.5, 0.4, -0.7, 0.8, -0.3, 0.3, -0.1, 0.0,
+            painter.rect_filled(rect, 4, theme.ports.audio.gamma_multiply(0.14));
+            // A still waveform: the same shape on every card, standing for sound.
+            const LEVELS: [f32; 16] = [
+                0.0, 0.5, -0.8, 0.9, -0.5, 0.4, -0.7, 0.8, -0.3, 0.6, -0.9, 0.5, -0.4, 0.3, -0.1,
+                0.0,
             ];
-            let wave = rect.shrink2(vec2(7.0, 6.0));
+            let wave = rect.shrink2(vec2(10.0, rect.height() * 0.22));
             let points = LEVELS
                 .iter()
                 .enumerate()
@@ -248,19 +262,21 @@ fn paint_thumb(painter: &Painter, rect: Rect, thumb: Thumb, missing: bool, theme
             ));
         }
         Thumb::Graph => {
-            painter.rect_filled(square, 5, theme.graph_block.gamma_multiply(0.16));
+            painter.rect_filled(rect, 4, theme.graph_block.gamma_multiply(0.16));
             let ink = Stroke::new(1.4, theme.graph_block);
+            let side = square.width() * 0.28;
             let node = |x: f32, y: f32| {
-                Rect::from_min_size(square.lerp_inside(vec2(x, y)), Vec2::splat(5.0))
+                Rect::from_min_size(square.lerp_inside(vec2(x, y)), Vec2::splat(side))
             };
-            let (a, b) = (node(0.15, 0.2), node(0.6, 0.55));
+            let (a, b) = (node(0.05, 0.1), node(0.67, 0.62));
             painter.rect_stroke(a, 1, ink, StrokeKind::Inside);
             painter.rect_stroke(b, 1, ink, StrokeKind::Inside);
+            let bend = (a.right() + b.left()) / 2.0;
             painter.add(egui::Shape::line(
                 vec![
                     a.right_center(),
-                    pos2(a.right() + 3.0, a.center().y),
-                    pos2(a.right() + 3.0, b.center().y),
+                    pos2(bend, a.center().y),
+                    pos2(bend, b.center().y),
                     b.left_center(),
                 ],
                 ink,
@@ -269,41 +285,67 @@ fn paint_thumb(painter: &Painter, rect: Rect, thumb: Thumb, missing: bool, theme
     }
 }
 
-/// The one row every resource is drawn with: a picture, the name and a detail line under it.
-/// The row is a drag source carrying `payload`; the fix button sits at its end, outside the drag
-/// area, so a drag never swallows its click. Right-click opens a menu with a rename field, then
-/// whatever `menu` adds.
+/// The label colours a resource of `kind` can take, its kind's own first, each with its swatch
+/// at the end of the row and the `current` one checked. Returns the one clicked.
+fn label_color_menu(
+    ui: &mut Ui,
+    kind: ResourceKind,
+    current: Option<LabelColor>,
+) -> Option<Option<LabelColor>> {
+    let theme = Theme::of(ui.ctx());
+    let mut picked = None;
+    for color in std::iter::once(None).chain(LabelColor::ALL.map(Some)) {
+        let name = color.map_or(tr("label_color.none"), theme::label_color_name);
+        let button = egui::Button::new(name)
+            .selected(current == color)
+            .min_size(vec2(140.0, 0.0));
+        let response = ui.add(button);
+        let colors = theme.item_colors(kind.track_kind(), color);
+        let dot = Rect::from_center_size(
+            pos2(response.rect.right() - 12.0, response.rect.center().y),
+            Vec2::splat(10.0),
+        );
+        ui.painter().rect(
+            dot,
+            CornerRadius::same(3),
+            colors.bar,
+            Stroke::new(1.0, colors.text.gamma_multiply(0.5)),
+            StrokeKind::Inside,
+        );
+        if response.clicked() {
+            picked = Some(color);
+        }
+    }
+    picked
+}
+
+/// The one card every resource is drawn with, `size` big: a picture of its kind, the name and a
+/// detail line under it. The card is a drag source carrying `payload`; the fix button sits over
+/// the picture. Double-clicking the name (or F2, through [`start_rename`] with
+/// [`card_name_id`]) renames it in place; right-click opens `menu`, after a Rename entry.
 pub fn resource_card<P: std::any::Any + Send + Sync>(
     ui: &mut Ui,
     card: &Card<'_>,
+    size: Vec2,
     payload: P,
     menu: impl FnOnce(&mut Ui),
 ) -> CardResponse {
     let mut out = CardResponse::default();
     let theme = Theme::of(ui.ctx());
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+    let inner = rect.shrink(CARD_PAD);
+    let picture = inner.with_max_y(inner.bottom() - CARD_TEXT_HEIGHT);
+    let name_row = Rect::from_min_size(
+        pos2(inner.left(), picture.bottom() + 3.0),
+        vec2(inner.width(), 16.0),
+    );
+    let detail_top = name_row.bottom() + 1.0;
     let fix_font = FontId::new(
         11.5,
         ui.style().text_styles[&egui::TextStyle::Button]
             .family
             .clone(),
     );
-    let fix_rect = card.fix_button.map(|(label, _)| {
-        let width = ui
-            .painter()
-            .layout_no_wrap(label.to_owned(), fix_font.clone(), theme.surfaces.text)
-            .size()
-            .x
-            + 20.0;
-        Rect::from_center_size(
-            pos2(rect.right() - ROW_PAD - width / 2.0, rect.center().y),
-            vec2(width, DENSE_HEIGHT),
-        )
-    });
-    let body_rect = match fix_rect {
-        Some(fix) => rect.with_max_x(fix.left() - 4.0),
-        None => rect,
-    };
     let label = if card.drag_count > 1 {
         tr_args(
             "resources.drag.more",
@@ -315,6 +357,8 @@ pub fn resource_card<P: std::any::Any + Send + Sync>(
     } else {
         card.name.to_owned()
     };
+    let name_id = card_name_id(card.id);
+    let renaming = is_renaming(ui.ctx(), name_id);
     let paint = |painter: &Painter, hovered: bool| {
         let (fill, stroke) = if card.missing {
             (
@@ -332,22 +376,32 @@ pub fn resource_card<P: std::any::Any + Send + Sync>(
                 Stroke::new(1.0, theme.surfaces.border),
             )
         } else if hovered {
-            (theme.surfaces.raised, Stroke::NONE)
+            (
+                theme.surfaces.raised,
+                Stroke::new(1.0, theme.surfaces.divider),
+            )
         } else {
-            (Color32::TRANSPARENT, Stroke::NONE)
+            (
+                theme.surfaces.inner_card,
+                Stroke::new(1.0, theme.surfaces.divider),
+            )
         };
         painter.rect(rect, CONTROL_RADIUS, fill, stroke, StrokeKind::Inside);
-        let thumb_width = match card.thumb {
-            Thumb::Graph => THUMB.y,
-            Thumb::Video | Thumb::Audio => THUMB.x,
-        };
-        let thumb = Rect::from_min_size(
-            pos2(rect.left() + ROW_PAD, rect.center().y - THUMB.y / 2.0),
-            vec2(thumb_width, THUMB.y),
-        );
-        paint_thumb(painter, thumb, card.thumb, card.missing, theme);
-        let left = thumb.right() + 8.0;
-        let width = body_rect.right() - ROW_PAD - left;
+        paint_thumb(painter, picture, card.thumb, card.missing, theme);
+        if let Some(color) = card.color {
+            let band = picture.with_max_y(picture.top() + 4.0);
+            let colors = theme.label_colors(color);
+            painter.rect_filled(
+                band,
+                CornerRadius {
+                    nw: 4,
+                    ne: 4,
+                    sw: 0,
+                    se: 0,
+                },
+                colors.bar,
+            );
+        }
         let (name_font, name_color) = if card.missing {
             (FontId::proportional(12.5), theme.error)
         } else if card.highlighted {
@@ -355,58 +409,112 @@ pub fn resource_card<P: std::any::Any + Send + Sync>(
         } else {
             (FontId::proportional(12.5), theme.surfaces.text)
         };
-        let name = one_line(ui, card.name, name_font, name_color, width);
+        if !renaming {
+            let name = one_line(ui, card.name, name_font, name_color, inner.width());
+            let top = name_row.center().y - name.size().y / 2.0;
+            painter.galley(pos2(inner.left(), top), name, name_color);
+        }
         let detail = one_line(
             ui,
             &card.detail,
             FontId::proportional(SMALL_SIZE),
             theme.surfaces.text_faint,
-            width,
+            inner.width(),
         );
-        let top = rect.center().y - (name.size().y + detail.size().y + 1.0) / 2.0;
-        let name_height = name.size().y;
-        painter.galley(pos2(left, top), name, name_color);
         painter.galley(
-            pos2(left, top + name_height + 1.0),
+            pos2(inner.left(), detail_top),
             detail,
             theme.surfaces.text_faint,
         );
     };
-    let body = drag_source(ui, card.id, body_rect, payload, (card.glyph, &label), paint);
+    let body = drag_source(ui, card.id, rect, payload, (card.glyph, &label), paint);
     body.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, card.name));
     // The detail line too, for screen readers (and tests).
     ui.ctx()
         .accesskit_node_builder(body.id, |node| node.set_description(card.detail.clone()));
     let body = body.on_hover_text(&card.hover);
-    // Clicking the rename field must not close the menu, so only clicks outside do; the menu's
-    // buttons close it themselves.
-    egui::Popup::context_menu(&body)
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .show(|ui| {
-            let rename = name_edit(ui, card.id.with("name"), card.name, |t| {
-                t.desired_width(180.0)
-            });
-            out.renamed = rename.committed;
-            menu(ui);
-        });
-    out.double_clicked = body.double_clicked();
+    body.context_menu(|ui| {
+        let rename = egui::Button::new(tr("resources.rename")).shortcut_text("F2");
+        if ui.add(rename).clicked() {
+            start_rename(ui.ctx(), name_id);
+            ui.close();
+        }
+        menu(ui);
+    });
+    if let Some(edit) = rename_field(ui, name_id, name_row, card.name, |t| t) {
+        out.renamed = edit.committed;
+    }
+    let on_name = body
+        .interact_pointer_pos()
+        .is_some_and(|p| name_row.contains(p));
+    if body.double_clicked() {
+        if on_name {
+            start_rename(ui.ctx(), name_id);
+        } else {
+            out.double_clicked = true;
+        }
+    }
     out.clicked = body.clicked();
-    if let (Some((label, help)), Some(fix)) = (card.fix_button, fix_rect) {
-        let button = egui::Button::new(RichText::new(label).font(fix_font)).min_size(fix.size());
-        // Placed over the row it is part of, without taking more room in the list.
+    if let Some((label, help)) = card.fix_button {
+        let button = egui::Button::new(RichText::new(label).font(fix_font));
+        let width = ui
+            .painter()
+            .layout_no_wrap(
+                label.to_owned(),
+                FontId::proportional(11.5),
+                theme.surfaces.text,
+            )
+            .size()
+            .x
+            + 20.0;
+        let fix = Rect::from_center_size(
+            pos2(
+                picture.center().x,
+                picture.bottom() - DENSE_HEIGHT / 2.0 - 2.0,
+            ),
+            vec2(width.min(picture.width()), DENSE_HEIGHT),
+        );
+        // Placed over the card's picture, on top of the drag area, so it takes the click.
         out.fixed = ui.place(fix, button).on_hover_text(help).clicked();
     }
     out
 }
 
-/// The panel: a title row with the filter and Import…, then Media and Graphs as two groups,
-/// side by side when the panel is wide enough. `streams` holds each linked file's streams as
-/// far as they are known, for the rows' detail lines.
+/// Lays `count` cards out in rows, as many to a row as fit at [`CARD_MIN_WIDTH`], widened to
+/// fill the width and 4:3. `add` draws card `i` at the size it is given.
+fn card_grid(ui: &mut Ui, count: usize, mut add: impl FnMut(&mut Ui, usize, Vec2)) {
+    let width = ui.available_width();
+    let columns = (((width + CARD_GAP) / (CARD_MIN_WIDTH + CARD_GAP)).floor() as usize).max(1);
+    let card_width = (width - CARD_GAP * (columns - 1) as f32) / columns as f32;
+    let size = vec2(card_width, (card_width * CARD_ASPECT).round());
+    for row in (0..count).collect::<Vec<_>>().chunks(columns) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = CARD_GAP;
+            for &i in row {
+                add(ui, i, size);
+            }
+        });
+        ui.add_space(CARD_GAP - ui.spacing().item_spacing.y);
+    }
+}
+
+/// The panel's two tabs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum Tab {
+    #[default]
+    Media,
+    Graphs,
+}
+
+/// The panel: a title row with the filter and Import…, then the Media and Graphs tabs, each a
+/// grid of cards. `streams` holds each linked file's streams as far as they are known, for the
+/// cards' detail lines. With `open_on_click`, one click on a graph opens it (a setting).
 pub fn resources_panel(
     ui: &mut Ui,
     project: &Project,
     missing: &HashSet<ResourceId>,
     streams: &HashMap<PathBuf, Vec<StreamInfo>>,
+    open_on_click: bool,
 ) -> Vec<ResourceAction> {
     let mut actions = Vec::new();
     let filter_id = Id::new("resources-filter");
@@ -445,71 +553,81 @@ pub fn resources_panel(
         .into_iter()
         .filter(|g| matches(&g.name))
         .collect();
-    let body = ui.available_rect_before_wrap();
-    let two_columns = body.width() >= TWO_COLUMNS;
+    let tab_id = Id::new("resources-tab");
+    let mut tab: Tab = ui.data(|d| d.get_temp(tab_id)).unwrap_or_default();
+    let panel = ui.available_rect_before_wrap();
+    // F2 over the panel renames the selected card of the open tab.
+    let rename = ui.rect_contains_pointer(panel)
+        && !ui.ctx().egui_wants_keyboard_input()
+        && ui.input(|i| i.key_pressed(egui::Key::F2));
+    egui::Frame::new()
+        .inner_margin(Margin::symmetric(8, 0))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let media_tab = tr_args(
+                    "resources.media_count",
+                    &[("count", &media.len().to_string())],
+                );
+                let graph_tab = tr_args(
+                    "resources.graph_count",
+                    &[("count", &graphs.len().to_string())],
+                );
+                let options = [
+                    (media_tab.as_str(), tr("resources.tab.media.help")),
+                    (graph_tab.as_str(), tr("resources.tab.graphs.help")),
+                ];
+                let selected = usize::from(tab == Tab::Graphs);
+                let row = ui.available_rect_before_wrap();
+                if let Some(i) = crate::widgets::tabs(ui, &options, selected) {
+                    tab = if i == 0 { Tab::Media } else { Tab::Graphs };
+                }
+                if tab == Tab::Graphs {
+                    // "+ New" at the tab row's right end, over its divider.
+                    let new =
+                        egui::Button::new(RichText::new(tr("resources.graph.new")).size(11.5))
+                            .frame(false)
+                            .min_size(vec2(0.0, 22.0));
+                    let at = Rect::from_min_max(
+                        pos2(row.right() - 60.0, row.top()),
+                        pos2(row.right(), row.top() + crate::widgets::TABS_HEIGHT),
+                    );
+                    let new = ui
+                        .put(at, new)
+                        .on_hover_text(tr("resources.graph.new.help"));
+                    if new.clicked() {
+                        actions.push(ResourceAction::NewGraph);
+                    }
+                }
+            });
+        });
+    ui.data_mut(|d| d.insert_temp(tab_id, tab));
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
             egui::Frame::new()
                 .inner_margin(Margin::symmetric(8, 10))
-                .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 4.0;
-                    if two_columns {
-                        ui.columns(2, |columns| {
-                            media_group(
-                                &mut columns[0],
-                                project,
-                                &media,
-                                missing,
-                                streams,
-                                &mut actions,
-                            );
-                            graph_group(&mut columns[1], project, &graphs, &mut actions);
-                        });
-                    } else {
-                        media_group(ui, project, &media, missing, streams, &mut actions);
-                        ui.add_space(10.0);
-                        graph_group(ui, project, &graphs, &mut actions);
+                .show(ui, |ui| match tab {
+                    Tab::Media => {
+                        media_group(ui, project, &media, missing, streams, rename, &mut actions);
+                    }
+                    Tab::Graphs => {
+                        graph_group(ui, project, &graphs, open_on_click, rename, &mut actions);
                     }
                 });
         });
-    if two_columns {
-        // Between the columns, down the whole card.
-        let theme = Theme::of(ui.ctx());
-        ui.painter().vline(
-            body.center().x,
-            body.y_range(),
-            Stroke::new(1.0, theme.surfaces.divider),
-        );
-    }
     actions
 }
 
-/// A group's label with its count, and `add` at its right.
-fn group_header(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
-    ui.allocate_ui_with_layout(
-        vec2(ui.available_width(), 22.0),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            section_label(ui, label);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), add);
-        },
-    );
-}
-
-/// A quiet line in a group: why it is empty, or the hint under the lists.
+/// A quiet line in a tab: why it is empty, or the hint under the cards.
 fn faint_note(ui: &mut Ui, text: &str) {
     let theme = Theme::of(ui.ctx());
     let text = RichText::new(text)
         .size(11.0)
         .color(theme.surfaces.text_faint);
-    // Left-aligned: a column's justified layout would spread the words across the line.
-    ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-        ui.add(egui::Label::new(text).wrap());
-    });
+    ui.add(egui::Label::new(text).wrap());
 }
 
-/// What a media row says under its name: the kind, then the stream's shape once it is known
+/// What a media card says under its name: the kind, then the stream's shape once it is known
 /// ("video · 320×180 · 30 fps", "audio · stereo · 48 kHz").
 pub fn media_detail(resource: &Resource, stream: Option<&StreamInfo>) -> String {
     let mut parts = vec![match resource.kind {
@@ -552,33 +670,29 @@ fn resource_stream<'a>(resource: &Resource, streams: &'a [StreamInfo]) -> Option
     }
 }
 
+/// The media cards. Click selects a card, Ctrl or Shift+click adds it to the selection or takes
+/// it out; `rename` (F2) renames the card clicked last.
 fn media_group(
     ui: &mut Ui,
     project: &Project,
     shown: &[&Resource],
     missing: &HashSet<ResourceId>,
     streams: &HashMap<PathBuf, Vec<StreamInfo>>,
+    rename: bool,
     actions: &mut Vec<ResourceAction>,
 ) {
-    group_header(
-        ui,
-        &tr_args(
-            "resources.media_count",
-            &[("count", &shown.len().to_string())],
-        ),
-        |_| {},
-    );
     if project.resources.is_empty() {
         faint_note(ui, tr("resources.empty"));
     } else if shown.is_empty() {
         faint_note(ui, tr("resources.no_match"));
     }
-    // The selected rows, which a drag of any of them takes along.
+    // The selected cards, which a drag of any of them takes along, the last clicked last.
     let selection_id = Id::new("resource-selection");
     let mut selection: Vec<ResourceId> = ui.data(|d| d.get_temp(selection_id)).unwrap_or_default();
     selection.retain(|&id| project.resource(id).is_some());
     let mut clicked = None;
-    for resource in shown {
+    card_grid(ui, shown.len(), |ui, i, size| {
+        let resource = shown[i];
         let dragged: Vec<ResourceId> = if selection.contains(&resource.id) {
             shown
                 .iter()
@@ -631,13 +745,25 @@ fn media_group(
             selected: selection.contains(&resource.id),
             drag_count: dragged.len(),
             fix_button: missing.then(|| (tr("resources.relocate"), tr("resources.relocate.help"))),
+            color: resource.color,
         };
-        let out = resource_card(ui, &card, DraggedResource(dragged), |ui| {
+        if rename && selection.last() == Some(&resource.id) {
+            start_rename(ui.ctx(), card_name_id(card.id));
+        }
+        let out = resource_card(ui, &card, size, DraggedResource(dragged), |ui| {
             ui.label(RichText::new(file).weak());
             if ui.button(tr("resources.add_to_timeline")).clicked() {
                 actions.push(ResourceAction::AddToTimeline(resource.id));
                 ui.close();
             }
+            ui.menu_button(tr("resources.color"), |ui| {
+                if let Some(color) = label_color_menu(ui, resource.kind, resource.color) {
+                    actions.push(ResourceAction::SetColor(resource.id, color));
+                    ui.close();
+                }
+            })
+            .response
+            .on_hover_text(tr("resources.color.help"));
             if ui.button(tr("resources.relocate")).clicked() {
                 actions.push(ResourceAction::Relocate(resource.id));
                 ui.close();
@@ -659,8 +785,7 @@ fn media_group(
         if out.clicked {
             clicked = Some(resource.id);
         }
-    }
-    // Click selects the row, Ctrl or Shift adds it to the selection or takes it out.
+    });
     if let Some(id) = clicked {
         if ui.input(|i| i.modifiers.command || i.modifiers.shift) {
             match selection.iter().position(|&s| s == id) {
@@ -674,14 +799,17 @@ fn media_group(
         }
     }
     ui.data_mut(|d| d.insert_temp(selection_id, selection));
+    if !shown.is_empty() {
+        faint_note(ui, tr("resources.hint.media"));
+    }
 }
 
-/// What a graph card hands over while it is dragged. The timeline takes it: dropped on a graph
+/// What a graph hands over while it is dragged. The timeline takes it: dropped on a graph
 /// layer it places the graph there, anywhere else it makes a new layer for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DraggedGraph(pub u32);
 
-/// What a graph row says under its name: whether it is open, and how many items place it.
+/// What a graph card says under its name: whether it is open, and how many items place it.
 pub fn graph_detail(project: &Project, entry: &GraphEntry) -> String {
     let items = project
         .graph_tracks
@@ -701,37 +829,28 @@ pub fn graph_detail(project: &Project, entry: &GraphEntry) -> String {
     }
 }
 
-/// The graphs, the open one marked, and the panel's hint under them. Double-click opens a graph
-/// in the editor.
+/// The graph cards, the open one marked. Double-click opens a graph in the editor, or one click
+/// with `open_on_click`; a click selects it, and `rename` (F2) renames the selected one.
 fn graph_group(
     ui: &mut Ui,
     project: &Project,
     shown: &[GraphEntry],
+    open_on_click: bool,
+    rename: bool,
     actions: &mut Vec<ResourceAction>,
 ) {
-    group_header(
-        ui,
-        &tr_args(
-            "resources.graph_count",
-            &[("count", &shown.len().to_string())],
-        ),
-        |ui| {
-            let new = egui::Button::new(RichText::new(tr("resources.graph.new")).size(11.5))
-                .frame(false)
-                .min_size(vec2(0.0, 22.0));
-            if ui
-                .add(new)
-                .on_hover_text(tr("resources.graph.new.help"))
-                .clicked()
-            {
-                actions.push(ResourceAction::NewGraph);
-            }
-        },
-    );
     if shown.is_empty() {
         faint_note(ui, tr("resources.no_match"));
     }
-    for entry in shown {
+    let selection_id = Id::new("graph-selection");
+    let mut selection: Option<u32> = ui.data(|d| d.get_temp(selection_id)).flatten();
+    let help = if open_on_click {
+        tr("resources.graph.help_click")
+    } else {
+        tr("resources.graph.help")
+    };
+    card_grid(ui, shown.len(), |ui, i, size| {
+        let entry = &shown[i];
         let card = Card {
             id: Id::new(("graph", entry.id)),
             thumb: Thumb::Graph,
@@ -741,16 +860,20 @@ fn graph_group(
             hover: if entry.open {
                 tr("resources.graph.open_now")
             } else {
-                tr("resources.graph.help")
+                help
             }
             .to_owned(),
             missing: false,
             highlighted: entry.open,
-            selected: false,
+            selected: selection == Some(entry.id),
             drag_count: 1,
             fix_button: None,
+            color: None,
         };
-        let out = resource_card(ui, &card, DraggedGraph(entry.id), |ui| {
+        if rename && selection == Some(entry.id) {
+            start_rename(ui.ctx(), card_name_id(card.id));
+        }
+        let out = resource_card(ui, &card, size, DraggedGraph(entry.id), |ui| {
             if !entry.open && ui.button(tr("resources.graph.open")).clicked() {
                 actions.push(ResourceAction::OpenGraph(entry.id));
                 ui.close();
@@ -767,12 +890,25 @@ fn graph_group(
         if let Some(name) = out.renamed {
             actions.push(ResourceAction::RenameGraph(entry.id, name));
         }
-        if out.double_clicked && !entry.open {
+        if out.clicked {
+            selection = Some(entry.id);
+        }
+        let open = out.double_clicked || (open_on_click && out.clicked);
+        if open && !entry.open {
             actions.push(ResourceAction::OpenGraph(entry.id));
         }
+    });
+    ui.data_mut(|d| d.insert_temp(selection_id, selection));
+    if !shown.is_empty() {
+        faint_note(
+            ui,
+            if open_on_click {
+                tr("resources.hint.graphs_click")
+            } else {
+                tr("resources.hint.graphs")
+            },
+        );
     }
-    ui.add_space(6.0);
-    faint_note(ui, tr("resources.hint"));
 }
 
 /// The "found multiple tracks" dialog for `pending`: a checkbox per stream. `Some(true)` when

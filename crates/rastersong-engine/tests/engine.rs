@@ -256,7 +256,7 @@ fn audio_offset_changes_the_render_and_back() {
 const DRUMS: &str = r#"{ "version": 0,
   "nodes": [
     { "id": "video", "type": "video_input" },
-    { "id": "drums", "type": "audio_input", "params": { "port": "drums" } },
+    { "id": "drums", "type": "audio_source", "params": { "source": "track:drums" } },
     { "id": "am", "type": "am", "params": { "depth": 2 } },
     { "id": "out", "type": "output" }
   ],
@@ -544,6 +544,61 @@ mod listening {
         for (i, expected) in reference.iter().enumerate() {
             assert_eq!(&engine.frame(i).unwrap().rgb, expected, "frame {i}");
         }
+    }
+
+    /// Holds whatever thread waits on it until dropped, also when the test fails, so the engine
+    /// can still shut down.
+    #[derive(Default)]
+    struct Gate(
+        std::sync::Mutex<bool>,
+        std::sync::Condvar,
+        std::sync::atomic::AtomicBool,
+    );
+
+    impl Gate {
+        fn wait(&self) {
+            let open = self.0.lock().unwrap();
+            self.2.store(true, std::sync::atomic::Ordering::SeqCst);
+            drop(self.1.wait_while(open, |open| !*open).unwrap());
+        }
+    }
+
+    struct OpenOnDrop(Arc<Gate>);
+
+    impl Drop for OpenOnDrop {
+        fn drop(&mut self) {
+            *self.0.0.lock().unwrap() = true;
+            self.0.1.notify_all();
+        }
+    }
+
+    #[test]
+    fn listening_runs_beside_the_render_not_in_its_place() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        // The render thread's first update parks it: listening still has to be heard.
+        let engine = engine();
+        let gate = Arc::new(Gate::default());
+        let first = AtomicBool::new(true);
+        engine.on_update({
+            let gate = gate.clone();
+            move || {
+                if first.swap(false, Ordering::SeqCst) {
+                    gate.wait();
+                }
+            }
+        });
+        let release = OpenOnDrop(gate.clone());
+        load(&engine, FINITE);
+        wait_until("the render thread held", || gate.2.load(Ordering::SeqCst));
+        let source = engine.listened_audio();
+        wait_until("the sound while the render is held", || {
+            engine.listen(Some(target("audio")), 3);
+            source.blocks(3..8).iter().all(|b| b.is_some())
+        });
+        drop(release);
+        engine.listen(None, 3);
+        wait_until("all frames", || engine.buffered_from(0) == FRAMES);
     }
 
     #[test]
