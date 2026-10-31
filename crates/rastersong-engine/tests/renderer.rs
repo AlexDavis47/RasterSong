@@ -299,7 +299,7 @@ fn a_track_wired_straight_to_the_audio_output_is_rendered_as_it_is() {
     // An Audio Source reading the track called `Audio` on its own isn't the mix: rendered.
     let graph = straight.replace(
         r#"{ "id": "audio", "type": "audio_input" }"#,
-        r#"{ "id": "audio", "type": "audio_source", "params": { "source": "track:Audio" } }"#,
+        r#"{ "id": "audio", "type": "audio_input", "params": { "source": "track:Audio" } }"#,
     );
     let mut r = renderer(&graph);
     assert!(matches!(r.audio_sink(), AudioSink::Rendered { .. }));
@@ -339,8 +339,8 @@ fn tracks_at_different_rates_meet_in_one_graph() {
     let graph = r#"{ "version": 0,
       "nodes": [
         { "id": "video", "type": "video_input" },
-        { "id": "a", "type": "audio_source", "params": { "source": "track:low" } },
-        { "id": "b", "type": "audio_source", "params": { "source": "track:high" } },
+        { "id": "a", "type": "audio_input", "params": { "source": "track:low" } },
+        { "id": "b", "type": "audio_input", "params": { "source": "track:high" } },
         { "id": "mix", "type": "combine" }, { "id": "sound", "type": "audio_output" },
         { "id": "out", "type": "output" }
       ],
@@ -501,7 +501,7 @@ fn video_in_reads_the_mix_and_a_source_naming_no_track_reads_zeros() {
 
     let named = common::FINITE_PASSTHROUGH.replace(
         r#""type": "video_input""#,
-        r#""type": "video_source", "params": { "source": "track:Nope" }"#,
+        r#""type": "video_input", "params": { "source": "track:Nope" }"#,
     );
     let mut r = Renderer::new(
         &common::backend(),
@@ -591,7 +591,7 @@ fn only_the_rendered_bus_has_its_audio_output_compiled() {
 
     let graph = GraphDesc::from_json(&SOUND.replace(
         r#"{ "id": "sound", "type": "audio_output" }"#,
-        r#"{ "id": "sound", "type": "audio_output", "params": { "bus": "Surround" } }"#,
+        r#"{ "id": "sound", "type": "audio_bus_output", "params": { "bus": "Surround" } }"#,
     ))
     .unwrap();
     let sink_for = |bus: &Bus| {
@@ -612,13 +612,10 @@ fn only_the_rendered_bus_has_its_audio_output_compiled() {
         .unwrap();
         r.audio_sink()
     };
-    // Main has no Audio Output: it plays its track mix.
+    // Main has no Audio Output, only a bus output for another bus: it plays its track mix.
     assert_eq!(sink_for(&Bus::main()), AudioSink::TrackMix);
     // The Surround bus renders it with its six channels, mono going to every one.
-    let surround = Bus {
-        name: "Surround".into(),
-        channels: 6,
-    };
+    let surround = Bus::new("Surround", 6);
     assert_eq!(
         sink_for(&surround),
         AudioSink::Rendered {

@@ -199,7 +199,6 @@ fn a_project_with_graph_items_renders_them() {
 
     // The graph reading a track that doesn't exist, on an item over frames 2 and 3: black there.
     let graph = project.graph_id;
-    project.graph.nodes[0].kind = rastersong_engine::VIDEO_SOURCE_NODE.into();
     project.graph.nodes[0].params.insert(
         rastersong_engine::SOURCE_PARAM.into(),
         rastersong_engine::ParamValue::Text("track:Nope".into()),

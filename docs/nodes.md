@@ -6,26 +6,15 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 
 | Node | What it does |
 |---|---|
-| [Audio In](#audio_input) | The graph's main sound: what is below its item on the timeline, one frame's worth per block, -1 to 1, channels interleaved |
-| [Audio Source](#audio_source) | Sound from elsewhere in the project: the audio mix, one audio track on its own, or a graph track's output |
-| [Video In](#video_input) | The graph's main picture: what is below its item on the timeline, as RGB from 0 to 1 |
-| [Video Source](#video_source) | A picture from elsewhere in the project: the video mix, one video track on its own, or a graph track's output |
+| [Audio Input](#audio_input) | Sound: what is below the graph's item unless set otherwise, one frame's worth per block, -1 to 1, channels interleaved |
+| [Named Input](#named_input) | What a Named Output of a graph on a lower graph track sends, picked by its track and name |
+| [Video Input](#video_input) | A picture: what is below the graph's item unless set otherwise, as RGB from 0 to 1 |
 
 ### `audio_input`
 
-**Audio In**: The graph's main sound: what is below its item on the timeline, one frame's worth per block, -1 to 1, channels interleaved
+**Audio Input**: Sound: what is below the graph's item unless set otherwise, one frame's worth per block, -1 to 1, channels interleaved
 
-Every graph has one, which can't be removed. Below the lowest graph track it is the audio mix; above another graph track it is that track's sound where one of its items plays. Use an Audio Source to read anything else.
-
-**Outputs**
-
-- `out` (audio, -1 to 1): The sound, one frame's worth per block, from -1 to 1; stereo comes as L, R, L, R, …
-
-### `audio_source`
-
-**Audio Source**: Sound from elsewhere in the project: the audio mix, one audio track on its own, or a graph track's output
-
-A track is read before its volume and mute, so a muted kick can still drive an effect. A graph track must be below the one this graph plays on, or it reads silence; where none of its items plays it reads what is below that track. Nothing picked reads silence.
+New graphs come with one reading what is below: below the lowest graph track that is the audio mix; above another graph track it is that track's sound where one of its items plays. Its Source can read the audio mix, one audio track on its own (before its volume and mute, so a muted kick can still drive an effect), or a graph track's main sound instead. A graph track must be below the one this graph plays on, or it reads silence; where none of its items plays it reads what is below that track. Nothing picked reads silence.
 
 **Outputs**
 
@@ -35,24 +24,30 @@ A track is read before its volume and mute, so a muted kick can still drive an e
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `source` (Source) | `` | text | no | What this node reads: the audio mix, a track's stem, or a graph track below this one |
-| `output` (Output) | `` | text | no | Which output of the graph track to read: its main Audio, or one of its graphs' Named Outputs |
+| `source` (Source) | `below` | text | no | What this node reads: what is below, the audio mix, a track's stem, or a graph track below this one |
+
+### `named_input`
+
+**Named Input**: What a Named Output of a graph on a lower graph track sends, picked by its track and name
+
+The signal comes as the Named Output sends it, whatever kind it is. The graph track must be below the one this graph plays on; where none of its items plays, or none has an output of that name, it reads zeros.
+
+**Outputs**
+
+- `out`: The signal as the Named Output sends it
+
+**Parameters**
+
+| Name | Default | Range | Modulation | What it does |
+|---|---|---|---|---|
+| `track` (Track) | `` | text | no | The graph track whose Named Output this reads |
+| `name` (Reads) | `` | text | no | The Named Output it reads: a graph track below this one, and the name |
 
 ### `video_input`
 
-**Video In**: The graph's main picture: what is below its item on the timeline, as RGB from 0 to 1
+**Video Input**: A picture: what is below the graph's item unless set otherwise, as RGB from 0 to 1
 
-Every graph has one, which can't be removed. Below the lowest graph track it is the video mix; above another graph track it is that track's picture where one of its items plays. Use a Video Source to read anything else.
-
-**Outputs**
-
-- `out` (video, 0 to 1): The picture, as RGB from 0 to 1
-
-### `video_source`
-
-**Video Source**: A picture from elsewhere in the project: the video mix, one video track on its own, or a graph track's output
-
-A track is read before its mute. A graph track must be below the one this graph plays on, or it reads black; where none of its items plays it reads what is below that track. Nothing picked reads black.
+New graphs come with one reading what is below: below the lowest graph track that is the video mix; above another graph track it is that track's picture where one of its items plays. Its Source can read the video mix, one video track on its own (before its mute), or a graph track's main picture instead. A graph track must be below the one this graph plays on, or it reads black; where none of its items plays it reads what is below that track. Nothing picked reads black.
 
 **Outputs**
 
@@ -62,8 +57,7 @@ A track is read before its mute. A graph track must be below the one this graph 
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `source` (Source) | `` | text | no | What this node reads: the video mix, a track's stem, or a graph track below this one |
-| `output` (Output) | `` | text | no | Which output of the graph track to read: its main Video, or one of its graphs' Named Outputs |
+| `source` (Source) | `below` | text | no | What this node reads: what is below, the video mix, a track's stem, or a graph track below this one |
 
 ## Generators
 
@@ -1107,15 +1101,16 @@ Can process R, G and B separately.
 
 | Node | What it does |
 |---|---|
-| [Audio Output](#audio_output) | The rendered sound of one output bus: replaces that bus's track mix in the preview and the export |
+| [Audio Bus Output](#audio_bus_output) | The graph's sound for one of the other output buses: replaces that bus's track mix in its export |
+| [Audio Output](#audio_output) | The graph's sound: what graphs above read, and on the master bus what the preview plays and the export writes |
 | [Named Output](#named_output) | An output other graphs read by its name, without adding to this graph's picture or sound |
-| [Output](#output) | The rendered result: RGB, or mono shown as grayscale |
+| [Video Output](#output) | The graph's picture: what graphs above read, and on top what the preview shows and the export writes. RGB, or mono shown as grayscale |
 
-### `audio_output`
+### `audio_bus_output`
 
-**Audio Output**: The rendered sound of one output bus: replaces that bus's track mix in the preview and the export
+**Audio Bus Output**: The graph's sound for one of the other output buses: replaces that bus's track mix in its export
 
-Every graph has one on the master bus, which can't be removed; add one for each other bus. With nothing connected, the bus plays its track mix: the audio tracks routed to it, at their volumes; a track wired straight in is also used as it is. A mono signal is written to every channel of the bus; any other signal is written as interleaved samples across the bus's channels (a stereo signal to a stereo bus as it is). Each frame's block is resampled from its own rate to the project's audio rate, and clipped to -1 to 1.
+Add one for each bus besides the master, which is the Audio Output's. With nothing connected, the bus plays its track mix: the audio tracks routed to it, at their volumes. A mono signal is written to every channel of the bus; any other signal is written as interleaved samples across the bus's channels. Each frame's block is resampled from its own rate to the project's audio rate, and clipped to -1 to 1. One naming the master bus, or a bus the project doesn't have, is not rendered.
 
 **Inputs**
 
@@ -1130,13 +1125,33 @@ Every graph has one on the master bus, which can't be removed; add one for each 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
 | `volume` (Volume) | 0 dB | -48 to 12 (up to -120 to 60) | yes | Louder or quieter, in decibels, before the sound is clipped to -1 to 1. 0 changes nothing; the meter shows the peak after the volume, so a peak above 0 dB will clip. |
-| `bus` (Bus) | `Main` | text | no | The output bus this sound goes to, from the buses in Project settings. The project's first bus (Main unless renamed) is the one the preview plays and the export writes. An output naming a bus the project doesn't have is not rendered. |
+| `bus` (Bus) | `` | text | no | The output bus this sound goes to, from the buses in Project settings other than the master |
+
+### `audio_output`
+
+**Audio Output**: The graph's sound: what graphs above read, and on the master bus what the preview plays and the export writes
+
+Every graph has one, which can't be removed. With nothing connected, the master plays its track mix: the audio tracks routed to it, at their volumes; a track wired straight in is also used as it is. A mono signal is written to every channel of the bus; any other signal is written as interleaved samples across the bus's channels (a stereo signal to a stereo bus as it is). Each frame's block is resampled from its own rate to the project's audio rate, and clipped to -1 to 1. Use an Audio Bus Output for the other buses.
+
+**Inputs**
+
+- `in` (main, required): The sound to output, from -1 to 1: mono, stereo, or any signal read as samples
+
+**Outputs**
+
+- `out` (audio, -1 to 1): The sound as written
+
+**Parameters**
+
+| Name | Default | Range | Modulation | What it does |
+|---|---|---|---|---|
+| `volume` (Volume) | 0 dB | -48 to 12 (up to -120 to 60) | yes | Louder or quieter, in decibels, before the sound is clipped to -1 to 1. 0 changes nothing; the meter shows the peak after the volume, so a peak above 0 dB will clip. |
 
 ### `named_output`
 
 **Named Output**: An output other graphs read by its name, without adding to this graph's picture or sound
 
-A Video Source or Audio Source in a graph on a higher graph track reads it by picking this graph's track and the name. Any signal goes in and comes out as it is. Names are unique within a graph.
+A Named Input in a graph on a higher graph track reads it by picking this graph's track and the name. Any signal goes in and comes out as it is. Names are unique within a graph.
 
 **Inputs**
 
@@ -1154,7 +1169,7 @@ A Video Source or Audio Source in a graph on a higher graph track reads it by pi
 
 ### `output`
 
-**Output**: The rendered result: RGB, or mono shown as grayscale
+**Video Output**: The graph's picture: what graphs above read, and on top what the preview shows and the export writes. RGB, or mono shown as grayscale
 
 **Inputs**
 

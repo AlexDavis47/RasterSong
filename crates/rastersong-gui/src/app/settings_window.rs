@@ -182,7 +182,7 @@ impl App {
         }
         if ui.button(tr("settings.buses.add")).clicked() {
             let name = self.project.unused_bus_name();
-            self.project.buses.push(Bus { name, channels: 2 });
+            self.project.buses.push(Bus::new(name, 2));
         }
         help(ui, tr("settings.buses.help"));
         if let Some((old, new)) = rename {

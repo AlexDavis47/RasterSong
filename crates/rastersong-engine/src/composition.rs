@@ -4,18 +4,19 @@
 use std::collections::BTreeMap;
 
 use rastersong_graph::nodes::{
-    AUDIO_INPUT, AUDIO_SOURCE, DEFAULT_AUDIO, DEFAULT_VIDEO, OUTPUT_PARAM, SOURCE_PARAM,
-    VIDEO_INPUT, VIDEO_SOURCE, source_key,
+    AUDIO_INPUT, BELOW, NAME_PARAM, NAMED_INPUT, SOURCE_PARAM, TRACK_PARAM, VIDEO_INPUT, named_key,
+    source_key,
 };
 use rastersong_graph::{GraphDesc, ParamValue};
 
 use crate::timeline::{GraphItem, Source, TrackKind};
 
-/// Whether an input node reads pictures or sound.
+/// Whether an input node reads pictures or sound, or (a Named Input) whatever was sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputKind {
     Video,
     Audio,
+    Named,
 }
 
 /// What one input node of a graph reads, and the name the graph is filled by for it. Several
@@ -30,26 +31,38 @@ pub struct InputPort {
 
 /// What a node of type `kind` with `params` reads; `None` for nodes other than inputs.
 pub fn port_of(kind: &str, params: &BTreeMap<String, ParamValue>) -> Option<InputPort> {
+    let text = |name: &str| match params.get(name) {
+        Some(ParamValue::Text(text)) => text.as_str(),
+        _ => "",
+    };
     let (kind, key, source) = match kind {
-        VIDEO_INPUT => (InputKind::Video, DEFAULT_VIDEO.to_owned(), Source::Below),
-        AUDIO_INPUT => (InputKind::Audio, DEFAULT_AUDIO.to_owned(), Source::Below),
-        VIDEO_SOURCE | AUDIO_SOURCE => {
-            let video = kind == VIDEO_SOURCE;
-            let text = |name: &str| match params.get(name) {
-                Some(ParamValue::Text(text)) => text.as_str(),
-                _ => "",
-            };
-            let (source, output) = (text(SOURCE_PARAM), text(OUTPUT_PARAM));
-            let kind = if video {
-                InputKind::Video
-            } else {
-                InputKind::Audio
-            };
+        VIDEO_INPUT | AUDIO_INPUT => {
+            let video = kind == VIDEO_INPUT;
+            // A missing setting is the default: what is below.
+            let source = params
+                .get(SOURCE_PARAM)
+                .map_or(BELOW, |_| text(SOURCE_PARAM));
             (
-                kind,
-                source_key(video, source, output),
-                Source::from_settings(source, output, video),
+                if video {
+                    InputKind::Video
+                } else {
+                    InputKind::Audio
+                },
+                source_key(video, source),
+                Source::from_setting(source),
             )
+        }
+        NAMED_INPUT => {
+            let (track, name) = (text(TRACK_PARAM), text(NAME_PARAM));
+            let source = if track.is_empty() || name.is_empty() {
+                Source::Nothing
+            } else {
+                Source::Named {
+                    track: track.to_owned(),
+                    name: name.to_owned(),
+                }
+            };
+            (InputKind::Named, named_key(track, name), source)
         }
         _ => return None,
     };
@@ -138,18 +151,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn inputs_read_below_and_sources_what_they_name() {
+    fn inputs_read_what_their_source_names() {
         let desc = GraphDesc::from_json(
             r#"{ "version": 0, "nodes": [
                 { "id": "v", "type": "video_input" },
-                { "id": "a", "type": "audio_input" },
-                { "id": "k", "type": "audio_source", "params": { "source": "track:Kick" } },
-                { "id": "k2", "type": "audio_source", "params": { "source": "track:Kick" } },
-                { "id": "kv", "type": "video_source", "params": { "source": "track:Kick" } },
-                { "id": "g", "type": "video_source",
-                  "params": { "source": "graph:FX", "output": "Mask" } },
-                { "id": "m", "type": "audio_source", "params": { "source": "mix" } },
-                { "id": "n", "type": "video_source" },
+                { "id": "a", "type": "audio_input", "params": { "source": "below" } },
+                { "id": "k", "type": "audio_input", "params": { "source": "track:Kick" } },
+                { "id": "k2", "type": "audio_input", "params": { "source": "track:Kick" } },
+                { "id": "kv", "type": "video_input", "params": { "source": "track:Kick" } },
+                { "id": "g", "type": "video_input", "params": { "source": "graph:FX" } },
+                { "id": "mask", "type": "named_input", "params": { "track": "FX", "name": "Mask" } },
+                { "id": "m", "type": "audio_input", "params": { "source": "mix" } },
+                { "id": "n", "type": "video_input", "params": { "source": "" } },
                 { "id": "o", "type": "output" } ] }"#,
         )
         .unwrap();
@@ -164,11 +177,12 @@ mod tests {
                 (InputKind::Audio, Source::Below),
                 (InputKind::Audio, Source::Track("Kick".into())),
                 (InputKind::Video, Source::Track("Kick".into())),
+                (InputKind::Video, Source::Graph("FX".into())),
                 (
-                    InputKind::Video,
-                    Source::Graph {
+                    InputKind::Named,
+                    Source::Named {
                         track: "FX".into(),
-                        port: "Mask".into()
+                        name: "Mask".into()
                     }
                 ),
                 (InputKind::Audio, Source::Mix),
@@ -179,33 +193,14 @@ mod tests {
 
     #[test]
     fn source_settings_round_trip() {
-        for (source, video) in [
-            (Source::Mix, true),
-            (Source::Track("a:b".into()), false),
-            (
-                Source::Graph {
-                    track: "FX".into(),
-                    port: "Video".into(),
-                },
-                true,
-            ),
-            (
-                Source::Graph {
-                    track: "FX".into(),
-                    port: "Mask".into(),
-                },
-                false,
-            ),
-            (Source::Nothing, true),
+        for source in [
+            Source::Below,
+            Source::Mix,
+            Source::Track("a:b".into()),
+            Source::Graph("FX".into()),
+            Source::Nothing,
         ] {
-            let (s, o) = source.settings(video);
-            assert_eq!(Source::from_settings(&s, &o, video), source);
+            assert_eq!(Source::from_setting(&source.setting()), source);
         }
-        let (_, output) = Source::Graph {
-            track: "FX".into(),
-            port: "Video".into(),
-        }
-        .settings(true);
-        assert_eq!(output, "", "the main output is left out");
     }
 }

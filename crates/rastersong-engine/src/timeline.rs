@@ -116,10 +116,10 @@ impl LabelColor {
     ];
 }
 
-/// What an input node of a graph reads. Video In and Audio In read [`Source::Below`]; a Video
-/// Source or Audio Source names any of the others in its `source` and `output` settings. Sources
-/// are matched by kind: a node reading pictures gets the source's picture, one reading sound its
-/// sound.
+/// What an input node of a graph reads. A Video Input or Audio Input names it in its `source`
+/// setting ([`SOURCE_PARAM`](rastersong_graph::nodes::SOURCE_PARAM)), a Named Input in its
+/// `track` and `name`. Sources are matched by kind: a node reading pictures gets the source's
+/// picture, one reading sound its sound; a Named Input gets the signal as it was sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
     /// The main output of the next active graph below, or the timeline's mix with none.
@@ -128,62 +128,50 @@ pub enum Source {
     Mix,
     /// One track on its own (its stem), before its volume and mute.
     Track(String),
-    /// An output of the graph track `track`, which must be below the item's: where nothing
-    /// plays on it, what is below it. `port` is `Video` or `Audio` for the main outputs, else a
-    /// Named Output's name.
-    Graph { track: String, port: String },
+    /// The main output of the graph track named, which must be below the item's: where nothing
+    /// plays on it, what is below it.
+    Graph(String),
+    /// The Named Output `name` of the graph track `track`, which must be below the item's: zeros
+    /// where none of its items sends one.
+    Named { track: String, name: String },
     /// Zeros.
     Nothing,
 }
 
 impl Source {
-    /// The source a Video Source (`video`) or Audio Source with settings `source` and `output`
-    /// reads (see [`SOURCE_PARAM`](rastersong_graph::nodes::SOURCE_PARAM)).
-    pub fn from_settings(source: &str, output: &str, video: bool) -> Self {
-        if source == "mix" {
+    /// The source a Video Input or Audio Input with `source` setting `source` reads.
+    pub fn from_setting(source: &str) -> Self {
+        if source == rastersong_graph::nodes::BELOW {
+            Self::Below
+        } else if source == "mix" {
             Self::Mix
         } else if let Some(track) = source.strip_prefix("track:") {
             Self::Track(track.to_owned())
         } else if let Some(track) = source.strip_prefix("graph:") {
-            Self::Graph {
-                track: track.to_owned(),
-                port: if output.is_empty() {
-                    main_output(video)
-                } else {
-                    output
-                }
-                .to_owned(),
-            }
+            Self::Graph(track.to_owned())
         } else {
             Self::Nothing
         }
     }
 
-    /// The `source` and `output` settings of a Video Source (`video`) or Audio Source reading
-    /// it: the reverse of [`Self::from_settings`]. [`Source::Below`] reads as nothing there.
-    pub fn settings(&self, video: bool) -> (String, String) {
+    /// The `source` setting of a Video Input or Audio Input reading it: the reverse of
+    /// [`Self::from_setting`]. A Named Output reads as nothing there.
+    pub fn setting(&self) -> String {
         match self {
-            Self::Mix => ("mix".into(), String::new()),
-            Self::Track(track) => (format!("track:{track}"), String::new()),
-            Self::Graph { track, port } => (
-                format!("graph:{track}"),
-                if port == main_output(video) {
-                    String::new()
-                } else {
-                    port.clone()
-                },
-            ),
-            Self::Below | Self::Nothing => (String::new(), String::new()),
+            Self::Below => rastersong_graph::nodes::BELOW.to_owned(),
+            Self::Mix => "mix".into(),
+            Self::Track(track) => format!("track:{track}"),
+            Self::Graph(track) => format!("graph:{track}"),
+            Self::Named { .. } | Self::Nothing => String::new(),
         }
     }
-}
 
-/// The name of a graph's main output of pictures (`video`) or sound.
-fn main_output(video: bool) -> &'static str {
-    if video {
-        rastersong_graph::nodes::DEFAULT_VIDEO
-    } else {
-        rastersong_graph::nodes::DEFAULT_AUDIO
+    /// The graph track it reads, if any.
+    pub fn graph_track(&self) -> Option<&str> {
+        match self {
+            Self::Graph(track) | Self::Named { track, .. } => Some(track),
+            _ => None,
+        }
     }
 }
 
@@ -406,15 +394,18 @@ impl TrackSpec {
 /// The most channels a bus can have.
 pub const MAX_BUS_CHANNELS: u32 = 8;
 
-/// An output bus: a named set of channels that audio tracks are summed into and an Audio Output
-/// writes to. The first bus of a project is the master, which the preview plays and the export
-/// writes.
+/// An output bus: a named set of channels that audio tracks are summed into. The first bus of a
+/// project is the master, which the preview plays, the export writes and the graphs' Audio Output
+/// writes to; an Audio Bus Output writes to one of the others.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Bus {
     pub name: String,
     /// 1 for mono, 2 for stereo, 6 for 5.1, … up to [`MAX_BUS_CHANNELS`].
     pub channels: u32,
+    /// Whether it is the project's master bus, the first. Not saved: it follows the order.
+    #[serde(skip)]
+    pub master: bool,
 }
 
 impl Default for Bus {
@@ -429,6 +420,23 @@ impl Bus {
         Self {
             name: DEFAULT_BUS.to_owned(),
             channels: 2,
+            master: true,
+        }
+    }
+
+    /// A bus other than the master.
+    pub fn new(name: impl Into<String>, channels: u32) -> Self {
+        Self {
+            name: name.into(),
+            channels,
+            master: false,
+        }
+    }
+
+    /// Marks the first of `buses` as the master and the others not.
+    pub fn mark_master(buses: &mut [Bus]) {
+        for (i, bus) in buses.iter_mut().enumerate() {
+            bus.master = i == 0;
         }
     }
 
@@ -461,7 +469,13 @@ impl Timeline {
 
     /// The master bus: the first, which the preview plays and the export writes.
     pub fn master(&self) -> Bus {
-        self.buses.first().cloned().unwrap_or_else(Bus::main)
+        self.buses
+            .first()
+            .cloned()
+            .map_or_else(Bus::main, |bus| Bus {
+                master: true,
+                ..bus
+            })
     }
 
     /// Whether the two render the same frames and graph sound: they differ at most in the

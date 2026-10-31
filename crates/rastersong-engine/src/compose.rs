@@ -14,7 +14,7 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use rastersong_graph::nodes::{AUDIO_OUTPUT, DEFAULT_AUDIO, DEFAULT_VIDEO};
+use rastersong_graph::nodes::{AUDIO_BUS_OUTPUT, AUDIO_OUTPUT, DEFAULT_AUDIO, DEFAULT_VIDEO};
 use rastersong_graph::{
     CompileOptions, Graph, GraphDesc, GraphError, Layout, NodeCost, NodeMeters, NodeStats,
     OutputLevel, ParamLevel, Registry, Signal, Sources, Span, audio_output_bus,
@@ -1070,10 +1070,12 @@ impl<'a> Builder<'a> {
                 });
             }
         }
-        let renders_audio = desc
-            .nodes
-            .iter()
-            .any(|n| n.kind == AUDIO_OUTPUT && audio_output_bus(n) == self.plan.bus.name);
+        let bus = &self.plan.bus;
+        let renders_audio = desc.nodes.iter().any(|n| match n.kind.as_str() {
+            AUDIO_OUTPUT => bus.master,
+            AUDIO_BUS_OUTPUT => !bus.master && audio_output_bus(n) == bus.name,
+            _ => false,
+        });
         // The project's beat grid, in the graph's own time: its first beat moves by as much as
         // the graph's frames are shifted, so beats stay on the metronome wherever the item is.
         let fps = self.plan.fps;
@@ -1159,24 +1161,23 @@ impl<'a> Builder<'a> {
                 .iter()
                 .position(|t| t.name == *track)
                 .map_or(Fill::Zeros, |node| Fill::Receive { node, video }),
-            Source::Graph { track, port } => {
+            Source::Graph(_) | Source::Named { .. } => {
                 let Some(below) = comp
                     .graph_tracks
                     .iter()
-                    .position(|t| t.name == *track)
+                    .position(|t| Some(t.name.as_str()) == source.graph_track())
                     .map(|index| self.graph_node(index))
                     .filter(|&below| below < node)
                 else {
                     return Fill::Zeros;
                 };
-                let main = if video { DEFAULT_VIDEO } else { DEFAULT_AUDIO };
-                if port == main {
-                    return Fill::Receive { node: below, video };
+                match source {
+                    Source::Named { name, .. } => self.named[below]
+                        .iter()
+                        .position(|(n, _)| n == name)
+                        .map_or(Fill::Zeros, |slot| Fill::Named { node: below, slot }),
+                    _ => Fill::Receive { node: below, video },
                 }
-                self.named[below]
-                    .iter()
-                    .position(|(name, _)| name == port)
-                    .map_or(Fill::Zeros, |slot| Fill::Named { node: below, slot })
             }
             Source::Nothing => Fill::Zeros,
         }

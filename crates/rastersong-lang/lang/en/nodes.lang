@@ -14,29 +14,30 @@ node.am.output.out = The processed signal
 node.am.param.depth.label = Depth
 node.am.param.depth.help = How strongly the modulator scales the carrier: carrier × (1 + depth × modulator)
 
-node.audio_input.label = Audio In
-node.audio_input.description = The graph's main sound: what is below its item on the timeline, one frame's worth per block, -1 to 1, channels interleaved
-node.audio_input.doc = Every graph has one, which can't be removed. Below the lowest graph track it is the audio mix; above another graph track it is that track's sound where one of its items plays. Use an Audio Source to read anything else.
+node.audio_bus_output.label = Audio Bus Output
+node.audio_bus_output.description = The graph's sound for one of the other output buses: replaces that bus's track mix in its export
+node.audio_bus_output.doc = Add one for each bus besides the master, which is the Audio Output's. With nothing connected, the bus plays its track mix: the audio tracks routed to it, at their volumes. A mono signal is written to every channel of the bus; any other signal is written as interleaved samples across the bus's channels. Each frame's block is resampled from its own rate to the project's audio rate, and clipped to -1 to 1. One naming the master bus, or a bus the project doesn't have, is not rendered.
+node.audio_bus_output.input.in = The sound to output, from -1 to 1: mono, stereo, or any signal read as samples
+node.audio_bus_output.output.out = The sound as written
+node.audio_bus_output.param.volume.label = Volume
+node.audio_bus_output.param.volume.help = Louder or quieter, in decibels, before the sound is clipped to -1 to 1. 0 changes nothing; the meter shows the peak after the volume, so a peak above 0 dB will clip.
+node.audio_bus_output.param.bus.label = Bus
+node.audio_bus_output.param.bus.help = The output bus this sound goes to, from the buses in Project settings other than the master
+node.audio_input.label = Audio Input
+node.audio_input.description = Sound: what is below the graph's item unless set otherwise, one frame's worth per block, -1 to 1, channels interleaved
+node.audio_input.doc = New graphs come with one reading what is below: below the lowest graph track that is the audio mix; above another graph track it is that track's sound where one of its items plays. Its Source can read the audio mix, one audio track on its own (before its volume and mute, so a muted kick can still drive an effect), or a graph track's main sound instead. A graph track must be below the one this graph plays on, or it reads silence; where none of its items plays it reads what is below that track. Nothing picked reads silence.
 node.audio_input.output.out = The sound, one frame's worth per block, from -1 to 1; stereo comes as L, R, L, R, …
-
-node.audio_source.label = Audio Source
-node.audio_source.description = Sound from elsewhere in the project: the audio mix, one audio track on its own, or a graph track's output
-node.audio_source.doc = A track is read before its volume and mute, so a muted kick can still drive an effect. A graph track must be below the one this graph plays on, or it reads silence; where none of its items plays it reads what is below that track. Nothing picked reads silence.
-node.audio_source.output.out = The sound, one frame's worth per block, from -1 to 1; stereo comes as L, R, L, R, …
-node.audio_source.param.source.label = Source
-node.audio_source.param.source.help = What this node reads: the audio mix, a track's stem, or a graph track below this one
-node.audio_source.param.output.label = Output
-node.audio_source.param.output.help = Which output of the graph track to read: its main Audio, or one of its graphs' Named Outputs
-
+node.audio_input.param.source.label = Source
+node.audio_input.param.source.help = What this node reads: what is below, the audio mix, a track's stem, or a graph track below this one
 node.audio_output.label = Audio Output
-node.audio_output.description = The rendered sound of one output bus: replaces that bus's track mix in the preview and the export
-node.audio_output.doc = Every graph has one on the master bus, which can't be removed; add one for each other bus. With nothing connected, the bus plays its track mix: the audio tracks routed to it, at their volumes; a track wired straight in is also used as it is. A mono signal is written to every channel of the bus; any other signal is written as interleaved samples across the bus's channels (a stereo signal to a stereo bus as it is). Each frame's block is resampled from its own rate to the project's audio rate, and clipped to -1 to 1.
+node.audio_output.description = The graph's sound: what graphs above read, and on the master bus what the preview plays and the export writes
+node.audio_output.doc = Every graph has one, which can't be removed. With nothing connected, the master plays its track mix: the audio tracks routed to it, at their volumes; a track wired straight in is also used as it is. A mono signal is written to every channel of the bus; any other signal is written as interleaved samples across the bus's channels (a stereo signal to a stereo bus as it is). Each frame's block is resampled from its own rate to the project's audio rate, and clipped to -1 to 1. Use an Audio Bus Output for the other buses.
 node.audio_output.input.in = The sound to output, from -1 to 1: mono, stereo, or any signal read as samples
 node.audio_output.output.out = The sound as written
 node.audio_output.param.volume.label = Volume
-node.audio_output.param.bus.label = Bus
-node.audio_output.param.bus.help = The output bus this sound goes to, from the buses in Project settings. The project's first bus (Main unless renamed) is the one the preview plays and the export writes. An output naming a bus the project doesn't have is not rendered.
 node.audio_output.param.volume.help = Louder or quieter, in decibels, before the sound is clipped to -1 to 1. 0 changes nothing; the meter shows the peak after the volume, so a peak above 0 dB will clip.
+
+
 
 node.beat.label = Beat
 node.beat.description = A 0 to 1 signal locked to the project's beats, restarting every note length: phase, decay, pulse or steps
@@ -342,12 +343,20 @@ node.oscillator.param.offset.help = Added to the wave: 0.5 with amplitude 0.5 fi
 node.oscillator.param.pulse_width.label = Pulse width
 node.oscillator.param.pulse_width.help = For the square wave, the fraction of the cycle it stays high
 
-node.output.label = Output
-node.output.description = The rendered result: RGB, or mono shown as grayscale
+node.output.label = Video Output
+node.output.description = The graph's picture: what graphs above read, and on top what the preview shows and the export writes. RGB, or mono shown as grayscale
 
+node.named_input.label = Named Input
+node.named_input.description = What a Named Output of a graph on a lower graph track sends, picked by its track and name
+node.named_input.doc = The signal comes as the Named Output sends it, whatever kind it is. The graph track must be below the one this graph plays on; where none of its items plays, or none has an output of that name, it reads zeros.
+node.named_input.output.out = The signal as the Named Output sends it
+node.named_input.param.track.label = Track
+node.named_input.param.track.help = The graph track whose Named Output this reads
+node.named_input.param.name.label = Reads
+node.named_input.param.name.help = The Named Output it reads: a graph track below this one, and the name
 node.named_output.label = Named Output
 node.named_output.description = An output other graphs read by its name, without adding to this graph's picture or sound
-node.named_output.doc = A Video Source or Audio Source in a graph on a higher graph track reads it by picking this graph's track and the name. Any signal goes in and comes out as it is. Names are unique within a graph.
+node.named_output.doc = A Named Input in a graph on a higher graph track reads it by picking this graph's track and the name. Any signal goes in and comes out as it is. Names are unique within a graph.
 node.named_output.input.in = The signal to offer to other graphs
 node.named_output.output.out = The signal as offered
 node.named_output.param.name.label = Name
@@ -523,19 +532,13 @@ node.transpose.description = Swaps rows and columns: the picture's width and hei
 node.transpose.input.in = The signal to process
 node.transpose.output.out = The processed signal
 
-node.video_input.label = Video In
-node.video_input.description = The graph's main picture: what is below its item on the timeline, as RGB from 0 to 1
-node.video_input.doc = Every graph has one, which can't be removed. Below the lowest graph track it is the video mix; above another graph track it is that track's picture where one of its items plays. Use a Video Source to read anything else.
+node.video_input.label = Video Input
+node.video_input.description = A picture: what is below the graph's item unless set otherwise, as RGB from 0 to 1
+node.video_input.doc = New graphs come with one reading what is below: below the lowest graph track that is the video mix; above another graph track it is that track's picture where one of its items plays. Its Source can read the video mix, one video track on its own (before its mute), or a graph track's main picture instead. A graph track must be below the one this graph plays on, or it reads black; where none of its items plays it reads what is below that track. Nothing picked reads black.
 node.video_input.output.out = The picture, as RGB from 0 to 1
+node.video_input.param.source.label = Source
+node.video_input.param.source.help = What this node reads: what is below, the video mix, a track's stem, or a graph track below this one
 
-node.video_source.label = Video Source
-node.video_source.description = A picture from elsewhere in the project: the video mix, one video track on its own, or a graph track's output
-node.video_source.doc = A track is read before its mute. A graph track must be below the one this graph plays on, or it reads black; where none of its items plays it reads what is below that track. Nothing picked reads black.
-node.video_source.output.out = The picture, as RGB from 0 to 1
-node.video_source.param.source.label = Source
-node.video_source.param.source.help = What this node reads: the video mix, a track's stem, or a graph track below this one
-node.video_source.param.output.label = Output
-node.video_source.param.output.help = Which output of the graph track to read: its main Video, or one of its graphs' Named Outputs
 
 node.three_band.param.slope.label = Slope (dB/oct)
 node.three_band.param.slope.help = How sharply each crossover separates the bands. The mid band is what remains, so the three bands always add back up to the input at any slope

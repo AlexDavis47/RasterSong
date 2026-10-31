@@ -493,8 +493,9 @@ The per-item source mapping (each graph item picking a source for each of its gr
 a second place to look for what a graph does, it made two items of one graph behave differently, and new ports
 started on a guess (the track of the same name).
 
-- **Fixed base nodes.** Every graph has one Video In and one Audio In, which always read what is below the item, and
-  one Output and one Audio Output on the master bus, which always pass the result up. They can't be deleted or
+- **Fixed base nodes** *(superseded by [Six routing nodes](#six-routing-nodes-october-2026))*. Every graph has one
+  Video In and one Audio In, which always read what is below the item, and one Output and one Audio Output on the
+  master bus, which always pass the result up. They can't be deleted or
   copied, and a graph missing one gets it back. The `port` setting is gone.
 - **Extra inputs name their source themselves.** **Video Source** and **Audio Source** have a `source` setting
   (`mix`, `track:<name>`, `graph:<graph track>`, or nothing) and, for a graph track, an `output` (empty for the main
@@ -510,6 +511,25 @@ started on a guess (the track of the same name).
 - **The one-graph render** (the CLI's `render <video> <audio> <graph>`) no longer feeds a port named after a track:
   Video In and Audio In read the mix, which changes the golden frames slightly (the sound reaches the graph at the
   mix rate).
+
+### Six routing nodes (October 2026)
+
+The Video In / Audio In / Video Source / Audio Source / Output / Audio Output / Named Output set was hard to read,
+and Named Outputs were effectively hidden: a Source had to pick a graph track before a second drop-down listed the
+names. The routing nodes are now pairs:
+
+- **Video Input, Audio Input, Named Input; Video Output, Audio Output, Named Output.** The Video and Audio Inputs
+  carry the `source` setting the Source nodes had, `below` by default, so there is one input node per kind of
+  signal. They are no longer locked: a new graph comes with a pair reading what is below, and nothing else needs
+  special rules.
+- **A Named Input lists every Named Output in one drop-down** (`track › name`), stored as its `track` and `name`
+  settings, and passes the signal on as it was sent, whatever its kind.
+- **Audio Output vs Audio Bus Output.** The Audio Output is the graph's main sound and always writes to the master
+  bus (no `bus` setting); an **Audio Bus Output** writes to one of the other buses. One naming the master is not
+  rendered. A `Bus` carries whether it is the master (not saved: the first bus is), and the graph compiles the
+  Audio Output only for the master and the Audio Bus Output for its bus.
+- **The render form keeps Named Outputs.** It used to keep only what fed the Video and Audio Outputs, so the app
+  rendered every graph without its Named Outputs and nothing could read them.
 
 ### The track tree (October 2026)
 

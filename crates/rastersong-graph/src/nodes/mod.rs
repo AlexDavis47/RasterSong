@@ -21,43 +21,55 @@ use crate::{InputSpec, Node, OutputSpec, ParamSpec, ParamValue, Params, Range, T
 
 /// The node type name of the graph's output node.
 pub const OUTPUT: &str = "output";
-/// The node type name of an audio output: every graph has one on the project's master bus, and
-/// may add one for each other bus.
+/// The node type name of the graph's main sound: every graph has one, which writes to the
+/// project's master bus.
 pub const AUDIO_OUTPUT: &str = "audio_output";
+/// The node type name of an output writing the graph's sound to one of the other buses.
+pub const AUDIO_BUS_OUTPUT: &str = "audio_bus_output";
 /// The node type name of an output other graphs can read by its name, beside the main ones.
 pub const NAMED_OUTPUT: &str = "named_output";
-/// The node type name of the graph's main picture input, which reads what is below its item.
+/// The node type name of an input reading a Named Output of a graph track by its name.
+pub const NAMED_INPUT: &str = "named_input";
+/// The node type name of a picture input, which reads what its `source` names.
 pub const VIDEO_INPUT: &str = "video_input";
-/// The node type name of the graph's main sound input, which reads what is below its item.
+/// The node type name of a sound input, which reads what its `source` names.
 pub const AUDIO_INPUT: &str = "audio_input";
-/// The node type name of an extra input reading a picture from a source it names.
-pub const VIDEO_SOURCE: &str = "video_source";
-/// The node type name of an extra input reading sound from a source it names.
-pub const AUDIO_SOURCE: &str = "audio_source";
-/// The source Video In reads, and the name the main video output is read by. As an FX, the host
-/// track's picture fills it.
+/// The source a Video Input reading what is below fills, and the name the main video output is
+/// read by. As an FX, the host track's picture fills it.
 pub const DEFAULT_VIDEO: &str = "Video";
-/// The source Audio In reads, and the name the main audio output is read by. As an FX, the host
-/// track's sound fills it.
+/// The source an Audio Input reading what is below fills, and the name the main audio output is
+/// read by. As an FX, the host track's sound fills it.
 pub const DEFAULT_AUDIO: &str = "Audio";
-/// The parameter of the audio output that names the output bus it writes to.
+/// The parameter of the Audio Bus Output that names the output bus it writes to.
 pub const BUS_PARAM: &str = "bus";
-/// The bus an audio output writes to unless set otherwise: the project's first, master bus.
+/// The name of the bus a project starts with, its master.
 pub const DEFAULT_BUS: &str = "Main";
-/// The parameter of Video Source and Audio Source that names what they read: `mix`,
+/// The parameter of Video Input and Audio Input that names what they read: `below`, `mix`,
 /// `track:<name>` or `graph:<graph track>`, or nothing when empty. Whoever uses the graph fills it.
 pub const SOURCE_PARAM: &str = "source";
-/// The parameter of Video Source and Audio Source that names the output of a graph track they
-/// read: a Named Output's name, or empty for the main output of their kind.
-pub const OUTPUT_PARAM: &str = "output";
-/// The parameter of a Named Output that names it.
+/// The `source` setting reading what is below the graph's item: the inputs' default.
+pub const BELOW: &str = "below";
+/// The parameter of a Named Input that names the graph track it reads.
+pub const TRACK_PARAM: &str = "track";
+/// The parameter of a Named Output that names it, and of a Named Input that names what it reads.
 pub const NAME_PARAM: &str = "name";
 
-/// The name the host fills for a Video Source (`video`) or Audio Source reading `source` and
-/// `output`. Never one of the main names, so extra sources and the main ones don't mix.
-pub fn source_key(video: bool, source: &str, output: &str) -> String {
-    let kind = if video { "video" } else { "audio" };
-    format!("{kind}\u{0}{source}\u{0}{output}")
+/// The name the host fills for a Video Input (`video`) or Audio Input reading `source`: the main
+/// name for what is below, else a name never one of the main ones, so the two don't mix.
+pub fn source_key(video: bool, source: &str) -> String {
+    match (source, video) {
+        (BELOW, true) => DEFAULT_VIDEO.to_owned(),
+        (BELOW, false) => DEFAULT_AUDIO.to_owned(),
+        _ => {
+            let kind = if video { "video" } else { "audio" };
+            format!("{kind}\u{0}{source}")
+        }
+    }
+}
+
+/// The name the host fills for a Named Input reading Named Output `name` of graph track `track`.
+pub fn named_key(track: &str, name: &str) -> String {
+    format!("named\u{0}{track}\u{0}{name}")
 }
 /// The node type names of the channel splitter and combiner, whose port counts follow the signal.
 pub const SPLIT: &str = "split";
@@ -94,7 +106,7 @@ macro_rules! nodes {
 
 nodes! {
     input {
-        source: [VideoInput, AudioInput, VideoSource, AudioSource],
+        source: [VideoInput, AudioInput, NamedInput],
     },
     generator {
         beat: [Beat],
@@ -105,7 +117,7 @@ nodes! {
     },
     output {
         video: [Output],
-        audio: [AudioOutput],
+        audio: [AudioOutput, AudioBusOutput],
         named: [NamedOutput],
     },
     structure {

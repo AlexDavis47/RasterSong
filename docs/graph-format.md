@@ -61,9 +61,9 @@ tempo and the loop region:
   `height`. A graph item has the `graph` id it runs, `position` and `length` (seconds on the timeline), `start`
   (seconds into the graph's own time at its left edge), `muted`, `pre_roll` (true by default: the graph warms up as
   if it had run before the item). What the graph reads is set on its own input nodes, not on the item: a
-  `video_source` or `audio_source` node's `source` is `"mix"`, `"track:<name>"` (a track's stem),
-  `"graph:<graph track>"` (an output of that graph track, which must be below the item's) or empty (nothing), and
-  its `output` names a `named_output` of the graph track's graphs (empty: the main output of its kind). Items on
+  `video_input` or `audio_input` node's `source` is `"below"` (the default), `"mix"`, `"track:<name>"` (a track's
+  stem), `"graph:<graph track>"` (the main output of that graph track, which must be below the item's) or empty
+  (nothing); a `named_input` node's `track` and `name` name a `named_output` of that graph track's graphs. Items on
   one track never overlap; a file with overlaps is repaired on load. See [Composition](engine.md#composition).
 - `graph`, `graph_id`, `graph_name` and `graphs`: the project's graphs. `graph` is the open one (the one the editor
   shows), named `graph_name` with id `graph_id`; `graphs` holds the others, each an `id`, a `name` and its
