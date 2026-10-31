@@ -2,7 +2,7 @@ use std::f64::consts::{PI, TAU};
 
 use crate::dsp::mix;
 use crate::nodes::support::UNBOUNDED_WARMUP;
-use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
+use crate::nodes::{Category, Measure, NodeKind, NodeSpec};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Most allpass stages a phaser can chain.
@@ -15,11 +15,9 @@ const MAX_STAGES: usize = 12;
 pub struct Phaser {
     stages: usize,
     freq: f64,
-    unit: Unit,
+    unit: Measure,
     feedback: f32,
     mix: f32,
-    /// Cycles per sample of one unit of frequency, set in `prepare`.
-    scale: f64,
     /// The lowest frequency (cycles per sample) the sweep reaches, for warmup.
     slowest: f64,
     /// Each stage's state.
@@ -36,9 +34,9 @@ params! { Phaser {
     FREQ: ParamSpec::number("freq", 1000.0,
         20.0,
         5_000.0)
+    .rate("second")
     .exposed()
     .limits(1e-06, 1e9),
-    UNIT: Unit::freq_param("second"),
     FEEDBACK: ParamSpec::number("feedback", 0.3,
         -0.95,
         0.95),
@@ -51,7 +49,7 @@ impl NodeKind for Phaser {
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
-        r#"{ "stages": 2, "freq": 3, "unit": "row" }"#,
+        r#"{ "stages": 2, "freq": 3, "freq.unit": "row" }"#,
         r#"{ "stages": 8, "freq": 400, "feedback": -0.8, "mix": 0.7 }"#,
         r#"{ "stages": 12, "freq": 20000, "feedback": 0.95 }"#,
     ];
@@ -61,10 +59,9 @@ impl NodeKind for Phaser {
         Ok(Self {
             stages: (params.number_at(Self::STAGES)?.round() as usize).clamp(1, MAX_STAGES),
             freq: params.number_at(Self::FREQ)?,
-            unit: params.choice_as(Self::UNIT)?,
+            unit: params.measure_at(Self::FREQ)?,
             feedback: params.float_at(Self::FEEDBACK)?,
             mix: params.float_at(Self::MIX)?,
-            scale: 1.0,
             slowest: 0.0,
             state: [0.0; MAX_STAGES],
             last: 0.0,
@@ -82,8 +79,8 @@ impl Phaser {
 
 impl Node for Phaser {
     fn prepare(&mut self, ctx: &PrepareContext) {
-        self.scale = self.unit.per_sample(1.0, ctx);
-        self.slowest = ctx.param_min(Self::FREQ, self.freq) * self.scale;
+        self.unit.prepare(ctx);
+        self.slowest = self.unit.slowest(ctx, Self::FREQ, self.freq);
     }
 
     fn process(&mut self, ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
@@ -95,9 +92,9 @@ impl Node for Phaser {
         let fixed = ctx
             .param(Self::FREQ)
             .is_none()
-            .then(|| Self::coefficient(self.freq * self.scale));
+            .then(|| Self::coefficient(self.unit.per_sample(self.freq)));
         for (i, (out, &x)) in outputs[0].data.iter_mut().zip(&inputs[0].data).enumerate() {
-            let a = fixed.unwrap_or_else(|| Self::coefficient(freq.at64(i) * self.scale));
+            let a = fixed.unwrap_or_else(|| Self::coefficient(self.unit.per_sample(freq.at64(i))));
             let mut v = x + feedback.at(i) * self.last;
             let stages = (stages.at64(i).round() as usize).clamp(1, MAX_STAGES);
             for z in &mut self.state[..stages] {
@@ -147,7 +144,7 @@ mod tests {
             .map(|n| (std::f64::consts::TAU * 0.02 * f64::from(n)).sin() as f32)
             .collect();
         let out = run(
-            r#"{ "mix": 1, "feedback": 0, "freq": 0.05, "unit": "row" }"#,
+            r#"{ "mix": 1, "feedback": 0, "freq": 0.05, "freq.unit": "row" }"#,
             &input,
         );
         let peak = out[2000..].iter().fold(0.0f32, |m, x| m.max(x.abs()));

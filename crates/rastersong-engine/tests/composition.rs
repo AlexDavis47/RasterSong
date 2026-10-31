@@ -1,5 +1,5 @@
-//! Composition: the tracks' mix and the graph tracks above it, each item filling its ports from
-//! its sources, rendered by the sequential renderer, the service and the offline render.
+//! Composition: the tracks' mix and the graph tracks above it, each graph's input nodes reading
+//! the sources they name, rendered by the sequential renderer, the service and the offline render.
 
 mod common;
 
@@ -10,8 +10,8 @@ use common::{FRAMES, backend, tracks, wait_until};
 use rastersong_engine::{
     AudioSink, Bus, ComposedGraphTrack, Composition, Engine, EngineConfig, EngineError,
     EngineStatus, FakeVideo, FrameSink, GraphDesc, GraphItem, Item, MediaTrack, OutputSize,
-    Rational, Registry, RenderInfo, RenderSettings, RenderTrack, RenderedFrame, Renderer, Source,
-    Timeline, TrackKind, TrackSpec, render,
+    Rational, Registry, RenderInfo, RenderSettings, RenderTrack, RenderedFrame, Renderer, Timeline,
+    TrackKind, TrackSpec, render,
 };
 
 const FPS: f64 = 30.0;
@@ -30,11 +30,19 @@ fn passthrough() -> String {
     )
 }
 
-/// Port `port`'s picture straight to the output.
-fn show(port: &str) -> String {
+/// A Video Source reading `source` (and `output`, for a graph track), as a node.
+fn source_node(id: &str, source: &str, output: &str) -> String {
+    format!(
+        r#"{{ "id": "{id}", "type": "video_source", "params": {{ "source": "{source}", "output": "{output}" }} }}"#
+    )
+}
+
+/// The picture of `source` straight to the output.
+fn show(source: &str, output: &str) -> String {
     graph(
         &format!(
-            r#"{{ "id": "v", "type": "video_input", "params": {{ "port": "{port}" }} }}, {{ "id": "o", "type": "output" }}"#
+            r#"{}, {{ "id": "o", "type": "output" }}"#,
+            source_node("v", source, output)
         ),
         r#"{ "from": "v", "to": "o" }"#,
     )
@@ -58,7 +66,7 @@ fn crush() -> String {
 fn delay(frames: u32) -> String {
     graph(
         &format!(
-            r#"{{ "id": "v", "type": "video_input" }}, {{ "id": "d", "type": "delay", "params": {{ "time": {frames}, "unit": "frame", "mix": 1 }} }}, {{ "id": "o", "type": "output" }}"#
+            r#"{{ "id": "v", "type": "video_input" }}, {{ "id": "d", "type": "delay", "params": {{ "time": {frames}, "time.unit": "frame", "mix": 1 }} }}, {{ "id": "o", "type": "output" }}"#
         ),
         r#"{ "from": "v", "to": "d" }, { "from": "d", "to": "o" }"#,
     )
@@ -179,6 +187,84 @@ fn without_graph_items_the_mix_shows() {
     assert_eq!(all_frames(&mut r, 8), reference(&passthrough(), 8));
 }
 
+/// A beat's phase as the picture: it rises over each beat (15 frames at 120 bpm).
+fn beat() -> String {
+    graph(
+        r#"{ "id": "b", "type": "beat", "params": { "shape": "phase" } }, { "id": "o", "type": "output" }"#,
+        r#"{ "from": "b", "to": "o" }"#,
+    )
+}
+
+#[test]
+fn an_item_starting_mid_timeline_keeps_the_projects_beat_grid() {
+    let tracks = video_track();
+    let mut comp = composition(&tracks, &[(1, beat())]);
+    // Five frames in, a third of a beat, and trimmed by two frames at its start.
+    let mut item = span(5, 20, 1);
+    item.start = 2.0 / FPS;
+    comp.graph_tracks = vec![graph_track("G", vec![item])];
+    let rendered = all_frames(&mut renderer_for(&comp, &tracks), 20);
+    let whole = reference(&beat(), 20);
+    for i in 5..20 {
+        assert_eq!(rendered[i], whole[i], "frame {i}");
+    }
+}
+
+#[test]
+fn an_items_beats_land_where_the_metronome_clicks_with_a_first_beat_offset() {
+    // 120 bpm at 30 fps: a beat every 15 frames, the first one 4 frames in, as the metronome
+    // and the ruler count them.
+    let tempo = rastersong_engine::Tempo {
+        offset_secs: 4.0 / FPS,
+        ..Default::default()
+    };
+    let tracks = video_track();
+    let mut comp = composition(&tracks, &[(1, beat())]);
+    let mut item = span(7, 40, 1);
+    item.start = 3.0 / FPS;
+    comp.graph_tracks = vec![graph_track("G", vec![item])];
+    let mut r = Renderer::with_composition(
+        &other_backend(),
+        None,
+        &tracks,
+        &comp,
+        &GraphDesc::from_json(&passthrough()).unwrap(),
+        tempo,
+        &Bus::main(),
+        &Registry::default(),
+        OutputSize::Native,
+    )
+    .unwrap();
+    let rendered = all_frames(&mut r, 40);
+    // The phase is 0 at the top of each beat's frame and near 1 just before.
+    for beat in [19, 34] {
+        assert_eq!(rendered[beat][0], 0, "frame {beat}");
+        assert!(rendered[beat - 1][0] > 200, "frame {}", beat - 1);
+    }
+}
+
+#[test]
+fn graph_progress_goes_across_the_item_wherever_it_is() {
+    let progress = graph(
+        r#"{ "id": "p", "type": "graph_progress" }, { "id": "o", "type": "output" }"#,
+        r#"{ "from": "p", "to": "o" }"#,
+    );
+    let tracks = video_track();
+    let mut comp = composition(&tracks, &[(1, progress)]);
+    let mut item = span(5, 25, 1);
+    item.start = 2.0 / FPS;
+    comp.graph_tracks = vec![graph_track("G", vec![item])];
+    let rendered = all_frames(&mut renderer_for(&comp, &tracks), 25);
+    // The first pixel of each frame: 0 on the item's first frame, half way at its middle.
+    assert_eq!(rendered[5][0], 0);
+    assert!(
+        (127..=128).contains(&rendered[15][0]),
+        "{}",
+        rendered[15][0]
+    );
+    assert!(rendered[24][0] > 240, "{}", rendered[24][0]);
+}
+
 #[test]
 fn an_item_changes_only_the_frames_it_plays() {
     let tracks = video_track();
@@ -229,44 +315,80 @@ fn the_top_graph_wins_and_reads_the_one_below_unless_told_otherwise() {
     }
 
     // Reading the mix instead, the top graph replaces the one below where it plays.
-    comp.graph_tracks[0].items[0]
-        .sources
-        .insert("Video".into(), Source::Mix);
-    let rendered = all_frames(&mut renderer_for(&comp, &tracks), 10);
+    let crush_of = |source: &str| {
+        graph(
+            &format!(
+                r#"{}, {{ "id": "c", "type": "bitcrush", "params": {{ "bits": 2 }} }}, {{ "id": "o", "type": "output" }}"#,
+                source_node("s", source, "")
+            ),
+            r#"{ "from": "s", "to": "c" }, { "from": "c", "to": "o" }"#,
+        )
+    };
+    let mut reading = |source: &str| {
+        comp.graphs[1].1 = GraphDesc::from_json(&crush_of(source)).unwrap();
+        all_frames(&mut renderer_for(&comp, &tracks), 10)
+    };
+    let rendered = reading("mix");
     assert_eq!(rendered[4], crushed[4]);
     assert_eq!(rendered[8], inverted[8]);
 
     // Or the bottom graph track's output by name, which is what is below it here.
-    comp.graph_tracks[0].items[0].sources.insert(
-        "Video".into(),
-        Source::Graph {
-            track: "Bottom".into(),
-            port: "Video".into(),
-        },
-    );
-    let rendered = all_frames(&mut renderer_for(&comp, &tracks), 10);
+    let rendered = reading("graph:Bottom");
     assert_eq!(rendered[4], both[4]);
 }
 
 #[test]
 fn graph_sources_only_point_down() {
     let tracks = video_track();
-    let mut comp = composition(&tracks, &[(1, invert()), (2, show("Up"))]);
-    let mut reader = span(0, 10, 2);
-    reader.sources.insert(
-        "Up".into(),
-        Source::Graph {
-            track: "Top".into(),
-            port: "Video".into(),
-        },
-    );
-    comp.graph_tracks = vec![
-        graph_track("Top", vec![span(0, 10, 1)]),
-        graph_track("Bottom", vec![reader]),
-    ];
+    let comp = Composition {
+        graph_tracks: vec![
+            graph_track("Top", vec![span(0, 10, 1)]),
+            graph_track("Bottom", vec![span(0, 10, 2)]),
+        ],
+        ..composition(&tracks, &[(1, invert()), (2, show("graph:Top", ""))])
+    };
     // The bottom item can't read the track above it: zeros, and the top graph inverts them.
     let rendered = all_frames(&mut renderer_for(&comp, &tracks), 4);
     assert!(rendered.iter().flatten().all(|&b| b == 255));
+}
+
+#[test]
+fn a_named_output_is_read_by_graphs_above_without_changing_its_tracks_picture() {
+    // The bottom graph passes the picture up as it is and offers it inverted as `Inverted`.
+    let offers = graph(
+        r#"{ "id": "v", "type": "video_input" }, { "id": "i", "type": "invert" }, { "id": "o", "type": "output" },
+           { "id": "n", "type": "named_output", "params": { "name": "Inverted" } }"#,
+        r#"{ "from": "v", "to": "o" }, { "from": "v", "to": "i" }, { "from": "i", "to": "n" }"#,
+    );
+    let tracks = video_track();
+    let mut comp = composition(
+        &tracks,
+        &[
+            (1, offers),
+            (2, show("graph:Bottom", "Inverted")),
+            (3, show("graph:Bottom", "Nope")),
+        ],
+    );
+    comp.graph_tracks = vec![
+        graph_track("Top", vec![span(0, 10, 2)]),
+        graph_track("Bottom", vec![span(0, 6, 1)]),
+    ];
+    let (plain, inverted) = (reference(&passthrough(), 10), reference(&invert(), 10));
+    let rendered = all_frames(&mut renderer_for(&comp, &tracks), 10);
+    for i in 0..6 {
+        assert_eq!(rendered[i], inverted[i], "frame {i}");
+    }
+    // Where the bottom graph doesn't play, nothing offers it: zeros.
+    assert!(rendered[8].iter().all(|&b| b == 0));
+    // The bottom track's own picture is the plain one.
+    comp.graph_tracks.remove(0);
+    let rendered = all_frames(&mut renderer_for(&comp, &tracks), 6);
+    assert_eq!(rendered[3], plain[3]);
+    // A name no graph on the track offers reads zeros.
+    comp.graph_tracks
+        .insert(0, graph_track("Top", vec![span(0, 10, 3)]));
+    let rendered = all_frames(&mut renderer_for(&comp, &tracks), 6);
+    assert!(rendered[3].iter().all(|&b| b == 0));
 }
 
 #[test]
@@ -294,19 +416,16 @@ fn seeking_into_an_item_renders_what_playing_through_does() {
 fn ports_read_a_tracks_stem_even_when_it_is_out_of_the_mix() {
     // `other` is muted: it is only there to be read.
     let tracks = tracks(vec![late("other")]);
-    let mut comp = composition(&tracks, &[(1, show("Other"))]);
+    let mut comp = composition(&tracks, &[(1, show("track:other", ""))]);
     comp.tracks[1].in_mix = false;
-    let mut item = span(0, 10, 1);
-    item.sources
-        .insert("Other".into(), Source::Track("other".into()));
-    comp.graph_tracks = vec![graph_track("G", vec![item])];
+    comp.graph_tracks = vec![graph_track("G", vec![span(0, 10, 1)])];
     let rendered = all_frames(&mut renderer_for(&comp, &tracks), 8);
     for (i, frame) in rendered.iter().enumerate().skip(2) {
         assert_eq!(frame[0], (i - 2) as u8, "frame {i} shows `other`");
     }
 
-    // Without a source the port reads zeros.
-    comp.graph_tracks[0].items[0].sources.clear();
+    // Without a source the node reads zeros.
+    comp.graphs[0].1 = GraphDesc::from_json(&show("", "")).unwrap();
     let rendered = all_frames(&mut renderer_for(&comp, &tracks), 8);
     assert!(rendered.iter().flatten().all(|&b| b == 0));
 
@@ -322,20 +441,24 @@ fn a_source_with_latency_holds_the_rest_back_to_line_up() {
     // the `other` stem, which is held back a frame to meet it.
     let tracks = tracks(vec![late("other")]);
     let side_by_side = graph(
-        r#"{ "id": "v", "type": "video_input" }, { "id": "x", "type": "video_input", "params": { "port": "Other" } }, { "id": "o", "type": "output" }"#,
+        &format!(
+            r#"{{ "id": "v", "type": "video_input" }}, {}, {{ "id": "o", "type": "output" }}"#,
+            source_node("x", "track:other", "")
+        ),
         r#"{ "from": "v", "to": "o" }"#,
     );
     let mut comp = composition(
         &tracks,
-        &[(1, shifted()), (2, side_by_side), (3, show("Other"))],
+        &[
+            (1, shifted()),
+            (2, side_by_side),
+            (3, show("track:other", "")),
+        ],
     );
     comp.tracks[1].in_mix = false;
     for (graph, expect) in [(2, 0), (3, 2)] {
-        let mut top = span(0, 10, graph);
-        top.sources
-            .insert("Other".into(), Source::Track("other".into()));
         comp.graph_tracks = vec![
-            graph_track("Top", vec![top]),
+            graph_track("Top", vec![span(0, 10, graph)]),
             graph_track("Bottom", vec![span(0, 10, 1)]),
         ];
         let mut r = renderer_for(&comp, &tracks);
@@ -467,8 +590,15 @@ fn peak(comp: &Composition, tracks: &[RenderTrack]) -> f32 {
 
 /// The main sound straight to the Audio Output, with a gain so it isn't the plain mix.
 fn louder() -> String {
+    louder_of(r#"{ "id": "a", "type": "audio_input" }"#)
+}
+
+/// What node `a` reads straight to the Audio Output, with a gain so it isn't the plain mix.
+fn louder_of(a: &str) -> String {
     graph(
-        r#"{ "id": "a", "type": "audio_input" }, { "id": "s", "type": "audio_output", "params": { "volume": 0.001 } }, { "id": "v", "type": "video_input" }, { "id": "o", "type": "output" }"#,
+        &format!(
+            r#"{a}, {{ "id": "s", "type": "audio_output", "params": {{ "volume": 0.001 }} }}, {{ "id": "v", "type": "video_input" }}, {{ "id": "o", "type": "output" }}"#
+        ),
         r#"{ "from": "a", "to": "s" }, { "from": "v", "to": "o" }"#,
     )
 }
@@ -489,9 +619,10 @@ fn a_graph_hears_the_mix_at_the_tracks_volume_or_a_stem_as_it_is() {
         "a muted track is silent in the mix"
     );
     // Its stem is there as it is, at full level.
-    comp.graph_tracks[0].items[0]
-        .sources
-        .insert("Audio".into(), Source::Track("song".into()));
+    comp.graphs[0].1 = GraphDesc::from_json(&louder_of(
+        r#"{ "id": "a", "type": "audio_source", "params": { "source": "track:song" } }"#,
+    ))
+    .unwrap();
     assert!((peak(&comp, &tracks) / full - 1.0).abs() < 0.01);
 }
 

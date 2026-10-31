@@ -290,12 +290,18 @@ fn an_audio_output_renders_sound_with_each_frame() {
 fn a_track_wired_straight_to_the_audio_output_is_rendered_as_it_is() {
     use rastersong_engine::AudioSink;
 
-    let graph = SOUND.replace(
+    let straight = SOUND.replace(
         r#"{ "from": "audio", "to": "inv" }, { "from": "inv", "to": "sound" }"#,
         r#"{ "from": "audio", "to": "sound" }"#,
     );
+    // Audio In wired straight in is the mix: the mixer plays it.
+    assert_eq!(renderer(&straight).audio_sink(), AudioSink::TrackMix);
+    // An Audio Source reading the track called `Audio` on its own isn't the mix: rendered.
+    let graph = straight.replace(
+        r#"{ "id": "audio", "type": "audio_input" }"#,
+        r#"{ "id": "audio", "type": "audio_source", "params": { "source": "track:Audio" } }"#,
+    );
     let mut r = renderer(&graph);
-    // The port reads the track called `Audio` on its own, which isn't the mix: rendered.
     assert!(matches!(r.audio_sink(), AudioSink::Rendered { .. }));
     r.render(3, &|| false).unwrap();
     let peak = r
@@ -333,8 +339,8 @@ fn tracks_at_different_rates_meet_in_one_graph() {
     let graph = r#"{ "version": 0,
       "nodes": [
         { "id": "video", "type": "video_input" },
-        { "id": "a", "type": "audio_input", "params": { "port": "low" } },
-        { "id": "b", "type": "audio_input", "params": { "port": "high" } },
+        { "id": "a", "type": "audio_source", "params": { "source": "track:low" } },
+        { "id": "b", "type": "audio_source", "params": { "source": "track:high" } },
         { "id": "mix", "type": "combine" }, { "id": "sound", "type": "audio_output" },
         { "id": "out", "type": "output" }
       ],
@@ -485,17 +491,17 @@ fn items_place_the_video_and_gaps_read_zeros() {
 }
 
 #[test]
-fn the_main_port_reads_the_mix_and_a_port_naming_no_track_reads_zeros() {
+fn video_in_reads_the_mix_and_a_source_naming_no_track_reads_zeros() {
     use rastersong_engine::{GraphDesc, RenderTrack, Renderer};
 
-    // The master's main Video port is the tracks' mix, whatever they are called.
+    // Video In reads the tracks' mix, whatever they are called.
     let (info, reds) = passthrough_frames(None, RenderTrack::video("other", common::VIDEO));
     assert_eq!(info.frames, common::FRAMES);
     assert_eq!(reds, (0..common::FRAMES as u8).collect::<Vec<_>>());
 
     let named = common::FINITE_PASSTHROUGH.replace(
         r#""type": "video_input""#,
-        r#""type": "video_input", "params": { "port": "Nope" }"#,
+        r#""type": "video_source", "params": { "source": "track:Nope" }"#,
     );
     let mut r = Renderer::new(
         &common::backend(),
@@ -539,7 +545,7 @@ fn without_graphs_the_top_video_track_playing_shows() {
         &common::backend(),
         None,
         &tracks,
-        &single_composition(&tracks, &graph).without_graphs(),
+        &single_composition(&tracks).without_graphs(),
         &graph,
         Default::default(),
         &rastersong_engine::Bus::main(),
@@ -565,7 +571,7 @@ fn without_graphs_the_top_video_track_playing_shows() {
         &common::backend(),
         None,
         &tracks,
-        &single_composition(&tracks, &graph).without_graphs(),
+        &single_composition(&tracks).without_graphs(),
         &graph,
         Default::default(),
         &rastersong_engine::Bus::main(),

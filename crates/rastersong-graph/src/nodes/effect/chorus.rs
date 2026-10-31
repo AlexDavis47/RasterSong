@@ -1,6 +1,6 @@
 use crate::dsp::{DelayLine, mix};
 use crate::nodes::support::settle_frames;
-use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
+use crate::nodes::{Category, Measure, NodeKind, NodeSpec};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Chorus: the signal mixed with a few slightly delayed copies. It has no oscillator of its own:
@@ -9,12 +9,11 @@ use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 #[derive(Debug)]
 pub struct Chorus {
     time: f64,
-    unit: Unit,
+    unit: Measure,
     voices: usize,
     spread: f64,
     mix: f32,
     /// Samples per unit and the longest delay any voice can reach, set in `prepare`.
-    unit_samples: f64,
     max_delay: f64,
     line: DelayLine,
 }
@@ -23,9 +22,9 @@ params! { Chorus {
     TIME: ParamSpec::number("time", 20.0,
         0.0,
         50.0)
+    .length("ms")
     .exposed()
     .limits(0.0, 1000.0),
-    UNIT: Unit::time_param("ms"),
     VOICES: ParamSpec::number("voices", 2.0, 1.0, 4.0).integer(),
     SPREAD: ParamSpec::number("spread", 0.3,
         0.0,
@@ -39,20 +38,19 @@ impl NodeKind for Chorus {
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
-        r#"{ "time": 0.5, "unit": "row", "voices": 3 }"#,
+        r#"{ "time": 0.5, "time.unit": "row", "voices": 3 }"#,
         r#"{ "time": 12, "voices": 4, "spread": 0.6, "mix": 0.8 }"#,
-        r#"{ "time": 1, "unit": "row", "voices": 1 }"#,
+        r#"{ "time": 1, "time.unit": "row", "voices": 1 }"#,
     ];
     const BENCH: Option<&'static str> = Some(r#"{ "voices": 3 }"#);
 
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
             time: params.number_at(Self::TIME)?,
-            unit: params.choice_as(Self::UNIT)?,
+            unit: params.measure_at(Self::TIME)?,
             voices: params.number_at(Self::VOICES)?.round().clamp(1.0, 4.0) as usize,
             spread: params.number_at(Self::SPREAD)?,
             mix: params.float_at(Self::MIX)?,
-            unit_samples: 0.0,
             max_delay: 0.0,
             line: DelayLine::default(),
         })
@@ -74,12 +72,12 @@ const MAX_VOICES: f64 = 4.0;
 
 impl Node for Chorus {
     fn prepare(&mut self, ctx: &PrepareContext) {
-        self.unit_samples = self.unit.samples(ctx);
+        self.unit.prepare(ctx);
         // The widest any voice reaches, at the most voices and the widest spread either may take.
         let voices = voice_count(ctx.param_max(Self::VOICES, self.voices as f64));
         let spread = ctx.param_max(Self::SPREAD, self.spread).max(0.0);
         let widest = factor(voices - 1, voices, spread).max(1.0);
-        self.max_delay = ctx.param_max(Self::TIME, self.time) * self.unit_samples * widest;
+        self.max_delay = ctx.param_max(Self::TIME, self.time) * self.unit.unit_samples() * widest;
         self.line = DelayLine::new(self.max_delay.ceil() as usize + 1);
     }
 
@@ -90,7 +88,7 @@ impl Node for Chorus {
         let spread = ctx.value(Self::SPREAD, self.spread);
         for (i, (out, &x)) in outputs[0].data.iter_mut().zip(&inputs[0].data).enumerate() {
             self.line.push(x);
-            let base = time.at64(i) * self.unit_samples;
+            let base = time.at64(i) * self.unit.unit_samples();
             let (voices, spread) = (voice_count(voices.at64(i)), spread.at64(i));
             let wet: f32 = (0..voices)
                 .map(|k| self.line.read(base * factor(k, voices, spread)))
@@ -125,7 +123,7 @@ mod tests {
         // One row is the 8 sample block, so a quarter row is 2 samples.
         let mut n = node(
             "chorus",
-            r#"{ "time": 0.25, "unit": "row", "voices": 1, "mix": 1 }"#,
+            r#"{ "time": 0.25, "time.unit": "row", "voices": 1, "mix": 1 }"#,
             8,
             8.0,
             &[true],
@@ -140,7 +138,7 @@ mod tests {
         // Two voices at 1 and 3 samples (time 2, spread 0.5): the average of both delays.
         let mut n = node(
             "chorus",
-            r#"{ "time": 0.25, "unit": "row", "voices": 2, "spread": 0.5, "mix": 1 }"#,
+            r#"{ "time": 0.25, "time.unit": "row", "voices": 2, "spread": 0.5, "mix": 1 }"#,
             8,
             8.0,
             &[true],

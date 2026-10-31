@@ -67,9 +67,6 @@ pub struct Project {
     /// Whether the timeline ruler shows time or bars and beats (tempo).
     #[serde(default)]
     pub timeline_mode: TimelineMode,
-    /// Skips every graph track in the preview: it shows and plays the mix.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub bypass_graph: bool,
     /// Sample rate of the sound a graph with an Audio Output renders, in the preview and export.
     #[serde(
         default = "default_audio_rate",
@@ -277,7 +274,6 @@ impl Project {
             loop_region: None,
             tempo: Tempo::default(),
             timeline_mode: TimelineMode::default(),
-            bypass_graph: false,
             audio_rate: crate::DEFAULT_AUDIO_RATE,
             max_warmup_frames: DEFAULT_MAX_WARMUP_FRAMES,
             inspect_rate: DEFAULT_INSPECT_RATE,
@@ -547,7 +543,7 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    use crate::timeline::MAX_BUS_CHANNELS;
+    use crate::timeline::{LabelColor, MAX_BUS_CHANNELS};
 
     fn graph() -> GraphDesc {
         GraphDesc::from_json(
@@ -698,10 +694,13 @@ mod tests {
     #[test]
     fn renaming_a_track_follows_through_to_sources() {
         let mut project = three_tracks();
-        let graph = project.graph_id;
         project.add_graph_track("Graphs");
-        project.place_graph("Graphs", graph, 0.0, 1.0).unwrap();
-        project.set_graph_source("Graphs", 0, "Kick", crate::Source::Track("a".into()));
+        let mut kick = rastersong_graph::NodeDesc::new("k".into(), crate::AUDIO_SOURCE_NODE);
+        kick.params.insert(
+            crate::SOURCE_PARAM.into(),
+            ParamValue::Text("track:a".into()),
+        );
+        project.graph.nodes.push(kick);
         // Taken, empty and unknown names are refused; its own name is fine.
         assert!(!project.rename_track("a", "b"));
         assert!(!project.rename_track("a", "  "));
@@ -710,7 +709,7 @@ mod tests {
         assert!(project.rename_track("a", " kick "));
         assert!(project.has_track("kick") && !project.has_track("a"));
         assert_eq!(
-            project.graph_tracks[0].items[0].sources["Kick"],
+            crate::input_ports(&project.graph).last().unwrap().source,
             crate::Source::Track("kick".into())
         );
         // Graph tracks share the names.
@@ -793,6 +792,21 @@ mod tests {
     }
 
     #[test]
+    fn resource_colors_are_set_cleared_and_saved() {
+        let mut project = Project::new(graph());
+        let id = project.add_resource(ResourceKind::Audio, "loop", "loop.wav", None);
+        assert!(project.set_resource_color(id, Some(LabelColor::Teal)));
+        assert!(!project.set_resource_color(id, Some(LabelColor::Teal)));
+        assert!(!project.set_resource_color(ResourceId(99), Some(LabelColor::Red)));
+        let json = serde_json::to_string(&project).unwrap();
+        assert!(json.contains(r#""color":"teal""#));
+        let back: Project = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.resource(id).unwrap().color, Some(LabelColor::Teal));
+        assert!(project.set_resource_color(id, None));
+        assert!(!serde_json::to_string(&project).unwrap().contains("color"));
+    }
+
+    #[test]
     fn round_trips_with_paths_relative_to_the_project() {
         let dir = temp_dir("project");
         let path = dir.join("song.rastersong");
@@ -856,24 +870,6 @@ mod tests {
     }
 
     #[test]
-    fn graph_bypass_round_trips_and_defaults_off() {
-        let dir = temp_dir("project-bypass");
-        let path = dir.join("bypass.rastersong");
-        let mut project =
-            Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
-        project.save(&path).unwrap();
-        assert!(
-            !std::fs::read_to_string(&path)
-                .unwrap()
-                .contains("bypass_graph")
-        );
-        assert!(!Project::load(&path).unwrap().bypass_graph);
-        project.bypass_graph = true;
-        project.save(&path).unwrap();
-        assert!(Project::load(&path).unwrap().bypass_graph);
-    }
-
-    #[test]
     fn tempo_round_trips_and_is_sanitized_on_load() {
         let dir = temp_dir("project-tempo");
         let path = dir.join("tempo.rastersong");
@@ -881,7 +877,8 @@ mod tests {
             Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
         project.tempo = Tempo {
             bpm: 133.5,
-            beats_per_bar: 3,
+            beats_per_bar: 6,
+            beat_unit: 8,
             offset_secs: 0.25,
         };
         project.timeline_mode = TimelineMode::Tempo;

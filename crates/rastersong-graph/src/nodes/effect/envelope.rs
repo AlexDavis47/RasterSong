@@ -1,6 +1,6 @@
 use crate::dsp::AttackRelease;
 use crate::nodes::support::settle_frames;
-use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
+use crate::nodes::{Category, Measure, NodeKind, NodeSpec};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 choice! {
@@ -20,9 +20,9 @@ pub struct Envelope {
     detector: Detector,
     attack: f64,
     release: f64,
-    unit: Unit,
-    /// Samples in one unit, and the smoothing of the times, set in `prepare`.
-    unit_samples: f64,
+    attack_unit: Measure,
+    release_unit: Measure,
+    /// The smoothing of the times, set in `prepare`.
     times: AttackRelease,
     /// Longest time constant in samples, for warmup.
     slowest: f64,
@@ -32,10 +32,11 @@ pub struct Envelope {
 params! { Envelope {
     DETECTOR: ParamSpec::choice("detector", Detector::OPTIONS, "peak"),
     ATTACK: ParamSpec::number("attack", 5.0, 0.0, 1000.0)
+    .length("ms")
         .limits(0.0, 1e6),
     RELEASE: ParamSpec::number("release", 50.0, 0.0, 5000.0)
+    .length("ms")
         .limits(0.0, 1e6),
-    UNIT: Unit::time_param("ms"),
 } }
 
 impl NodeKind for Envelope {
@@ -45,7 +46,7 @@ impl NodeKind for Envelope {
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "detector": "rms", "attack": 2, "release": 10 }"#,
-        r#"{ "attack": 0.5, "release": 0.5, "unit": "row" }"#,
+        r#"{ "attack": 0.5, "release": 0.5, "attack.unit": "row", "release.unit": "row" }"#,
         r#"{ "attack": 0, "release": 0 }"#,
     ];
     const BENCH: Option<&'static str> = Some("{}");
@@ -55,8 +56,8 @@ impl NodeKind for Envelope {
             detector: params.choice_as(Self::DETECTOR)?,
             attack: params.number_at(Self::ATTACK)?,
             release: params.number_at(Self::RELEASE)?,
-            unit: params.choice_as(Self::UNIT)?,
-            unit_samples: 1.0,
+            attack_unit: params.measure_at(Self::ATTACK)?,
+            release_unit: params.measure_at(Self::RELEASE)?,
             times: AttackRelease::default(),
             slowest: 0.0,
             level: 0.0,
@@ -66,12 +67,20 @@ impl NodeKind for Envelope {
 
 impl Node for Envelope {
     fn prepare(&mut self, ctx: &PrepareContext) {
-        self.unit_samples = self.unit.samples(ctx);
-        self.times = AttackRelease::new(self.attack, self.release, self.unit_samples);
+        self.attack_unit.prepare(ctx);
+        self.release_unit.prepare(ctx);
+        self.times = AttackRelease::new(
+            (self.attack, self.attack_unit.unit_samples()),
+            (self.release, self.release_unit.unit_samples()),
+        );
         // The slowest the times can get, when a signal moves them.
-        self.slowest = (ctx.param_max(Self::ATTACK, self.attack))
-            .max(ctx.param_max(Self::RELEASE, self.release))
-            * self.unit_samples;
+        self.slowest = self
+            .attack_unit
+            .samples(ctx.param_max(Self::ATTACK, self.attack))
+            .max(
+                self.release_unit
+                    .samples(ctx.param_max(Self::RELEASE, self.release)),
+            );
     }
 
     fn process(&mut self, ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {

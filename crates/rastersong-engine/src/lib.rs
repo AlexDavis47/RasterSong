@@ -26,8 +26,7 @@ pub use audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE};
 pub use cache::{CacheKey, Frame, FrameCache};
 pub use clock::PlaybackClock;
 pub use composition::{
-    ComposedGraphTrack, Composition, InputKind, InputPort, MediaTrack, extra_ports, input_ports,
-    is_main_port, port_of,
+    ComposedGraphTrack, Composition, InputKind, InputPort, MediaTrack, input_ports, port_of,
 };
 pub use error::EngineError;
 pub use listen::ListenTarget;
@@ -41,16 +40,17 @@ pub use project::{
 pub use rastersong_graph::dsp::Fft;
 pub use rastersong_graph::nodes::support::UNBOUNDED_WARMUP;
 pub use rastersong_graph::nodes::{
-    AUDIO_INPUT, AUDIO_OUTPUT, BUS_PARAM, CHANNEL_PORTS, COMBINE, DEFAULT_AUDIO, DEFAULT_BUS,
-    DEFAULT_VIDEO, MAX_CHANNELS, OUTPUT, PORT_PARAM, SPLIT, VIDEO_INPUT,
+    AUDIO_INPUT, AUDIO_OUTPUT, AUDIO_SOURCE as AUDIO_SOURCE_NODE, BUS_PARAM, CHANNEL_PORTS,
+    COMBINE, DEFAULT_AUDIO, DEFAULT_BUS, DEFAULT_VIDEO, MAX_CHANNELS, NAME_PARAM, NAMED_OUTPUT,
+    OUTPUT, OUTPUT_PARAM, SOURCE_PARAM, SPLIT, VIDEO_INPUT, VIDEO_SOURCE as VIDEO_SOURCE_NODE,
 };
 pub use rastersong_graph::{
     Category, ChannelMap, Channels, CompileOptions, Connection, Diagnostic, FORMAT_VERSION,
     GeneratorLayout, Graph, GraphDesc, GraphError, Grouping, Interpolation, Kind, Layout,
     MODULATION_AMOUNT_LIMITS, Meter, MeterKind, ModMode, Modulation, NodeCost, NodeDesc,
     NodeDiagnostic, NodeMeters, NodeStats, NodeType, OutputLevel, OutputSpec, ParamKind,
-    ParamLevel, ParamSpec, ParamValue, Part, Range, Registry, Severity, ShownWhen, Tag, TagRule,
-    Tempo, audio_output_bus, range_span, render_form,
+    ParamLevel, ParamSpec, ParamValue, Part, Range, Reading, Registry, Severity, ShownWhen, Tag,
+    TagRule, Tempo, Timing, Unit, audio_output_bus, range_span, render_form,
 };
 pub use rastersong_media::{
     AudioCache, AudioClip, AudioOptions, AvailableFormat, BackendInfo, ExportFormat, FakeBackend,
@@ -69,7 +69,8 @@ pub use service::{
 pub use tap::{PICTURE_SIDE, Picture, Tap, TapOutcome, TapRequest, picture_size};
 pub use thumbnails::{THUMBNAIL_HEIGHT, Thumbnails, VideoKey};
 pub use timeline::{
-    Bus, GraphItem, Item, MAX_BUS_CHANNELS, Source, Timebase, Timeline, TrackKind, TrackSpec,
+    Bus, GraphItem, Item, LabelColor, MAX_BUS_CHANNELS, Source, Timebase, Timeline, TrackKind,
+    TrackSpec,
 };
 pub use waveform::Waveform;
 

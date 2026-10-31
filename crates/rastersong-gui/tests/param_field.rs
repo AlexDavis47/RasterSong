@@ -66,6 +66,7 @@ fn harness(modulation: Option<Modulation>) -> Harness<'static, State> {
                         ui.label("amount");
                     },
                     |_| {},
+                    |_| {},
                 );
                 state.track = response.track;
                 state.value_box = response.value_box;

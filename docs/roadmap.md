@@ -203,6 +203,11 @@ Renames, merges, splits and removals need **no migration** while the format is v
   paste arrive from the platform as clipboard events rather than keys (only when the clipboard holds text, for
   paste), so rebinding them means handling those chords as plain keys and reading the system clipboard ourselves.
   Mouse modifiers (Ctrl to add to a selection, Shift to drag freely, Alt to stretch) stay fixed for 1.0.
+- [x] **feature** **Open graphs with a single click** (Application setting, off by default): one click on a graph
+  card in Resources or a graph item on the timeline opens it ([Settings](app.md#settings)). Behaviour that is a
+  matter of taste becomes a setting ([Contributing](../CONTRIBUTING.md), rule 21).
+- [x] **bug** The Settings window ran off the bottom of a small screen with no way to reach its last settings;
+  its pages scroll now.
 
 ---
 
@@ -337,6 +342,27 @@ Reusable widgets, built once in `rastersong-gui` (a `widgets/` module) and used 
 - [x] **bug** Switching to Tempo mode added the tempo bar above the timeline and pushed it down. A toolbar is
   always there now, with the Time / Tempo switch, the tempo, the Metronome (heard in Tempo mode) and Snap, which
   left the ruler's corner.
+- [x] **chore** UI polish pass (October 2026): note-length units (`16th`, `beat`, `bar`, dotted and triplet) picked on the value box with a Free / Sync switch, a unit per length or rate, rates readable as a period ("one cycle every 2 bars"), and one time signature field (`6 / 8`) shared by the Beat node, the timeline and Settings, samples per second
+  in the graph statistics, round metronome lights, one default height for every track with Ctrl+scroll and reset
+  entries, item titles that stop before the mute button, tick lines over the items, a warm-up bar in the export
+  window, a delayed wire probe that stays hidden under other windows, and a double-click on a graph item that no
+  longer clears the cache ([Timeline](app.md), [Decisions](decisions.md#one-spelling-of-a-graph-for-the-engine-october-2026)).
+- [x] **feature** Resource label colours: **Color** in a media resource's menu picks one of eight labels, which
+  its card and all its items on the timeline are drawn in ([Resources](app.md#resources),
+  [Decisions](decisions.md#resource-colours-are-labels-not-free-colours-october-2026)).
+- [ ] **feature** Label colours for graph resources too, which their graph items take.
+- [x] **feature** Graph inputs and outputs live on the graph: fixed Video In, Audio In, Output and master Audio
+  Output in every graph, Video Source and Audio Source nodes that pick what they read, and Named Outputs for graphs
+  above; the per-item source mapping is gone ([Node graph](app.md#node-graph),
+  [Decisions](decisions.md#sources-on-the-graph-not-the-item-october-2026)).
+- [x] **feature** Track names rename in place: double-click the name, or F2 for the selected track
+  ([Timeline](app.md#timeline)).
+- [x] **chore** Removed the canvas header's **Bypass graphs** button and the project's `bypass_graph` flag
+  ([Decisions](decisions.md#no-bypass-graphs-switch-october-2026)).
+- [x] **feature** The canvas header's graph name opens a menu of the project's graphs to switch to
+  ([Node graph](app.md#node-graph)).
+- [x] **feature** **Fullscreen** preview: the preview fills the window and the window the screen; Esc goes back
+  ([Preview](app.md#preview)).
 - Automation clips and the multi-clip timeline are now part of
   [Timeline, resources and routing](#timeline-resources-and-routing).
 
@@ -438,8 +464,8 @@ timebase (done in stage 1).
 the Resources panel; a curve made in the panel is dragged in at the default length. Points are edited on the item:
 Ctrl+click on the line adds one, dragging moves it, right-click sets its interpolation and its exact time and
 value. Points snap like items. As a signal a curve is a generator like Oscillator or Beat, sampled at the shared
-generator layout, audio rate by default. Automation tracks are never seen or heard; graph items read them as a
-source for an input port, like a stem.
+generator layout, audio rate by default. Automation tracks are never seen or heard; graphs read them through a
+source node, like a stem.
 
 **Mixing and stems.** Video and audio are mixed **inside the renderer**. Video layers: the top track with an item
 at that frame wins, stretched to the project size as Video Output stretches (opacity and blend modes come later).
@@ -455,11 +481,12 @@ own, before its volume and mute, so a muted kick track can still drive an effect
 
 **Graphs and ports.** Graphs are resources; a project can have any number.
 
-- A graph has any number of named **Input** and **Output** nodes, each a port. Video Output and Audio Output (one
-  per bus) are the main outputs; other outputs are plain ports, for example an oscillator exposed as a control
-  signal.
-- **The parent fills the ports, with no fallback.** As a subgraph, the parent graph wires the pins; an unwired pin
-  reads zeros, with a note. On a graph track, the item picks a source for each input port (see *Graph tracks*).
+- A graph has fixed main inputs and outputs (Video In, Audio In, Output, and an Audio Output on the master bus),
+  plus any number of **Video Source** / **Audio Source** nodes reading what they name and **Named Outputs**
+  offered to other graphs, for example an oscillator exposed as a control signal. *(Done on graph tracks, see
+  [Decisions](decisions.md#sources-on-the-graph-not-the-item-october-2026).)*
+- **The parent fills the ports, with no fallback.** As a subgraph, the parent graph wires the pins (its Named
+  Outputs become the subgraph node's outputs); an unwired pin reads zeros, with a note.
 - **New graphs start as the template:** `In: Video` wired to Video Output and `In: Audio` to Audio Output, with
   effects inserted into the wires. Nothing passes through by rule: a graph without an Audio Output is silent, and a
   main output with nothing connected gives black or silence, each with a note.
@@ -634,12 +661,12 @@ raw.
      ([Graph tracks](app.md#graph-tracks)).
    - [ ] **feature** A cache key made of the active graphs' versions, so editing one graph keeps frames rendered
      only by others.
-   - [ ] **feature** Graph Progress node.
+   - [x] **feature** Graph Progress node ([Nodes](nodes.md#graph_progress)).
    - [ ] **chore** Run graph tracks as a pipeline across frames again, as graph layers did.
    - [ ] **feature** Inspecting connections in a graph that isn't under the playhead.
 
    **Known gaps in 2c** (found while writing its docs, not yet scheduled):
-   - [ ] **feature** Drag a graph item to another graph track (a move stays on its own track).
+   - [x] **feature** Drag a graph item to another graph track ([Graph tracks](app.md#graph-tracks)).
    - [ ] **feature** A note on a graph with no Audio Output saying it is silent where it plays.
    - [ ] **chore** The default timeline panel is 300 px tall, so four or more tracks scroll.
 
@@ -814,7 +841,7 @@ and a regenerated `nodes.md`.
 
 ### Cross-cutting node items
 
-- [x] **chore** Every node's unit parameter uses the one `Unit` (guard test `every_unit_parameter_offers_the_shared_units`) ([Units](#units-and-parameter-semantics)).
+- [x] **chore** Every length and rate uses the one `Unit` (guard test `every_length_and_rate_starts_in_a_shared_unit`) ([Units](#units-and-parameter-semantics)).
 - [x] **chore** Every node with a dry/wet `mix` uses the one shared definition
   ([Units and parameter semantics](#units-and-parameter-semantics)).
 - [ ] **feature** Add nodes only after the foundations are in, so new nodes use integer and conditional parameters
@@ -855,6 +882,9 @@ independent of each other.
 4. [x] **feature** Wire probe drum: wrap-around view wheel turned by Alt+scroll, clicks and ↑/↓.
 5. [x] **feature** Inspector: one layout for node, graph item and track selections; the modulation card.
 6. [x] **feature** Resources: Media and Graphs together with counts and one filter field.
+   - [x] **feature** Media and Graphs became tabs, and resources 4:3 cards in a wrapping grid, renamed in place
+     by a double-click on the name, F2 or the menu's Rename ([Resources](app.md#resources)).
+   - [ ] **feature** Real thumbnails on video cards (the first frame) instead of the picture icon.
 7. [x] **feature** Timeline: calmer headers with remove in the menu, the toolbar's Loop readout.
 8. [x] **feature** Tempo mode: the tempo group by the Time/Tempo switch, the two-tier ruler, bar shading, the
    first-beat marker, beat-grid snap and loop, bar.beat in the transport with the beat light.
@@ -931,6 +961,14 @@ The aim: one implementation per idea, so fixes and features land in one place. K
   ([Engine](engine.md#composition))
 - [x] **bug** The preview's Original showed only the first video track, not the video mix
   ([Preview](app.md#preview))
+- [x] **bug** Beat-locked nodes in a graph item that doesn't start at 0 fell off the metronome by the item's
+  position ([Composition](engine.md#composition))
+- [x] **bug** Sample & Hold with a note-length period ignored the first-beat offset
+  ([Signals & units](signals-and-units.md#tempo))
+- [x] **bug** Listening to a connection stopped the render-ahead; taps and listening now run on their own thread
+  ([Taps and listening](engine.md#taps-and-listening))
+- [x] **bug** The wire probe flashed between "not rendered" and "Looking…" as the playhead moved, and opened while
+  the pointer was still sliding along a wire ([Node graph](app.md#node-graph))
 
 ---
 

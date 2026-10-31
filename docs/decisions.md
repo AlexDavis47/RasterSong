@@ -471,7 +471,8 @@ How stage 2b built the routing above ([Composition](engine.md#composition) repla
 
 ### Input ports (October 2026)
 
-The first step of roadmap stage 2b. Video Input and Audio Input stop naming tracks and become the graph's input
+*(The `port` setting was replaced by fixed main inputs and source nodes, see
+[Sources on the graph](#sources-on-the-graph-not-the-item-october-2026).)* The first step of roadmap stage 2b. Video Input and Audio Input stop naming tracks and become the graph's input
 ports.
 
 - **The same two node types, with a `port` setting instead of `source`.** A port's kind (picture or sound) decides
@@ -485,6 +486,30 @@ ports.
   names. Ports are added, renamed and deleted like any node; only the Output is kept, because every graph has
   exactly one.
 - **Renaming a track renames what reads it**, which is now bindings (receives, once they exist), not graph nodes.
+
+### Sources on the graph, not the item (October 2026)
+
+The per-item source mapping (each graph item picking a source for each of its graph's input ports) is gone: it was
+a second place to look for what a graph does, it made two items of one graph behave differently, and new ports
+started on a guess (the track of the same name).
+
+- **Fixed base nodes.** Every graph has one Video In and one Audio In, which always read what is below the item, and
+  one Output and one Audio Output on the master bus, which always pass the result up. They can't be deleted or
+  copied, and a graph missing one gets it back. The `port` setting is gone.
+- **Extra inputs name their source themselves.** **Video Source** and **Audio Source** have a `source` setting
+  (`mix`, `track:<name>`, `graph:<graph track>`, or nothing) and, for a graph track, an `output` (empty for the main
+  output of its kind). The engine fills each by that pair, so two nodes reading the same thing share one signal.
+  Renaming a track rewrites the settings in every graph.
+- **Named Outputs.** A graph offers extra signals to graphs above it by name, without adding them to its picture or
+  sound; when subgraphs come they become the subgraph node's outputs. A graph track's named outputs are the names
+  its items' graphs offer, each in the layout of the first item that has it; where no item plays, or the playing
+  item doesn't offer that name in that layout, it reads zeros. Names are unique within a graph.
+- **Graph-track sources still point down.** A source naming a graph track that isn't below the item reads zeros, so
+  graphs can't loop. Whether the track is below depends on where the item is, so the picker lists every graph track.
+- **Buses stay on Audio Outputs.** The base one writes the master; one more per other bus can be added.
+- **The one-graph render** (the CLI's `render <video> <audio> <graph>`) no longer feeds a port named after a track:
+  Video In and Audio In read the mix, which changes the golden frames slightly (the sound reaches the graph at the
+  mix rate).
 
 ### The track tree (October 2026)
 
@@ -540,9 +565,10 @@ Resolve, and only graph inputs are new.
   At each frame the master picture and sound are the Video Output and Audio Output of the topmost active graph
   item, or the plain mixes where no graph item is active. Graph sound is not summed, since every graph passes its
   sound through and summing would double it. A muted graph track is skipped.
-- **A graph item picks a source for each input port.** The choices are *Below*, the video or audio mix, any track's
-  stem, any output port of a graph on a track **below**, or nothing (zeros, with a note). Sources only point down,
-  so graphs are evaluated bottom to top and can't form a loop.
+- **A graph item picks a source for each input port.** *(Replaced: sources are set on the graph's own nodes, see
+  [Sources on the graph](#sources-on-the-graph-not-the-item-october-2026).)* The choices are *Below*, the video or
+  audio mix, any track's stem, any output port of a graph on a track **below**, or nothing (zeros, with a note).
+  Sources only point down, so graphs are evaluated bottom to top and can't form a loop.
 - **Below is the default for the main ports, and it is matched by kind.** `In: Video` reads the main Video Output
   of the next active graph below, or the video mix with none; `In: Audio` the same for sound. Stacking a graph on
   another chains them unless changed. The graph layers' *Layer below* went wrong because the audio input looked for
@@ -641,6 +667,76 @@ only a numerator (beats per bar), so a quarter note is taken as one beat: 1/4 is
 in a 3/4 project, where a bar is 3/4. Both parts are whole numbers, but any denominator is allowed (1/3, 1/12 for
 triplets), not only powers of two. No migration: a saved Beat that still has `period` or `division` fails with
 an unknown parameter until it is replaced ([No migrations before 1.0](#no-migrations-before-10-october-2026)).
+
+### Note lengths as units, picked on the value box (October 2026)
+
+A timed value is always a number in a unit, so a signal can modulate it: "3 sixteenths", "2 cycles per bar". The
+`unit` choice names the musical units by note: `32nd`, `16th`, `8th`, `beat`, `half` and `bar`, each also
+`_dotted` (half as long again) or `_triplet` (two thirds as long), and the value counts them. A beat and a bar follow
+the time signature (in 6/8 a beat is an eighth note and a bar six of them); the other notes are fixed fractions of a
+whole note. This replaces a first attempt, a `tempo` unit whose `numerator` and `denominator` wrote the length as a
+time signature: a time signature is not a duration, `1/4` and `4/4` read alike, and the value was left with nothing
+to count.
+
+Each number measured in a unit (marked `.length(unit)` or `.rate(unit)` in its spec, see `Timing`) has a unit of
+its own, saved next to it as `"attack.unit": "16th"`; a node has no `unit` parameter. A rate can also be read as a
+period, saved as `"rate.every": "bar"`: the value is how many units one cycle lasts (one cycle every 2 bars), so a
+signal modulating it lengthens or shortens the cycle, and a period of zero or less holds still. The inspector shows
+the unit as a menu on the value box, grouped as tempo (with the straight, dotted and
+triplet switch), time, picture and signal, and labelled by the count ("3 | 16ths", "1 | beat"; for a rate "/ bar",
+or read as a period "2 | bars a cycle", picked with the **Per / Every** switch at the top of a rate's menu).
+The `int` toggle of those numbers becomes **Free / Sync** at the top of that menu, and the chip is lit while Sync is
+on: Sync is the same rounding, to whole units, of the value and of every modulated sample. It lives in the menu
+because the inspector row has no room for the name, the value, the unit and a switch. Three Band compares its
+crossovers only when both are in the same unit and reading, since otherwise their order depends on the tempo and
+the picture. No migration
+([No migrations before 1.0](#no-migrations-before-10-october-2026)).
+
+### One time signature field everywhere (October 2026)
+
+A time signature is edited the same way wherever one appears: the shared `time_signature` widget, two whole-number
+boxes with a slash (`6 / 8`). The timeline toolbar and Settings use it for the project's tempo, which gained the
+denominator (`beat_unit`, default 4), and the node inspector draws the Beat node's `numerator` and `denominator` as
+one *Time signature* row, unless a signal is wired to either. The bpm counts the time signature's beat, as a
+metronome does: 6/8 at 120 is 120 eighth notes a minute, and a beat of the ruler, the beat lights and the metronome
+is that note. Fixed note lengths (`16th`, `half`, the Beat node's `1/4`) are measured against the quarter note, so
+a sixteenth is the same time in any time signature at the same quarter-note speed.
+
+### One spelling of a graph for the engine (October 2026)
+
+`render_form` also sorts nodes by id, names a connection's omitted port and sorts connections. The editor writes
+graphs that way, so a graph opened in it came out different from the same graph as the project stored it, and
+double-clicking a graph item counted as an edit and cleared the cache.
+
+### Taps and listening on their own thread (October 2026)
+
+Taps and listening used to run on the render thread, ahead of render-ahead. Listening keeps a second of sound
+rendered ahead of a moving position, so while it was on the render-ahead hardly ran and the preview stopped. They
+now run on a second thread with the tap renderer, which already had its own decoder and graph state, so nothing
+else had to be shared but the decoded audio (behind one lock, so a song is decoded once). It costs a core while
+something is inspected or listened to; the render-ahead keeps the other.
+
+### Rename in place, not in a menu (October 2026)
+
+Names shown as text (resource cards, track headers) are renamed where they are, as in file managers and other
+editors: a double-click on the name or F2 turns it into a field with the name selected. The right-click menu keeps
+a **Rename** entry that starts the same in-place edit, so there is still one way to rename (`rename_field` over
+`name_edit`). A double-click elsewhere on a card keeps its own meaning (add media at the playhead, open a graph).
+Inspector name fields stay fields, since the inspector is a form.
+
+### Resource colours are labels, not free colours (October 2026)
+
+The colour belongs to the resource, not the item: right-click a resource card → Color, and every item of it on the
+timeline is drawn in it, so all the clips of one file read as one at a glance (as in Premiere). Items have no
+colour of their own. A resource's colour is one of eight named labels rather than any RGB value, so each theme can give every label a fill,
+bar and text that stay legible (the theme test checks their contrast) and the file stores a word, not a colour that
+only suits one theme.
+
+### No Bypass graphs switch (October 2026)
+
+The canvas header's **Bypass graphs** button and the project's `bypass_graph` flag are gone. The preview's
+**Original** already shows the mix without graphs for comparison, and a saved flag that silently hid every graph
+was a trap once the button left. Muting graph tracks or items skips them.
 
 ## Open
 

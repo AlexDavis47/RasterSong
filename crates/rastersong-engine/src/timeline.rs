@@ -6,7 +6,6 @@
 //! and out points, at a position on the timeline, played at a rate. Positions and in/out points
 //! are times in seconds, so they survive a change of frame rate. Gaps between items read zeros.
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use rastersong_graph::nodes::DEFAULT_BUS;
@@ -89,23 +88,103 @@ pub struct Item {
     pub group: Option<u32>,
 }
 
-/// What fills one input port of a graph item. Sources are matched by kind: a port read as a
-/// picture gets the source's picture, one read as sound its sound.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// A label colour for a resource, picked from a fixed set so every theme can draw it legibly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum LabelColor {
+    Red,
+    Orange,
+    Yellow,
+    Green,
+    Teal,
+    Blue,
+    Violet,
+    Pink,
+}
+
+impl LabelColor {
+    /// Every colour, in the order menus list them.
+    pub const ALL: [Self; 8] = [
+        Self::Red,
+        Self::Orange,
+        Self::Yellow,
+        Self::Green,
+        Self::Teal,
+        Self::Blue,
+        Self::Violet,
+        Self::Pink,
+    ];
+}
+
+/// What an input node of a graph reads. Video In and Audio In read [`Source::Below`]; a Video
+/// Source or Audio Source names any of the others in its `source` and `output` settings. Sources
+/// are matched by kind: a node reading pictures gets the source's picture, one reading sound its
+/// sound.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
-    /// The main output of the next active graph below, or the timeline's mix with none. What
-    /// the main ports read unless set otherwise.
+    /// The main output of the next active graph below, or the timeline's mix with none.
     Below,
     /// The video mix (the top video track with an item) or the audio mix.
     Mix,
     /// One track on its own (its stem), before its volume and mute.
     Track(String),
     /// An output of the graph track `track`, which must be below the item's: where nothing
-    /// plays on it, what is below it. `port` is `Video` or `Audio` for the main outputs.
+    /// plays on it, what is below it. `port` is `Video` or `Audio` for the main outputs, else a
+    /// Named Output's name.
     Graph { track: String, port: String },
     /// Zeros.
     Nothing,
+}
+
+impl Source {
+    /// The source a Video Source (`video`) or Audio Source with settings `source` and `output`
+    /// reads (see [`SOURCE_PARAM`](rastersong_graph::nodes::SOURCE_PARAM)).
+    pub fn from_settings(source: &str, output: &str, video: bool) -> Self {
+        if source == "mix" {
+            Self::Mix
+        } else if let Some(track) = source.strip_prefix("track:") {
+            Self::Track(track.to_owned())
+        } else if let Some(track) = source.strip_prefix("graph:") {
+            Self::Graph {
+                track: track.to_owned(),
+                port: if output.is_empty() {
+                    main_output(video)
+                } else {
+                    output
+                }
+                .to_owned(),
+            }
+        } else {
+            Self::Nothing
+        }
+    }
+
+    /// The `source` and `output` settings of a Video Source (`video`) or Audio Source reading
+    /// it: the reverse of [`Self::from_settings`]. [`Source::Below`] reads as nothing there.
+    pub fn settings(&self, video: bool) -> (String, String) {
+        match self {
+            Self::Mix => ("mix".into(), String::new()),
+            Self::Track(track) => (format!("track:{track}"), String::new()),
+            Self::Graph { track, port } => (
+                format!("graph:{track}"),
+                if port == main_output(video) {
+                    String::new()
+                } else {
+                    port.clone()
+                },
+            ),
+            Self::Below | Self::Nothing => (String::new(), String::new()),
+        }
+    }
+}
+
+/// The name of a graph's main output of pictures (`video`) or sound.
+fn main_output(video: bool) -> &'static str {
+    if video {
+        rastersong_graph::nodes::DEFAULT_VIDEO
+    } else {
+        rastersong_graph::nodes::DEFAULT_AUDIO
+    }
 }
 
 /// A graph placed on a graph track. Graph items have no resource and no rate: the graph runs
@@ -130,14 +209,10 @@ pub struct GraphItem {
     /// left edge never changes what follows. Off, it starts cold at the edge.
     #[serde(default = "yes", skip_serializing_if = "is_yes")]
     pub pre_roll: bool,
-    /// What fills each input port, by port name. A port left out reads [`Source::Below`] if it
-    /// is a main port (`Video` read as a picture, `Audio` as sound), else nothing.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub sources: BTreeMap<String, Source>,
 }
 
 impl GraphItem {
-    /// Graph `graph` from `position` for `length` seconds, its ports on their defaults.
+    /// Graph `graph` from `position` for `length` seconds.
     pub fn new(graph: u32, position: f64, length: f64) -> Self {
         Self {
             graph,
@@ -146,7 +221,6 @@ impl GraphItem {
             start: 0.0,
             muted: false,
             pre_roll: true,
-            sources: BTreeMap::new(),
         }
     }
 
@@ -158,18 +232,6 @@ impl GraphItem {
     /// Whether the item plays at timeline time `t`.
     pub fn plays_at(&self, t: f64) -> bool {
         !self.muted && t >= self.position && t < self.end()
-    }
-
-    /// What fills port `port`, read as a picture when `video`: its source, or the default.
-    pub fn source(&self, port: &str, video: bool) -> Source {
-        self.sources.get(port).cloned().unwrap_or_else(|| {
-            let main = if video {
-                port == rastersong_graph::nodes::DEFAULT_VIDEO
-            } else {
-                port == rastersong_graph::nodes::DEFAULT_AUDIO
-            };
-            if main { Source::Below } else { Source::Nothing }
-        })
     }
 
     /// The item with nonsense (non-finite or negative times) replaced.

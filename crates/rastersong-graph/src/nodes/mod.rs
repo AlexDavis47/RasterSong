@@ -12,7 +12,7 @@ pub mod support;
 
 use std::collections::BTreeMap;
 
-pub use support::{SampleClock, Unit};
+pub use support::{Feel, Measure, Note, SampleClock, Unit};
 
 use rastersong_lang::tr;
 
@@ -21,24 +21,44 @@ use crate::{InputSpec, Node, OutputSpec, ParamSpec, ParamValue, Params, Range, T
 
 /// The node type name of the graph's output node.
 pub const OUTPUT: &str = "output";
-/// The node type name of the graph's optional audio output.
+/// The node type name of an audio output: every graph has one on the project's master bus, and
+/// may add one for each other bus.
 pub const AUDIO_OUTPUT: &str = "audio_output";
-/// The node type name of an input port that reads pictures.
+/// The node type name of an output other graphs can read by its name, beside the main ones.
+pub const NAMED_OUTPUT: &str = "named_output";
+/// The node type name of the graph's main picture input, which reads what is below its item.
 pub const VIDEO_INPUT: &str = "video_input";
-/// The node type name of an input port that reads sound.
+/// The node type name of the graph's main sound input, which reads what is below its item.
 pub const AUDIO_INPUT: &str = "audio_input";
-/// The main video port: what an input port reads unless named otherwise. As an FX, the host
+/// The node type name of an extra input reading a picture from a source it names.
+pub const VIDEO_SOURCE: &str = "video_source";
+/// The node type name of an extra input reading sound from a source it names.
+pub const AUDIO_SOURCE: &str = "audio_source";
+/// The source Video In reads, and the name the main video output is read by. As an FX, the host
 /// track's picture fills it.
 pub const DEFAULT_VIDEO: &str = "Video";
-/// The main audio port. As an FX, the host track's sound fills it.
+/// The source Audio In reads, and the name the main audio output is read by. As an FX, the host
+/// track's sound fills it.
 pub const DEFAULT_AUDIO: &str = "Audio";
 /// The parameter of the audio output that names the output bus it writes to.
 pub const BUS_PARAM: &str = "bus";
 /// The bus an audio output writes to unless set otherwise: the project's first, master bus.
 pub const DEFAULT_BUS: &str = "Main";
-/// The parameter of both input nodes that names the port they read: whoever uses the graph
-/// fills each port by its name.
-pub const PORT_PARAM: &str = "port";
+/// The parameter of Video Source and Audio Source that names what they read: `mix`,
+/// `track:<name>` or `graph:<graph track>`, or nothing when empty. Whoever uses the graph fills it.
+pub const SOURCE_PARAM: &str = "source";
+/// The parameter of Video Source and Audio Source that names the output of a graph track they
+/// read: a Named Output's name, or empty for the main output of their kind.
+pub const OUTPUT_PARAM: &str = "output";
+/// The parameter of a Named Output that names it.
+pub const NAME_PARAM: &str = "name";
+
+/// The name the host fills for a Video Source (`video`) or Audio Source reading `source` and
+/// `output`. Never one of the main names, so extra sources and the main ones don't mix.
+pub fn source_key(video: bool, source: &str, output: &str) -> String {
+    let kind = if video { "video" } else { "audio" };
+    format!("{kind}\u{0}{source}\u{0}{output}")
+}
 /// The node type names of the channel splitter and combiner, whose port counts follow the signal.
 pub const SPLIT: &str = "split";
 pub const COMBINE: &str = "combine";
@@ -74,17 +94,19 @@ macro_rules! nodes {
 
 nodes! {
     input {
-        source: [VideoInput, AudioInput],
+        source: [VideoInput, AudioInput, VideoSource, AudioSource],
     },
     generator {
         beat: [Beat],
         constant: [Constant],
+        graph_progress: [GraphProgress],
         oscillator: [Oscillator],
         noise: [Noise],
     },
     output {
         video: [Output],
         audio: [AudioOutput],
+        named: [NamedOutput],
     },
     structure {
         split: [Split],
@@ -264,6 +286,12 @@ impl NodeSpec {
             addable: category.user_addable(),
             meters: &[],
         }
+    }
+
+    /// Every graph has exactly one: users neither add nor remove it.
+    pub const fn fixed(mut self) -> Self {
+        self.addable = false;
+        self
     }
 
     /// Lets users add the node themselves, whatever its category.

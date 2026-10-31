@@ -13,8 +13,8 @@ use eframe::egui;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use rastersong_engine::{
-    AudioClip, FakeBackend, FakeVideo, GraphDesc, ItemRef, Project, Rational, TimelineMode,
-    TrackKind,
+    AudioClip, FakeBackend, FakeVideo, GraphDesc, ItemRef, ParamValue, Project, Rational,
+    TimelineMode, TrackKind,
 };
 use rastersong_gui::theme::WireStyle;
 
@@ -103,6 +103,51 @@ fn bus_screenshots() {
     save(&mut harness, "buses-settings");
 }
 
+#[test]
+#[ignore = "needs a GPU; run explicitly to look at the UI"]
+fn unit_chip_screenshots() {
+    let mut harness = tall_harness(app_edited(
+        ThemeChoice::Dark,
+        1,
+        TimelineMode::Tempo,
+        |project| {
+            project.tempo.beats_per_bar = 6;
+            project.tempo.beat_unit = 8;
+            let bands = project
+                .graph
+                .nodes
+                .iter_mut()
+                .find(|n| n.kind == "three_band")
+                .unwrap();
+            bands
+                .params
+                .insert("low_hz.unit".into(), ParamValue::Text("16th_dotted".into()));
+            bands
+                .params
+                .insert("high_hz.every".into(), ParamValue::Text("bar".into()));
+        },
+    ));
+    harness.run_steps(5);
+    let bands = harness.state().editor().key_of("bands").unwrap();
+    let header = harness
+        .state()
+        .editor()
+        .node_screen_rect(bands)
+        .unwrap()
+        .center_top()
+        + egui::vec2(0.0, 8.0);
+    click_at(&mut harness, header);
+    harness.run_steps(4);
+    save(&mut harness, "unit-chip");
+    harness
+        .query_all_by_role(egui::accesskit::Role::ComboBox)
+        .find(|n| n.value().is_some_and(|v| v.contains("dotted")))
+        .unwrap()
+        .click();
+    harness.run_steps(4);
+    save(&mut harness, "unit-menu");
+}
+
 fn with_theme(app: &mut App, theme: ThemeChoice) {
     let mut settings = app.settings().clone();
     settings.theme = theme;
@@ -112,6 +157,14 @@ fn with_theme(app: &mut App, theme: ThemeChoice) {
 fn gpu_harness(app: App) -> Harness<'static, App> {
     Harness::builder()
         .with_size(egui::vec2(1400.0, 900.0))
+        .wgpu()
+        .build_ui_state(|ui, app: &mut App| app.ui(ui), app)
+}
+
+/// A harness tall enough to show a long inspector.
+fn tall_harness(app: App) -> Harness<'static, App> {
+    Harness::builder()
+        .with_size(egui::vec2(1400.0, 1300.0))
         .wgpu()
         .build_ui_state(|ui, app: &mut App| app.ui(ui), app)
 }
@@ -446,10 +499,6 @@ fn bypass_screenshots() {
         save(&mut harness, &format!("{name}-8-node-menu"));
         harness.key_press(egui::Key::Escape);
         harness.run_steps(2);
-
-        harness.get_by_label("Bypass graphs").click();
-        harness.run_steps(6);
-        save(&mut harness, &format!("{name}-9-graph-bypassed"));
     }
 }
 
@@ -532,7 +581,7 @@ fn track_screenshots() {
         .rect()
         .center();
     let x = from.x;
-    let row = rastersong_gui::timeline::AUDIO_LANE_HEIGHT;
+    let row = rastersong_gui::timeline::LANE_HEIGHT;
     harness.event(egui::Event::PointerMoved(from));
     harness.run_steps(1);
     harness.event(egui::Event::PointerButton {
@@ -590,7 +639,7 @@ fn graph_track_screenshots() {
                 GraphDesc::from_json(
                     r#"{ "version": 0, "nodes": [
                         { "id": "v", "type": "video_input" },
-                        { "id": "k", "type": "audio_input", "params": { "port": "Kick" } },
+                        { "id": "k", "type": "audio_source", "params": { "source": "track:audio" } },
                         { "id": "o", "type": "output" } ],
                         "connections": [ { "from": "v", "to": "o" } ] }"#,
                 )
@@ -602,12 +651,6 @@ fn graph_track_screenshots() {
         project.place_graph(&bottom, open, 0.0, 2.0);
         let top = project.add_graph_track("Graphs");
         project.place_graph(&top, side, 0.5, 1.0);
-        project.set_graph_source(
-            &top,
-            0,
-            "Kick",
-            rastersong_engine::Source::Track("audio".into()),
-        );
     });
     let mut harness = gpu_harness(app);
     wait_for_frames(&mut harness, 10);
@@ -755,7 +798,7 @@ fn graph_stats_screenshots() {
                     "nodes": [
                         { "id": "video", "type": "video_input", "position": [0, 0] },
                         { "id": "delay", "type": "delay", "position": [200, 0],
-                          "params": { "time": 2, "unit": "frame" } },
+                          "params": { "time": 2, "time.unit": "frame" } },
                         { "id": "out", "type": "output", "position": [400, 0] }
                     ],
                     "connections": [ { "from": "video", "to": "delay" }, { "from": "delay", "to": "out" } ] }"#,
@@ -1029,4 +1072,46 @@ fn drag_bubble_screenshots() {
     // Past the pick-up bloop.
     harness.run_steps(20);
     save(&mut harness, "dark-30-drag-bubble");
+}
+
+/// Resource label colours, the Resources tabs and cards, the canvas header's graph menu and the
+/// fullscreen preview.
+#[test]
+#[ignore = "needs a GPU; run explicitly to look at the UI"]
+fn resources_and_colors_screenshots() {
+    use rastersong_engine::LabelColor;
+    for (theme, name) in [(ThemeChoice::Dark, "dark"), (ThemeChoice::Light, "light")] {
+        let app = app_edited(theme, 2, TimelineMode::Time, |project| {
+            let colors = [LabelColor::Orange, LabelColor::Red, LabelColor::Green];
+            let ids: Vec<_> = project.resources.iter().map(|r| r.id).collect();
+            for (id, color) in ids.into_iter().zip(colors) {
+                project.set_resource_color(id, Some(color));
+            }
+            project.add_graph("Glow", None);
+            project.add_graph("A graph with a long name", None);
+        });
+        let mut harness = gpu_harness(app);
+        wait_for_frames(&mut harness, 10);
+        save(&mut harness, &format!("{name}-30-colors-and-media"));
+        harness.get_by_label_contains("Graphs ·").click();
+        harness.run_steps(3);
+        save(&mut harness, &format!("{name}-31-graphs-tab"));
+        let open = harness.state().project().graph_name.clone();
+        let header = harness
+            .get(
+                egui_kittest::kittest::By::new()
+                    .role(egui::accesskit::Role::ComboBox)
+                    .label(&open),
+            )
+            .rect()
+            .center();
+        click_at(&mut harness, header);
+        harness.run_steps(3);
+        save(&mut harness, &format!("{name}-32-graph-menu"));
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(2);
+        harness.get_by_label("Fullscreen").click();
+        harness.run_steps(4);
+        save(&mut harness, &format!("{name}-33-fullscreen"));
+    }
 }

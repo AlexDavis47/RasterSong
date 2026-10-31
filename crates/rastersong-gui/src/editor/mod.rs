@@ -11,6 +11,7 @@ mod performance;
 mod ports;
 mod search;
 mod tooltips;
+mod unit_chip;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -26,7 +27,7 @@ pub use graph_stats::StatsContext;
 pub use inspect::{InspectContext, InspectMode, ViewChoice, changing_view, listening};
 pub use inspector::InspectorContext;
 pub use modulation::{PARAM_PORT, as_param, param_port};
-pub use ports::port_label;
+pub use ports::{port_label, source_label};
 
 /// Identifies a node in the editor, stable across renames.
 pub type NodeKey = u64;
@@ -109,6 +110,9 @@ pub struct GraphEditor {
     pub scroll_reserved: bool,
     /// The wire probe open on the canvas, if any.
     probe: Option<tooltips::Probe>,
+    /// The probe's target the pointer has rested on since this time (seconds), before the probe
+    /// opens.
+    probe_wait: Option<(tooltips::Target, f64)>,
     /// Steps the probe's drum was turned since the app last asked.
     view_turn: i32,
     last_geometry: Vec<canvas::Geometry>,
@@ -119,6 +123,8 @@ pub struct GraphEditor {
     pub keep_connections: bool,
     /// The project's limit on pre-rendered warmup frames, to flag nodes that need more.
     pub max_warmup_frames: u32,
+    /// The name of the project's master bus, which the graph's base Audio Output writes to.
+    pub master_bus: String,
     /// Each node's processing time in microseconds, smoothed over recent frames, by node id.
     costs: HashMap<String, f32>,
     /// Problems found when loading a graph (e.g. connections to ports that don't exist).
@@ -160,11 +166,13 @@ impl GraphEditor {
             hovered_audio: false,
             scroll_reserved: false,
             probe: None,
+            probe_wait: None,
             view_turn: 0,
             last_geometry: Vec::new(),
             clipboard: None,
             keep_connections: true,
             max_warmup_frames: rastersong_engine::DEFAULT_MAX_WARMUP_FRAMES,
+            master_bus: rastersong_engine::DEFAULT_BUS.to_owned(),
             costs: HashMap::new(),
             warnings: Vec::new(),
             compiled: Vec::new(),

@@ -140,10 +140,6 @@ impl Widget for ValueBox<'_> {
                 },
                 |s| s.x,
             );
-            let rect = egui::Rect::from_min_size(
-                ui.next_widget_position(),
-                vec2(width, size.map_or(height, |s| s.y)),
-            );
             let mut edit = ui
                 .data(|d| d.get_temp::<Edit>(id))
                 .filter(|e| e.value == old)
@@ -160,8 +156,12 @@ impl Widget for ValueBox<'_> {
                 )));
                 state.store(ui.ctx(), id);
             }
+            // Allocated like the resting box, so the layout places both alike (a centred row
+            // puts the field at the same height).
+            let (_, rect) = ui.allocate_space(vec2(width, size.map_or(height, |s| s.y)));
             let padding = ui.spacing().button_padding;
-            let response = ui.put(
+            let response = put_in(
+                ui,
                 rect,
                 TextEdit::singleline(&mut edit.text)
                     .id(id)
@@ -274,6 +274,14 @@ fn parse(text: &str) -> Option<f64> {
         .map(|c| if c == '\u{2212}' { '-' } else { c })
         .collect();
     cleaned.parse().ok().filter(|v: &f64| v.is_finite())
+}
+
+/// Shows `widget` filling `rect`, which the caller has already allocated.
+fn put_in(ui: &mut Ui, rect: egui::Rect, widget: impl Widget) -> Response {
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(
+        egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+    ));
+    child.add(widget)
 }
 
 #[cfg(test)]

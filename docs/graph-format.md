@@ -50,7 +50,8 @@ tempo and the loop region:
   video track's are used, or 1920×1080 at 30 fps without one. See [Timeline](engine.md#timeline).
 - `resources`: the media the project uses, as the Resources panel lists them. Each has an `id` (what tracks point
   at), a `name`, a `kind` (`video` or `audio`), the linked file's `path`, and the `stream` it plays, by its index in
-  the file (left out: the file's best stream of that kind).
+  the file (left out: the file's best stream of that kind), and its label `color` (`"red"`, `"orange"`, `"yellow"`,
+  `"green"`, `"teal"`, `"blue"`, `"violet"` or `"pink"`; left out, its items are drawn in their track's colour).
 - `tracks`: the Video and Audio sections, video tracks first, each section top first, as the timeline lists them.
   Each track has a `name` (what graph sources read it by, unique among all tracks), its `kind` (`video` or
   `audio`), the `resource` it plays, its `items`, `volume`, `muted` and `solo` for the mix, its `bus` (audio only)
@@ -59,20 +60,20 @@ tempo and the loop region:
 - `graph_tracks`: the Graphs section, top first. Each has a `name` (unique among all tracks), `items`, `muted` and
   `height`. A graph item has the `graph` id it runs, `position` and `length` (seconds on the timeline), `start`
   (seconds into the graph's own time at its left edge), `muted`, `pre_roll` (true by default: the graph warms up as
-  if it had run before the item) and `sources`: what fills each input port, by port name. A source is `"below"`,
-  `"mix"` (the video or audio mix, by the port's kind), `{ "track": "kick" }` (a track's stem),
-  `{ "graph": { "track": "Graphs 1", "port": "Video" } }` (an output of a graph track below this one) or
-  `"nothing"`. A port left out reads `"below"` if it is a main port (`Video`, `Audio`), else nothing. Items on one
-  track never overlap; a file with overlaps is repaired on load. See [Composition](engine.md#composition).
+  if it had run before the item). What the graph reads is set on its own input nodes, not on the item: a
+  `video_source` or `audio_source` node's `source` is `"mix"`, `"track:<name>"` (a track's stem),
+  `"graph:<graph track>"` (an output of that graph track, which must be below the item's) or empty (nothing), and
+  its `output` names a `named_output` of the graph track's graphs (empty: the main output of its kind). Items on
+  one track never overlap; a file with overlaps is repaired on load. See [Composition](engine.md#composition).
 - `graph`, `graph_id`, `graph_name` and `graphs`: the project's graphs. `graph` is the open one (the one the editor
   shows), named `graph_name` with id `graph_id`; `graphs` holds the others, each an `id`, a `name` and its
   `graph`, until one is opened and swaps places with the open graph.
 - An item on a video or audio track: `position` (seconds into the project), `start` and `end` (its in and out
   points, in seconds of the file; no `end` plays to the end of the file), `rate` (seconds of file per second of
-  timeline, 1 by default), `muted` and its `group` (items with the same number move, trim, split and delete
+  timeline, 1 by default), `muted`, its `group` (items with the same number move, trim, split and delete
   together; a group of one is dropped on load).
 - `loop_region` (`start` and `end` in seconds, and whether it is `enabled`), `tempo` (`bpm`, `beats_per_bar`,
-  `offset_secs`), `timeline_mode` (`"time"` or `"tempo"`) and `bypass_graph` (skip every graph track).
+  `offset_secs`), and `timeline_mode` (`"time"` or `"tempo"`).
 
 ```json
 { "version": 0,

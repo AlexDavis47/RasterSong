@@ -1,6 +1,6 @@
 use crate::dsp::{AttackRelease, db_to_gain, gain_to_db};
 use crate::nodes::support::settle_frames;
-use crate::nodes::{Category, Meter, NodeKind, NodeSpec, Unit};
+use crate::nodes::{Category, Measure, Meter, NodeKind, NodeSpec};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// A peak limiter: the gain drops at once so no sample passes the ceiling, then recovers over the
@@ -11,10 +11,9 @@ pub struct Limiter {
     /// The ceiling as a gain.
     ceiling: f32,
     release: f64,
-    unit: Unit,
-    /// Samples in one unit, and the release smoothing coefficient of the constant time: set in
+    unit: Measure,
+    /// The release smoothing coefficient of the constant time: set in
     /// `prepare`.
-    unit_samples: f64,
     times: AttackRelease,
     slowest: f64,
     gain: f32,
@@ -30,8 +29,8 @@ params! { Limiter {
     RELEASE: ParamSpec::number("release", 50.0,
         0.0,
         1000.0)
+    .length("ms")
     .limits(0.0, 1e6),
-    UNIT: Unit::time_param("ms"),
 } }
 
 impl NodeKind for Limiter {
@@ -44,7 +43,7 @@ impl NodeKind for Limiter {
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "ceiling": -12, "release": 10 }"#,
         r#"{ "ceiling": 0, "release": 0 }"#,
-        r#"{ "ceiling": -3, "release": 0.5, "unit": "row" }"#,
+        r#"{ "ceiling": -3, "release": 0.5, "release.unit": "row" }"#,
     ];
     const BENCH: Option<&'static str> = Some("{}");
 
@@ -52,8 +51,7 @@ impl NodeKind for Limiter {
         Ok(Self {
             ceiling: db_to_gain(params.number_at(Self::CEILING)?) as f32,
             release: params.number_at(Self::RELEASE)?,
-            unit: params.choice_as(Self::UNIT)?,
-            unit_samples: 1.0,
+            unit: params.measure_at(Self::RELEASE)?,
             times: AttackRelease::default(),
             slowest: 0.0,
             gain: 1.0,
@@ -67,10 +65,13 @@ impl Node for Limiter {
     }
 
     fn prepare(&mut self, ctx: &PrepareContext) {
-        self.unit_samples = self.unit.samples(ctx);
-        self.times = AttackRelease::new(0.0, self.release, self.unit_samples);
+        self.unit.prepare(ctx);
+        self.times = AttackRelease::new((0.0, 1.0), (self.release, self.unit.unit_samples()));
         // About 7 time constants to recover to within 0.1%, at the slowest the release gets.
-        self.slowest = 7.0 * ctx.param_max(Self::RELEASE, self.release) * self.unit_samples;
+        self.slowest = 7.0
+            * self
+                .unit
+                .samples(ctx.param_max(Self::RELEASE, self.release));
     }
 
     fn process(&mut self, ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
@@ -126,7 +127,7 @@ mod tests {
     fn the_gain_recovers_after_a_peak() {
         // Release of 2 samples: after the peak the quiet tail climbs back toward full level.
         let out = limit(
-            r#"{ "ceiling": -6, "release": 2, "unit": "row" }"#,
+            r#"{ "ceiling": -6, "release": 2, "release.unit": "row" }"#,
             &[1.0, 0.1, 0.1, 0.1],
         );
         // One row is the whole 4 sample block here, so the release is 8 samples.

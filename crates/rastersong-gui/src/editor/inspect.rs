@@ -176,8 +176,10 @@ struct State {
     /// The frame being shown, and when it was asked for.
     frame: usize,
     asked: f64,
-    /// The last thing the engine answered, shown while the next answer is on its way.
-    last: Option<Arc<Tap>>,
+    /// The last thing the engine answered (never [`Visual::Waiting`]), shown while the next
+    /// answer is on its way, so a connection that isn't rendered doesn't flash to waiting and
+    /// back each time the playhead moves.
+    last: Option<Visual>,
     version: u64,
 }
 
@@ -214,38 +216,27 @@ pub fn inspect(ui: &Ui, node: &str, output: usize, ctx: &InspectContext) -> Visu
         };
         match (ctx.tap)(&request) {
             TapOutcome::Ready(tap) => {
-                if state
-                    .last
-                    .as_ref()
-                    .is_none_or(|last| !Arc::ptr_eq(last, &tap))
-                {
+                let same = matches!(&state.last, Some(Visual::Ready { tap: last, .. })
+                    if Arc::ptr_eq(last, &tap));
+                if !same {
                     state.version += 1;
                 }
-                state.last = Some(tap);
-                ready(&state)
+                state.last = Some(Visual::Ready {
+                    tap,
+                    version: state.version,
+                });
             }
             TapOutcome::Pending => {
                 ui.ctx()
                     .request_repaint_after(std::time::Duration::from_millis(50));
-                ready(&state)
             }
-            TapOutcome::NotRendered => Visual::NotRendered,
-            TapOutcome::Failed(message) => Visual::Failed(message),
+            TapOutcome::NotRendered => state.last = Some(Visual::NotRendered),
+            TapOutcome::Failed(message) => state.last = Some(Visual::Failed(message)),
         }
+        state.last.clone().unwrap_or(Visual::Waiting)
     };
     ui.data_mut(|d| d.insert_temp(id, state));
     visual
-}
-
-/// The view of the last answer, or waiting if there is none.
-fn ready(state: &State) -> Visual {
-    match &state.last {
-        Some(tap) => Visual::Ready {
-            tap: tap.clone(),
-            version: state.version,
-        },
-        None => Visual::Waiting,
-    }
 }
 
 impl Visual {
@@ -433,6 +424,38 @@ mod tests {
             ]
         );
         assert_eq!(InspectMode::Picture.stepped(-1), InspectMode::Readings);
+    }
+
+    #[test]
+    fn a_connection_that_is_not_rendered_stays_so_while_the_next_answer_is_on_its_way() {
+        let ctx = egui::Context::default();
+        let answers = std::cell::RefCell::new(vec![TapOutcome::Pending, TapOutcome::NotRendered]);
+        let tap = |_: &TapRequest| answers.borrow_mut().pop().unwrap_or(TapOutcome::Pending);
+        let mut seen = Vec::new();
+        // Past the dwell the engine says not rendered; the playhead moves on and the next answer
+        // is pending.
+        for (time, frame) in [(0.0, 0), (1.0, 0), (2.0, 5)] {
+            let inspect_ctx = InspectContext {
+                frame,
+                tap: &tap,
+                refresh: 0.0,
+                views: ViewChoice::default(),
+            };
+            let input = egui::RawInput {
+                time: Some(time),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                seen.push(inspect(ui, "node", 0, &inspect_ctx));
+            });
+            output.textures_delta.clear();
+        }
+        assert!(matches!(seen[0], Visual::Waiting));
+        assert!(matches!(seen[1], Visual::NotRendered));
+        assert!(
+            matches!(seen[2], Visual::NotRendered),
+            "no flash to waiting"
+        );
     }
 
     #[test]

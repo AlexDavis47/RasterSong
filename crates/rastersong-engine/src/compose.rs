@@ -3,8 +3,9 @@
 //! [Composition](../../../docs/engine.md#composition).
 //!
 //! A graph track shows its item's output where one plays and what is below it elsewhere; each
-//! item fills its input ports from its sources (what is below, the mix, a stem, a graph track
-//! further down). The top graph track's output is the master, or the mix with none.
+//! item's input nodes read the sources they name (what is below, the mix, a stem, a graph track
+//! further down, or one of its named outputs). The top graph track's output is the master, or the
+//! mix with none.
 //!
 //! Every stage has a latency: the frames between a source frame going in and its result coming
 //! out. A stage's output for output frame `f` comes out at source step `f + latency`, and where
@@ -13,14 +14,14 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use rastersong_graph::nodes::{AUDIO_OUTPUT, DEFAULT_AUDIO, DEFAULT_VIDEO, PORT_PARAM};
+use rastersong_graph::nodes::{AUDIO_OUTPUT, DEFAULT_AUDIO, DEFAULT_VIDEO};
 use rastersong_graph::{
     CompileOptions, Graph, GraphDesc, GraphError, Layout, NodeCost, NodeMeters, NodeStats,
-    OutputLevel, ParamLevel, ParamValue, Registry, Signal, Sources, audio_output_bus,
+    OutputLevel, ParamLevel, Registry, Signal, Sources, Span, audio_output_bus,
 };
 
 use crate::EngineError;
-use crate::composition::{Composition, InputKind, port_of};
+use crate::composition::{Composition, InputKind, input_ports};
 use crate::timeline::{GraphItem, Source, TrackKind};
 
 /// The sound the mix and the graph tracks are in: this many samples a second, in the bus's
@@ -42,19 +43,30 @@ pub(crate) struct Stream {
     pub picture: bool,
     /// The sound, in the stage's audio layout; empty for silence.
     pub audio: Vec<f32>,
+    /// A graph track's named outputs, in its slots' order; empty for zeros.
+    pub named: Vec<Vec<f32>>,
 }
 
 impl Stream {
     pub fn clear(&mut self) {
         self.video.clear();
         self.audio.clear();
+        self.named.iter_mut().for_each(Vec::clear);
         self.picture = false;
     }
 
     fn assign(&mut self, other: &Self) {
         assign(&mut self.video, &other.video);
         assign(&mut self.audio, &other.audio);
+        self.assign_named(&other.named);
         self.picture = other.picture;
+    }
+
+    fn assign_named(&mut self, named: &[Vec<f32>]) {
+        self.named.resize_with(named.len(), Vec::new);
+        for (dst, src) in self.named.iter_mut().zip(named) {
+            assign(dst, src);
+        }
     }
 }
 
@@ -150,6 +162,11 @@ enum Fill {
         node: usize,
         video: bool,
     },
+    /// Named output slot `slot` of graph-track node `node`.
+    Named {
+        node: usize,
+        slot: usize,
+    },
     /// Nothing fills the port: zeros.
     Zeros,
 }
@@ -185,6 +202,9 @@ struct FxRt {
     host_delay: usize,
     host_ring: Ring,
     ports: Vec<Port>,
+    /// Its graph track's named output slots, each with whether the graph fills it: it has a
+    /// named output of that name and the slot's layout.
+    named: Vec<(String, bool)>,
     /// Whether its input had a picture, by input frame, until the output for it comes out.
     flags: VecDeque<(i64, bool)>,
     out: Stream,
@@ -245,6 +265,7 @@ impl ChainRt {
                 host_delay,
                 host_ring,
                 ports,
+                named,
                 flags,
                 out: fx_out,
                 active,
@@ -265,6 +286,11 @@ impl ChainRt {
                         .get(node)
                         .and_then(|o| o.ring.get(f_in))
                         .map(|s| if video { &s.video[..] } else { &s.audio[..] }),
+                    Fill::Named { node, slot } => outputs
+                        .get(node)
+                        .and_then(|o| o.ring.get(f_in))
+                        .and_then(|s| s.named.get(slot))
+                        .map(|v| &v[..]),
                     Fill::Zeros => None,
                 };
                 match source {
@@ -286,6 +312,13 @@ impl ChainRt {
             match graph.audio_output() {
                 Some(audio) => assign(&mut fx_out.audio, &audio.data),
                 None => fx_out.audio.clear(),
+            }
+            fx_out.named.resize_with(named.len(), Vec::new);
+            for (out, (name, fills)) in fx_out.named.iter_mut().zip(named.iter()) {
+                match graph.named_output(name).filter(|_| *fills) {
+                    Some(signal) => assign(out, &signal.data),
+                    None => out.clear(),
+                }
             }
             let f_out = f_in - *own as i64;
             fx_out.picture = flags.iter().any(|&(f, p)| f == f_out && p);
@@ -346,6 +379,8 @@ struct ItemsRt {
     /// the stage's.
     raw_layout: Layout,
     layout: Layout,
+    /// How many named output slots the track has.
+    slots: usize,
     out: Stream,
 }
 
@@ -407,13 +442,19 @@ impl ItemsRt {
                 self.out.audio.clear();
                 self.out.audio.resize(self.layout.len(), 0.0);
                 mix_into(&s.audio, from, &mut self.out.audio, self.layout, 1.0);
+                self.out.assign_named(&s.named);
             }
             Some(s) => self.out.assign(s),
             None => self.out.clear(),
         }
-        // An item's graph shows its picture wherever the item plays.
+        // An item's graph shows its picture wherever the item plays; where none plays, its
+        // named outputs read zeros (what is below has none of its own).
         if supplier.is_some() {
             self.out.picture = !self.out.video.is_empty();
+            self.out.named.resize_with(self.slots, Vec::new);
+        } else {
+            self.out.named.clear();
+            self.out.named.resize_with(self.slots, Vec::new);
         }
         Ok(())
     }
@@ -745,6 +786,12 @@ fn frame_of(t: f64, fps: f64) -> i64 {
     (t * fps - 1e-6).ceil() as i64
 }
 
+/// What is added to an output frame to get `item`'s graph's own frame: its graph counts from the
+/// item's trimmed start, not from the start of the project.
+fn item_base(item: &GraphItem, fps: f64) -> i64 {
+    (item.start * fps).round() as i64 - frame_of(item.position, fps)
+}
+
 /// Compiles a composition.
 struct Builder<'a> {
     plan: &'a ComposePlan<'a>,
@@ -759,6 +806,9 @@ struct Builder<'a> {
     reads: Vec<Vec<usize>>,
     /// Whether each node's sound is the plain audio mix, as far as is known.
     mix_sound: Vec<bool>,
+    /// Each graph track node's named output slots: the names its items' graphs have, each
+    /// with the layout of the first item that has it.
+    named: Vec<Vec<(String, Layout)>>,
 }
 
 impl<'a> Builder<'a> {
@@ -777,6 +827,7 @@ impl<'a> Builder<'a> {
             compiled: vec![None; nodes],
             reads: vec![Vec::new(); nodes],
             mix_sound: vec![false; nodes],
+            named: vec![Vec::new(); nodes],
         }
     }
 
@@ -801,20 +852,19 @@ impl<'a> Builder<'a> {
     fn build(mut self) -> Result<Compose, EngineError> {
         let comp = self.comp();
         let mix_node = self.mix_node;
-        // A track is read when it is in the mix or an item reads its stem.
+        // A track is read when it is in the mix or a graph that plays reads its stem.
+        let stems: Vec<String> = (0..comp.graph_tracks.len())
+            .flat_map(|g| self.playing(g))
+            .flat_map(|i| input_ports(self.graphs[&i.graph]))
+            .filter_map(|p| match p.source {
+                Source::Track(name) => Some(name),
+                _ => None,
+            })
+            .collect();
         let read: Vec<bool> = comp
             .tracks
             .iter()
-            .map(|t| {
-                t.in_mix
-                    || (0..comp.graph_tracks.len()).any(|g| {
-                        self.playing(g).iter().any(|i| {
-                            i.sources
-                                .values()
-                                .any(|s| matches!(s, Source::Track(name) if *name == t.name))
-                        })
-                    })
-            })
+            .map(|t| t.in_mix || stems.contains(&t.name))
             .collect();
         let mut nodes = Vec::new();
         let mut warmups = vec![0usize; self.compiled.len()];
@@ -867,7 +917,7 @@ impl<'a> Builder<'a> {
                 let (chain, passes_mix) = self.build_item(node, item, host_latency)?;
                 mix_sound &= passes_mix;
                 items.push(ItemFxRt {
-                    base: (item.start * fps).round() as i64 - first,
+                    base: item_base(item, fps),
                     first,
                     end,
                     pre_roll: item.pre_roll,
@@ -876,6 +926,34 @@ impl<'a> Builder<'a> {
                     chain,
                 });
             }
+            // The track's named outputs: each name once, in the layout of the first item that
+            // has it; an item whose output of that name has another layout fills zeros.
+            let mut slots: Vec<(String, Layout)> = Vec::new();
+            for item in &items {
+                for fx in &item.chain.fx {
+                    for (name, layout) in fx.graph.named_layouts() {
+                        if !slots.iter().any(|(n, _)| n == name) {
+                            slots.push((name.to_owned(), layout));
+                        }
+                    }
+                }
+            }
+            for item in &mut items {
+                for fx in &mut item.chain.fx {
+                    fx.named = slots
+                        .iter()
+                        .map(|(name, layout)| {
+                            let fills = fx
+                                .graph
+                                .named_layouts()
+                                .any(|(n, l)| n == name && l == *layout);
+                            (name.clone(), fills)
+                        })
+                        .collect();
+                }
+            }
+            let slot_count = slots.len();
+            self.named[node] = slots;
             let latency = items
                 .iter()
                 .map(|i| i.chain.latency)
@@ -898,6 +976,7 @@ impl<'a> Builder<'a> {
                     raw: Ring::new(if lead > 0 { lead + 1 } else { 0 }),
                     raw_layout: self.mix,
                     layout: self.mix,
+                    slots: slot_count,
                     out: Stream::default(),
                     items,
                 },
@@ -943,48 +1022,35 @@ impl<'a> Builder<'a> {
         latency_in: usize,
     ) -> Result<(ChainRt, bool), EngineError> {
         let desc = self.graphs[&item.graph];
-        let ports: Vec<(String, InputKind)> = crate::composition::input_ports(desc)
-            .into_iter()
-            .map(|p| (p.name, p.kind))
-            .collect();
-        let both = |name: &str| {
-            ports
-                .iter()
-                .any(|(p, k)| p == name && *k == InputKind::Video)
-                && ports
-                    .iter()
-                    .any(|(p, k)| p == name && *k == InputKind::Audio)
-        };
-        let key = |name: &str, kind: InputKind| match kind {
-            InputKind::Audio if both(name) => format!("{name}\u{0}sound"),
-            _ => name.to_owned(),
-        };
+        let ports = input_ports(desc);
         let fills: Vec<Fill> = ports
             .iter()
-            .map(|(name, kind)| self.fill(node, item, name, *kind))
+            .map(|p| self.fill(node, &p.source, p.kind))
             .collect();
         let align = fills
             .iter()
             .filter_map(|f| match f {
-                Fill::Receive { node, .. } => Some(self.compiled[*node].expect("compiled").0),
+                Fill::Receive { node, .. } | Fill::Named { node, .. } => {
+                    Some(self.compiled[*node].expect("compiled").0)
+                }
                 _ => None,
             })
             .fold(latency_in, usize::max);
         let mut port_rts = Vec::new();
         let mut sources = HashMap::new();
-        for ((name, kind), fill) in ports.iter().zip(&fills) {
-            if let Fill::Receive { node, .. } = *fill {
+        for (port, fill) in ports.iter().zip(&fills) {
+            if let Fill::Receive { node, .. } | Fill::Named { node, .. } = *fill {
                 self.reads[node].push(align);
             }
             let layout = match *fill {
-                _ if *kind == InputKind::Video => self.video_layout,
+                Fill::Named { node, slot } => self.named[node][slot].1,
+                _ if port.kind == InputKind::Video => self.video_layout,
                 Fill::Receive { node, .. } => self.compiled[node].expect("compiled").1,
                 _ => self.mix,
             };
-            let key = key(name, *kind);
-            sources.insert(key.clone(), layout);
+            sources.insert(port.key.clone(), layout);
             port_rts.push(Port {
-                key,
+                key: port.key.clone(),
                 signal: Signal::zeros(layout),
                 fill: *fill,
             });
@@ -1008,12 +1074,29 @@ impl<'a> Builder<'a> {
             .nodes
             .iter()
             .any(|n| n.kind == AUDIO_OUTPUT && audio_output_bus(n) == self.plan.bus.name);
-        let keyed = keyed(desc, &|name, kind| key(name, kind));
+        // The project's beat grid, in the graph's own time: its first beat moves by as much as
+        // the graph's frames are shifted, so beats stay on the metronome wherever the item is.
+        let fps = self.plan.fps;
+        let mut tempo = self.plan.options.tempo;
+        tempo.offset_secs += item_base(item, fps) as f64 / fps;
+        // What the item plays of the graph's own time, in whole frames as it is rendered; an
+        // item without end (a render of one graph) plays the project.
+        let span = if item.length.is_finite() {
+            let first = frame_of(item.position, fps);
+            Span {
+                start: (first + item_base(item, fps)) as f64 / fps,
+                length: (frame_of(item.end(), fps) - first) as f64 / fps,
+            }
+        } else {
+            self.plan.options.span
+        };
         let options = CompileOptions {
             sources,
+            tempo,
+            span,
             ..self.plan.options.clone()
         };
-        let graph = Graph::compile(&keyed, self.plan.registry, &options)
+        let graph = Graph::compile(desc, self.plan.registry, &options)
             .map_err(|e| fx_error(e, item.graph, self.plan.single))?;
         // The item's sound is the mix when its Audio Output is wired straight from a port that
         // reads the mix: what is below, when that is the mix, or the mix itself. A render of one
@@ -1042,6 +1125,7 @@ impl<'a> Builder<'a> {
             host_delay,
             host_ring: Ring::new(if host_delay > 0 { host_delay + 1 } else { 0 }),
             ports: port_rts,
+            named: Vec::new(),
             flags: VecDeque::new(),
             out: Stream::default(),
             active: false,
@@ -1058,11 +1142,12 @@ impl<'a> Builder<'a> {
         ))
     }
 
-    /// Where port `name` read as `kind` of `item` on graph-track node `node` gets its signal.
-    fn fill(&self, node: usize, item: &GraphItem, name: &str, kind: InputKind) -> Fill {
+    /// Where an input node reading `source` as `kind`, in an item on graph-track node `node`,
+    /// gets its signal.
+    fn fill(&self, node: usize, source: &Source, kind: InputKind) -> Fill {
         let video = kind == InputKind::Video;
         let comp = self.comp();
-        match item.source(name, video) {
+        match source {
             Source::Below if video => Fill::HostVideo,
             Source::Below => Fill::HostAudio,
             Source::Mix => Fill::Receive {
@@ -1072,33 +1157,30 @@ impl<'a> Builder<'a> {
             Source::Track(track) => comp
                 .tracks
                 .iter()
-                .position(|t| t.name == track)
+                .position(|t| t.name == *track)
                 .map_or(Fill::Zeros, |node| Fill::Receive { node, video }),
             Source::Graph { track, port } => {
-                let main = if video { DEFAULT_VIDEO } else { DEFAULT_AUDIO };
-                comp.graph_tracks
+                let Some(below) = comp
+                    .graph_tracks
                     .iter()
-                    .position(|t| t.name == track)
+                    .position(|t| t.name == *track)
                     .map(|index| self.graph_node(index))
-                    .filter(|&below| below < node && port == main)
-                    .map_or(Fill::Zeros, |node| Fill::Receive { node, video })
+                    .filter(|&below| below < node)
+                else {
+                    return Fill::Zeros;
+                };
+                let main = if video { DEFAULT_VIDEO } else { DEFAULT_AUDIO };
+                if port == main {
+                    return Fill::Receive { node: below, video };
+                }
+                self.named[below]
+                    .iter()
+                    .position(|(name, _)| name == port)
+                    .map_or(Fill::Zeros, |slot| Fill::Named { node: below, slot })
             }
             Source::Nothing => Fill::Zeros,
         }
     }
-}
-
-/// `desc` ready to compile for an item: each input port reading the source `key` names.
-fn keyed(desc: &GraphDesc, key: &dyn Fn(&str, InputKind) -> String) -> GraphDesc {
-    let mut desc = desc.clone();
-    for node in &mut desc.nodes {
-        if let Some((name, kind)) = port_of(&node.kind, &node.params) {
-            let key = key(name, kind);
-            node.params
-                .insert(PORT_PARAM.to_owned(), ParamValue::Text(key));
-        }
-    }
-    desc
 }
 
 #[cfg(test)]

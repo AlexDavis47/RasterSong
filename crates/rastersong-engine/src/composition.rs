@@ -3,90 +3,72 @@
 
 use std::collections::BTreeMap;
 
-use rastersong_graph::nodes::{AUDIO_INPUT, DEFAULT_AUDIO, DEFAULT_VIDEO, PORT_PARAM, VIDEO_INPUT};
+use rastersong_graph::nodes::{
+    AUDIO_INPUT, AUDIO_SOURCE, DEFAULT_AUDIO, DEFAULT_VIDEO, OUTPUT_PARAM, SOURCE_PARAM,
+    VIDEO_INPUT, VIDEO_SOURCE, source_key,
+};
 use rastersong_graph::{GraphDesc, ParamValue};
 
-use crate::timeline::{GraphItem, TrackKind};
+use crate::timeline::{GraphItem, Source, TrackKind};
 
-/// Whether an input port reads pictures or sound.
+/// Whether an input node reads pictures or sound.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputKind {
     Video,
     Audio,
 }
 
-/// An input port of a graph: what a graph item's sources fill, by name. Several input nodes can
-/// read one port.
+/// What one input node of a graph reads, and the name the graph is filled by for it. Several
+/// nodes reading the same source share it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InputPort {
-    pub name: String,
-    /// What the port's first input node reads.
+    /// The name the host fills: `Video` or `Audio` for the main inputs.
+    pub key: String,
     pub kind: InputKind,
+    pub source: Source,
 }
 
-impl InputPort {
-    /// Whether it is a main port: `Video` read as a picture, or `Audio` read as sound.
-    pub fn is_main(&self) -> bool {
-        is_main_port(&self.name, self.kind)
-    }
-}
-
-/// Whether port `name` read as `kind` is a main port, which reads what is below unless set
-/// otherwise.
-pub fn is_main_port(name: &str, kind: InputKind) -> bool {
-    match kind {
-        InputKind::Video => name == DEFAULT_VIDEO,
-        InputKind::Audio => name == DEFAULT_AUDIO,
-    }
-}
-
-/// The port a node of type `kind` with `params` reads, and whether it reads pictures or sound;
-/// `None` for nodes other than input ports.
-pub fn port_of<'a>(
-    kind: &str,
-    params: &'a BTreeMap<String, ParamValue>,
-) -> Option<(&'a str, InputKind)> {
-    let (kind, default) = match kind {
-        VIDEO_INPUT => (InputKind::Video, DEFAULT_VIDEO),
-        AUDIO_INPUT => (InputKind::Audio, DEFAULT_AUDIO),
+/// What a node of type `kind` with `params` reads; `None` for nodes other than inputs.
+pub fn port_of(kind: &str, params: &BTreeMap<String, ParamValue>) -> Option<InputPort> {
+    let (kind, key, source) = match kind {
+        VIDEO_INPUT => (InputKind::Video, DEFAULT_VIDEO.to_owned(), Source::Below),
+        AUDIO_INPUT => (InputKind::Audio, DEFAULT_AUDIO.to_owned(), Source::Below),
+        VIDEO_SOURCE | AUDIO_SOURCE => {
+            let video = kind == VIDEO_SOURCE;
+            let text = |name: &str| match params.get(name) {
+                Some(ParamValue::Text(text)) => text.as_str(),
+                _ => "",
+            };
+            let (source, output) = (text(SOURCE_PARAM), text(OUTPUT_PARAM));
+            let kind = if video {
+                InputKind::Video
+            } else {
+                InputKind::Audio
+            };
+            (
+                kind,
+                source_key(video, source, output),
+                Source::from_settings(source, output, video),
+            )
+        }
         _ => return None,
     };
-    let name = match params.get(PORT_PARAM) {
-        Some(ParamValue::Text(name)) => name.as_str(),
-        _ => default,
-    };
-    Some((name, kind))
+    Some(InputPort { key, kind, source })
 }
 
-/// Graph `desc`'s input ports in the order their first nodes come: each name once for each kind
-/// it is read as.
+/// What graph `desc`'s input nodes read, each once, in the order their first nodes come.
 pub fn input_ports(desc: &GraphDesc) -> Vec<InputPort> {
     let mut ports: Vec<InputPort> = Vec::new();
-    for (name, kind) in desc
+    for port in desc
         .nodes
         .iter()
         .filter_map(|n| port_of(&n.kind, &n.params))
     {
-        if !ports.iter().any(|p| p.name == name && p.kind == kind) {
-            ports.push(InputPort {
-                name: name.to_owned(),
-                kind,
-            });
+        if !ports.iter().any(|p| p.key == port.key) {
+            ports.push(port);
         }
     }
     ports
-}
-
-/// The names of `desc`'s input ports other than the main ones, each once. A name read as a
-/// picture and as sound gets the picture and the sound of its source.
-pub fn extra_ports(desc: &GraphDesc) -> Vec<String> {
-    let mut names: Vec<String> = Vec::new();
-    for port in input_ports(desc).into_iter().filter(|p| !p.is_main()) {
-        if !names.contains(&port.name) {
-            names.push(port.name);
-        }
-    }
-    names
 }
 
 /// A video or audio track as the renderer composes it.
@@ -156,18 +138,74 @@ mod tests {
     use super::*;
 
     #[test]
-    fn main_ports_are_video_read_as_a_picture_and_audio_read_as_sound() {
+    fn inputs_read_below_and_sources_what_they_name() {
         let desc = GraphDesc::from_json(
             r#"{ "version": 0, "nodes": [
                 { "id": "v", "type": "video_input" },
                 { "id": "a", "type": "audio_input" },
-                { "id": "k", "type": "audio_input", "params": { "port": "Kick" } },
-                { "id": "k2", "type": "video_input", "params": { "port": "Kick" } },
-                { "id": "odd", "type": "video_input", "params": { "port": "Audio" } },
+                { "id": "k", "type": "audio_source", "params": { "source": "track:Kick" } },
+                { "id": "k2", "type": "audio_source", "params": { "source": "track:Kick" } },
+                { "id": "kv", "type": "video_source", "params": { "source": "track:Kick" } },
+                { "id": "g", "type": "video_source",
+                  "params": { "source": "graph:FX", "output": "Mask" } },
+                { "id": "m", "type": "audio_source", "params": { "source": "mix" } },
+                { "id": "n", "type": "video_source" },
                 { "id": "o", "type": "output" } ] }"#,
         )
         .unwrap();
-        assert_eq!(extra_ports(&desc), ["Kick", "Audio"]);
-        assert_eq!(input_ports(&desc).len(), 5);
+        let sources: Vec<(InputKind, Source)> = input_ports(&desc)
+            .into_iter()
+            .map(|p| (p.kind, p.source))
+            .collect();
+        assert_eq!(
+            sources,
+            [
+                (InputKind::Video, Source::Below),
+                (InputKind::Audio, Source::Below),
+                (InputKind::Audio, Source::Track("Kick".into())),
+                (InputKind::Video, Source::Track("Kick".into())),
+                (
+                    InputKind::Video,
+                    Source::Graph {
+                        track: "FX".into(),
+                        port: "Mask".into()
+                    }
+                ),
+                (InputKind::Audio, Source::Mix),
+                (InputKind::Video, Source::Nothing),
+            ]
+        );
+    }
+
+    #[test]
+    fn source_settings_round_trip() {
+        for (source, video) in [
+            (Source::Mix, true),
+            (Source::Track("a:b".into()), false),
+            (
+                Source::Graph {
+                    track: "FX".into(),
+                    port: "Video".into(),
+                },
+                true,
+            ),
+            (
+                Source::Graph {
+                    track: "FX".into(),
+                    port: "Mask".into(),
+                },
+                false,
+            ),
+            (Source::Nothing, true),
+        ] {
+            let (s, o) = source.settings(video);
+            assert_eq!(Source::from_settings(&s, &o, video), source);
+        }
+        let (_, output) = Source::Graph {
+            track: "FX".into(),
+            port: "Video".into(),
+        }
+        .settings(true);
+        assert_eq!(output, "", "the main output is left out");
     }
 }

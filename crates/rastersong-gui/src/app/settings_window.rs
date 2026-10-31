@@ -13,7 +13,7 @@ use crate::name_edit::name_edit;
 use crate::settings::Settings;
 use crate::theme::{ThemeChoice, WireStyle};
 use crate::value_box::ValueBox;
-use crate::widgets::channels_label;
+use crate::widgets::{channels_label, time_signature};
 
 /// Which of the window's two pages is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -46,7 +46,7 @@ fn help(ui: &mut Ui, text: &str) {
     ui.add_space(4.0);
 }
 
-/// The bpm, beats per bar and first-beat fields, shared by the Settings window and the
+/// The bpm, time signature and first-beat fields, shared by the Settings window and the
 /// timeline's tempo bar so the two cannot drift apart.
 pub(super) fn tempo_fields(ui: &mut Ui, tempo: &mut Tempo) {
     ui.add(
@@ -58,17 +58,13 @@ pub(super) fn tempo_fields(ui: &mut Ui, tempo: &mut Tempo) {
     )
     .on_hover_text(tr("tempo.bpm.help"));
     let mut beats = f64::from(tempo.beats_per_bar);
-    if ui
-        .add(
-            ValueBox::new(&mut beats)
-                .range(1.0..=64.0)
-                .max_decimals(0)
-                .suffix(tr("tempo.beats.suffix")),
-        )
-        .on_hover_text(tr("tempo.beats.help"))
+    let mut unit = f64::from(tempo.beat_unit);
+    if time_signature(ui, &mut beats, &mut unit, 64.0)
+        .on_hover_text(tr("tempo.signature.help"))
         .changed()
     {
         tempo.beats_per_bar = beats.round() as u32;
+        tempo.beat_unit = unit.round() as u32;
     }
     ui.add(
         ValueBox::new(&mut tempo.offset_secs)
@@ -130,10 +126,13 @@ impl App {
                     .on_hover_text(tr("settings.project.help"));
                 });
                 ui.separator();
-                match self.settings_tab {
-                    SettingsTab::Application => self.application_settings(ui),
-                    SettingsTab::Project => self.project_settings(ui),
-                }
+                // Taller than a small window, a page scrolls instead of running off the screen.
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| match self.settings_tab {
+                        SettingsTab::Application => self.application_settings(ui),
+                        SettingsTab::Project => self.project_settings(ui),
+                    });
             });
         self.show_settings = open;
         self.bus_removal_dialog(ctx);
@@ -402,6 +401,11 @@ impl App {
             tr("settings.keep_connections"),
         );
         help(ui, tr("settings.keep_connections.help"));
+        ui.checkbox(
+            &mut self.settings.open_graphs_on_click,
+            tr("settings.open_graphs_on_click"),
+        );
+        help(ui, tr("settings.open_graphs_on_click.help"));
     }
 
     /// Says so when the graph needs more warmup than the limit allows, and which node needs it.

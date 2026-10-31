@@ -45,7 +45,7 @@ pub const FINITE: &str = r#"{ "version": 0,
   "nodes": [
     { "id": "video", "type": "video_input" },
     { "id": "audio", "type": "audio_input" },
-    { "id": "delay", "type": "delay", "params": { "time": 1.5, "unit": "frame" }, "modulation": { "time": { "amount": 5, "mode": "bipolar" } }, "interpolation": "linear" },
+    { "id": "delay", "type": "delay", "params": { "time": 1.5, "time.unit": "frame" }, "modulation": { "time": { "amount": 5, "mode": "bipolar" } }, "interpolation": "linear" },
     { "id": "crush", "type": "bitcrush", "params": { "bits": 5 }, "modulation": { "bits": { "amount": 20, "mode": "bipolar" } } },
     { "id": "out", "type": "output" }
   ],
@@ -66,7 +66,7 @@ pub const INFINITE: &str = r#"{ "version": 0,
     { "id": "video", "type": "video_input" },
     { "id": "audio", "type": "audio_input" },
     { "id": "smooth", "type": "filter", "params": { "cutoff": 0.5, "slope": "6" }, "modulation": { "cutoff": { "amount": 20, "mode": "bipolar" } } },
-    { "id": "echo", "type": "delay", "params": { "time": 0.5, "unit": "frame", "feedback": 0.5, "mix": 0.5 } },
+    { "id": "echo", "type": "delay", "params": { "time": 0.5, "time.unit": "frame", "feedback": 0.5, "mix": 0.5 } },
     { "id": "out", "type": "output" }
   ],
   "connections": [

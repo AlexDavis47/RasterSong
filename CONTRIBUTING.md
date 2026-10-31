@@ -68,3 +68,8 @@ this page is the short list. If a rule here and a document disagree, fix the doc
 
 19. Keep changes small and committed in logical steps with clear messages; leave the tree clean.
 20. When a rule here is missing or wrong, edit this file in the same change rather than working around it.
+21. **Behaviour that is a matter of taste becomes a setting** whenever that is practical: when users of other
+    editors could reasonably expect either way (one click or two to open a graph, snapping on or off), build the
+    common default and add an Application setting for the other, applied everywhere the behaviour appears (the
+    single-click open covers the Resources cards and the timeline's graph items alike). See
+    [Desktop app](docs/app.md#settings).

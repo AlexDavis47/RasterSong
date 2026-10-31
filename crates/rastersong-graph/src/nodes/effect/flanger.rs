@@ -1,5 +1,5 @@
 use crate::dsp::{DelayLine, mix};
-use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
+use crate::nodes::{Category, Measure, NodeKind, NodeSpec};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Flanger: a very short delay with feedback, mixed with the dry signal, which carves a comb of
@@ -8,11 +8,10 @@ use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 #[derive(Debug)]
 pub struct Flanger {
     time: f64,
-    unit: Unit,
+    unit: Measure,
     feedback: f32,
     mix: f32,
     /// Set in `prepare`: samples per unit, the longest delay, the strongest feedback.
-    unit_samples: f64,
     max_delay: f64,
     max_feedback: f32,
     line: DelayLine,
@@ -22,9 +21,9 @@ params! { Flanger {
     TIME: ParamSpec::number("time", 2.0,
         0.0,
         10.0)
+    .length("ms")
     .exposed()
     .limits(0.0, 1000.0),
-    UNIT: Unit::time_param("ms"),
     FEEDBACK: ParamSpec::number("feedback", 0.5,
         -0.95,
         0.95),
@@ -37,8 +36,8 @@ impl NodeKind for Flanger {
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
-        r#"{ "time": 0.25, "unit": "row" }"#,
-        r#"{ "time": 0.5, "unit": "row", "feedback": -0.8, "mix": 0.7 }"#,
+        r#"{ "time": 0.25, "time.unit": "row" }"#,
+        r#"{ "time": 0.5, "time.unit": "row", "feedback": -0.8, "mix": 0.7 }"#,
         r#"{ "time": 3, "feedback": 0 }"#,
     ];
     const BENCH: Option<&'static str> = Some("{}");
@@ -46,10 +45,9 @@ impl NodeKind for Flanger {
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
             time: params.number_at(Self::TIME)?,
-            unit: params.choice_as(Self::UNIT)?,
+            unit: params.measure_at(Self::TIME)?,
             feedback: params.float_at(Self::FEEDBACK)?,
             mix: params.float_at(Self::MIX)?,
-            unit_samples: 0.0,
             max_delay: 0.0,
             max_feedback: 0.0,
             line: DelayLine::default(),
@@ -59,8 +57,8 @@ impl NodeKind for Flanger {
 
 impl Node for Flanger {
     fn prepare(&mut self, ctx: &PrepareContext) {
-        self.unit_samples = self.unit.samples(ctx);
-        self.max_delay = ctx.param_max(Self::TIME, self.time) * self.unit_samples;
+        self.unit.prepare(ctx);
+        self.max_delay = ctx.param_max(Self::TIME, self.time) * self.unit.unit_samples();
         self.max_feedback = ctx
             .param_max(Self::FEEDBACK, f64::from(self.feedback))
             .abs()
@@ -77,7 +75,7 @@ impl Node for Flanger {
         let amount = ctx.value(Self::MIX, f64::from(self.mix));
         for (i, (out, &x)) in outputs[0].data.iter_mut().zip(&inputs[0].data).enumerate() {
             // The newest sample can't be read before it is written, so the delay is at least one.
-            let delay = (time.at64(i) * self.unit_samples).max(1.0);
+            let delay = (time.at64(i) * self.unit.unit_samples()).max(1.0);
             let delayed = self.line.read(delay - 1.0);
             self.line.push(x + feedback.at(i) * delayed);
             *out = mix(x, delayed, amount.at(i));
@@ -109,7 +107,7 @@ mod tests {
         // A quarter row of 8 samples is 2 samples.
         let mut n = node(
             "flanger",
-            r#"{ "time": 0.25, "unit": "row", "feedback": 0, "mix": 1 }"#,
+            r#"{ "time": 0.25, "time.unit": "row", "feedback": 0, "mix": 1 }"#,
             8,
             8.0,
             &[true],
@@ -123,7 +121,7 @@ mod tests {
     fn negative_feedback_flips_the_echo() {
         let mut n = node(
             "flanger",
-            r#"{ "time": 0.25, "unit": "row", "feedback": -0.5, "mix": 1 }"#,
+            r#"{ "time": 0.25, "time.unit": "row", "feedback": -0.5, "mix": 1 }"#,
             8,
             8.0,
             &[true],
