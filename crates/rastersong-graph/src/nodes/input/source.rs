@@ -1,10 +1,10 @@
-//! Where signals enter the graph. Every graph has one Video In and one Audio In, which read what
-//! is below the graph's item on the timeline. Video Source and Audio Source nodes read anything
-//! else (the mix, a track's stem, another graph track's output), picked on the node itself.
+//! Where signals enter the graph. A Video Input or Audio Input reads what its `source` names:
+//! what is below the graph's item (the default), the mix, a track's stem or a graph track's main
+//! output. A Named Input reads a Named Output of a graph track by its name.
 
 use crate::nodes::{
-    AUDIO_INPUT, AUDIO_SOURCE, Category, DEFAULT_AUDIO, DEFAULT_VIDEO, NodeKind, NodeSpec,
-    OUTPUT_PARAM, SOURCE_PARAM, VIDEO_INPUT, VIDEO_SOURCE, source_key,
+    AUDIO_INPUT, BELOW, Category, NAME_PARAM, NAMED_INPUT, NodeKind, NodeSpec, SOURCE_PARAM,
+    TRACK_PARAM, VIDEO_INPUT, named_key, source_key,
 };
 use crate::{Layout, LayoutContext, Node, OutputSpec, ParamSpec, Params, TagRule};
 use crate::{ProcessContext, Signal};
@@ -57,97 +57,79 @@ macro_rules! source_node {
     };
 }
 
-/// The graph's main picture: what is below its item, as RGB in `0..=1`. Every graph has one.
+/// A picture, as RGB in `0..=1`: by default what is below the graph's item, else the video mix,
+/// a video track or a graph track's main output, named by `source`.
 #[derive(Debug)]
 pub struct VideoInput(Source);
 
-impl NodeKind for VideoInput {
-    const KIND: &'static str = VIDEO_INPUT;
-    const SPEC: NodeSpec = NodeSpec::new(Category::Input)
-        .inputs(&[])
-        .outputs(&[OutputSpec::new("out").tag(TagRule::VIDEO)])
-        .fixed();
-
-    fn new(_params: &Params) -> Result<Self, String> {
-        Ok(Self(Source {
-            name: DEFAULT_VIDEO.to_owned(),
-        }))
-    }
-}
-
-source_node!(VideoInput);
-
-/// The graph's main sound: what is below its item, one frame's worth of samples per block, in
-/// `-1..=1`, with the channels interleaved (L, R, L, R, … for stereo). Every graph has one.
-#[derive(Debug)]
-pub struct AudioInput(Source);
-
-impl NodeKind for AudioInput {
-    const KIND: &'static str = AUDIO_INPUT;
-    const SPEC: NodeSpec = NodeSpec::new(Category::Input)
-        .inputs(&[])
-        .outputs(&[OutputSpec::new("out").tag(TagRule::AUDIO)])
-        .fixed();
-
-    fn new(_params: &Params) -> Result<Self, String> {
-        Ok(Self(Source {
-            name: DEFAULT_AUDIO.to_owned(),
-        }))
-    }
-}
-
-source_node!(AudioInput);
-
-/// A picture from elsewhere in the project, as RGB in `0..=1`: the video mix, a video track, or
-/// a graph track's output, named by `source` (and `output`, for a graph track).
-#[derive(Debug)]
-pub struct VideoSource(Source);
-
-params! { VideoSource {
-    SOURCE: ParamSpec::text(SOURCE_PARAM, ""),
-    OUTPUT: ParamSpec::text(OUTPUT_PARAM, ""),
+params! { VideoInput {
+    SOURCE: ParamSpec::text(SOURCE_PARAM, BELOW),
 } }
 
-impl NodeKind for VideoSource {
-    const KIND: &'static str = VIDEO_SOURCE;
+impl NodeKind for VideoInput {
+    const KIND: &'static str = VIDEO_INPUT;
     const SPEC: NodeSpec = NodeSpec::new(Category::Input)
         .params(Self::PARAMS)
         .inputs(&[])
         .outputs(&[OutputSpec::new("out").tag(TagRule::VIDEO)]);
 
     fn new(params: &Params) -> Result<Self, String> {
-        let (source, output) = (params.text_at(Self::SOURCE)?, params.text_at(Self::OUTPUT)?);
         Ok(Self(Source {
-            name: source_key(true, &source, &output),
+            name: source_key(true, &params.text_at(Self::SOURCE)?),
         }))
     }
 }
 
-source_node!(VideoSource);
+source_node!(VideoInput);
 
-/// Sound from elsewhere in the project: the audio mix, an audio track, or a graph track's
-/// output, named by `source` (and `output`, for a graph track).
+/// Sound, one frame's worth of samples per block, in `-1..=1`, with the channels interleaved
+/// (L, R, L, R, … for stereo): by default what is below the graph's item, else the audio mix, an
+/// audio track or a graph track's main output, named by `source`.
 #[derive(Debug)]
-pub struct AudioSource(Source);
+pub struct AudioInput(Source);
 
-params! { AudioSource {
-    SOURCE: ParamSpec::text(SOURCE_PARAM, ""),
-    OUTPUT: ParamSpec::text(OUTPUT_PARAM, ""),
+params! { AudioInput {
+    SOURCE: ParamSpec::text(SOURCE_PARAM, BELOW),
 } }
 
-impl NodeKind for AudioSource {
-    const KIND: &'static str = AUDIO_SOURCE;
+impl NodeKind for AudioInput {
+    const KIND: &'static str = AUDIO_INPUT;
     const SPEC: NodeSpec = NodeSpec::new(Category::Input)
         .params(Self::PARAMS)
         .inputs(&[])
         .outputs(&[OutputSpec::new("out").tag(TagRule::AUDIO)]);
 
     fn new(params: &Params) -> Result<Self, String> {
-        let (source, output) = (params.text_at(Self::SOURCE)?, params.text_at(Self::OUTPUT)?);
         Ok(Self(Source {
-            name: source_key(false, &source, &output),
+            name: source_key(false, &params.text_at(Self::SOURCE)?),
         }))
     }
 }
 
-source_node!(AudioSource);
+source_node!(AudioInput);
+
+/// What a Named Output called `name` on graph track `track` sends, as it is sent.
+#[derive(Debug)]
+pub struct NamedInput(Source);
+
+params! { NamedInput {
+    TRACK: ParamSpec::text(TRACK_PARAM, ""),
+    NAME: ParamSpec::text(NAME_PARAM, ""),
+} }
+
+impl NodeKind for NamedInput {
+    const KIND: &'static str = NAMED_INPUT;
+    const SPEC: NodeSpec = NodeSpec::new(Category::Input)
+        .params(Self::PARAMS)
+        .inputs(&[])
+        .outputs(&[OutputSpec::new("out")]);
+
+    fn new(params: &Params) -> Result<Self, String> {
+        let (track, name) = (params.text_at(Self::TRACK)?, params.text_at(Self::NAME)?);
+        Ok(Self(Source {
+            name: named_key(&track, &name),
+        }))
+    }
+}
+
+source_node!(NamedInput);

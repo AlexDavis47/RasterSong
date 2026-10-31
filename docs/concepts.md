@@ -68,7 +68,7 @@ Imagine you're making a music video. You've got your video, and you've got your 
 1. **Drop your video file on the timeline** - Its picture lands on a video track and its sound on an audio track
 2. **Drop your music file** - It lands on an audio track; a graph can read it as your modulator
 3. **Drop a graph on a graph track** - A new graph shows the timeline unchanged: its In: Video and In: Audio
-   read what is below it, wired straight to the outputs. Add an Audio Source to read the music track on its own
+   read what is below it, wired straight to the outputs. Add an Audio Input reading the music track to use it on its own
 4. **Split the carrier** - A Split node turns the RGB signal into red, green, and blue signals
 5. **Split the modulator** - A three-band splitter outputs:
    - Bass track

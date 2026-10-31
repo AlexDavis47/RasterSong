@@ -1,59 +1,39 @@
 //! The graph's ends: its inputs and outputs.
 //!
-//! Every graph has one each of Video In, Audio In, Output and an Audio Output on the project's
-//! master bus. They can't be deleted or copied, and a graph missing one gets it back. Video
-//! Source, Audio Source, Named Output and Audio Outputs for other buses are ordinary nodes.
-//! Input nodes are titled after what they read.
+//! Every graph has one Video Output and one Audio Output. They can't be deleted or copied, and a
+//! graph missing one gets it back. Inputs (Video Input, Audio Input, Named Input), Named Outputs
+//! and Audio Bus Outputs are ordinary nodes; new graphs come with a Video Input and an Audio
+//! Input reading what is below. Input nodes are titled after what they read.
 
 use eframe::egui::pos2;
-use rastersong_engine::{
-    AUDIO_INPUT, AUDIO_OUTPUT, BUS_PARAM, InputKind, NodeType, ParamValue, Source, VIDEO_INPUT,
-    audio_output_bus, port_of,
-};
+use rastersong_engine::{AUDIO_OUTPUT, InputKind, NodeType, Source, port_of};
 use rastersong_lang::{tr, tr_args};
 
 use super::{EditorNode, GraphEditor, NodeKey};
 
 pub(super) use rastersong_engine::OUTPUT;
 
-/// How far right of the rightmost node a missing output goes, and left of the leftmost a
-/// missing input.
+/// How far right of the rightmost node a missing output goes.
 const OUTPUT_GAP: f32 = 190.0;
-/// How far apart missing nodes added on one side are.
+/// How far apart missing outputs are.
 const ADDED_STEP: f32 = 90.0;
+
+/// The base nodes every graph has one of.
+const BASE: [&str; 2] = [OUTPUT, AUDIO_OUTPUT];
 
 impl GraphEditor {
     /// Whether the node is one of the graph's base nodes, which the user can't delete or copy:
-    /// the first Video In, Audio In and Output, and the first Audio Output on the master bus.
+    /// the first Video Output and Audio Output.
     pub fn is_protected(&self, key: NodeKey) -> bool {
         let Some(node) = self.node(key) else {
             return false;
         };
-        let base = |n: &EditorNode| match n.kind.as_str() {
-            VIDEO_INPUT | AUDIO_INPUT | OUTPUT => true,
-            AUDIO_OUTPUT => self.writes_master(n),
-            _ => false,
-        };
-        base(node)
+        BASE.contains(&node.kind.as_str())
             && self
                 .nodes
                 .iter()
-                .find(|n| n.kind == node.kind && base(n))
+                .find(|n| n.kind == node.kind)
                 .is_some_and(|first| first.key == key)
-    }
-
-    /// Whether audio output `node` writes to the project's master bus.
-    fn writes_master(&self, node: &EditorNode) -> bool {
-        let params = node
-            .params
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        let desc = rastersong_engine::NodeDesc {
-            params,
-            ..rastersong_engine::NodeDesc::new(node.id.clone(), AUDIO_OUTPUT)
-        };
-        audio_output_bus(&desc) == self.master_bus
     }
 
     /// The title an input node shows unless the user named it: what it reads.
@@ -65,52 +45,25 @@ impl GraphEditor {
         ))
     }
 
-    /// Adds whichever of the base nodes the graph lacks: the inputs left of everything, the
-    /// outputs right of it.
+    /// Adds whichever of the base nodes the graph lacks, right of everything.
     pub fn ensure_ports(&mut self) {
-        let has = |editor: &Self, kind: &str| match kind {
-            AUDIO_OUTPUT => editor
-                .nodes
-                .iter()
-                .any(|n| n.kind == AUDIO_OUTPUT && editor.writes_master(n)),
-            _ => editor.nodes.iter().any(|n| n.kind == kind),
-        };
-        let missing: Vec<&str> = [VIDEO_INPUT, AUDIO_INPUT, OUTPUT, AUDIO_OUTPUT]
+        let missing: Vec<&str> = BASE
             .into_iter()
-            .filter(|kind| !has(self, kind))
+            .filter(|kind| !self.nodes.iter().any(|n| n.kind == *kind))
             .collect();
         if missing.is_empty() {
             return;
         }
-        let xs = self.nodes.iter().map(|n| n.pos.x);
-        let (left, right) = (
-            xs.clone().reduce(f32::min).unwrap_or(0.0),
-            xs.reduce(f32::max).unwrap_or(0.0),
-        );
+        let right = self.nodes.iter().map(|n| n.pos.x).reduce(f32::max);
         let top = self
             .nodes
             .iter()
             .map(|n| n.pos.y)
             .reduce(f32::min)
             .unwrap_or(0.0);
-        let (mut inputs, mut outputs) = (0.0, 0.0);
-        for kind in missing {
-            let at = if matches!(kind, VIDEO_INPUT | AUDIO_INPUT) {
-                inputs += ADDED_STEP;
-                pos2(left - OUTPUT_GAP, top + inputs - ADDED_STEP)
-            } else {
-                outputs += ADDED_STEP;
-                pos2(right + OUTPUT_GAP, top + outputs - ADDED_STEP)
-            };
-            if let Some(key) = self.add_node(kind, at)
-                && kind == AUDIO_OUTPUT
-            {
-                let master = self.master_bus.clone();
-                self.node_mut(key)
-                    .unwrap()
-                    .params
-                    .insert(BUS_PARAM.to_owned(), ParamValue::Text(master));
-            }
+        let x = right.map_or(0.0, |r| r + OUTPUT_GAP);
+        for (i, kind) in missing.into_iter().enumerate() {
+            self.add_node(kind, pos2(x, top + i as f32 * ADDED_STEP));
         }
     }
 
@@ -126,12 +79,13 @@ pub fn port_label(label: &str, kind: InputKind) -> String {
     let key = match kind {
         InputKind::Video => "editor.port.video_title",
         InputKind::Audio => "editor.port.audio_title",
+        InputKind::Named => "editor.port.named_title",
     };
     tr_args(key, &[("port", label)])
 }
 
 /// How `source`, read as `kind`, is named: the main name for what is below, the mix, a track's
-/// name, a graph track and its output, or Nothing.
+/// name, a graph track, a graph track and its Named Output, or Nothing.
 pub fn source_label(source: &Source, kind: InputKind) -> String {
     let video = kind == InputKind::Video;
     match source {
@@ -139,18 +93,9 @@ pub fn source_label(source: &Source, kind: InputKind) -> String {
         Source::Below => rastersong_engine::DEFAULT_AUDIO.to_owned(),
         Source::Mix if video => tr("source.video_mix").to_owned(),
         Source::Mix => tr("source.audio_mix").to_owned(),
-        Source::Track(track) => track.clone(),
-        Source::Graph { track, port } => {
-            let main = if video {
-                rastersong_engine::DEFAULT_VIDEO
-            } else {
-                rastersong_engine::DEFAULT_AUDIO
-            };
-            if port == main {
-                track.clone()
-            } else {
-                tr_args("source.graph_output", &[("track", track), ("output", port)])
-            }
+        Source::Track(track) | Source::Graph(track) => track.clone(),
+        Source::Named { track, name } => {
+            tr_args("source.graph_output", &[("track", track), ("output", name)])
         }
         Source::Nothing => tr("source.nothing").to_owned(),
     }
@@ -160,7 +105,7 @@ pub fn source_label(source: &Source, kind: InputKind) -> String {
 mod tests {
     use std::collections::BTreeSet;
 
-    use rastersong_engine::GraphDesc;
+    use rastersong_engine::{GraphDesc, ParamValue};
 
     use super::*;
 
@@ -176,58 +121,60 @@ mod tests {
     }
 
     #[test]
-    fn sources_are_titled_after_what_they_read() {
+    fn inputs_reading_elsewhere_are_titled_after_what_they_read() {
         let mut desc = GraphDesc::from_json(GRAPH).unwrap();
         let mut kick =
-            rastersong_engine::NodeDesc::new("kick".into(), rastersong_engine::AUDIO_SOURCE_NODE);
+            rastersong_engine::NodeDesc::new("kick".into(), rastersong_engine::AUDIO_INPUT);
         kick.params.insert(
             rastersong_engine::SOURCE_PARAM.into(),
             ParamValue::Text("track:Kick".into()),
         );
         desc.nodes.push(kick);
+        let mut glow =
+            rastersong_engine::NodeDesc::new("glow".into(), rastersong_engine::NAMED_INPUT);
+        for (param, value) in [
+            (rastersong_engine::TRACK_PARAM, "FX"),
+            (rastersong_engine::NAME_PARAM, "Glow"),
+        ] {
+            glow.params
+                .insert(param.into(), ParamValue::Text(value.into()));
+        }
+        desc.nodes.push(glow);
         let editor = GraphEditor::new(&desc);
         let title = |id: &str| editor.port_title(editor.node(editor.key_of(id).unwrap()).unwrap());
         assert_eq!(title("kick").as_deref(), Some("♪ In: Kick"));
+        assert_eq!(title("glow").as_deref(), Some("◆ In: FX › Glow"));
     }
 
     #[test]
-    fn only_the_base_nodes_are_kept_from_deleting_and_copying() {
+    fn only_the_outputs_are_kept_from_deleting_and_copying() {
         let mut editor = GraphEditor::new(&GraphDesc::from_json(GRAPH).unwrap());
-        let keys: BTreeSet<NodeKey> = ["video", "audio", "out", "split"]
+        let keys: BTreeSet<NodeKey> = ["video", "audio", "out", "sound", "split"]
             .iter()
             .map(|id| editor.key_of(id).unwrap())
             .collect();
         let copied = editor.fragment(&keys);
         let ids: Vec<&str> = copied.nodes.iter().map(|n| n.id.as_str()).collect();
-        assert_eq!(ids, ["split"]);
+        assert_eq!(ids, ["video", "audio", "split"]);
         editor.remove_nodes(&keys);
         let left: Vec<&str> = editor.nodes.iter().map(|n| n.id.as_str()).collect();
         assert!(
-            ["video", "audio", "out"].iter().all(|id| left.contains(id))
-                && !left.contains(&"split"),
+            ["out", "sound"].iter().all(|id| left.contains(id))
+                && !["video", "audio", "split"]
+                    .iter()
+                    .any(|id| left.contains(id)),
             "{left:?}"
         );
-        // A second Video In is an ordinary node.
-        let extra = editor.add_node(VIDEO_INPUT, pos2(0.0, 0.0)).unwrap();
-        assert!(!editor.is_protected(extra));
-        editor.remove_nodes(&BTreeSet::from([extra]));
-        assert!(editor.node(extra).is_none());
     }
 
     #[test]
-    fn missing_base_nodes_are_added() {
+    fn missing_outputs_are_added() {
         let mut editor =
             GraphEditor::new(&GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
-        editor.master_bus = "Master".into();
         editor.ensure_ports();
         editor.ensure_ports();
         let kinds: Vec<&str> = editor.nodes.iter().map(|n| n.kind.as_str()).collect();
-        assert_eq!(kinds, [VIDEO_INPUT, AUDIO_INPUT, OUTPUT, AUDIO_OUTPUT]);
-        let audio = editor.nodes.last().unwrap();
-        assert_eq!(
-            audio.params.get(BUS_PARAM),
-            Some(&ParamValue::Text("Master".into()))
-        );
-        assert!(editor.is_protected(audio.key));
+        assert_eq!(kinds, [OUTPUT, AUDIO_OUTPUT]);
+        assert!(editor.nodes.iter().all(|n| editor.is_protected(n.key)));
     }
 }

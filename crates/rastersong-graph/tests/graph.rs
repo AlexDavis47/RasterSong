@@ -21,6 +21,7 @@ fn options() -> CompileOptions {
         pixel_scale: 1.0,
         span: rastersong_graph::Span::default(),
         audio_bus: "Main".to_owned(),
+        master: true,
     }
 }
 
@@ -124,7 +125,7 @@ fn modulators_are_resampled_to_the_carrier() {
 fn unused_nodes_are_not_run() {
     // A node reading a source the host doesn't provide is fine as long as it doesn't feed the output.
     let json = graph_json(
-        r#"{ "id": "video", "type": "video_input" }, { "id": "other", "type": "video_source", "params": { "source": "track:nope" } },
+        r#"{ "id": "video", "type": "video_input" }, { "id": "other", "type": "video_input", "params": { "source": "track:nope" } },
            { "id": "out", "type": "output" }"#,
         r#"{ "from": "video", "to": "out" }"#,
     );
@@ -1093,24 +1094,39 @@ fn only_one_audio_output_and_nothing_reads_an_output() {
         compile(&two),
         Err(GraphError::AudioOutputCount { ref bus, count: 2 }) if bus == "Main"
     ));
-    // One per bus is fine, and only the rendered bus's is compiled.
-    let buses = GraphDesc::from_json(&two.replace(
-        r#""id": "b", "type": "audio_output""#,
-        r#""id": "b", "type": "audio_output", "params": { "bus": "Stems" }"#,
-    ))
+    // An Audio Bus Output per other bus is fine, and only the rendered bus's output is
+    // compiled: the Audio Output on the master, a bus output elsewhere. One naming the master
+    // is ignored.
+    let buses = GraphDesc::from_json(
+        &two.replace(
+            r#""id": "b", "type": "audio_output""#,
+            r#""id": "b", "type": "audio_bus_output", "params": { "bus": "Stems" }"#,
+        )
+        .replace(
+            r#"{ "id": "out""#,
+            r#"{ "id": "m", "type": "audio_bus_output", "params": { "bus": "Main" } }, { "id": "out""#,
+        )
+        .replace(
+            r#"{ "from": "audio", "to": "b" }"#,
+            r#"{ "from": "audio", "to": "b" }, { "from": "audio", "to": "m" }"#,
+        ),
+    )
     .unwrap();
-    let audio_for = |bus: &str| {
+    let audio_for = |bus: &str, master: bool| {
         let options = CompileOptions {
             audio_bus: bus.to_owned(),
+            master,
             ..options()
         };
         Graph::compile(&buses, &Registry::default(), &options)
             .unwrap()
             .audio_layout()
     };
-    assert!(audio_for("Main").is_some());
-    assert!(audio_for("Stems").is_some());
-    assert!(audio_for("Drums").is_none());
+    assert!(audio_for("Main", true).is_some());
+    assert!(audio_for("Stems", false).is_some());
+    assert!(audio_for("Drums", false).is_none());
+    // Renamed, the master is still the Audio Output's.
+    assert!(audio_for("Stems", true).is_some());
     let reads = graph_json(
         r#"{ "id": "video", "type": "video_input" }, { "id": "audio", "type": "audio_input" },
            { "id": "a", "type": "audio_output" }, { "id": "d", "type": "delay" }, { "id": "out", "type": "output" }"#,
@@ -1306,4 +1322,63 @@ fn named_outputs_are_read_by_name_and_must_be_unique() {
     );
     let error = compile(&json).unwrap_err().to_string();
     assert!(error.contains("Out"), "{error}");
+}
+
+#[test]
+fn the_render_form_keeps_named_outputs_and_what_feeds_them() {
+    // The host renders the render form, so a Named Output dropped from it is never sent.
+    let json = graph_json(
+        r#"{ "id": "video", "type": "video_input" }, { "id": "out", "type": "output" },
+           { "id": "inv", "type": "invert" },
+           { "id": "a", "type": "named_output", "params": { "name": "Glow" } }"#,
+        r#"{ "from": "video", "to": "out" }, { "from": "video", "to": "inv" }, { "from": "inv", "to": "a" }"#,
+    );
+    let form = render_form_of(&json);
+    let ids: Vec<&str> = form.nodes.iter().map(|n| n.id.as_str()).collect();
+    assert!(ids.contains(&"a") && ids.contains(&"inv"), "{ids:?}");
+    let graph = Graph::compile(&form, &Registry::default(), &options()).unwrap();
+    assert_eq!(graph.named_layouts().count(), 1);
+}
+
+#[test]
+fn inputs_read_what_their_source_names() {
+    use rastersong_graph::nodes::{named_key, source_key};
+    let json = graph_json(
+        r#"{ "id": "below", "type": "video_input" },
+           { "id": "mix", "type": "video_input", "params": { "source": "mix" } },
+           { "id": "glow", "type": "named_input", "params": { "track": "FX", "name": "Glow" } },
+           { "id": "m", "type": "named_output", "params": { "name": "M" } },
+           { "id": "g", "type": "named_output", "params": { "name": "G" } },
+           { "id": "out", "type": "output" }"#,
+        r#"{ "from": "below", "to": "out" }, { "from": "mix", "to": "m" }, { "from": "glow", "to": "g" }"#,
+    );
+    let mut opts = options();
+    let video = Layout::rgb(W, H);
+    opts.sources.insert(source_key(true, "mix"), video);
+    opts.sources.insert(named_key("FX", "Glow"), video);
+    let mut graph = Graph::compile(
+        &GraphDesc::from_json(&json).unwrap(),
+        &Registry::default(),
+        &opts,
+    )
+    .unwrap();
+    let mut sources = HashMap::new();
+    sources.insert(
+        "Video".to_owned(),
+        Signal::from_data(video, vec![0.1; video.len()]),
+    );
+    sources.insert("Audio".to_owned(), Signal::zeros(Layout::audio(AUDIO)));
+    sources.insert(
+        source_key(true, "mix"),
+        Signal::from_data(video, vec![0.2; video.len()]),
+    );
+    sources.insert(
+        named_key("FX", "Glow"),
+        Signal::from_data(video, vec![0.4; video.len()]),
+    );
+    let out = graph.process(0, &sources).unwrap().data.clone();
+    let read = |graph: &Graph, name: &str| graph.named_output(name).unwrap().data[0];
+    assert_eq!(out[0], 0.1);
+    assert_eq!(read(&graph, "M"), 0.2);
+    assert_eq!(read(&graph, "G"), 0.4);
 }

@@ -3345,7 +3345,7 @@ checksum = "ca45419789ae5a7899559e9512e58ca889e41f04f1f2445e9f4b290ceccd1d08"
 
 [[package]]
 name = "rastersong-cli"
-version = "0.1.0"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "clap",
@@ -3359,7 +3359,7 @@ dependencies = [
 
 [[package]]
 name = "rastersong-engine"
-version = "0.1.0"
+version = "0.1.5"
 dependencies = [
  "rastersong-graph",
  "rastersong-lang",
@@ -3372,7 +3372,7 @@ dependencies = [
 
 [[package]]
 name = "rastersong-graph"
-version = "0.1.0"
+version = "0.1.5"
 dependencies = [
  "criterion",
  "proptest",
@@ -3385,7 +3385,7 @@ dependencies = [
 
 [[package]]
 name = "rastersong-gui"
-version = "0.1.0"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "cpal",
@@ -3402,11 +3402,11 @@ dependencies = [
 
 [[package]]
 name = "rastersong-lang"
-version = "0.1.0"
+version = "0.1.5"
 
 [[package]]
 name = "rastersong-media"
-version = "0.1.0"
+version = "0.1.5"
 dependencies = [
  "criterion",
  "ffmpeg-next",
@@ -5302,7 +5302,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "clap",

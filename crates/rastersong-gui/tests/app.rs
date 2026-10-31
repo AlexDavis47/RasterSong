@@ -1252,9 +1252,9 @@ fn pick(harness: &mut Harness<'_, App>, row: &str, choice: &str) {
 }
 
 #[test]
-fn a_source_node_picks_what_it_reads_in_the_inspector() {
+fn inputs_pick_what_they_read_and_named_inputs_list_the_named_outputs_below() {
     let mut harness = loaded_with(app_with_project(|project| {
-        let below = project.add_graph_track("Below");
+        let lower = project.add_graph_track("Lower");
         let offers = GraphDesc::from_json(
             r#"{ "version": 0, "nodes": [
                 { "id": "v", "type": "video_input" }, { "id": "o", "type": "output" },
@@ -1263,63 +1263,67 @@ fn a_source_node_picks_what_it_reads_in_the_inspector() {
         )
         .unwrap();
         let offering = project.add_graph("Offers", Some(offers));
-        project.place_graph(&below, offering, 0.0, 2.0);
-        let mut node =
-            rastersong_engine::NodeDesc::new("side".into(), rastersong_engine::AUDIO_SOURCE_NODE);
-        node.position = Some([0.0, 300.0]);
-        project.graph.nodes.push(node);
+        project.place_graph(&lower, offering, 0.0, 2.0);
+        let mut side =
+            rastersong_engine::NodeDesc::new("side".into(), rastersong_engine::AUDIO_INPUT);
+        side.params.insert(
+            rastersong_engine::SOURCE_PARAM.into(),
+            rastersong_engine::ParamValue::Text(String::new()),
+        );
+        side.position = Some([0.0, 300.0]);
+        project.graph.nodes.push(side);
+        let mut glow =
+            rastersong_engine::NodeDesc::new("glow".into(), rastersong_engine::NAMED_INPUT);
+        glow.position = Some([0.0, 450.0]);
+        project.graph.nodes.push(glow);
     }));
-    select(&mut harness, "side");
-    harness.run_steps(3);
-    let source = |harness: &Harness<'_, App>| {
+    let source = |harness: &Harness<'_, App>, id: &str| {
         let editor = harness.state().editor();
-        let node = editor.node(key(harness, "side")).unwrap();
+        let node = editor.node(key(harness, id)).unwrap();
         rastersong_engine::port_of(&node.kind, &node.params)
             .unwrap()
             .source
     };
-    assert_eq!(source(&harness), Source::Nothing);
-    // Only a graph track has outputs to pick.
-    assert!(harness.query_by_label("Output").is_none());
+    select(&mut harness, "side");
+    harness.run_steps(3);
+    assert_eq!(source(&harness, "side"), Source::Nothing);
     pick(&mut harness, "Source", "Track: audio");
-    assert_eq!(source(&harness), Source::Track("audio".into()));
-    pick(&mut harness, "Source", "Graph track: Below");
-    pick(&mut harness, "Output", "Glow");
-    assert_eq!(
-        source(&harness),
-        Source::Graph {
-            track: "Below".into(),
-            port: "Glow".into()
-        }
-    );
+    assert_eq!(source(&harness, "side"), Source::Track("audio".into()));
+    pick(&mut harness, "Source", "Graph track: Lower");
+    assert_eq!(source(&harness, "side"), Source::Graph("Lower".into()));
+    pick(&mut harness, "Source", "Below");
+    assert_eq!(source(&harness, "side"), Source::Below);
     shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
+    assert_eq!(source(&harness, "side"), Source::Graph("Lower".into()));
+
+    // A Named Input lists every graph track's Named Outputs in one drop-down.
+    select(&mut harness, "glow");
+    harness.run_steps(3);
+    assert_eq!(source(&harness, "glow"), Source::Nothing);
+    pick(&mut harness, "Reads", "Lower › Glow");
     assert_eq!(
-        source(&harness),
-        Source::Graph {
-            track: "Below".into(),
-            port: "Audio".into()
+        source(&harness, "glow"),
+        Source::Named {
+            track: "Lower".into(),
+            name: "Glow".into()
         }
     );
 }
 
 #[test]
-fn the_base_nodes_survive_delete_and_are_not_offered_in_the_node_menu() {
+fn the_outputs_survive_delete_and_the_inputs_do_not() {
     let mut harness = loaded();
-    for id in ["video", "audio"] {
+    for (id, kept) in [("out", true), ("sound", true), ("video", false)] {
         select(&mut harness, id);
         harness.key_press(egui::Key::Delete);
         harness.run_steps(2);
-        assert!(
+        assert_eq!(
             harness.state().editor().key_of(id).is_some(),
-            "{id} is still there"
+            kept,
+            "{id} kept: {kept}"
         );
     }
-    assert!(
-        harness
-            .state()
-            .editor()
-            .is_protected(key(&harness, "video"))
-    );
+    assert!(harness.state().editor().is_protected(key(&harness, "out")));
 }
 
 #[test]
@@ -1666,10 +1670,7 @@ fn the_single_click_setting_opens_graphs_from_resources_with_one_click() {
 #[test]
 fn tracks_offer_the_buses_and_project_settings_add_them() {
     let mut harness = harness(app_with_project(|project| {
-        project.buses.push(rastersong_engine::Bus {
-            name: "Stems".into(),
-            channels: 1,
-        });
+        project.buses.push(rastersong_engine::Bus::new("Stems", 1));
         project.track_of_mut(TrackKind::Audio, 0).bus = "Stems".into();
     }));
     step_until(&mut harness, "the project to load", |app| {
@@ -2079,7 +2080,7 @@ use rastersong_gui::timeline::GraphDrop;
 const SIDE_GRAPH: &str = r#"{ "version": 0, "nodes": [
     { "id": "v", "type": "video_input" },
     { "id": "a", "type": "audio_input" },
-    { "id": "s", "type": "audio_source", "params": { "source": "mix" } },
+    { "id": "s", "type": "audio_input", "params": { "source": "mix" } },
     { "id": "out", "type": "audio_output" },
     { "id": "o", "type": "output" } ],
     "connections": [ { "from": "v", "to": "o" }, { "from": "a", "to": "out" } ] }"#;

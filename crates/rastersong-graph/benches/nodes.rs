@@ -108,6 +108,7 @@ fn graphs(c: &mut Criterion) {
                 pixel_scale: 1.0,
                 span: rastersong_graph::Span::default(),
                 audio_bus: "Main".to_owned(),
+                master: true,
             },
         )
         .unwrap();

@@ -442,12 +442,20 @@ mod tests {
         // "split" matches Split Channels by prefix and Three-Band Split by substring.
         assert_eq!(labels("split")[..2], ["Split Channels", "Three-Band Split"]);
         assert!(labels("zzz").is_empty());
-        // Everything but the base nodes every graph has one of (Video In, Audio In, Output);
-        // sources, named outputs and audio outputs for other buses are offered.
+        // Everything but the outputs every graph has one of (Video Output, Audio Output); the
+        // inputs, named inputs and outputs, and bus outputs are offered.
         let all = labels("");
-        assert_eq!(all.len(), types.len() - 3);
-        assert!(!all.contains(&"Output") && !all.contains(&"Video In"));
-        assert!(all.contains(&"Video Source") && all.contains(&"Named Output"));
+        assert_eq!(all.len(), types.len() - 2);
+        assert!(!all.contains(&"Video Output") && !all.contains(&"Audio Output"));
+        for offered in [
+            "Video Input",
+            "Audio Input",
+            "Named Input",
+            "Named Output",
+            "Audio Bus Output",
+        ] {
+            assert!(all.contains(&offered), "{offered}");
+        }
     }
 
     #[test]

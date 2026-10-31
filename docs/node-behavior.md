@@ -68,10 +68,10 @@ resolution.
 
 ## Ports
 
-`?` marks optional inputs. Video In and Audio In are the graph's main inputs: they read what is below its item on
-the timeline. Video Source and Audio Source read what their `source` setting names: the mix, a track, or a graph
-track's output (see [Composition](engine.md#composition)). A source naming nothing that exists reads zeros. Named
-Output offers a signal to graphs on higher graph tracks.
+`?` marks optional inputs. Video Input and Audio Input read what their `source` setting names: what is below the
+graph's item on the timeline (the default), the mix, a track, or a graph track's main output (see
+[Composition](engine.md#composition)). A Named Input reads a Named Output, which offers a signal to graphs on higher
+graph tracks. An input naming nothing that exists reads zeros.
 
 ## Split and Combine Channels
 

@@ -442,6 +442,7 @@ impl Renderer {
             output: video_layout,
             pixel_scale: f64::from(width) / f64::from(timebase.width),
             audio_bus: bus.name.clone(),
+            master: bus.master,
         };
         let media = composition
             .tracks

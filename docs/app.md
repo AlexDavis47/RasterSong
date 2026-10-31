@@ -56,19 +56,23 @@ no further than 85%: a graph wider than that starts from its inputs on the left,
 - Exposed parameters show as diamond pins under a node's inputs; a wire into one modulates that parameter.
   Each node type exposes its main parameters by default (e.g. Delay's time and feedback); the inspector's
   diamond toggles show or hide the others. Hiding a connected parameter disconnects it.
-- **Every graph has four base nodes**: **Video In** and **Audio In**, which read what is below the graph's item
-  on the timeline (titled `▣ In: Video`, `♪ In: Audio` unless renamed), and **Output** and an **Audio Output** on
-  the master bus, which pass the result up. They can't be deleted or copied (a second Video In, say, is an
-  ordinary node), a graph missing one gets it back when opened, and the base Audio Output's bus can't be changed.
-- **To read anything else, add a source node**: **Video Source** or **Audio Source**, and pick in its inspector
-  what it reads: the video or audio mix, a track's stem (**Track: kick**, read before its volume and mute), a
-  graph track's output (**Graph track: FX**, then which output: the main Video or Audio, or a Named Output its
-  graphs offer), or **Nothing**. Each is titled after what it reads (`♪ In: kick`). A graph track must be below
-  the one the graph plays on, or it reads zeros. Renaming a track updates the source nodes that read it, in every
-  graph; one whose track is gone says *missing* in red and reads nothing.
-- **Outputs**: add a **Named Output** to offer a signal to graphs on higher graph tracks without adding it to this
-  graph's picture or sound (names are unique within a graph), and an **Audio Output** for each bus other than the
+- **Routing nodes**: **Video Input**, **Audio Input** and **Named Input** bring signals in; **Video Output**,
+  **Audio Output** and **Named Output** send them out, and **Audio Bus Output** writes to a bus other than the
   master.
+- **Every graph has one Video Output and one Audio Output** (the master bus), which pass the result up. They can't
+  be deleted or copied, and a graph missing one gets it back when opened. Inputs are ordinary nodes: a new graph
+  comes with a Video Input and an Audio Input reading what is below its item on the timeline (titled
+  `▣ In: Video`, `♪ In: Audio` unless renamed).
+- **Each Video Input and Audio Input picks what it reads** in its inspector's **Source**: **Below** (the default),
+  the video or audio mix, a track's stem (**Track: kick**, read before its volume and mute), a graph track's main
+  output (**Graph track: FX**), or **Nothing**. Each is titled after what it reads (`♪ In: kick`).
+- **Named Outputs and Named Inputs**: a **Named Output** offers a signal to graphs on higher graph tracks without
+  adding it to this graph's picture or sound (names are unique within a graph). A **Named Input**'s **Reads**
+  drop-down lists every Named Output of the graphs placed on each graph track, as `FX › Glow`; it passes the
+  signal on as it was sent and is titled `◆ In: FX › Glow`.
+- A graph track read by an input must be below the one the graph plays on, or it reads zeros. Renaming a track
+  updates the inputs that read it, in every graph; one whose track is gone says *missing* in red and reads
+  nothing.
 - Right-click empty space, or press **Tab** over it, to add a node there; **+ Add node** adds one in the middle of
   the canvas. The node search opens with its field focused: type, use ↑/↓, and press Enter (or click). Results
   are grouped under their categories, best match first, each with its one-line description. Opened from a
@@ -362,10 +366,11 @@ The timeline's toolbar edits the same tempo fields. The preview resolution and v
 transport bar, where they are used while playing. A page taller than the window scrolls.
 
 **Output buses** lists the project's buses, master first, each with a name and a channel count (mono, stereo, 3 to
-8 channels; 5.1 is six). *+ Add bus* adds one; renaming a bus renames it on its tracks and Audio Outputs too. The
-master can't be removed. Removing a bus that tracks are routed to, or that Audio Outputs write to, asks first and
-lists them: the tracks move to the master, and the Audio Outputs are left writing to a bus that isn't there (shown
-in red in the inspector) and aren't rendered until set to another.
+8 channels; 5.1 is six). *+ Add bus* adds one; renaming a bus renames it on its tracks and Audio Bus Outputs too. The
+master can't be removed. Removing a bus that tracks are routed to, or that Audio Bus Outputs write to, asks first
+and lists them: the tracks move to the master, and the Audio Bus Outputs are left writing to a bus that isn't there
+(shown in red in the inspector) and aren't rendered until set to another. The Audio Output always writes to
+whichever bus is first.
 
 ## Export
 

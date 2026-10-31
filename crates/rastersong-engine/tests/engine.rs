@@ -256,7 +256,7 @@ fn audio_offset_changes_the_render_and_back() {
 const DRUMS: &str = r#"{ "version": 0,
   "nodes": [
     { "id": "video", "type": "video_input" },
-    { "id": "drums", "type": "audio_source", "params": { "source": "track:drums" } },
+    { "id": "drums", "type": "audio_input", "params": { "source": "track:drums" } },
     { "id": "am", "type": "am", "params": { "depth": 2 } },
     { "id": "out", "type": "output" }
   ],

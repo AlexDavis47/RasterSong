@@ -30,11 +30,17 @@ fn passthrough() -> String {
     )
 }
 
-/// A Video Source reading `source` (and `output`, for a graph track), as a node.
+/// A Video Input reading `source`, or with an `output` name, a Named Input reading that Named
+/// Output of the graph track `source` names (`graph:<track>`), as a node.
 fn source_node(id: &str, source: &str, output: &str) -> String {
-    format!(
-        r#"{{ "id": "{id}", "type": "video_source", "params": {{ "source": "{source}", "output": "{output}" }} }}"#
-    )
+    match source.strip_prefix("graph:").filter(|_| !output.is_empty()) {
+        Some(track) => format!(
+            r#"{{ "id": "{id}", "type": "named_input", "params": {{ "track": "{track}", "name": "{output}" }} }}"#
+        ),
+        None => format!(
+            r#"{{ "id": "{id}", "type": "video_input", "params": {{ "source": "{source}" }} }}"#
+        ),
+    }
 }
 
 /// The picture of `source` straight to the output.
@@ -373,6 +379,10 @@ fn a_named_output_is_read_by_graphs_above_without_changing_its_tracks_picture() 
         graph_track("Top", vec![span(0, 10, 2)]),
         graph_track("Bottom", vec![span(0, 6, 1)]),
     ];
+    // The host renders each graph's render form, which keeps the Named Output.
+    for (_, desc) in &mut comp.graphs {
+        *desc = rastersong_engine::render_form(desc, Registry::shared());
+    }
     let (plain, inverted) = (reference(&passthrough(), 10), reference(&invert(), 10));
     let rendered = all_frames(&mut renderer_for(&comp, &tracks), 10);
     for i in 0..6 {
@@ -620,7 +630,7 @@ fn a_graph_hears_the_mix_at_the_tracks_volume_or_a_stem_as_it_is() {
     );
     // Its stem is there as it is, at full level.
     comp.graphs[0].1 = GraphDesc::from_json(&louder_of(
-        r#"{ "id": "a", "type": "audio_source", "params": { "source": "track:song" } }"#,
+        r#"{ "id": "a", "type": "audio_input", "params": { "source": "track:song" } }"#,
     ))
     .unwrap();
     assert!((peak(&comp, &tracks) / full - 1.0).abs() < 0.01);

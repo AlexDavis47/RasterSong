@@ -6,7 +6,8 @@ use std::collections::BTreeMap;
 
 use eframe::egui::{self, Color32, RichText, Ui};
 use rastersong_engine::{
-    AUDIO_OUTPUT, AUDIO_SOURCE_NODE, BUS_PARAM, OUTPUT_PARAM, SOURCE_PARAM, VIDEO_SOURCE_NODE,
+    AUDIO_BUS_OUTPUT, AUDIO_INPUT, BUS_PARAM, NAME_PARAM, NAMED_INPUT, SOURCE_PARAM, TRACK_PARAM,
+    VIDEO_INPUT,
 };
 use rastersong_engine::{
     Channels, GeneratorLayout, Grouping, Interpolation, MeterKind, Modulation, NodeMeters,
@@ -29,13 +30,14 @@ use crate::widgets::{
 /// What the inspector needs from outside the editor.
 #[derive(Debug, Default)]
 pub struct InspectorContext<'a> {
-    /// The project's output buses, offered by audio outputs: (name, label).
+    /// The project's output buses but the master, offered by Audio Bus Outputs: (name, label).
     pub buses: &'a [(String, String)],
-    /// What a Video Source and an Audio Source can read: (`source` setting, label).
+    /// What a Video Input and an Audio Input can read: (`source` setting, label).
     pub video_sources: &'a [(String, String)],
     pub audio_sources: &'a [(String, String)],
-    /// Each graph track's `graph:` source setting, with the Named Outputs its graphs offer.
-    pub graph_outputs: &'a [(String, Vec<String>)],
+    /// The Named Outputs a Named Input can read, as ([`named_choice`] of its track and name,
+    /// label).
+    pub named_outputs: &'a [(String, String)],
     /// Modulated parameters' values at the playhead, for their ghost handles.
     pub params: &'a [ParamLevel],
     /// What the nodes' meters read at the playhead.
@@ -98,7 +100,6 @@ impl GraphEditor {
         let mut toggled: Option<(usize, bool)> = None;
         let mut disconnect: Option<usize> = None;
         let mut bypass = false;
-        let protected = self.is_protected(key);
         let node = self.nodes.iter_mut().find(|n| n.key == key).unwrap();
 
         inspector_header(ui, |ui| {
@@ -168,56 +169,31 @@ impl GraphEditor {
                             Some(ParamValue::Text(text)) => text.clone(),
                             _ => String::new(),
                         };
-                        let source =
-                            matches!(node.kind.as_str(), VIDEO_SOURCE_NODE | AUDIO_SOURCE_NODE);
-                        // A source's output only matters for a graph track.
-                        let reading = text(SOURCE_PARAM);
-                        if source && spec.name == OUTPUT_PARAM && !reading.starts_with("graph:") {
+                        // A Named Input's track and name are picked together, on the name's row.
+                        let named = node.kind == NAMED_INPUT;
+                        if named && spec.name == TRACK_PARAM {
                             continue;
                         }
-                        let outputs: Vec<(String, String)> = if source && spec.name == OUTPUT_PARAM
-                        {
-                            let main = if node.kind == VIDEO_SOURCE_NODE {
-                                rastersong_engine::DEFAULT_VIDEO
-                            } else {
-                                rastersong_engine::DEFAULT_AUDIO
-                            };
-                            std::iter::once((String::new(), main.to_owned()))
-                                .chain(
-                                    ctx.graph_outputs
-                                        .iter()
-                                        .filter(|(track, _)| *track == reading)
-                                        .flat_map(|(_, names)| names)
-                                        .map(|name| (name.clone(), name.clone())),
-                                )
-                                .collect()
-                        } else {
-                            Vec::new()
-                        };
                         let tracks = match (node.kind.as_str(), spec.name) {
-                            (AUDIO_OUTPUT, BUS_PARAM) => Some(Names {
+                            (AUDIO_BUS_OUTPUT, BUS_PARAM) => Some(Names {
                                 choices: ctx.buses,
                                 missing: "editor.param.no_such_bus",
                                 empty: "editor.param.no_buses",
-                                locked: protected.then_some("editor.param.master_bus"),
                             }),
-                            (VIDEO_SOURCE_NODE, SOURCE_PARAM) => Some(Names {
+                            (VIDEO_INPUT, SOURCE_PARAM) => Some(Names {
                                 choices: ctx.video_sources,
                                 missing: "editor.param.no_such_source",
                                 empty: "editor.param.no_sources",
-                                locked: None,
                             }),
-                            (AUDIO_SOURCE_NODE, SOURCE_PARAM) => Some(Names {
+                            (AUDIO_INPUT, SOURCE_PARAM) => Some(Names {
                                 choices: ctx.audio_sources,
                                 missing: "editor.param.no_such_source",
                                 empty: "editor.param.no_sources",
-                                locked: None,
                             }),
-                            (_, OUTPUT_PARAM) if source => Some(Names {
-                                choices: &outputs,
+                            (NAMED_INPUT, NAME_PARAM) => Some(Names {
+                                choices: ctx.named_outputs,
                                 missing: "editor.param.no_such_output",
-                                empty: "editor.param.no_sources",
-                                locked: None,
+                                empty: "editor.param.no_named_outputs",
                             }),
                             _ => None,
                         };
@@ -287,6 +263,11 @@ impl GraphEditor {
                         // (and their stored slider ranges and open menus) never share ids.
                         let node_id = node.id.clone();
                         let mut slider = node.ranges.get(spec.name).map(|r| (r[0], r[1]));
+                        if named {
+                            let joined = named_choice(&text(TRACK_PARAM), &text(NAME_PARAM));
+                            node.params
+                                .insert(NAME_PARAM.to_owned(), ParamValue::Text(joined));
+                        }
                         let disconnected = ui
                             .push_id(node_id, |ui| {
                                 if !used {
@@ -316,6 +297,17 @@ impl GraphEditor {
                                 .inner
                             })
                             .inner;
+                        if named {
+                            let joined = match node.params.get(NAME_PARAM) {
+                                Some(ParamValue::Text(text)) => text.clone(),
+                                _ => String::new(),
+                            };
+                            let (track, name) = joined.split_once('\u{0}').unwrap_or(("", ""));
+                            for (param, value) in [(TRACK_PARAM, track), (NAME_PARAM, name)] {
+                                node.params
+                                    .insert(param.to_owned(), ParamValue::Text(value.to_owned()));
+                            }
+                        }
                         if disconnected {
                             disconnect = Some(index);
                         }
@@ -558,8 +550,16 @@ struct Names<'a> {
     choices: &'a [(String, String)],
     missing: &'static str,
     empty: &'static str,
-    /// Why the value can't be changed, when it can't.
-    locked: Option<&'static str>,
+}
+
+/// The value a Named Input's drop-down picks for Named Output `name` of graph track `track`:
+/// both settings in one, split again once picked. Empty for nothing picked.
+pub fn named_choice(track: &str, name: &str) -> String {
+    if track.is_empty() && name.is_empty() {
+        String::new()
+    } else {
+        format!("{track}\u{0}{name}")
+    }
 }
 
 /// What one parameter row shows and edits.
@@ -568,7 +568,8 @@ struct ParamRow<'a, 'u> {
     kind: &'a NodeType,
     spec: &'a ParamSpec,
     params: &'a mut BTreeMap<String, ParamValue>,
-    /// For an audio output's bus or a source's source and output: the values to pick from.
+    /// For a bus output's bus, an input's source or a Named Input's output: the values to
+    /// pick from.
     tracks: Option<Names<'a>>,
     /// Whether the number is rounded to whole numbers.
     integer: Option<&'a mut bool>,
@@ -973,7 +974,7 @@ fn other_control(
             }
             reset
         }
-        // Audio outputs pick one of the project's buses, sources what they read.
+        // Audio Bus Outputs pick one of the project's buses, inputs what they read.
         (ParamKind::Text { .. }, ParamValue::Text(s)) if tracks.is_some() => {
             let names = tracks.unwrap();
             let label = names
@@ -983,33 +984,33 @@ fn other_control(
                 .map(|(_, label)| label.clone());
             let missing = label.is_none();
             let shown = label.unwrap_or_else(|| {
-                let shown = s.split_once(':').map_or(s.as_str(), |(_, name)| name);
-                tr_args(names.missing, &[("track", shown)])
+                let shown = match s.split_once('\u{0}') {
+                    Some((track, name)) => {
+                        tr_args("source.graph_output", &[("track", track), ("output", name)])
+                    }
+                    None => s
+                        .split_once(':')
+                        .map_or(s.as_str(), |(_, name)| name)
+                        .to_owned(),
+                };
+                tr_args(names.missing, &[("track", &shown)])
             });
-            let combo = ui
-                .add_enabled_ui(names.locked.is_none(), |ui| {
-                    egui::ComboBox::from_id_salt(spec.name)
-                        .selected_text(RichText::new(shown).color(if missing {
-                            Theme::of(ui.ctx()).error
-                        } else {
-                            ui.visuals().text_color()
-                        }))
-                        .width(width)
-                        .show_ui(ui, |ui| {
-                            if names.choices.is_empty() {
-                                ui.weak(tr(names.empty));
-                            }
-                            for (value, label) in names.choices {
-                                ui.selectable_value(s, value.clone(), label);
-                            }
-                        })
-                        .response
+            let combo = egui::ComboBox::from_id_salt(spec.name)
+                .selected_text(RichText::new(shown).color(if missing {
+                    Theme::of(ui.ctx()).error
+                } else {
+                    ui.visuals().text_color()
+                }))
+                .width(width)
+                .show_ui(ui, |ui| {
+                    if names.choices.is_empty() {
+                        ui.weak(tr(names.empty));
+                    }
+                    for (value, label) in names.choices {
+                        ui.selectable_value(s, value.clone(), label);
+                    }
                 })
-                .inner;
-            if let Some(why) = names.locked {
-                combo.on_disabled_hover_text(tr(why));
-                return false;
-            }
+                .response;
             let reset = reset_gesture(ui, &combo, differs);
             if reset {
                 egui::Popup::close_all(ui.ctx());

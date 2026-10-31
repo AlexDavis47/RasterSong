@@ -25,7 +25,7 @@ use rastersong_engine::{
 pub use canvas::CanvasContext;
 pub use graph_stats::StatsContext;
 pub use inspect::{InspectContext, InspectMode, ViewChoice, changing_view, listening};
-pub use inspector::InspectorContext;
+pub use inspector::{InspectorContext, named_choice};
 pub use modulation::{PARAM_PORT, as_param, param_port};
 pub use ports::{port_label, source_label};
 
@@ -123,8 +123,6 @@ pub struct GraphEditor {
     pub keep_connections: bool,
     /// The project's limit on pre-rendered warmup frames, to flag nodes that need more.
     pub max_warmup_frames: u32,
-    /// The name of the project's master bus, which the graph's base Audio Output writes to.
-    pub master_bus: String,
     /// Each node's processing time in microseconds, smoothed over recent frames, by node id.
     costs: HashMap<String, f32>,
     /// Problems found when loading a graph (e.g. connections to ports that don't exist).
@@ -172,7 +170,6 @@ impl GraphEditor {
             clipboard: None,
             keep_connections: true,
             max_warmup_frames: rastersong_engine::DEFAULT_MAX_WARMUP_FRAMES,
-            master_bus: rastersong_engine::DEFAULT_BUS.to_owned(),
             costs: HashMap::new(),
             warnings: Vec::new(),
             compiled: Vec::new(),

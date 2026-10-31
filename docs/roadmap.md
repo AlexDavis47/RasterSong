@@ -355,6 +355,12 @@ Reusable widgets, built once in `rastersong-gui` (a `widgets/` module) and used 
   Output in every graph, Video Source and Audio Source nodes that pick what they read, and Named Outputs for graphs
   above; the per-item source mapping is gone ([Node graph](app.md#node-graph),
   [Decisions](decisions.md#sources-on-the-graph-not-the-item-october-2026)).
+- [x] **feature** Six routing nodes: Video Input, Audio Input and Named Input; Video Output, Audio Output and Named
+  Output; plus Audio Bus Output for buses other than the master. Inputs pick their source (Below by default) and
+  aren't locked; a Named Input lists every Named Output as `track › name`
+  ([Node graph](app.md#node-graph), [Decisions](decisions.md#six-routing-nodes-october-2026)).
+- [x] **bug** Named Outputs were dropped from the graphs the app renders, so nothing could read them
+  ([Decisions](decisions.md#six-routing-nodes-october-2026)).
 - [x] **feature** Track names rename in place: double-click the name, or F2 for the selected track
   ([Timeline](app.md#timeline)).
 - [x] **chore** Removed the canvas header's **Bypass graphs** button and the project's `bypass_graph` flag
@@ -481,10 +487,10 @@ own, before its volume and mute, so a muted kick track can still drive an effect
 
 **Graphs and ports.** Graphs are resources; a project can have any number.
 
-- A graph has fixed main inputs and outputs (Video In, Audio In, Output, and an Audio Output on the master bus),
-  plus any number of **Video Source** / **Audio Source** nodes reading what they name and **Named Outputs**
-  offered to other graphs, for example an oscillator exposed as a control signal. *(Done on graph tracks, see
-  [Decisions](decisions.md#sources-on-the-graph-not-the-item-october-2026).)*
+- A graph has one Video Output and one Audio Output (the master bus), plus any number of **Video Input** / **Audio
+  Input** nodes reading what they name, **Named Outputs** offered to other graphs (for example an oscillator
+  exposed as a control signal) and **Named Inputs** reading them. *(Done on graph tracks, see
+  [Decisions](decisions.md#six-routing-nodes-october-2026).)*
 - **The parent fills the ports, with no fallback.** As a subgraph, the parent graph wires the pins (its Named
   Outputs become the subgraph node's outputs); an unwired pin reads zeros, with a note.
 - **New graphs start as the template:** `In: Video` wired to Video Output and `In: Audio` to Audio Output, with

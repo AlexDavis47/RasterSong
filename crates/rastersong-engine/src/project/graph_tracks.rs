@@ -4,7 +4,7 @@
 //! frame the topmost active item's outputs are the master. What a graph reads is set on its input
 //! nodes, not on its items. See [Composition](../../../../docs/engine.md#composition).
 
-use rastersong_graph::nodes::{AUDIO_SOURCE, SOURCE_PARAM, VIDEO_SOURCE};
+use rastersong_graph::nodes::{AUDIO_INPUT, NAMED_INPUT, SOURCE_PARAM, TRACK_PARAM, VIDEO_INPUT};
 use rastersong_graph::{GraphDesc, ParamValue};
 use serde::{Deserialize, Serialize};
 
@@ -251,27 +251,36 @@ impl Project {
     pub fn source_exists(&self, source: &Source) -> bool {
         match source {
             Source::Track(name) => self.has_media_track(name),
-            Source::Graph { track, .. } => self.graph_track(track).is_some(),
+            Source::Graph(track) | Source::Named { track, .. } => self.graph_track(track).is_some(),
             _ => true,
         }
     }
 
-    /// Points every Video Source and Audio Source reading track `old` (a stem or a graph
-    /// track), in every graph, at `new`.
+    /// Points every input reading track `old` (a stem or a graph track), in every graph, at
+    /// `new`.
     pub(super) fn rename_sources(&mut self, old: &str, new: &str) {
         let graphs =
             std::iter::once(&mut self.graph).chain(self.graphs.iter_mut().map(|g| &mut g.graph));
-        for node in graphs
-            .flat_map(|g| &mut g.nodes)
-            .filter(|n| n.kind == VIDEO_SOURCE || n.kind == AUDIO_SOURCE)
-        {
-            let Some(ParamValue::Text(source)) = node.params.get_mut(SOURCE_PARAM) else {
-                continue;
-            };
-            for prefix in ["track:", "graph:"] {
-                if source.strip_prefix(prefix) == Some(old) {
-                    *source = format!("{prefix}{new}");
+        for node in graphs.flat_map(|g| &mut g.nodes) {
+            match node.kind.as_str() {
+                VIDEO_INPUT | AUDIO_INPUT => {
+                    let Some(ParamValue::Text(source)) = node.params.get_mut(SOURCE_PARAM) else {
+                        continue;
+                    };
+                    for prefix in ["track:", "graph:"] {
+                        if source.strip_prefix(prefix) == Some(old) {
+                            *source = format!("{prefix}{new}");
+                        }
+                    }
                 }
+                NAMED_INPUT => {
+                    if let Some(ParamValue::Text(track)) = node.params.get_mut(TRACK_PARAM)
+                        && track == old
+                    {
+                        *track = new.to_owned();
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -372,7 +381,7 @@ mod tests {
             r#"{ "version": 0, "nodes": [
                 { "id": "v", "type": "video_input" },
                 { "id": "a", "type": "audio_input" },
-                { "id": "k", "type": "audio_source", "params": { "source": "track:kick" } },
+                { "id": "k", "type": "audio_input", "params": { "source": "track:kick" } },
                 { "id": "o", "type": "output" } ] }"#,
         )
         .unwrap();
@@ -506,11 +515,20 @@ mod tests {
         let stored = project.add_graph("B", None);
         let mut b = project.graph_desc(stored).unwrap().clone();
         b.nodes
-            .push(rastersong_graph::NodeDesc::new("g".into(), VIDEO_SOURCE));
+            .push(rastersong_graph::NodeDesc::new("g".into(), VIDEO_INPUT));
         b.nodes.last_mut().unwrap().params.insert(
             SOURCE_PARAM.to_owned(),
             ParamValue::Text(format!("graph:{lower}")),
         );
+        let mut named = rastersong_graph::NodeDesc::new("n".into(), NAMED_INPUT);
+        named
+            .params
+            .insert(TRACK_PARAM.to_owned(), ParamValue::Text(lower.clone()));
+        named.params.insert(
+            rastersong_graph::nodes::NAME_PARAM.to_owned(),
+            ParamValue::Text("Glow".into()),
+        );
+        b.nodes.push(named);
         project
             .graphs
             .iter_mut()
@@ -532,15 +550,15 @@ mod tests {
         assert_eq!(sources(&project.graph), [Source::Track("drum".into())]);
         assert_eq!(
             sources(project.graph_desc(stored).unwrap()),
-            [Source::Graph {
-                track: "Bottom".into(),
-                port: "Video".into()
-            }]
+            [
+                Source::Graph("Bottom".into()),
+                Source::Named {
+                    track: "Bottom".into(),
+                    name: "Glow".into()
+                }
+            ]
         );
-        assert!(project.source_exists(&Source::Graph {
-            track: "Bottom".into(),
-            port: "Video".into()
-        }));
+        assert!(project.source_exists(&Source::Graph("Bottom".into())));
     }
 
     #[test]

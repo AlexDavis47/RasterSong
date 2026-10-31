@@ -47,7 +47,9 @@ impl ExportJob {
         if self.timeline.buses.is_empty() {
             vec![Bus::main()]
         } else {
-            self.timeline.buses.clone()
+            let mut buses = self.timeline.buses.clone();
+            Bus::mark_master(&mut buses);
+            buses
         }
     }
 
@@ -424,10 +426,7 @@ mod tests {
         let mixed = [mix_block(&mixer, 2, 2, 0, 1), mix_block(&mixer, 2, 2, 1, 4)].concat();
         assert_eq!(mixed, [0.0, 0.0, 0.5, 0.5, 0.0, 0.0, 0.0, 0.0]);
         // ... and `b` plays on its own mono bus at its volume, from 1 s.
-        let stems = Bus {
-            name: "Stems".into(),
-            channels: 1,
-        };
+        let stems = Bus::new("Stems", 1);
         let stem = mix_block(&bus_mixer(&tracks, &stems), 1, 2, 0, 4);
         assert_eq!(stem, [0.0, 0.0, 0.0, 0.125]);
     }

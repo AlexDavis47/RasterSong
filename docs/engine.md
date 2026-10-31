@@ -144,12 +144,14 @@ every graph shows the track mix's picture and plays the master's track mix.
 
 ## Audio Output
 
-A graph can have one **Audio Output** node per bus (optional; add it from the node menu), naming its bus in its
-`bus` setting (Main by default). On a graph track, its sound is the master's where the item is the topmost one
-playing; a graph without one is silent there ([Composition](#composition)). Where the sound is still the plain mix
-(the template's `In: Audio` wired straight to its Audio Output, reading what is below), the bus plays its track mix
-rather than rendering it again. The renderer renders one bus, the master by default (the CLI's `--bus` picks
-another): only the Audio Output writing to it is compiled.
+Every graph has one **Audio Output**, its main sound, which writes to the master bus; an **Audio Bus Output**
+(add it from the node menu) writes to another bus named in its `bus` setting. On a graph track, the Audio Output's
+sound is the master's where the item is the topmost one playing; a graph without one is silent there
+([Composition](#composition)). Where the sound is still the plain mix (the template's `In: Audio` wired straight to
+its Audio Output, reading what is below), the bus plays its track mix rather than rendering it again. The renderer
+renders one bus, the master by default (the CLI's `--bus` picks another): on the master (`Bus::master`, passed to
+the compiler as `CompileOptions::master`) only the Audio Output is compiled, on another bus only the Audio Bus
+Output naming it; one naming the master is never rendered.
 
 - **Any signal goes in.** One sample per pixel is mono and goes to every channel of the bus; anything else is
   written as interleaved samples across the bus's channels (a stereo signal to a stereo bus as it is; a picture,
@@ -219,23 +221,24 @@ doesn't move its beats. The options also carry the item's `Span` (its left edge 
 length, in whole frames), which Graph Progress reads; a graph rendered over the whole project gets the project's.
 
 **Inputs and sources.** Each input node of a graph reads a `Source`, matched by its kind (a node reading pictures
-gets the source's picture, one reading sound its sound). Video In and Audio In read `Below`; a Video Source or Audio
-Source reads what its `source` and `output` settings name:
+gets the source's picture, one reading sound its sound). A Video Input or Audio Input reads what its `source`
+setting names (`below` by default); a Named Input reads a Named Output by its `track` and `name`:
 
 - `Below`: what is below the item's graph track, which is the next graph track's output, or the mix under the
   lowest.
 - `Mix` (`mix`): the video mix or the audio mix.
 - `Track(name)` (`track:<name>`): one video or audio track on its own (its stem), before its volume and whether it
   is in the mix, so a muted track can still drive a graph.
-- `Graph { track, port }` (`graph:<track>`, with `output`): an output of a graph track below the item's: the main
-  `Video` or `Audio` (an empty `output`), where nothing plays on it what is below it; or a **Named Output**. A
-  graph track's named outputs are the names its items' graphs offer, each in the layout of the first item that
-  has it; where no item plays, or the playing one doesn't offer that name in that layout, it reads zeros. A graph
-  track at or above the item's reads zeros, so sources only point down and there are no loops.
+- `Graph(track)` (`graph:<track>`): the main output of a graph track below the item's, where nothing plays on it
+  what is below it.
+- `Named { track, name }` (a Named Input): a **Named Output** of a graph track below the item's. A graph track's
+  named outputs are the names its items' graphs offer, each in the layout of the first item that has it; where no
+  item plays, or the playing one doesn't offer that name in that layout, it reads zeros. A graph track at or above
+  the item's reads zeros, so inputs only point down and there are no loops.
 - `Nothing` (empty), or a track that doesn't exist: zeros.
 
-The graph is filled by name: `Video` and `Audio` for the main inputs, and for a source node a name built from its
-kind and settings (`source_key`), so nodes reading the same thing share one signal and a picture and a sound of
+The graph is filled by name: `Video` and `Audio` for inputs reading what is below, and for the others a name
+built from their kind and settings (`source_key`, `named_key`), so nodes reading the same thing share one signal and a picture and a sound of
 one track never mix. With no composition (`None`), the engine renders the open graph over the whole timeline on one
 graph track (`single_composition`), its main inputs reading the mix, which the CLI's `render <video> <audio>
 <graph>` and the tests rely on.

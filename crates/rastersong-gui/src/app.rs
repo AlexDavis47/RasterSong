@@ -1157,17 +1157,19 @@ impl App {
                         item_edits = graph_item_inspector(ui, &self.project, track, *item);
                         return;
                     }
+                    // Bus outputs write to the buses but the master, which is the Audio Output's.
                     let buses: Vec<(String, String)> = self
                         .project
                         .buses
                         .iter()
+                        .skip(1)
                         .map(|b| (b.name.clone(), b.name.clone()))
                         .collect();
                     let (video_sources, audio_sources) = (
                         source_choices(&self.project, TrackKind::Video),
                         source_choices(&self.project, TrackKind::Audio),
                     );
-                    let graph_outputs = graph_outputs(&self.project);
+                    let named_outputs = named_outputs(&self.project);
                     let frame = self.inspected_frame();
                     let params = frame.as_ref().map_or(&[][..], |f| &f.params[..]);
                     let meters = frame.as_ref().map_or(&[][..], |f| &f.meters[..]);
@@ -1177,7 +1179,7 @@ impl App {
                             buses: &buses,
                             video_sources: &video_sources,
                             audio_sources: &audio_sources,
-                            graph_outputs: &graph_outputs,
+                            named_outputs: &named_outputs,
                             params,
                             meters,
                         },
@@ -1258,9 +1260,6 @@ impl App {
     fn graph(&mut self, ui: &mut Ui) {
         self.editor.keep_connections = self.settings.keep_connections;
         self.editor.max_warmup_frames = self.project.max_warmup_frames;
-        if self.editor.master_bus != self.project.buses[0].name {
-            self.editor.master_bus = self.project.buses[0].name.clone();
-        }
         let frame = self.inspected_frame();
         let failure = self.failure();
         let levels = frame.as_ref().map_or(&[][..], |f| &f.levels[..]);
@@ -3814,33 +3813,32 @@ fn busy_badge(ui: &mut Ui, rect: egui::Rect, text: &str, theme: &Theme) {
         });
 }
 
-/// What a Video Source (`kind` video) or an Audio Source can read in `project`, as (`source`
-/// setting, label): the mix, every track of its kind, every graph track, nothing.
+/// What a Video Input (`kind` video) or an Audio Input can read in `project`, as (`source`
+/// setting, label): what is below, the mix, every track of its kind, every graph track's main
+/// output, nothing.
 fn source_choices(project: &Project, kind: TrackKind) -> Vec<(String, String)> {
-    let video = kind == TrackKind::Video;
-    let input = if video {
+    use rastersong_engine::Source;
+    let input = if kind == TrackKind::Video {
         rastersong_engine::InputKind::Video
     } else {
         rastersong_engine::InputKind::Audio
     };
-    let entry =
-        |source: rastersong_engine::Source, label: String| (source.settings(video).0, label);
-    let mut choices = vec![entry(
-        rastersong_engine::Source::Mix,
-        crate::editor::source_label(&rastersong_engine::Source::Mix, input),
-    )];
+    let mut choices = vec![
+        (Source::Below.setting(), tr("source.below").to_owned()),
+        (
+            Source::Mix.setting(),
+            crate::editor::source_label(&Source::Mix, input),
+        ),
+    ];
     for t in project.tracks_of(kind) {
-        choices.push(entry(
-            rastersong_engine::Source::Track(t.name.clone()),
+        choices.push((
+            Source::Track(t.name.clone()).setting(),
             tr_args("source.track", &[("track", &t.name)]),
         ));
     }
     for t in &project.graph_tracks {
-        choices.push(entry(
-            rastersong_engine::Source::Graph {
-                track: t.name.clone(),
-                port: String::new(),
-            },
+        choices.push((
+            Source::Graph(t.name.clone()).setting(),
             tr_args("source.graph", &[("track", &t.name)]),
         ));
     }
@@ -3848,41 +3846,41 @@ fn source_choices(project: &Project, kind: TrackKind) -> Vec<(String, String)> {
     choices
 }
 
-/// Each graph track's `graph:` source setting, with the names of the Named Outputs the graphs
-/// placed on it offer, each once.
-fn graph_outputs(project: &Project) -> Vec<(String, Vec<String>)> {
-    project
-        .graph_tracks
-        .iter()
-        .map(|t| {
-            let mut names: Vec<String> = Vec::new();
-            for item in &t.items {
-                let Some(desc) = project.graph_desc(item.graph) else {
-                    continue;
+/// What a Named Input can read in `project`, as (its drop-down's value, label "track › name"):
+/// every Named Output of the graphs placed on each graph track, each name once per track.
+fn named_outputs(project: &Project) -> Vec<(String, String)> {
+    let mut choices: Vec<(String, String)> = Vec::new();
+    for t in &project.graph_tracks {
+        for item in &t.items {
+            let Some(desc) = project.graph_desc(item.graph) else {
+                continue;
+            };
+            for node in desc
+                .nodes
+                .iter()
+                .filter(|n| n.kind == rastersong_engine::NAMED_OUTPUT)
+            {
+                let name = match node.params.get(rastersong_engine::NAME_PARAM) {
+                    Some(rastersong_engine::ParamValue::Text(name)) => name.clone(),
+                    _ => "Out".to_owned(),
                 };
-                for node in desc
-                    .nodes
-                    .iter()
-                    .filter(|n| n.kind == rastersong_engine::NAMED_OUTPUT)
-                {
-                    let name = match node.params.get(rastersong_engine::NAME_PARAM) {
-                        Some(rastersong_engine::ParamValue::Text(name)) => name.clone(),
-                        _ => "Out".to_owned(),
-                    };
-                    if !names.contains(&name) {
-                        names.push(name);
-                    }
+                let value = crate::editor::named_choice(&t.name, &name);
+                if !choices.iter().any(|(v, _)| *v == value) {
+                    let label = tr_args(
+                        "source.graph_output",
+                        &[("track", &t.name), ("output", &name)],
+                    );
+                    choices.push((value, label));
                 }
             }
-            (format!("graph:{}", t.name), names)
-        })
-        .collect()
+        }
+    }
+    choices
 }
 
 /// An editor for the project's open graph, with its base nodes in place.
 fn graph_editor(project: &Project) -> GraphEditor {
     let mut editor = GraphEditor::new(&project.graph);
-    editor.master_bus = project.buses[0].name.clone();
     editor.ensure_ports();
     editor
 }

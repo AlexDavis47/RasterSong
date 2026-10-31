@@ -78,10 +78,7 @@ fn bus_screenshots() {
         3,
         TimelineMode::Time,
         |project| {
-            project.buses.push(rastersong_engine::Bus {
-                name: "Stems".into(),
-                channels: 6,
-            });
+            project.buses.push(rastersong_engine::Bus::new("Stems", 6));
             project.track_of_mut(TrackKind::Audio, 1).bus = "Stems".into();
         },
     ));
@@ -639,7 +636,7 @@ fn graph_track_screenshots() {
                 GraphDesc::from_json(
                     r#"{ "version": 0, "nodes": [
                         { "id": "v", "type": "video_input" },
-                        { "id": "k", "type": "audio_source", "params": { "source": "track:audio" } },
+                        { "id": "k", "type": "audio_input", "params": { "source": "track:audio" } },
                         { "id": "o", "type": "output" } ],
                         "connections": [ { "from": "v", "to": "o" } ] }"#,
                 )

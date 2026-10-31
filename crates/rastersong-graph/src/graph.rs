@@ -9,7 +9,7 @@ use crate::desc::{
 };
 use crate::dsp::{DelayLine, resample, resample_split};
 use crate::nodes::{
-    AUDIO_INPUT, AUDIO_OUTPUT, AUDIO_SOURCE, BUS_PARAM, DEFAULT_BUS, MAX_METERS, Meter, NAME_PARAM,
+    AUDIO_BUS_OUTPUT, AUDIO_INPUT, AUDIO_OUTPUT, BUS_PARAM, MAX_METERS, Meter, NAME_PARAM,
     NAMED_OUTPUT, OUTPUT, Registry,
 };
 
@@ -49,9 +49,12 @@ pub struct CompileOptions {
     /// The size of a render pixel against a project pixel: 1 at full size, 0.5 for a
     /// half-resolution preview. The `pixel` unit follows it.
     pub pixel_scale: f64,
-    /// The output bus being rendered. Only the audio output writing to it is compiled; the
-    /// others are left out, as if they weren't there.
+    /// The output bus being rendered. Only the audio output writing to it is compiled (the
+    /// Audio Output on the master, an Audio Bus Output naming it elsewhere); the others are
+    /// left out, as if they weren't there.
     pub audio_bus: String,
+    /// Whether `audio_bus` is the project's master bus.
+    pub master: bool,
 }
 
 /// The level of one node output in the last processed frame.
@@ -445,10 +448,10 @@ impl Graph {
     ) -> Result<Self, GraphError> {
         let bypassed = apply_bypass(desc, registry);
         let desc = bypassed.as_ref().unwrap_or(desc);
-        check_audio_outputs(desc)?;
         check_named_outputs(desc)?;
-        let active = without_idle_outputs(desc, &options.audio_bus);
+        let active = without_idle_outputs(desc, options);
         let desc = active.as_ref().unwrap_or(desc);
+        check_audio_outputs(desc, &options.audio_bus)?;
         let filled = fill_missing_inputs(desc, registry);
         let desc = filled.as_ref().unwrap_or(desc);
         let mut pending = create_nodes(desc, registry)?;
@@ -463,7 +466,9 @@ impl Graph {
         let &[output] = outputs.as_slice() else {
             return Err(GraphError::OutputCount(outputs.len()));
         };
-        let audio_output = of_kind(AUDIO_OUTPUT).first().copied();
+        // At most one is left: the one writing to the bus rendered.
+        let audio_output = (0..pending.len())
+            .find(|&i| matches!(&*pending[i].kind, AUDIO_OUTPUT | AUDIO_BUS_OUTPUT));
         let named_outputs = of_kind(NAMED_OUTPUT);
         let sinks: Vec<usize> = std::iter::once(output)
             .chain(audio_output)
@@ -500,7 +505,7 @@ impl Graph {
         let audio_passthrough = audio_output
             .filter(|&audio| unity(&pending[audio]))
             .and_then(|audio| pending[audio].wires[0])
-            .filter(|&(src, _)| matches!(&*pending[src].kind, AUDIO_INPUT | AUDIO_SOURCE))
+            .filter(|&(src, _)| &*pending[src].kind == AUDIO_INPUT)
             .and_then(|(src, _)| pending[src].node.source().map(str::to_owned));
         let names: Vec<(String, usize)> = named_outputs
             .iter()
@@ -1579,11 +1584,11 @@ fn is_fed(desc: &GraphDesc, id: &str) -> bool {
         .any(|c| split_endpoint(&c.to).0 == id)
 }
 
-/// The bus an audio output node writes to.
+/// The bus an Audio Bus Output node writes to; empty when none is picked.
 pub fn audio_output_bus(node: &NodeDesc) -> &str {
     match node.params.get(BUS_PARAM) {
         Some(ParamValue::Text(bus)) => bus,
-        _ => DEFAULT_BUS,
+        _ => "",
     }
 }
 
@@ -1613,33 +1618,34 @@ fn check_named_outputs(desc: &GraphDesc) -> Result<(), GraphError> {
     Ok(())
 }
 
-/// Fails when two audio outputs with something connected write to the same bus.
-fn check_audio_outputs(desc: &GraphDesc) -> Result<(), GraphError> {
-    let mut seen: Vec<(&str, usize)> = Vec::new();
-    for node in &desc.nodes {
-        if node.kind == AUDIO_OUTPUT && is_fed(desc, &node.id) {
-            let bus = audio_output_bus(node);
-            match seen.iter_mut().find(|(b, _)| *b == bus) {
-                Some((_, count)) => *count += 1,
-                None => seen.push((bus, 1)),
-            }
-        }
-    }
-    match seen.into_iter().find(|&(_, count)| count > 1) {
-        Some((bus, count)) => Err(GraphError::AudioOutputCount {
+/// Fails when more than one audio output of `desc`, which has only the rendered ones left,
+/// writes to `bus`.
+fn check_audio_outputs(desc: &GraphDesc, bus: &str) -> Result<(), GraphError> {
+    let count = desc
+        .nodes
+        .iter()
+        .filter(|n| matches!(n.kind.as_str(), AUDIO_OUTPUT | AUDIO_BUS_OUTPUT))
+        .count();
+    if count > 1 {
+        return Err(GraphError::AudioOutputCount {
             bus: bus.to_owned(),
             count,
-        }),
-        None => Ok(()),
+        });
     }
+    Ok(())
 }
 
-/// `desc` without the outputs that aren't rendered: audio outputs writing to another bus than
-/// `bus`, and audio and named outputs with nothing connected (an unconnected audio output leaves
-/// the bus's track mix as it is rather than outputting silence). `None` when there are none.
-fn without_idle_outputs(desc: &GraphDesc, bus: &str) -> Option<GraphDesc> {
+/// `desc` without the outputs that aren't rendered: the Audio Output unless the master bus is,
+/// Audio Bus Outputs unless they name the bus rendered (never the master, which is the Audio
+/// Output's), and audio and named outputs with nothing connected (an unconnected audio output
+/// leaves the bus's track mix as it is rather than outputting silence). `None` when there are
+/// none.
+fn without_idle_outputs(desc: &GraphDesc, options: &CompileOptions) -> Option<GraphDesc> {
     let idle = |n: &NodeDesc| match n.kind.as_str() {
-        AUDIO_OUTPUT => !is_fed(desc, &n.id) || audio_output_bus(n) != bus,
+        AUDIO_OUTPUT => !is_fed(desc, &n.id) || !options.master,
+        AUDIO_BUS_OUTPUT => {
+            !is_fed(desc, &n.id) || options.master || audio_output_bus(n) != options.audio_bus
+        }
         NAMED_OUTPUT => !is_fed(desc, &n.id),
         _ => false,
     };
@@ -1666,12 +1672,17 @@ fn without_idle_outputs(desc: &GraphDesc, bus: &str) -> Option<GraphDesc> {
     })
 }
 
-/// The nodes that feed an output node, and the connections between them.
+/// The nodes that feed an output node (the Video Output, and the audio and named outputs with
+/// something connected), and the connections between them.
 fn contributing(desc: &GraphDesc) -> GraphDesc {
     let mut keep: HashSet<&str> = desc
         .nodes
         .iter()
-        .filter(|n| n.kind == OUTPUT || (n.kind == AUDIO_OUTPUT && is_fed(desc, &n.id)))
+        .filter(|n| match n.kind.as_str() {
+            OUTPUT => true,
+            AUDIO_OUTPUT | AUDIO_BUS_OUTPUT | NAMED_OUTPUT => is_fed(desc, &n.id),
+            _ => false,
+        })
         .map(|n| n.id.as_str())
         .collect();
     let mut queue: Vec<&str> = keep.iter().copied().collect();
