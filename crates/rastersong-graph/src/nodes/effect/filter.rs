@@ -2,7 +2,7 @@ use std::f64::consts::{PI, TAU};
 
 use crate::dsp::{Biquad, BiquadKind, DelayLine, MAX_STAGES, butterworth_cascade};
 use crate::nodes::support::UNBOUNDED_WARMUP;
-use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
+use crate::nodes::{Category, Measure, NodeKind, NodeSpec};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 choice! {
@@ -56,11 +56,10 @@ pub struct Filter {
     kind: Kind,
     slope: Slope,
     cutoff: f64,
-    unit: Unit,
+    unit: Measure,
     q: f64,
     gain: f64,
     /// Set in `prepare`.
-    per_sample: f64,
     modulated: bool,
     /// The largest and smallest cutoff in cycles per sample that modulation can reach.
     fastest: f64,
@@ -78,9 +77,9 @@ params! { Filter {
     SLOPE: ParamSpec::choice("slope", Slope::OPTIONS, "12")
     .shown_when("response", &["lowpass", "highpass"]),
     CUTOFF: ParamSpec::number("cutoff", 40.0, 0.01, 200.0)
+    .rate("row")
         .exposed()
         .limits(1e-06, 1e9),
-    UNIT: Unit::freq_param("row"),
     Q: ParamSpec::number("q", 0.707,
         0.1,
         20.0)
@@ -114,10 +113,9 @@ impl NodeKind for Filter {
             kind: params.choice_as(Self::RESPONSE)?,
             slope: params.choice_as(Self::SLOPE)?,
             cutoff: params.number_at(Self::CUTOFF)?,
-            unit: params.choice_as(Self::UNIT)?,
+            unit: params.measure_at(Self::CUTOFF)?,
             q: params.number_at(Self::Q)?,
             gain: params.number_at(Self::GAIN)?,
-            per_sample: 0.0,
             modulated: false,
             fastest: 0.0,
             slowest: 0.0,
@@ -174,7 +172,7 @@ impl Filter {
     }
 
     fn cutoff_per_sample(&self, value: f64) -> f64 {
-        value * self.per_sample
+        self.unit.per_sample(value)
     }
 }
 
@@ -191,10 +189,10 @@ fn sections_used(kind: Kind, slope: Slope) -> usize {
 
 impl Node for Filter {
     fn prepare(&mut self, ctx: &PrepareContext) {
-        self.per_sample = self.unit.per_sample(1.0, ctx);
+        self.unit.prepare(ctx);
         self.modulated = ctx.modulation(Self::CUTOFF).is_some();
-        self.fastest = self.cutoff_per_sample(ctx.param_max(Self::CUTOFF, self.cutoff));
-        self.slowest = self.cutoff_per_sample(ctx.param_min(Self::CUTOFF, self.cutoff));
+        self.fastest = self.unit.fastest(ctx, Self::CUTOFF, self.cutoff);
+        self.slowest = self.unit.slowest(ctx, Self::CUTOFF, self.cutoff);
         self.sections = self.design(self.cutoff_per_sample(self.cutoff), self.q, self.gain);
         self.coefficient = Self::pole_coefficient(self.cutoff_per_sample(self.cutoff));
         // A comb's period is at most this long; the line also holds the one-sample feedback delay.

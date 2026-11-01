@@ -1,26 +1,25 @@
 use crate::dsp::{AttackRelease, db_to_gain, gain_to_db};
 use crate::nodes::support::settle_frames;
-use crate::nodes::{Category, Meter, NodeKind, NodeSpec, Unit};
+use crate::nodes::{Category, Measure, Meter, NodeKind, NodeSpec};
 use crate::{InputSpec, Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// A feed-forward compressor: turns the signal down by `ratio` above `threshold`, following the
 /// level of the input (or of the sidechain, when connected). Times are milliseconds of the
 /// signal's own time by default, so a compressor on a video carrier works over the same fraction
-/// of a frame at any resolution; `unit` can make them rows, frames, seconds, beats or bars.
+/// of a frame at any resolution; each can be counted in rows, frames, seconds or note lengths at the tempo instead.
 #[derive(Debug)]
 pub struct Compressor {
     threshold: f64,
     ratio: f64,
-    /// Attack and release, in `unit`.
+    /// Attack and release, each in its own unit.
     attack_time: f64,
     release_time: f64,
-    unit: Unit,
+    attack_unit: Measure,
+    release_unit: Measure,
     knee: f64,
     makeup: f64,
     /// Set in `prepare`.
     times: AttackRelease,
-    /// Samples in one `unit`.
-    unit_samples: f64,
     /// The slowest attack or release modulation can reach, in samples, for warmup.
     slowest_samples: f64,
     sidechain: bool,
@@ -42,12 +41,13 @@ params! { Compressor {
     ATTACK: ParamSpec::number("attack", 10.0,
         0.01,
         1000.0)
+    .length("ms")
     .limits(0.0, 1e6),
     RELEASE: ParamSpec::number("release", 100.0,
         0.1,
         5000.0)
+    .length("ms")
     .limits(0.0, 1e6),
-    UNIT: Unit::time_param("ms"),
     KNEE: ParamSpec::number("knee", 6.0,
         0.0,
         24.0)
@@ -71,7 +71,7 @@ impl NodeKind for Compressor {
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "threshold": -12, "ratio": 6, "attack": 2, "release": 20 }"#,
         r#"{ "threshold": -30, "knee": 0, "makeup": 6 }"#,
-        r#"{ "threshold": -12, "unit": "bar", "attack": 0.001, "release": 0.02 }"#,
+        r#"{ "threshold": -12, "attack.unit": "bar", "release.unit": "bar", "attack": 0.001, "release": 0.02 }"#,
     ];
     const BENCH: Option<&'static str> = Some("{}");
 
@@ -81,11 +81,11 @@ impl NodeKind for Compressor {
             ratio: params.number_at(Self::RATIO)?,
             attack_time: params.number_at(Self::ATTACK)?,
             release_time: params.number_at(Self::RELEASE)?,
-            unit: params.choice_as(Self::UNIT)?,
+            attack_unit: params.measure_at(Self::ATTACK)?,
+            release_unit: params.measure_at(Self::RELEASE)?,
             knee: params.number_at(Self::KNEE)?,
             makeup: params.number_at(Self::MAKEUP)?,
             times: AttackRelease::default(),
-            unit_samples: 1.0,
             slowest_samples: 0.0,
             sidechain: false,
             reduction: 0.0,
@@ -115,12 +115,19 @@ impl Compressor {
 
 impl Node for Compressor {
     fn prepare(&mut self, ctx: &PrepareContext) {
-        self.unit_samples = self.unit.samples(ctx);
-        self.times = AttackRelease::new(self.attack_time, self.release_time, self.unit_samples);
-        self.slowest_samples = ctx
-            .param_max(Self::ATTACK, self.attack_time)
-            .max(ctx.param_max(Self::RELEASE, self.release_time))
-            * self.unit_samples;
+        self.attack_unit.prepare(ctx);
+        self.release_unit.prepare(ctx);
+        self.times = AttackRelease::new(
+            (self.attack_time, self.attack_unit.unit_samples()),
+            (self.release_time, self.release_unit.unit_samples()),
+        );
+        self.slowest_samples = self
+            .attack_unit
+            .samples(ctx.param_max(Self::ATTACK, self.attack_time))
+            .max(
+                self.release_unit
+                    .samples(ctx.param_max(Self::RELEASE, self.release_time)),
+            );
         self.sidechain = ctx.connected[1];
     }
 

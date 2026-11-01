@@ -172,7 +172,14 @@ impl GraphEditor {
         self.hovered_output = None;
         let idle = self.interaction == super::canvas::Interaction::Idle;
         let probe = self.probe.take().filter(|_| idle);
-        let pointer = ui.input(|i| i.pointer.hover_pos());
+        // Another window over the canvas takes the pointer: nothing under it is hovered. The
+        // probe's own popup doesn't count.
+        let probe_layer = egui::LayerId::new(egui::Order::Foreground, ui.id().with("wire-probe"));
+        let pointer = ui.input(|i| i.pointer.hover_pos()).filter(|p| {
+            ui.ctx()
+                .layer_id_at(*p)
+                .is_none_or(|layer| layer == ui.layer_id() || layer == probe_layer)
+        });
         // On the probe, it stays about what it was opened for, whatever is under it.
         let target = pointer.and_then(|pointer| match probe {
             Some(probe) if probe.holds(pointer) => Some(probe.target),
@@ -182,6 +189,7 @@ impl GraphEditor {
         });
         let close = |ui: &Ui| ui.memory_mut(|m| m.surrender_focus(drum_id()));
         let (Some(pointer), Some(target)) = (pointer, target.filter(|_| idle)) else {
+            self.probe_wait = None;
             close(ui);
             return;
         };
@@ -203,6 +211,40 @@ impl GraphEditor {
                 .on_hover_ui(|ui| tip.show(ui));
             return;
         };
+        // Like any tooltip, the probe opens once the pointer has stopped on its target and rested
+        // there for the tooltip delay: sliding along a wire doesn't open it.
+        if !probe.is_some_and(|p| p.target == target) {
+            let now = ui.input(|i| i.time);
+            let since = match self.probe_wait {
+                Some((waiting, since)) if waiting == target => since,
+                _ => {
+                    self.probe_wait = Some((target, now));
+                    now
+                }
+            };
+            let rested = ui.input(|i| {
+                let still = i.pointer.is_still() && !i.is_scrolling();
+                still.then(|| {
+                    f64::from(
+                        i.pointer
+                            .time_since_last_movement()
+                            .min(i.time_since_last_scroll()),
+                    )
+                })
+            });
+            let Some(rested) = rested else {
+                ui.ctx().request_repaint();
+                close(ui);
+                return;
+            };
+            let left = f64::from(ui.style().interaction.tooltip_delay) - (now - since).min(rested);
+            if left > 0.0 {
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_secs_f64(left));
+                close(ui);
+                return;
+            }
+        }
         tip.mode = inspect.views.of(tip.audio);
         if tip.mode != InspectMode::Readings {
             tip.visual = Some(super::inspect::inspect(ui, &node, output, inspect));

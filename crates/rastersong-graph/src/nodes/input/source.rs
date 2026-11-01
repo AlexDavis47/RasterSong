@@ -1,15 +1,15 @@
-//! Input ports: where signals enter the graph. Each reads the port it names, and whoever uses the
-//! graph fills the ports: each graph item on the timeline picks a source for every port (by
-//! default what is below it for the main ports, `Video` and `Audio`).
+//! Where signals enter the graph. A Video Input or Audio Input reads what its `source` names:
+//! what is below the graph's item (the default), the mix, a track's stem or a graph track's main
+//! output. A Named Input reads a Named Output of a graph track by its name.
 
 use crate::nodes::{
-    AUDIO_INPUT, Category, DEFAULT_AUDIO, DEFAULT_VIDEO, NodeKind, NodeSpec, PORT_PARAM,
-    VIDEO_INPUT,
+    AUDIO_INPUT, BELOW, Category, NAME_PARAM, NAMED_INPUT, NodeKind, NodeSpec, SOURCE_PARAM,
+    TRACK_PARAM, VIDEO_INPUT, named_key, source_key,
 };
 use crate::{Layout, LayoutContext, Node, OutputSpec, ParamSpec, Params, TagRule};
 use crate::{ProcessContext, Signal};
 
-/// Reads a port by name.
+/// Reads a host-supplied signal by name.
 #[derive(Debug)]
 struct Source {
     name: String,
@@ -20,7 +20,7 @@ impl Source {
         ctx.sources
             .get(&self.name)
             .map(|&layout| vec![layout])
-            .ok_or_else(|| format!("nothing fills the port `{}`", self.name))
+            .ok_or_else(|| format!("nothing fills the source `{}`", self.name))
     }
 
     fn process(&self, ctx: &ProcessContext, outputs: &mut [Signal]) {
@@ -33,12 +33,37 @@ impl Source {
     }
 }
 
-/// An input port that reads a picture, as RGB in `0..=1`.
+/// Implements [`Node`] for a node wrapping a [`Source`].
+macro_rules! source_node {
+    ($ty:ident) => {
+        impl Node for $ty {
+            fn source(&self) -> Option<&str> {
+                Some(&self.0.name)
+            }
+
+            fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
+                self.0.output_layouts(ctx)
+            }
+
+            fn process(
+                &mut self,
+                ctx: &ProcessContext,
+                _inputs: &[&Signal],
+                outputs: &mut [Signal],
+            ) {
+                self.0.process(ctx, outputs);
+            }
+        }
+    };
+}
+
+/// A picture, as RGB in `0..=1`: by default what is below the graph's item, else the video mix,
+/// a video track or a graph track's main output, named by `source`.
 #[derive(Debug)]
 pub struct VideoInput(Source);
 
 params! { VideoInput {
-    PORT: ParamSpec::text(PORT_PARAM, DEFAULT_VIDEO),
+    SOURCE: ParamSpec::text(SOURCE_PARAM, BELOW),
 } }
 
 impl NodeKind for VideoInput {
@@ -50,32 +75,21 @@ impl NodeKind for VideoInput {
 
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self(Source {
-            name: params.text_at(Self::PORT)?,
+            name: source_key(true, &params.text_at(Self::SOURCE)?),
         }))
     }
 }
 
-impl Node for VideoInput {
-    fn source(&self) -> Option<&str> {
-        Some(&self.0.name)
-    }
+source_node!(VideoInput);
 
-    fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
-        self.0.output_layouts(ctx)
-    }
-
-    fn process(&mut self, ctx: &ProcessContext, _inputs: &[&Signal], outputs: &mut [Signal]) {
-        self.0.process(ctx, outputs);
-    }
-}
-
-/// An input port that reads sound: one frame's worth of samples per block, in `-1..=1`, with the
-/// channels interleaved (L, R, L, R, … for stereo).
+/// Sound, one frame's worth of samples per block, in `-1..=1`, with the channels interleaved
+/// (L, R, L, R, … for stereo): by default what is below the graph's item, else the audio mix, an
+/// audio track or a graph track's main output, named by `source`.
 #[derive(Debug)]
 pub struct AudioInput(Source);
 
 params! { AudioInput {
-    PORT: ParamSpec::text(PORT_PARAM, DEFAULT_AUDIO),
+    SOURCE: ParamSpec::text(SOURCE_PARAM, BELOW),
 } }
 
 impl NodeKind for AudioInput {
@@ -87,21 +101,35 @@ impl NodeKind for AudioInput {
 
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self(Source {
-            name: params.text_at(Self::PORT)?,
+            name: source_key(false, &params.text_at(Self::SOURCE)?),
         }))
     }
 }
 
-impl Node for AudioInput {
-    fn source(&self) -> Option<&str> {
-        Some(&self.0.name)
-    }
+source_node!(AudioInput);
 
-    fn output_layouts(&self, ctx: &LayoutContext) -> Result<Vec<Layout>, String> {
-        self.0.output_layouts(ctx)
-    }
+/// What a Named Output called `name` on graph track `track` sends, as it is sent.
+#[derive(Debug)]
+pub struct NamedInput(Source);
 
-    fn process(&mut self, ctx: &ProcessContext, _inputs: &[&Signal], outputs: &mut [Signal]) {
-        self.0.process(ctx, outputs);
+params! { NamedInput {
+    TRACK: ParamSpec::text(TRACK_PARAM, ""),
+    NAME: ParamSpec::text(NAME_PARAM, ""),
+} }
+
+impl NodeKind for NamedInput {
+    const KIND: &'static str = NAMED_INPUT;
+    const SPEC: NodeSpec = NodeSpec::new(Category::Input)
+        .params(Self::PARAMS)
+        .inputs(&[])
+        .outputs(&[OutputSpec::new("out")]);
+
+    fn new(params: &Params) -> Result<Self, String> {
+        let (track, name) = (params.text_at(Self::TRACK)?, params.text_at(Self::NAME)?);
+        Ok(Self(Source {
+            name: named_key(&track, &name),
+        }))
     }
 }
+
+source_node!(NamedInput);

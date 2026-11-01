@@ -1,5 +1,5 @@
 use crate::dsp::{DelayLine, mix};
-use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
+use crate::nodes::{Category, Measure, NodeKind, NodeSpec};
 use crate::{InputSpec, Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Frequency (phase) modulation: the carrier is read back through a delay whose length follows
@@ -8,10 +8,9 @@ use crate::{InputSpec, Node, ParamSpec, Params, PrepareContext, ProcessContext, 
 #[derive(Debug)]
 pub struct Fm {
     depth: f64,
-    unit: Unit,
+    unit: Measure,
     mix: f32,
     /// Set in `prepare`.
-    unit_samples: f64,
     max_delay: f64,
     line: DelayLine,
 }
@@ -20,9 +19,9 @@ params! { Fm {
     DEPTH: ParamSpec::number("depth", 0.5,
         0.0,
         10.0)
+    .length("row")
     .exposed()
     .limits(0.0, 1000.0),
-    UNIT: Unit::time_param("row"),
     MIX: ParamSpec::mix(),
 } }
 
@@ -37,16 +36,15 @@ impl NodeKind for Fm {
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "depth": 0.7 }"#,
-        r#"{ "depth": 0.25, "unit": "frame", "mix": 0.6 }"#,
+        r#"{ "depth": 0.25, "depth.unit": "frame", "mix": 0.6 }"#,
     ];
     const BENCH: Option<&'static str> = Some(r#"{ "depth": 0.5 }"#);
 
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
             depth: params.number_at(Self::DEPTH)?,
-            unit: params.choice_as(Self::UNIT)?,
+            unit: params.measure_at(Self::DEPTH)?,
             mix: params.float_at(Self::MIX)?,
-            unit_samples: 0.0,
             max_delay: 0.0,
             line: DelayLine::default(),
         })
@@ -55,9 +53,9 @@ impl NodeKind for Fm {
 
 impl Node for Fm {
     fn prepare(&mut self, ctx: &PrepareContext) {
-        self.unit_samples = self.unit.samples(ctx);
+        self.unit.prepare(ctx);
         // The modulator is nominally within ±1, but a louder one is clamped to a reachable delay.
-        self.max_delay = 2.0 * ctx.param_max(Self::DEPTH, self.depth) * self.unit_samples;
+        self.max_delay = 2.0 * ctx.param_max(Self::DEPTH, self.depth) * self.unit.unit_samples();
         self.line = DelayLine::new(self.max_delay.ceil() as usize + 1);
     }
 
@@ -72,7 +70,7 @@ impl Node for Fm {
             .enumerate()
         {
             self.line.push(c);
-            let delay = (depth.at64(i) * self.unit_samples * (1.0 + f64::from(m))).max(0.0);
+            let delay = (depth.at64(i) * self.unit.unit_samples() * (1.0 + f64::from(m))).max(0.0);
             *out = mix(c, self.line.read(delay), amount.at(i));
         }
     }

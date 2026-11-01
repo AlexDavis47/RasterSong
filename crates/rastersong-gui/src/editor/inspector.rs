@@ -5,29 +5,39 @@
 use std::collections::BTreeMap;
 
 use eframe::egui::{self, Color32, RichText, Ui};
-use rastersong_engine::{AUDIO_OUTPUT, BUS_PARAM};
+use rastersong_engine::{
+    AUDIO_BUS_OUTPUT, AUDIO_INPUT, BUS_PARAM, NAME_PARAM, NAMED_INPUT, SOURCE_PARAM, TRACK_PARAM,
+    VIDEO_INPUT,
+};
 use rastersong_engine::{
     Channels, GeneratorLayout, Grouping, Interpolation, MeterKind, Modulation, NodeMeters,
-    NodeStats, NodeType, ParamKind, ParamLevel, ParamSpec, ParamValue, Severity, ShownWhen,
+    NodeStats, NodeType, ParamKind, ParamLevel, ParamSpec, ParamValue, Severity, ShownWhen, Timing,
 };
 use rastersong_lang::{tr, tr_args};
 
 use super::param_field::{
     Modulated, NumberRange, SMALL_BUTTON, param_field, reset_button, reset_gesture,
 };
+use super::unit_chip::unit_chip;
 use super::{GraphEditor, NodeKey, param_port};
 use crate::name_edit::name_edit;
 use crate::theme::Theme;
 use crate::widgets::{
     CHOICE_WIDTH, KeyButton, about, inspector, inspector_body, inspector_header, kind_row,
-    name_style, section, setting_row, swatch, toggle_box,
+    name_style, section, setting_row, swatch, time_signature, toggle_box,
 };
 
 /// What the inspector needs from outside the editor.
 #[derive(Debug, Default)]
 pub struct InspectorContext<'a> {
-    /// Names of the project's output buses, offered by audio outputs.
-    pub buses: &'a [String],
+    /// The project's output buses but the master, offered by Audio Bus Outputs: (name, label).
+    pub buses: &'a [(String, String)],
+    /// What a Video Input and an Audio Input can read: (`source` setting, label).
+    pub video_sources: &'a [(String, String)],
+    pub audio_sources: &'a [(String, String)],
+    /// The Named Outputs a Named Input can read, as ([`named_choice`] of its track and name,
+    /// label).
+    pub named_outputs: &'a [(String, String)],
     /// Modulated parameters' values at the playhead, for their ghost handles.
     pub params: &'a [ParamLevel],
     /// What the nodes' meters read at the playhead.
@@ -155,12 +165,76 @@ impl GraphEditor {
                 section(ui, tr("editor.inspector.parameters"), |ui| {
                     ui.spacing_mut().item_spacing.y = 12.0;
                     for (index, spec) in kind.spec.params.iter().enumerate() {
-                        let tracks = (node.kind == AUDIO_OUTPUT && spec.name == BUS_PARAM)
-                            .then_some(Names {
-                                names: ctx.buses,
+                        let text = |name: &str| match node.params.get(name) {
+                            Some(ParamValue::Text(text)) => text.clone(),
+                            _ => String::new(),
+                        };
+                        // A Named Input's track and name are picked together, on the name's row.
+                        let named = node.kind == NAMED_INPUT;
+                        if named && spec.name == TRACK_PARAM {
+                            continue;
+                        }
+                        let tracks = match (node.kind.as_str(), spec.name) {
+                            (AUDIO_BUS_OUTPUT, BUS_PARAM) => Some(Names {
+                                choices: ctx.buses,
                                 missing: "editor.param.no_such_bus",
                                 empty: "editor.param.no_buses",
+                            }),
+                            (VIDEO_INPUT, SOURCE_PARAM) => Some(Names {
+                                choices: ctx.video_sources,
+                                missing: "editor.param.no_such_source",
+                                empty: "editor.param.no_sources",
+                            }),
+                            (AUDIO_INPUT, SOURCE_PARAM) => Some(Names {
+                                choices: ctx.audio_sources,
+                                missing: "editor.param.no_such_source",
+                                empty: "editor.param.no_sources",
+                            }),
+                            (NAMED_INPUT, NAME_PARAM) => Some(Names {
+                                choices: ctx.named_outputs,
+                                missing: "editor.param.no_such_output",
+                                empty: "editor.param.no_named_outputs",
+                            }),
+                            _ => None,
+                        };
+                        // A numerator and the denominator after it are one time signature
+                        // field, unless a signal is wired to either: then each shows its
+                        // modulation as usual.
+                        let combined = |first: usize| {
+                            signature_at(kind.spec.params, first)
+                                && pins[first].wire.is_none()
+                                && pins[first + 1].wire.is_none()
+                        };
+                        if index > 0 && combined(index - 1) {
+                            continue;
+                        }
+                        if combined(index) {
+                            let used = spec
+                                .is_used(|name| choice_value(kind.spec.params, &node.params, name));
+                            let mut exposes = [&pins[index], &pins[index + 1]].map(|p| p.exposed);
+                            if !used && !exposes.contains(&true) {
+                                continue;
+                            }
+                            let specs = [spec, &kind.spec.params[index + 1]];
+                            ui.push_id(node.id.clone(), |ui| {
+                                if !used {
+                                    ui.set_opacity(0.5);
+                                }
+                                ui.vertical(|ui| {
+                                    ui.spacing_mut().item_spacing.y = 4.0;
+                                    signature_row(ui, &kind, specs, &mut node.params, &mut exposes);
+                                    if !used && let Some(when) = spec.when {
+                                        ui.weak(unused_reason(&kind, &when));
+                                    }
+                                });
                             });
+                            for (offset, exposed) in exposes.into_iter().enumerate() {
+                                if exposed != pins[index + offset].exposed {
+                                    toggled = Some((index + offset, exposed));
+                                }
+                            }
+                            continue;
+                        }
                         let Pin { exposed, wire } = pins[index].clone();
                         // A parameter the node's settings leave unused is hidden, unless a
                         // signal is wired to it (or its pin shown): that stays in view,
@@ -189,6 +263,11 @@ impl GraphEditor {
                         // (and their stored slider ranges and open menus) never share ids.
                         let node_id = node.id.clone();
                         let mut slider = node.ranges.get(spec.name).map(|r| (r[0], r[1]));
+                        if named {
+                            let joined = named_choice(&text(TRACK_PARAM), &text(NAME_PARAM));
+                            node.params
+                                .insert(NAME_PARAM.to_owned(), ParamValue::Text(joined));
+                        }
                         let disconnected = ui
                             .push_id(node_id, |ui| {
                                 if !used {
@@ -218,6 +297,17 @@ impl GraphEditor {
                                 .inner
                             })
                             .inner;
+                        if named {
+                            let joined = match node.params.get(NAME_PARAM) {
+                                Some(ParamValue::Text(text)) => text.clone(),
+                                _ => String::new(),
+                            };
+                            let (track, name) = joined.split_once('\u{0}').unwrap_or(("", ""));
+                            for (param, value) in [(TRACK_PARAM, track), (NAME_PARAM, name)] {
+                                node.params
+                                    .insert(param.to_owned(), ParamValue::Text(value.to_owned()));
+                            }
+                        }
                         if disconnected {
                             disconnect = Some(index);
                         }
@@ -453,13 +543,23 @@ fn unused_reason(kind: &NodeType, when: &ShownWhen) -> String {
     )
 }
 
-/// Names a text parameter picks from, and the lang keys for a name that isn't among them and
-/// for none at all.
+/// Values a text parameter picks from, each with its label, and the lang keys for a value that
+/// isn't among them and for none at all.
 #[derive(Debug, Clone, Copy)]
 struct Names<'a> {
-    names: &'a [String],
+    choices: &'a [(String, String)],
     missing: &'static str,
     empty: &'static str,
+}
+
+/// The value a Named Input's drop-down picks for Named Output `name` of graph track `track`:
+/// both settings in one, split again once picked. Empty for nothing picked.
+pub fn named_choice(track: &str, name: &str) -> String {
+    if track.is_empty() && name.is_empty() {
+        String::new()
+    } else {
+        format!("{track}\u{0}{name}")
+    }
 }
 
 /// What one parameter row shows and edits.
@@ -468,7 +568,8 @@ struct ParamRow<'a, 'u> {
     kind: &'a NodeType,
     spec: &'a ParamSpec,
     params: &'a mut BTreeMap<String, ParamValue>,
-    /// For an audio output's bus: the names to pick from.
+    /// For a bus output's bus, an input's source or a Named Input's output: the values to
+    /// pick from.
     tracks: Option<Names<'a>>,
     /// Whether the number is rounded to whole numbers.
     integer: Option<&'a mut bool>,
@@ -669,6 +770,24 @@ fn param_row(row: ParamRow) -> bool {
                 live,
                 source,
             });
+            let timed = spec.timing != Timing::None;
+            let mut measure = spec
+                .measure_of(params)
+                .map(|(unit, reading)| (unit.to_owned(), reading));
+            let count = *n;
+            let chip_id = ui.id().with((spec.name, "unit"));
+            // A timed value's rounding is its unit menu's Free/Sync switch.
+            let (sync, integer) = if timed {
+                (integer, None)
+            } else {
+                (None, integer)
+            };
+            let suffix = |ui: &mut Ui| {
+                if let Some((unit, reading)) = measure.as_mut() {
+                    let rate = (spec.timing == Timing::Rate).then_some(reading);
+                    unit_chip(ui, chip_id, unit, count, rate, sync);
+                }
+            };
             let trailing = |ui: &mut Ui| {
                 if let Some(integer) = integer {
                     let theme = Theme::of(ui.ctx());
@@ -696,9 +815,12 @@ fn param_row(row: ParamRow) -> bool {
                 }
             };
             let response = param_field(
-                ui, spec.name, label, n, range, modulated, slider, leading, trailing,
+                ui, spec.name, label, n, range, modulated, slider, leading, suffix, trailing,
             );
             disconnect = response.disconnect;
+            if let Some((unit, reading)) = measure {
+                spec.set_measure(params, &unit, reading);
+            }
             if rounded {
                 *n = n.round();
             }
@@ -729,6 +851,101 @@ fn param_row(row: ParamRow) -> bool {
     disconnect
 }
 
+/// Whether parameters `first` and `first + 1` are a time signature's numerator and denominator.
+fn signature_at(specs: &[ParamSpec], first: usize) -> bool {
+    specs.get(first).is_some_and(|s| s.name == "numerator")
+        && specs
+            .get(first + 1)
+            .is_some_and(|s| s.name == "denominator")
+}
+
+/// A numerator and denominator as one time signature row: the two pin toggles (for parameters a
+/// signal can modulate) and the name, then the field and its reset button. Values equal to the
+/// default are not stored, as in [`param_row`].
+fn signature_row(
+    ui: &mut Ui,
+    kind: &NodeType,
+    specs: [&ParamSpec; 2],
+    params: &mut BTreeMap<String, ParamValue>,
+    exposes: &mut [bool; 2],
+) {
+    let number = |spec: &ParamSpec, value: Option<&ParamValue>| match value {
+        Some(ParamValue::Number(n)) => *n,
+        _ => match spec.default_value() {
+            ParamValue::Number(n) => n,
+            _ => 1.0,
+        },
+    };
+    let defaults = specs.map(|spec| number(spec, None));
+    let mut values = specs.map(|spec| number(spec, params.get(spec.name)));
+    let max = specs
+        .iter()
+        .map(|spec| match spec.kind {
+            ParamKind::Number { limit_max, .. } => limit_max,
+            _ => 64.0,
+        })
+        .fold(1.0, f64::max);
+    let label = tr("param.time_signature.label");
+    let mut reset = false;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        let theme = Theme::of(ui.ctx());
+        for (spec, exposed) in specs.iter().zip(exposes.iter_mut()) {
+            if !spec.modulatable {
+                continue;
+            }
+            let hover = tr_args(
+                if *exposed {
+                    "editor.param.pin_hide_named"
+                } else {
+                    "editor.param.pin_show_named"
+                },
+                &[("name", kind.param_label(spec.name))],
+            );
+            if toggle_box(
+                ui,
+                *exposed,
+                theme.accent,
+                &hover,
+                |painter, rect, color, on| {
+                    diamond(painter, rect, color, on);
+                },
+            )
+            .on_hover_text(&hover)
+            .clicked()
+            {
+                *exposed = !*exposed;
+            }
+        }
+        if specs.iter().all(|s| s.locked) {
+            locked_diamond(ui).on_hover_text(tr_args(
+                "editor.param.locked",
+                &[("reason", kind.param_locked(specs[0]).trim_end_matches('.'))],
+            ));
+        }
+        ui.label(RichText::new(label).font(crate::theme::medium(13.0)))
+            .on_hover_text(tr("param.time_signature.help"));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let shown = format!("{}/{}", defaults[0], defaults[1]);
+            reset = reset_button(ui, label, &shown, values != defaults);
+            let [numerator, denominator] = &mut values;
+            time_signature(ui, numerator, denominator, max)
+                .on_hover_text(tr("param.time_signature.help"));
+        });
+    });
+    if reset {
+        values = defaults;
+    }
+    for ((spec, value), default) in specs.iter().zip(values).zip(defaults) {
+        let value = value.round();
+        if value == default {
+            params.remove(spec.name);
+        } else {
+            params.insert(spec.name.to_owned(), ParamValue::Number(value));
+        }
+    }
+}
+
 /// The control of a parameter that isn't a number: a drop-down of its choices, of the project's
 /// buses, or a text field. Returns true if the user reset it.
 fn other_control(
@@ -757,15 +974,27 @@ fn other_control(
             }
             reset
         }
-        // Audio outputs pick one of the project's buses.
+        // Audio Bus Outputs pick one of the project's buses, inputs what they read.
         (ParamKind::Text { .. }, ParamValue::Text(s)) if tracks.is_some() => {
             let names = tracks.unwrap();
-            let missing = !names.names.contains(s);
-            let shown = if missing {
-                tr_args(names.missing, &[("track", s)])
-            } else {
-                s.clone()
-            };
+            let label = names
+                .choices
+                .iter()
+                .find(|(value, _)| value == s)
+                .map(|(_, label)| label.clone());
+            let missing = label.is_none();
+            let shown = label.unwrap_or_else(|| {
+                let shown = match s.split_once('\u{0}') {
+                    Some((track, name)) => {
+                        tr_args("source.graph_output", &[("track", track), ("output", name)])
+                    }
+                    None => s
+                        .split_once(':')
+                        .map_or(s.as_str(), |(_, name)| name)
+                        .to_owned(),
+                };
+                tr_args(names.missing, &[("track", &shown)])
+            });
             let combo = egui::ComboBox::from_id_salt(spec.name)
                 .selected_text(RichText::new(shown).color(if missing {
                     Theme::of(ui.ctx()).error
@@ -774,11 +1003,11 @@ fn other_control(
                 }))
                 .width(width)
                 .show_ui(ui, |ui| {
-                    if names.names.is_empty() {
+                    if names.choices.is_empty() {
                         ui.weak(tr(names.empty));
                     }
-                    for name in names.names {
-                        ui.selectable_value(s, name.clone(), name);
+                    for (value, label) in names.choices {
+                        ui.selectable_value(s, value.clone(), label);
                     }
                 })
                 .response;

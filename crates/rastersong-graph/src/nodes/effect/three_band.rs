@@ -1,24 +1,23 @@
 use super::filter::Slope;
 use crate::dsp::{Biquad, MAX_STAGES, butterworth_cascade};
-use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
+use crate::nodes::{Category, Measure, NodeKind, NodeSpec};
 use crate::{
     Node, OutputSpec, ParamSpec, Params, Part, PrepareContext, ProcessContext, Signal, TagRule,
 };
 use rastersong_lang::tr_args;
 
 /// Splits a signal into low, mid and high bands. Crossovers are in Hz of the input signal's own
-/// sample rate (for an audio input, ordinary Hz) unless `unit` says otherwise. Mid is what remains after removing low and high,
+/// sample rate (for an audio input, ordinary Hz) unless their units say otherwise. Mid is what remains after removing low and high,
 /// so the three bands always add back up to the input.
 #[derive(Debug)]
 pub struct ThreeBand {
     low_hz: f64,
     high_hz: f64,
-    unit: Unit,
+    low_unit: Measure,
+    high_unit: Measure,
     slope: Slope,
     /// The slowest the low crossover can get, in cycles per sample, for warmup: set in `prepare`.
     low_cycles: f64,
-    /// Cycles per sample of one unit, set in `prepare`.
-    scale: f64,
     low: [Biquad; MAX_STAGES],
     high: [Biquad; MAX_STAGES],
 }
@@ -27,12 +26,13 @@ params! { ThreeBand {
     LOW_HZ: ParamSpec::number("low_hz", 250.0,
         1.0,
         100_000.0)
+    .rate("second")
     .limits(0.001, 1e9),
     HIGH_HZ: ParamSpec::number("high_hz", 4000.0,
         1.0,
         100_000.0)
+    .rate("second")
     .limits(0.001, 1e9),
-    UNIT: Unit::freq_param("second"),
     SLOPE: ParamSpec::choice("slope", &["12", "24", "48"], "12"),
 } }
 
@@ -48,7 +48,7 @@ impl NodeKind for ThreeBand {
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "low_hz": 300, "high_hz": 3000 }"#,
-        r#"{ "low_hz": 2, "high_hz": 9, "unit": "beat" }"#,
+        r#"{ "low_hz": 2, "high_hz": 9, "low_hz.unit": "beat", "high_hz.unit": "beat" }"#,
         r#"{ "low_hz": 300, "high_hz": 3000, "slope": "24" }"#,
         r#"{ "low_hz": 300, "high_hz": 3000, "slope": "48" }"#,
     ];
@@ -57,7 +57,12 @@ impl NodeKind for ThreeBand {
     fn new(params: &Params) -> Result<Self, String> {
         let low_hz = params.number_at(Self::LOW_HZ)?;
         let high_hz = params.number_at(Self::HIGH_HZ)?;
-        if low_hz >= high_hz {
+        let (low_unit, high_unit) = (
+            params.measure_at(Self::LOW_HZ)?,
+            params.measure_at(Self::HIGH_HZ)?,
+        );
+        // Crossovers in different units can only be compared once the unit lengths are known.
+        if low_unit == high_unit && low_hz >= high_hz {
             return Err(tr_args(
                 "error.three_band.order",
                 &[("low", &low_hz.to_string()), ("high", &high_hz.to_string())],
@@ -66,10 +71,10 @@ impl NodeKind for ThreeBand {
         Ok(Self {
             low_hz,
             high_hz,
-            unit: params.choice_as(Self::UNIT)?,
+            low_unit,
+            high_unit,
             slope: params.choice_as(Self::SLOPE)?,
             low_cycles: 0.0,
-            scale: 1.0,
             low: [Biquad::default(); MAX_STAGES],
             high: [Biquad::default(); MAX_STAGES],
         })
@@ -77,12 +82,17 @@ impl NodeKind for ThreeBand {
 }
 
 impl ThreeBand {
-    /// The sections of a crossover filter at `hz` (in this node's unit).
+    /// The sections of a crossover filter at `hz` (in its crossover's unit).
     fn cascade(&self, hz: f64, high_pass: bool) -> [Biquad; MAX_STAGES] {
+        let unit = if high_pass {
+            self.high_unit
+        } else {
+            self.low_unit
+        };
         butterworth_cascade(
             high_pass,
             self.slope.stages(),
-            hz * self.scale,
+            unit.per_sample(hz),
             std::f64::consts::FRAC_1_SQRT_2,
         )
     }
@@ -98,10 +108,9 @@ impl ThreeBand {
 
 impl Node for ThreeBand {
     fn prepare(&mut self, ctx: &PrepareContext) {
-        self.low_cycles = self
-            .unit
-            .per_sample(ctx.param_min(Self::LOW_HZ, self.low_hz), ctx);
-        self.scale = self.unit.per_sample(1.0, ctx);
+        self.low_unit.prepare(ctx);
+        self.high_unit.prepare(ctx);
+        self.low_cycles = self.low_unit.slowest(ctx, Self::LOW_HZ, self.low_hz);
         self.low = self.cascade(self.low_hz, false);
         self.high = self.cascade(self.high_hz, true);
     }

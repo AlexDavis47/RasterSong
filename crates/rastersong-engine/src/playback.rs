@@ -346,7 +346,7 @@ impl Metronome {
     /// at its start and moves `speed` seconds per second.
     pub fn render(&mut self, tempo: Tempo, position: f64, speed: f64, gain: f32, out: &mut [f32]) {
         let tempo = tempo.sanitized();
-        let beats_per_second = tempo.bpm / 60.0;
+        let beats_per_second = 1.0 / tempo.seconds_per_beat();
         let step = speed / self.rate;
         for (i, frame) in out.as_chunks_mut::<2>().0.iter_mut().enumerate() {
             let time = position + i as f64 * step;

@@ -122,7 +122,7 @@ impl Node for Beat {
 
     fn prepare(&mut self, ctx: &PrepareContext) {
         self.group = ctx.main().samples_per_pixel.max(1) as usize;
-        self.beat_pixels = (ctx.samples_per_beat() / self.group as f64).max(1e-9);
+        self.beat_pixels = (ctx.samples_per_quarter() / self.group as f64).max(1e-9);
         self.origin = ctx.beat_offset_samples() / self.group as f64;
     }
 
@@ -161,6 +161,7 @@ mod tests {
         let tempo = Tempo {
             bpm: 60.0,
             beats_per_bar: 4,
+            beat_unit: 4,
             offset_secs: 0.0,
         };
         let mut node = node_with_tempo("beat", params, 8, 8.0, &[], tempo);

@@ -15,6 +15,8 @@ mod picture;
 mod scope;
 mod segmented;
 mod spectrum;
+mod tabs;
+mod time_signature;
 
 pub use beat_lights::beat_lights;
 pub use card::{
@@ -37,3 +39,5 @@ pub use picture::picture;
 pub use scope::scope;
 pub use segmented::segmented;
 pub use spectrum::spectrum;
+pub use tabs::{TABS_HEIGHT, tabs};
+pub use time_signature::time_signature;

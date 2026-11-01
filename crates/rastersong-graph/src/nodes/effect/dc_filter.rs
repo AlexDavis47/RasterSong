@@ -1,7 +1,7 @@
 use std::f64::consts::TAU;
 
 use crate::nodes::support::UNBOUNDED_WARMUP;
-use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
+use crate::nodes::{Category, Measure, NodeKind, NodeSpec};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// Removes the constant (DC) offset of a signal with a very slow high pass. A one-pole blocker:
@@ -9,9 +9,7 @@ use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 #[derive(Debug)]
 pub struct DcFilter {
     cutoff: f64,
-    unit: Unit,
-    /// Cycles per sample of one unit, set in `prepare`.
-    per_sample: f64,
+    unit: Measure,
     /// The slowest cutoff in cycles per sample, for warmup.
     slowest: f64,
     previous_in: f64,
@@ -20,9 +18,9 @@ pub struct DcFilter {
 
 params! { DcFilter {
     CUTOFF: ParamSpec::number("cutoff", 10.0, 0.1, 100.0)
+    .rate("second")
         .exposed()
         .limits(1e-06, 1e9),
-    UNIT: Unit::freq_param("second"),
 } }
 
 impl NodeKind for DcFilter {
@@ -31,16 +29,15 @@ impl NodeKind for DcFilter {
         .params(Self::PARAMS)
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
-        r#"{ "cutoff": 20, "unit": "second" }"#,
-        r#"{ "cutoff": 0.5, "unit": "row" }"#,
+        r#"{ "cutoff": 20, "cutoff.unit": "second" }"#,
+        r#"{ "cutoff": 0.5, "cutoff.unit": "row" }"#,
     ];
     const BENCH: Option<&'static str> = Some("{}");
 
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
             cutoff: params.number_at(Self::CUTOFF)?,
-            unit: params.choice_as(Self::UNIT)?,
-            per_sample: 0.0,
+            unit: params.measure_at(Self::CUTOFF)?,
             slowest: 0.0,
             previous_in: 0.0,
             previous_out: 0.0,
@@ -57,18 +54,19 @@ impl DcFilter {
 
 impl Node for DcFilter {
     fn prepare(&mut self, ctx: &PrepareContext) {
-        self.per_sample = self.unit.per_sample(1.0, ctx);
-        self.slowest = ctx.param_min(Self::CUTOFF, self.cutoff) * self.per_sample;
+        self.unit.prepare(ctx);
+        self.slowest = self.unit.slowest(ctx, Self::CUTOFF, self.cutoff);
     }
 
     fn process(&mut self, ctx: &ProcessContext, inputs: &[&Signal], outputs: &mut [Signal]) {
         let cutoff = ctx.value(Self::CUTOFF, self.cutoff);
         let constant = match cutoff {
-            crate::Value::Const(c) => Some(Self::feedback(c * self.per_sample)),
+            crate::Value::Const(c) => Some(Self::feedback(self.unit.per_sample(c))),
             crate::Value::Stream(_) => None,
         };
         for (i, (out, &x)) in outputs[0].data.iter_mut().zip(&inputs[0].data).enumerate() {
-            let r = constant.unwrap_or_else(|| Self::feedback(cutoff.at64(i) * self.per_sample));
+            let r =
+                constant.unwrap_or_else(|| Self::feedback(self.unit.per_sample(cutoff.at64(i))));
             let x = f64::from(x);
             let y = x - self.previous_in + r * self.previous_out;
             self.previous_in = x;

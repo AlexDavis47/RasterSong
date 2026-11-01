@@ -12,7 +12,7 @@ pub mod support;
 
 use std::collections::BTreeMap;
 
-pub use support::{SampleClock, Unit};
+pub use support::{Feel, Measure, Note, SampleClock, Unit};
 
 use rastersong_lang::tr;
 
@@ -21,24 +21,56 @@ use crate::{InputSpec, Node, OutputSpec, ParamSpec, ParamValue, Params, Range, T
 
 /// The node type name of the graph's output node.
 pub const OUTPUT: &str = "output";
-/// The node type name of the graph's optional audio output.
+/// The node type name of the graph's main sound: every graph has one, which writes to the
+/// project's master bus.
 pub const AUDIO_OUTPUT: &str = "audio_output";
-/// The node type name of an input port that reads pictures.
+/// The node type name of an output writing the graph's sound to one of the other buses.
+pub const AUDIO_BUS_OUTPUT: &str = "audio_bus_output";
+/// The node type name of an output other graphs can read by its name, beside the main ones.
+pub const NAMED_OUTPUT: &str = "named_output";
+/// The node type name of an input reading a Named Output of a graph track by its name.
+pub const NAMED_INPUT: &str = "named_input";
+/// The node type name of a picture input, which reads what its `source` names.
 pub const VIDEO_INPUT: &str = "video_input";
-/// The node type name of an input port that reads sound.
+/// The node type name of a sound input, which reads what its `source` names.
 pub const AUDIO_INPUT: &str = "audio_input";
-/// The main video port: what an input port reads unless named otherwise. As an FX, the host
-/// track's picture fills it.
+/// The source a Video Input reading what is below fills, and the name the main video output is
+/// read by. As an FX, the host track's picture fills it.
 pub const DEFAULT_VIDEO: &str = "Video";
-/// The main audio port. As an FX, the host track's sound fills it.
+/// The source an Audio Input reading what is below fills, and the name the main audio output is
+/// read by. As an FX, the host track's sound fills it.
 pub const DEFAULT_AUDIO: &str = "Audio";
-/// The parameter of the audio output that names the output bus it writes to.
+/// The parameter of the Audio Bus Output that names the output bus it writes to.
 pub const BUS_PARAM: &str = "bus";
-/// The bus an audio output writes to unless set otherwise: the project's first, master bus.
+/// The name of the bus a project starts with, its master.
 pub const DEFAULT_BUS: &str = "Main";
-/// The parameter of both input nodes that names the port they read: whoever uses the graph
-/// fills each port by its name.
-pub const PORT_PARAM: &str = "port";
+/// The parameter of Video Input and Audio Input that names what they read: `below`, `mix`,
+/// `track:<name>` or `graph:<graph track>`, or nothing when empty. Whoever uses the graph fills it.
+pub const SOURCE_PARAM: &str = "source";
+/// The `source` setting reading what is below the graph's item: the inputs' default.
+pub const BELOW: &str = "below";
+/// The parameter of a Named Input that names the graph track it reads.
+pub const TRACK_PARAM: &str = "track";
+/// The parameter of a Named Output that names it, and of a Named Input that names what it reads.
+pub const NAME_PARAM: &str = "name";
+
+/// The name the host fills for a Video Input (`video`) or Audio Input reading `source`: the main
+/// name for what is below, else a name never one of the main ones, so the two don't mix.
+pub fn source_key(video: bool, source: &str) -> String {
+    match (source, video) {
+        (BELOW, true) => DEFAULT_VIDEO.to_owned(),
+        (BELOW, false) => DEFAULT_AUDIO.to_owned(),
+        _ => {
+            let kind = if video { "video" } else { "audio" };
+            format!("{kind}\u{0}{source}")
+        }
+    }
+}
+
+/// The name the host fills for a Named Input reading Named Output `name` of graph track `track`.
+pub fn named_key(track: &str, name: &str) -> String {
+    format!("named\u{0}{track}\u{0}{name}")
+}
 /// The node type names of the channel splitter and combiner, whose port counts follow the signal.
 pub const SPLIT: &str = "split";
 pub const COMBINE: &str = "combine";
@@ -74,17 +106,19 @@ macro_rules! nodes {
 
 nodes! {
     input {
-        source: [VideoInput, AudioInput],
+        source: [VideoInput, AudioInput, NamedInput],
     },
     generator {
         beat: [Beat],
         constant: [Constant],
+        graph_progress: [GraphProgress],
         oscillator: [Oscillator],
         noise: [Noise],
     },
     output {
         video: [Output],
-        audio: [AudioOutput],
+        audio: [AudioOutput, AudioBusOutput],
+        named: [NamedOutput],
     },
     structure {
         split: [Split],
@@ -264,6 +298,12 @@ impl NodeSpec {
             addable: category.user_addable(),
             meters: &[],
         }
+    }
+
+    /// Every graph has exactly one: users neither add nor remove it.
+    pub const fn fixed(mut self) -> Self {
+        self.addable = false;
+        self
     }
 
     /// Lets users add the node themselves, whatever its category.

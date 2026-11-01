@@ -144,12 +144,14 @@ every graph shows the track mix's picture and plays the master's track mix.
 
 ## Audio Output
 
-A graph can have one **Audio Output** node per bus (optional; add it from the node menu), naming its bus in its
-`bus` setting (Main by default). On a graph track, its sound is the master's where the item is the topmost one
-playing; a graph without one is silent there ([Composition](#composition)). Where the sound is still the plain mix
-(the template's `In: Audio` wired straight to its Audio Output, reading what is below), the bus plays its track mix
-rather than rendering it again. The renderer renders one bus, the master by default (the CLI's `--bus` picks
-another): only the Audio Output writing to it is compiled.
+Every graph has one **Audio Output**, its main sound, which writes to the master bus; an **Audio Bus Output**
+(add it from the node menu) writes to another bus named in its `bus` setting. On a graph track, the Audio Output's
+sound is the master's where the item is the topmost one playing; a graph without one is silent there
+([Composition](#composition)). Where the sound is still the plain mix (the template's `In: Audio` wired straight to
+its Audio Output, reading what is below), the bus plays its track mix rather than rendering it again. The renderer
+renders one bus, the master by default (the CLI's `--bus` picks another): on the master (`Bus::master`, passed to
+the compiler as `CompileOptions::master`) only the Audio Output is compiled, on another bus only the Audio Bus
+Output naming it; one naming the master is never rendered.
 
 - **Any signal goes in.** One sample per pixel is mono and goes to every channel of the bus; anything else is
   written as interleaved samples across the bus's channels (a stereo signal to a stereo bus as it is; a picture,
@@ -179,7 +181,7 @@ renders a connection's sound ahead of a position, for the listen key. Both are r
 - They are answered by a second renderer the service builds on demand, with its own video decoder and graph
   state, so a tap never moves the render-ahead, never touches the frame cache and is never part of the cache key.
   The second renderer is dropped when nothing asks and an edit has made it stale.
-- Only the latest request is kept. `Engine::tap` returns `Pending` until the render thread answers (it calls the
+- Only the latest request is kept. `Engine::tap` returns `Pending` until the probe thread answers (it calls the
   update callback), and an answer is dropped when the project is edited; the editor asks again. A request for a
   connection that doesn't feed the output (the graph prunes those) is answered `NotRendered`, and one for a graph
   that can't render likewise.
@@ -189,10 +191,11 @@ renders a connection's sound ahead of a position, for the listen key. Both are r
   is heard is what an Audio Output wired there would play. The sound is kept for a second ahead of the position
   the caller reports with `Engine::listen`, and read through `Engine::listened_audio`, which plays in a `Mixer`
   like the rendered sound of a graph. Frames of a connection that isn't rendered are silent.
-- The tap renderer renders one frame at a time on the render thread, ahead of render-ahead, so taps and
-  listening make the cache wait a moment; the editor rate-limits its requests (the pointer rests on a
-  connection first; while the playhead moves, a new frame is asked for at most as often as the project's
-  `inspect_rate`, 5 a second by default).
+- The tap renderer runs on its own thread (`rastersong-probe`) beside the render thread, so taps and listening
+  never hold the render-ahead up, and the render-ahead never holds them up. The two threads share the decoded
+  audio, so a song is decoded once. The editor rate-limits its requests (the pointer rests on a connection first;
+  while the playhead moves, a new frame is asked for at most as often as the project's `inspect_rate`, 5 a second
+  by default).
 
 ## Composition
 
@@ -208,27 +211,37 @@ the cache and only rebuilds the renderer for what the editor inspects. A kept fr
 <out>` passes the composition in `RenderSettings::composition`.
 
 **Graph items.** A `GraphItem` places a graph on a graph track: position, length, `start` (seconds into the graph's
-own time at the left edge), mute, pre-roll and a `Source` for each input port. Items on one track never overlap
+own time at the left edge), mute and pre-roll. What its graph reads is set on the graph's input nodes. Items on one track never overlap
 (`Project::place_graph` trims what an item lands on, and loading a file repairs overlaps). Each item is compiled
 with its own state, so a graph used twice is compiled twice. Items of graphs the project doesn't have are left out.
+**The beat grid is the project's.** Beat-locked nodes follow the same grid as the metronome and the ruler's ticks
+(the project's tempo and first beat), never one that starts with the item. A graph counts its frames from the item's
+`start`, so its compile options carry the first beat moved into that count; where an item is placed or trimmed
+doesn't move its beats. The options also carry the item's `Span` (its left edge in the graph's own time and its
+length, in whole frames), which Graph Progress reads; a graph rendered over the whole project gets the project's.
 
-**Ports and sources.** An input node reads the port its `port` setting names (Video Input `Video`, Audio Input
-`Audio` by default). Each port of an item reads its source, matched by kind (a port read as a picture gets the
-source's picture, one read as sound its sound):
+**Inputs and sources.** Each input node of a graph reads a `Source`, matched by its kind (a node reading pictures
+gets the source's picture, one reading sound its sound). A Video Input or Audio Input reads what its `source`
+setting names (`below` by default); a Named Input reads a Named Output by its `track` and `name`:
 
 - `Below`: what is below the item's graph track, which is the next graph track's output, or the mix under the
-  lowest. The default for the main ports, `Video` read as a picture and `Audio` read as sound.
-- `Mix`: the video mix or the audio mix.
-- `Track(name)`: one video or audio track on its own (its stem), before its volume and whether it is in the mix,
-  so a muted track can still drive a graph.
-- `Graph { track, port }`: the output of a graph track below the item's (`Video` and `Audio` are its main outputs).
-  A graph track at or above the item's reads zeros, so sources only point down and there are no loops.
-- `Nothing`, and the default for every other port: zeros.
+  lowest.
+- `Mix` (`mix`): the video mix or the audio mix.
+- `Track(name)` (`track:<name>`): one video or audio track on its own (its stem), before its volume and whether it
+  is in the mix, so a muted track can still drive a graph.
+- `Graph(track)` (`graph:<track>`): the main output of a graph track below the item's, where nothing plays on it
+  what is below it.
+- `Named { track, name }` (a Named Input): a **Named Output** of a graph track below the item's. A graph track's
+  named outputs are the names its items' graphs offer, each in the layout of the first item that has it; where no
+  item plays, or the playing one doesn't offer that name in that layout, it reads zeros. A graph track at or above
+  the item's reads zeros, so inputs only point down and there are no loops.
+- `Nothing` (empty), or a track that doesn't exist: zeros.
 
-A port read both as a picture and as sound gets its source's picture and sound; inside the graph the sound is
-compiled under its own name (`<port>\0sound`), since one name carries one layout. With no composition (`None`), the
-engine renders the open graph over the whole timeline with each port named after a track reading that track
-(`single_composition`), which the CLI's `render <video> <audio> <graph>` and the tests rely on.
+The graph is filled by name: `Video` and `Audio` for inputs reading what is below, and for the others a name
+built from their kind and settings (`source_key`, `named_key`), so nodes reading the same thing share one signal and a picture and a sound of
+one track never mix. With no composition (`None`), the engine renders the open graph over the whole timeline on one
+graph track (`single_composition`), its main inputs reading the mix, which the CLI's `render <video> <audio>
+<graph>` and the tests rely on.
 
 **No passthrough.** Every graph needs its Output (compiling one without fails). A graph with no Audio Output on the
 rendered bus is silent where it plays; nothing is wired through for it. Only the one-graph form keeps the old rule

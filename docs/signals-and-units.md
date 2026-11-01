@@ -25,24 +25,31 @@ one list of units for both times and frequencies; a time multiplies by the unit'
 | frame | One full frame of the signal (block length) | Delay by 1 frame, feedback length |
 | ms | Milliseconds of the signal's own clock | Gate hold, reverb pre-delay |
 | second | Seconds of the signal's own clock; as a frequency, Hertz | Three-band crossovers |
-| beat, bar | Musical time at the project tempo | Compressor release of half a beat; a wobble on every beat |
+| 32nd, 16th, 8th, half | A note length at the project tempo, a fixed fraction of a whole note; each also `_dotted` (×1.5) or `_triplet` (×2/3) | Delay of 3 sixteenths; compressor release of one 8th |
+| beat, bar | The time signature's beat (an eighth in 6/8) and bar, also dotted or triplet | A wobble every beat; a sweep over 2 bars |
 
 All of these can be fractional.
 
-Every node that takes a time or a frequency has one `unit` parameter built with `Unit::time_param` or
-`Unit::freq_param` (`nodes/support.rs`; the second is labelled "Cycles per"). A node calls `unit.samples(ctx)` to
-multiply or `unit.per_sample(value, ctx)` to divide. The `pixel` unit scales with the preview through
+Every time or frequency is a number declared `.length("ms")` or `.rate("second")` with the unit it starts in, and
+each has a unit of its own, saved next to it: `"attack.unit": "16th"`. A rate can instead be read as a period,
+`"rate.every": "bar"`, where the value is how many units one cycle lasts. The inspector shows the unit as a menu on
+the value box, topped by a Free / Sync switch that rounds the value to whole units and, for a rate, a Per / Every
+switch. A node reads the number's `Measure` with `params.measure_at(Self::ATTACK)`, calls `prepare(ctx)` on it,
+then `samples(value)` for a length or `per_sample(value)` for a rate (`fastest` and `slowest` give a modulated
+rate's extremes, for warmup and buffer sizes). The `pixel` unit scales with the preview through
 `CompileOptions::pixel_scale`, which the renderer sets to render width over project width.
 
 ### Tempo
 
-The project stores a constant tempo (`Tempo`: BPM, beats per bar, and the seconds from the start of
+The project stores a constant tempo (`Tempo`: BPM counting the time signature's beat, the time signature's beats per bar and beat note, and the seconds from the start of
 the video to the first beat). It reaches the graph through `CompileOptions` and `PrepareContext`
-(`samples_per_beat()`, `samples_per_bar()`, `beat_offset_samples()`), so changing the tempo recompiles the graph.
+(`samples_per_beat()`, `samples_per_quarter()`, `samples_per_bar()`, `beat_offset_samples()`), so changing the tempo recompiles the graph.
 The timeline ruler can show Time or Tempo (bars and beats; the project's `timeline_mode`), switched with a button
 in the ruler header; the tempo controls only appear in Tempo mode, and loop edges snap to the visible beat grid in
-bars mode. The `beat` generator outputs phase, decay, pulse or step signals locked to the grid, and an oscillator
-in Beat or Bar units starts its cycle on the first beat. Both are position-based, so seeking is exact. Tempo
+bars mode. The `beat` generator outputs phase, decay, pulse or step signals locked to the grid, an oscillator
+in a note-length unit starts its cycle on the first beat, and Sample & Hold with a note-length period samples on
+the grid. All are position-based, so seeking is exact, and they follow the project's grid (the one the metronome
+clicks and the ruler ticks), wherever a graph item is placed or trimmed ([Composition](engine.md#composition)). Tempo
 changes over time (a tempo map) are not supported yet; `Tempo` is a struct so one can replace it.
 
 ## Signals

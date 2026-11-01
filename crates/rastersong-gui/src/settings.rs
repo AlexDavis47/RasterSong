@@ -43,6 +43,8 @@ pub struct Settings {
     pub render_ahead_secs: f64,
     /// Whether timeline items snap to the grid, item edges and the playhead while dragged.
     pub snap: bool,
+    /// One click on a graph in the Resources panel opens it, instead of a double-click.
+    pub open_graphs_on_click: bool,
 }
 
 impl Default for Settings {
@@ -62,6 +64,7 @@ impl Default for Settings {
             cache_mib: Self::DEFAULT_CACHE_MIB,
             render_ahead_secs: Self::DEFAULT_RENDER_AHEAD_SECS,
             snap: true,
+            open_graphs_on_click: false,
         }
     }
 }

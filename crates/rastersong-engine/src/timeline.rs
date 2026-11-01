@@ -6,7 +6,6 @@
 //! and out points, at a position on the timeline, played at a rate. Positions and in/out points
 //! are times in seconds, so they survive a change of frame rate. Gaps between items read zeros.
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use rastersong_graph::nodes::DEFAULT_BUS;
@@ -89,23 +88,91 @@ pub struct Item {
     pub group: Option<u32>,
 }
 
-/// What fills one input port of a graph item. Sources are matched by kind: a port read as a
-/// picture gets the source's picture, one read as sound its sound.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// A label colour for a resource, picked from a fixed set so every theme can draw it legibly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum LabelColor {
+    Red,
+    Orange,
+    Yellow,
+    Green,
+    Teal,
+    Blue,
+    Violet,
+    Pink,
+}
+
+impl LabelColor {
+    /// Every colour, in the order menus list them.
+    pub const ALL: [Self; 8] = [
+        Self::Red,
+        Self::Orange,
+        Self::Yellow,
+        Self::Green,
+        Self::Teal,
+        Self::Blue,
+        Self::Violet,
+        Self::Pink,
+    ];
+}
+
+/// What an input node of a graph reads. A Video Input or Audio Input names it in its `source`
+/// setting ([`SOURCE_PARAM`](rastersong_graph::nodes::SOURCE_PARAM)), a Named Input in its
+/// `track` and `name`. Sources are matched by kind: a node reading pictures gets the source's
+/// picture, one reading sound its sound; a Named Input gets the signal as it was sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
-    /// The main output of the next active graph below, or the timeline's mix with none. What
-    /// the main ports read unless set otherwise.
+    /// The main output of the next active graph below, or the timeline's mix with none.
     Below,
     /// The video mix (the top video track with an item) or the audio mix.
     Mix,
     /// One track on its own (its stem), before its volume and mute.
     Track(String),
-    /// An output of the graph track `track`, which must be below the item's: where nothing
-    /// plays on it, what is below it. `port` is `Video` or `Audio` for the main outputs.
-    Graph { track: String, port: String },
+    /// The main output of the graph track named, which must be below the item's: where nothing
+    /// plays on it, what is below it.
+    Graph(String),
+    /// The Named Output `name` of the graph track `track`, which must be below the item's: zeros
+    /// where none of its items sends one.
+    Named { track: String, name: String },
     /// Zeros.
     Nothing,
+}
+
+impl Source {
+    /// The source a Video Input or Audio Input with `source` setting `source` reads.
+    pub fn from_setting(source: &str) -> Self {
+        if source == rastersong_graph::nodes::BELOW {
+            Self::Below
+        } else if source == "mix" {
+            Self::Mix
+        } else if let Some(track) = source.strip_prefix("track:") {
+            Self::Track(track.to_owned())
+        } else if let Some(track) = source.strip_prefix("graph:") {
+            Self::Graph(track.to_owned())
+        } else {
+            Self::Nothing
+        }
+    }
+
+    /// The `source` setting of a Video Input or Audio Input reading it: the reverse of
+    /// [`Self::from_setting`]. A Named Output reads as nothing there.
+    pub fn setting(&self) -> String {
+        match self {
+            Self::Below => rastersong_graph::nodes::BELOW.to_owned(),
+            Self::Mix => "mix".into(),
+            Self::Track(track) => format!("track:{track}"),
+            Self::Graph(track) => format!("graph:{track}"),
+            Self::Named { .. } | Self::Nothing => String::new(),
+        }
+    }
+
+    /// The graph track it reads, if any.
+    pub fn graph_track(&self) -> Option<&str> {
+        match self {
+            Self::Graph(track) | Self::Named { track, .. } => Some(track),
+            _ => None,
+        }
+    }
 }
 
 /// A graph placed on a graph track. Graph items have no resource and no rate: the graph runs
@@ -130,14 +197,10 @@ pub struct GraphItem {
     /// left edge never changes what follows. Off, it starts cold at the edge.
     #[serde(default = "yes", skip_serializing_if = "is_yes")]
     pub pre_roll: bool,
-    /// What fills each input port, by port name. A port left out reads [`Source::Below`] if it
-    /// is a main port (`Video` read as a picture, `Audio` as sound), else nothing.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub sources: BTreeMap<String, Source>,
 }
 
 impl GraphItem {
-    /// Graph `graph` from `position` for `length` seconds, its ports on their defaults.
+    /// Graph `graph` from `position` for `length` seconds.
     pub fn new(graph: u32, position: f64, length: f64) -> Self {
         Self {
             graph,
@@ -146,7 +209,6 @@ impl GraphItem {
             start: 0.0,
             muted: false,
             pre_roll: true,
-            sources: BTreeMap::new(),
         }
     }
 
@@ -158,18 +220,6 @@ impl GraphItem {
     /// Whether the item plays at timeline time `t`.
     pub fn plays_at(&self, t: f64) -> bool {
         !self.muted && t >= self.position && t < self.end()
-    }
-
-    /// What fills port `port`, read as a picture when `video`: its source, or the default.
-    pub fn source(&self, port: &str, video: bool) -> Source {
-        self.sources.get(port).cloned().unwrap_or_else(|| {
-            let main = if video {
-                port == rastersong_graph::nodes::DEFAULT_VIDEO
-            } else {
-                port == rastersong_graph::nodes::DEFAULT_AUDIO
-            };
-            if main { Source::Below } else { Source::Nothing }
-        })
     }
 
     /// The item with nonsense (non-finite or negative times) replaced.
@@ -344,15 +394,18 @@ impl TrackSpec {
 /// The most channels a bus can have.
 pub const MAX_BUS_CHANNELS: u32 = 8;
 
-/// An output bus: a named set of channels that audio tracks are summed into and an Audio Output
-/// writes to. The first bus of a project is the master, which the preview plays and the export
-/// writes.
+/// An output bus: a named set of channels that audio tracks are summed into. The first bus of a
+/// project is the master, which the preview plays, the export writes and the graphs' Audio Output
+/// writes to; an Audio Bus Output writes to one of the others.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Bus {
     pub name: String,
     /// 1 for mono, 2 for stereo, 6 for 5.1, … up to [`MAX_BUS_CHANNELS`].
     pub channels: u32,
+    /// Whether it is the project's master bus, the first. Not saved: it follows the order.
+    #[serde(skip)]
+    pub master: bool,
 }
 
 impl Default for Bus {
@@ -367,6 +420,23 @@ impl Bus {
         Self {
             name: DEFAULT_BUS.to_owned(),
             channels: 2,
+            master: true,
+        }
+    }
+
+    /// A bus other than the master.
+    pub fn new(name: impl Into<String>, channels: u32) -> Self {
+        Self {
+            name: name.into(),
+            channels,
+            master: false,
+        }
+    }
+
+    /// Marks the first of `buses` as the master and the others not.
+    pub fn mark_master(buses: &mut [Bus]) {
+        for (i, bus) in buses.iter_mut().enumerate() {
+            bus.master = i == 0;
         }
     }
 
@@ -399,7 +469,13 @@ impl Timeline {
 
     /// The master bus: the first, which the preview plays and the export writes.
     pub fn master(&self) -> Bus {
-        self.buses.first().cloned().unwrap_or_else(Bus::main)
+        self.buses
+            .first()
+            .cloned()
+            .map_or_else(Bus::main, |bus| Bus {
+                master: true,
+                ..bus
+            })
     }
 
     /// Whether the two render the same frames and graph sound: they differ at most in the

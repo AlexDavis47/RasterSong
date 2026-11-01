@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use super::{ItemRef, Project, ProjectTrack};
-use crate::timeline::{Item, TrackKind};
+use crate::timeline::{Item, LabelColor, TrackKind};
 
 /// Identifies a resource within its project: what tracks point at. Unique among the project's
 /// resources (and those its tracks name), not across time: a new resource can take a removed
@@ -49,6 +49,10 @@ pub struct Resource {
     /// resource's kind.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream: Option<usize>,
+    /// The label colour the panel and the timeline draw it and its items in, to tell resources
+    /// apart. `None` is its track kind's own colour. It changes nothing in the render.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<LabelColor>,
 }
 
 impl Project {
@@ -97,6 +101,7 @@ impl Project {
             kind,
             path,
             stream,
+            color: None,
         });
         id
     }
@@ -385,6 +390,18 @@ impl Project {
         };
         self.resource_mut(id).unwrap().name = name;
         true
+    }
+
+    /// Gives resource `id` the label colour `color` (`None` for its track kind's own). Returns
+    /// whether it changed.
+    pub fn set_resource_color(&mut self, id: ResourceId, color: Option<LabelColor>) -> bool {
+        match self.resource_mut(id) {
+            Some(resource) if resource.color != color => {
+                resource.color = color;
+                true
+            }
+            _ => false,
+        }
     }
 }
 

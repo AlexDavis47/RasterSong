@@ -114,15 +114,19 @@ pub struct LayoutContext<'a> {
     pub output_count: usize,
 }
 
-/// The project's musical tempo, which beat and bar units are measured in. Constant for now; a
+/// The project's musical tempo, which note-length units and the timeline's bars and beats are measured in. Constant for now; a
 /// tempo map can replace it later without changing what nodes see.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Tempo {
-    /// Beats per minute.
+    /// Beats per minute: the note the time signature's denominator names, as a metronome counts.
     pub bpm: f64,
-    /// Beats in a bar (the time signature's numerator).
+    /// Beats in a bar: the time signature's numerator.
     pub beats_per_bar: u32,
+    /// The note a beat is, as a fraction of a whole note: the time signature's denominator (4 is
+    /// a quarter note, 8 an eighth).
+    #[serde(default = "Tempo::default_beat_unit")]
+    pub beat_unit: u32,
     /// Seconds from the start of the video to the first beat.
     #[serde(default)]
     pub offset_secs: f64,
@@ -133,6 +137,7 @@ impl Default for Tempo {
         Self {
             bpm: 120.0,
             beats_per_bar: 4,
+            beat_unit: 4,
             offset_secs: 0.0,
         }
     }
@@ -141,6 +146,10 @@ impl Default for Tempo {
 impl Tempo {
     pub const MIN_BPM: f64 = 20.0;
     pub const MAX_BPM: f64 = 400.0;
+
+    fn default_beat_unit() -> u32 {
+        4
+    }
 
     /// The same tempo with values forced into usable ranges, so a hand-edited file can't make
     /// a unit conversion divide by zero.
@@ -152,6 +161,7 @@ impl Tempo {
                 Self::default().bpm
             },
             beats_per_bar: self.beats_per_bar.clamp(1, 64),
+            beat_unit: self.beat_unit.clamp(1, 64),
             offset_secs: if self.offset_secs.is_finite() {
                 self.offset_secs
             } else {
@@ -160,12 +170,38 @@ impl Tempo {
         }
     }
 
+    /// Seconds in a beat: the note the time signature's denominator names.
     pub fn seconds_per_beat(&self) -> f64 {
         60.0 / self.sanitized().bpm
     }
 
+    /// Seconds in a quarter note, which note lengths are measured against: a beat in 4/4, two in
+    /// 6/8.
+    pub fn seconds_per_quarter(&self) -> f64 {
+        self.seconds_per_beat() * f64::from(self.sanitized().beat_unit) / 4.0
+    }
+
     pub fn seconds_per_bar(&self) -> f64 {
         self.seconds_per_beat() * f64::from(self.sanitized().beats_per_bar)
+    }
+}
+
+/// The stretch of a graph's own time that its graph item plays: from `start` seconds (the
+/// item's left edge) for `length` seconds. A graph rendered over the whole project plays the
+/// project's length from 0.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Span {
+    pub start: f64,
+    pub length: f64,
+}
+
+impl Default for Span {
+    /// From 0, without end.
+    fn default() -> Self {
+        Self {
+            start: 0.0,
+            length: f64::INFINITY,
+        }
     }
 }
 
@@ -174,6 +210,8 @@ impl Tempo {
 pub struct PrepareContext<'a> {
     pub frame_rate: f64,
     pub tempo: Tempo,
+    /// What the graph's item plays of the graph's own time.
+    pub span: Span,
     /// Input layouts as the node will receive them: every input has the main input's layout.
     pub inputs: &'a [Layout],
     pub outputs: &'a [Layout],
@@ -225,6 +263,11 @@ impl PrepareContext<'_> {
 
     pub fn samples_per_beat(&self) -> f64 {
         self.tempo.seconds_per_beat() * self.sample_rate()
+    }
+
+    /// Samples in a quarter note, which note lengths are measured against.
+    pub fn samples_per_quarter(&self) -> f64 {
+        self.tempo.seconds_per_quarter() * self.sample_rate()
     }
 
     pub fn samples_per_bar(&self) -> f64 {

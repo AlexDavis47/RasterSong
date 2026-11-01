@@ -158,7 +158,7 @@ pub fn short_number(value: f64) -> String {
 }
 
 /// Shows the field, top-down: `leading` (the pin toggle and name) with `trailing` (the int
-/// toggle), the value box and the reset button on its right; then the slider track across. A
+/// toggle), the value box, `suffix` (its unit) and the reset button on its right; then the slider track across. A
 /// modulated parameter is set in a card, and goes on with the slider's ends and the live value,
 /// where the signal comes from, the amount knob and box with the direction, and how far the
 /// signal moves the value. `name` names the reset button. Every part has a fixed size or takes
@@ -173,6 +173,7 @@ pub fn param_field(
     mut modulated: Option<Modulated>,
     custom: &mut Option<(f64, f64)>,
     leading: impl FnOnce(&mut Ui),
+    suffix: impl FnOnce(&mut Ui),
     trailing: impl FnOnce(&mut Ui),
 ) -> FieldResponse {
     let theme = Theme::of(ui.ctx());
@@ -198,6 +199,7 @@ pub fn param_field(
                 modulated.as_mut(),
                 custom,
                 leading,
+                suffix,
                 trailing,
             )
         })
@@ -214,6 +216,7 @@ fn field(
     mut modulated: Option<&mut Modulated>,
     custom: &mut Option<(f64, f64)>,
     leading: impl FnOnce(&mut Ui),
+    suffix: impl FnOnce(&mut Ui),
     trailing: impl FnOnce(&mut Ui),
 ) -> FieldResponse {
     let id = ui.make_persistent_id(id_salt);
@@ -238,6 +241,7 @@ fn field(
             if reset_button(ui, name, &default, *value != range.default) {
                 *value = range.default;
             }
+            suffix(ui);
             let speed = (shown.1 - shown.0) / 300.0;
             let response = ui
                 .add(
@@ -795,6 +799,7 @@ mod tests {
                     range,
                     Some(modulated),
                     custom,
+                    |_| {},
                     |_| {},
                     |_| {},
                 );

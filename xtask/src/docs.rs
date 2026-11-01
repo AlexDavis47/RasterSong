@@ -6,7 +6,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{Result, bail};
-use rastersong_graph::{Category, NodeType, ParamKind, ParamSpec, Range, Registry, TagRule};
+use rastersong_graph::{
+    Category, NodeType, ParamKind, ParamSpec, Range, Reading, Registry, TagRule, Timing,
+};
 
 use crate::util::workspace_root;
 
@@ -155,7 +157,9 @@ fn number(n: f64) -> String {
 }
 
 fn default(p: &ParamSpec) -> String {
-    let unit = if p.unit.is_empty() {
+    let unit = if p.timing != Timing::None {
+        format!(" `{}`", p.default_unit)
+    } else if p.unit.is_empty() {
         String::new()
     } else {
         format!(" {}", p.unit)
@@ -197,7 +201,21 @@ fn range(p: &ParamSpec) -> String {
 
 /// The help text, with the rule for when the parameter is used, if it has one.
 fn help(t: &NodeType, p: &ParamSpec) -> String {
-    let text = t.param_help(p.name);
+    let text = match p.timing {
+        Timing::None => t.param_help(p.name).to_owned(),
+        Timing::Length => format!(
+            "{}. Unit in `{}`.",
+            t.param_help(p.name).trim_end_matches('.'),
+            p.unit_key(Reading::Per)
+        ),
+        Timing::Rate => format!(
+            "{}. Cycles per unit in `{}`, or one cycle every so many units in `{}`.",
+            t.param_help(p.name).trim_end_matches('.'),
+            p.unit_key(Reading::Per),
+            p.unit_key(Reading::Every)
+        ),
+    };
+    let text = text.as_str();
     match p.when {
         None => text.to_owned(),
         Some(w) => {

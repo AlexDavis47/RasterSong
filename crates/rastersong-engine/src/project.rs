@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use rastersong_graph::nodes::{AUDIO_OUTPUT, BUS_PARAM, DEFAULT_BUS};
+use rastersong_graph::nodes::{AUDIO_BUS_OUTPUT, BUS_PARAM, DEFAULT_BUS};
 use rastersong_graph::{GraphDesc, ParamValue, Tempo, audio_output_bus};
 use rastersong_lang::tr_args;
 use serde::{Deserialize, Serialize};
@@ -67,9 +67,6 @@ pub struct Project {
     /// Whether the timeline ruler shows time or bars and beats (tempo).
     #[serde(default)]
     pub timeline_mode: TimelineMode,
-    /// Skips every graph track in the preview: it shows and plays the mix.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub bypass_graph: bool,
     /// Sample rate of the sound a graph with an Audio Output renders, in the preview and export.
     #[serde(
         default = "default_audio_rate",
@@ -277,7 +274,6 @@ impl Project {
             loop_region: None,
             tempo: Tempo::default(),
             timeline_mode: TimelineMode::default(),
-            bypass_graph: false,
             audio_rate: crate::DEFAULT_AUDIO_RATE,
             max_warmup_frames: DEFAULT_MAX_WARMUP_FRAMES,
             inspect_rate: DEFAULT_INSPECT_RATE,
@@ -302,7 +298,7 @@ impl Project {
     }
 
     /// What removing bus `name` affects: the audio tracks routed to it, and the ids of the
-    /// graph's Audio Outputs that write to it.
+    /// graph's Audio Bus Outputs that write to it.
     pub fn bus_users(&self, name: &str) -> (Vec<String>, Vec<String>) {
         let tracks = self
             .tracks
@@ -314,20 +310,21 @@ impl Project {
             .graph
             .nodes
             .iter()
-            .filter(|n| n.kind == AUDIO_OUTPUT && audio_output_bus(n) == name)
+            .filter(|n| n.kind == AUDIO_BUS_OUTPUT && audio_output_bus(n) == name)
             .map(|n| n.id.clone())
             .collect();
         (tracks, outputs)
     }
 
     /// Removes bus `name`, unless it is the last. Its tracks move to the master bus (the first
-    /// left); Audio Outputs writing to it are left as they are, writing to a bus that isn't
+    /// left); Audio Bus Outputs writing to it are left as they are, writing to a bus that isn't
     /// there, so they aren't rendered until pointed at another.
     pub fn remove_bus(&mut self, name: &str) -> bool {
         if self.buses.len() <= 1 || !self.has_bus(name) {
             return false;
         }
         self.buses.retain(|b| b.name != name);
+        Bus::mark_master(&mut self.buses);
         let master = self.master_bus().to_owned();
         for track in &mut self.tracks {
             if track.bus == name {
@@ -337,8 +334,8 @@ impl Project {
         true
     }
 
-    /// Renames bus `old` to `new`, with the tracks routed to it and the Audio Outputs writing
-    /// to it. Refused when `new` is empty or another bus has it.
+    /// Renames bus `old` to `new`, with the tracks routed to it and the Audio Bus Outputs
+    /// writing to it. Refused when `new` is empty or another bus has it.
     pub fn rename_bus(&mut self, old: &str, new: &str) -> bool {
         let new = new.trim();
         if new.is_empty() || old == new || self.has_bus(new) {
@@ -354,7 +351,7 @@ impl Project {
             }
         }
         for node in &mut self.graph.nodes {
-            if node.kind == AUDIO_OUTPUT && audio_output_bus(node) == old {
+            if node.kind == AUDIO_BUS_OUTPUT && audio_output_bus(node) == old {
                 node.params
                     .insert(BUS_PARAM.to_owned(), ParamValue::Text(new.to_owned()));
             }
@@ -539,6 +536,7 @@ fn sanitized_buses(buses: Vec<Bus>) -> Vec<Bus> {
     if kept.is_empty() {
         kept.push(Bus::main());
     }
+    Bus::mark_master(&mut kept);
     kept
 }
 
@@ -547,7 +545,7 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    use crate::timeline::MAX_BUS_CHANNELS;
+    use crate::timeline::{LabelColor, MAX_BUS_CHANNELS};
 
     fn graph() -> GraphDesc {
         GraphDesc::from_json(
@@ -620,16 +618,13 @@ mod tests {
             GraphDesc::from_json(
                 r#"{ "version": 0, "nodes": [
                     { "id": "sound", "type": "audio_output" },
-                    { "id": "stems", "type": "audio_output", "params": { "bus": "Stems" } } ] }"#,
+                    { "id": "stems", "type": "audio_bus_output", "params": { "bus": "Stems" } } ] }"#,
             )
             .unwrap(),
         );
         assert_eq!(project.buses, [Bus::main()]);
         assert_eq!(project.unused_bus_name(), "Bus 2");
-        project.buses.push(Bus {
-            name: "Stems".into(),
-            channels: 1,
-        });
+        project.buses.push(Bus::new("Stems", 1));
         project.add_track(TrackKind::Audio, "kick", "kick.wav");
         project.tracks[0].bus = "Stems".into();
         project.tracks[0].volume = 0.5;
@@ -642,7 +637,7 @@ mod tests {
             (vec!["kick".to_owned()], vec!["stems".to_owned()])
         );
 
-        // Renaming follows the tracks and outputs; Main's output had no bus set and gets one.
+        // Renaming follows the tracks and bus outputs; the Audio Output has no bus to follow.
         assert!(!project.rename_bus("Stems", "Main"));
         assert!(project.rename_bus("Stems", "Drums"));
         assert!(project.rename_bus("Main", "Music"));
@@ -650,7 +645,7 @@ mod tests {
         let bus_of = |p: &Project, id: &str| {
             audio_output_bus(p.graph.nodes.iter().find(|n| n.id == id).unwrap()).to_owned()
         };
-        assert_eq!(bus_of(&project, "sound"), "Music");
+        assert_eq!(bus_of(&project, "sound"), "");
         assert_eq!(bus_of(&project, "stems"), "Drums");
 
         // Removing moves its tracks to the master and leaves its outputs pointing nowhere. The
@@ -670,26 +665,14 @@ mod tests {
         project.save(&path).unwrap();
         let json = std::fs::read_to_string(&path).unwrap();
         assert!(!json.contains("buses") && !json.contains("\"bus\""));
-        project.buses.push(Bus {
-            name: " Stems ".into(),
-            channels: 99,
-        });
-        project.buses.push(Bus {
-            name: "Main".into(),
-            channels: 1,
-        });
+        project.buses.push(Bus::new(" Stems ", 99));
+        project.buses.push(Bus::new("Main", 1));
         project.tracks[0].bus = "Stems".into();
         project.save(&path).unwrap();
         let loaded = Project::load(&path).unwrap();
         assert_eq!(
             loaded.buses,
-            [
-                Bus::main(),
-                Bus {
-                    name: "Stems".into(),
-                    channels: MAX_BUS_CHANNELS
-                }
-            ]
+            [Bus::main(), Bus::new("Stems", MAX_BUS_CHANNELS)]
         );
         assert_eq!(loaded.tracks[0].bus, "Stems");
         std::fs::remove_dir_all(&dir).unwrap();
@@ -698,10 +681,13 @@ mod tests {
     #[test]
     fn renaming_a_track_follows_through_to_sources() {
         let mut project = three_tracks();
-        let graph = project.graph_id;
         project.add_graph_track("Graphs");
-        project.place_graph("Graphs", graph, 0.0, 1.0).unwrap();
-        project.set_graph_source("Graphs", 0, "Kick", crate::Source::Track("a".into()));
+        let mut kick = rastersong_graph::NodeDesc::new("k".into(), crate::AUDIO_INPUT);
+        kick.params.insert(
+            crate::SOURCE_PARAM.into(),
+            ParamValue::Text("track:a".into()),
+        );
+        project.graph.nodes.push(kick);
         // Taken, empty and unknown names are refused; its own name is fine.
         assert!(!project.rename_track("a", "b"));
         assert!(!project.rename_track("a", "  "));
@@ -710,7 +696,7 @@ mod tests {
         assert!(project.rename_track("a", " kick "));
         assert!(project.has_track("kick") && !project.has_track("a"));
         assert_eq!(
-            project.graph_tracks[0].items[0].sources["Kick"],
+            crate::input_ports(&project.graph).last().unwrap().source,
             crate::Source::Track("kick".into())
         );
         // Graph tracks share the names.
@@ -793,6 +779,21 @@ mod tests {
     }
 
     #[test]
+    fn resource_colors_are_set_cleared_and_saved() {
+        let mut project = Project::new(graph());
+        let id = project.add_resource(ResourceKind::Audio, "loop", "loop.wav", None);
+        assert!(project.set_resource_color(id, Some(LabelColor::Teal)));
+        assert!(!project.set_resource_color(id, Some(LabelColor::Teal)));
+        assert!(!project.set_resource_color(ResourceId(99), Some(LabelColor::Red)));
+        let json = serde_json::to_string(&project).unwrap();
+        assert!(json.contains(r#""color":"teal""#));
+        let back: Project = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.resource(id).unwrap().color, Some(LabelColor::Teal));
+        assert!(project.set_resource_color(id, None));
+        assert!(!serde_json::to_string(&project).unwrap().contains("color"));
+    }
+
+    #[test]
     fn round_trips_with_paths_relative_to_the_project() {
         let dir = temp_dir("project");
         let path = dir.join("song.rastersong");
@@ -856,24 +857,6 @@ mod tests {
     }
 
     #[test]
-    fn graph_bypass_round_trips_and_defaults_off() {
-        let dir = temp_dir("project-bypass");
-        let path = dir.join("bypass.rastersong");
-        let mut project =
-            Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
-        project.save(&path).unwrap();
-        assert!(
-            !std::fs::read_to_string(&path)
-                .unwrap()
-                .contains("bypass_graph")
-        );
-        assert!(!Project::load(&path).unwrap().bypass_graph);
-        project.bypass_graph = true;
-        project.save(&path).unwrap();
-        assert!(Project::load(&path).unwrap().bypass_graph);
-    }
-
-    #[test]
     fn tempo_round_trips_and_is_sanitized_on_load() {
         let dir = temp_dir("project-tempo");
         let path = dir.join("tempo.rastersong");
@@ -881,7 +864,8 @@ mod tests {
             Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
         project.tempo = Tempo {
             bpm: 133.5,
-            beats_per_bar: 3,
+            beats_per_bar: 6,
+            beat_unit: 8,
             offset_secs: 0.25,
         };
         project.timeline_mode = TimelineMode::Tempo;

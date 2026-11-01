@@ -23,6 +23,9 @@ pub enum Icon {
     Loop,
     /// Fit the picture to its pane.
     Fit,
+    /// Fill the screen with a pane, and go back.
+    Fullscreen,
+    ExitFullscreen,
     Volume,
     Settings,
     /// Add something: a node.
@@ -185,6 +188,32 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
                 vec![at(0.05, 0.0), at(0.05, 0.35), at(0.4, 0.35)],
                 stroke,
             ));
+        }
+        Icon::Fullscreen | Icon::ExitFullscreen => {
+            // Four arrows along the diagonals: out to the corners, or in from them.
+            let out = icon == Icon::Fullscreen;
+            for (x, y) in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)] {
+                let (dx, dy) = (1.0 - 2.0 * x, 1.0 - 2.0 * y);
+                let (tip, tail) = if out {
+                    ((x, y), (x + 0.38 * dx, y + 0.38 * dy))
+                } else {
+                    (
+                        (x + 0.38 * dx, y + 0.38 * dy),
+                        (x + 0.04 * dx, y + 0.04 * dy),
+                    )
+                };
+                painter.line_segment([at(tail.0, tail.1), at(tip.0, tip.1)], stroke);
+                // The arrowhead: two short strokes back from the tip, along the edges.
+                let back = if out { 0.28 } else { -0.28 };
+                painter.add(egui::Shape::line(
+                    vec![
+                        at(tip.0 + back * dx, tip.1),
+                        at(tip.0, tip.1),
+                        at(tip.0, tip.1 + back * dy),
+                    ],
+                    stroke,
+                ));
+            }
         }
         Icon::Close => {
             painter.line_segment([at(0.15, 0.15), at(0.85, 0.85)], stroke);

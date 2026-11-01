@@ -1,5 +1,5 @@
 use crate::dsp::{DelayLine, mix};
-use crate::nodes::{Category, NodeKind, NodeSpec, Unit};
+use crate::nodes::{Category, Measure, NodeKind, NodeSpec};
 use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 
 /// A delay line, in rows or frames. Delaying by a fraction of a row and modulating the time with
@@ -7,12 +7,11 @@ use crate::{Node, ParamSpec, Params, PrepareContext, ProcessContext, Signal};
 #[derive(Debug)]
 pub struct Delay {
     time: f64,
-    unit: Unit,
+    unit: Measure,
     feedback: f32,
     mix: f32,
     /// Set in `prepare`: samples per unit, the largest delay and feedback modulation can reach,
     /// and whether the feedback path runs.
-    unit_samples: f64,
     max_delay: f64,
     max_feedback: f32,
     feeds_back: bool,
@@ -23,9 +22,9 @@ params! { Delay {
     TIME: ParamSpec::number("time", 0.05,
         0.0,
         100.0)
+    .length("row")
     .exposed()
     .limits(0.0, 1000.0),
-    UNIT: Unit::time_param("row"),
     FEEDBACK: ParamSpec::number("feedback", 0.0,
         0.0,
         0.99)
@@ -40,7 +39,7 @@ impl NodeKind for Delay {
         .per_channel();
     const TEST_CONFIGS: &'static [&'static str] = &[
         r#"{ "time": 1.5 }"#,
-        r#"{ "time": 0.5, "unit": "frame" }"#,
+        r#"{ "time": 0.5, "time.unit": "frame" }"#,
         r#"{ "time": 2.25, "feedback": 0.6, "mix": 0.7 }"#,
         r#"{ "time": 0.3, "feedback": 0.5 }"#,
     ];
@@ -49,10 +48,9 @@ impl NodeKind for Delay {
     fn new(params: &Params) -> Result<Self, String> {
         Ok(Self {
             time: params.number_at(Self::TIME)?,
-            unit: params.choice_as(Self::UNIT)?,
+            unit: params.measure_at(Self::TIME)?,
             feedback: params.float_at(Self::FEEDBACK)?,
             mix: params.float_at(Self::MIX)?,
-            unit_samples: 0.0,
             max_delay: 0.0,
             max_feedback: 0.0,
             feeds_back: false,
@@ -63,8 +61,8 @@ impl NodeKind for Delay {
 
 impl Node for Delay {
     fn prepare(&mut self, ctx: &PrepareContext) {
-        self.unit_samples = self.unit.samples(ctx);
-        self.max_delay = ctx.param_max(Self::TIME, self.time) * self.unit_samples;
+        self.unit.prepare(ctx);
+        self.max_delay = ctx.param_max(Self::TIME, self.time) * self.unit.unit_samples();
         self.max_feedback = ctx.param_max(Self::FEEDBACK, f64::from(self.feedback)) as f32;
         self.feeds_back = self.max_feedback > 0.0;
         self.line = DelayLine::new(self.max_delay.ceil() as usize + 1);
@@ -78,7 +76,7 @@ impl Node for Delay {
         // least one sample.
         let min_delay = if self.feeds_back { 1.0 } else { 0.0 };
         for (i, (out, &x)) in outputs[0].data.iter_mut().zip(&inputs[0].data).enumerate() {
-            let delay = (time.at64(i) * self.unit_samples).max(min_delay);
+            let delay = (time.at64(i) * self.unit.unit_samples()).max(min_delay);
             let delayed = if self.feeds_back {
                 let delayed = self.line.read(delay - 1.0);
                 self.line.push(x + feedback.at(i) * delayed);

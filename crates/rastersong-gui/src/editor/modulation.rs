@@ -135,16 +135,16 @@ mod tests {
     fn nodes_start_with_their_types_exposed_parameters() {
         let (editor, delay) = editor_with_delay();
         let node = editor.node(delay).unwrap();
-        // Delay exposes time and feedback; mix is hidden; unit is a choice.
-        assert_eq!(editor.exposed_params(node), [0, 2]);
+        // Delay exposes time and feedback; mix is hidden.
+        assert_eq!(editor.exposed_params(node), [0, 1]);
     }
 
     #[test]
     fn exposing_and_hiding_parameters() {
         let (mut editor, delay) = editor_with_delay();
-        editor.set_param_exposed(delay, 3, true);
+        editor.set_param_exposed(delay, 2, true);
         let node = editor.node(delay).unwrap();
-        assert_eq!(editor.exposed_params(node), [0, 2, 3]);
+        assert_eq!(editor.exposed_params(node), [0, 1, 2]);
         // Hiding a connected parameter disconnects it.
         let audio = editor.key_of("audio").unwrap();
         editor.connect((audio, 0), (delay, param_port(0)));
@@ -152,13 +152,10 @@ mod tests {
         editor.set_param_exposed(delay, 0, false);
         assert!(!editor.param_connected(delay, 0));
         let node = editor.node(delay).unwrap();
-        assert_eq!(editor.exposed_params(node), [2, 3]);
+        assert_eq!(editor.exposed_params(node), [1, 2]);
         // Back to the defaults: nothing is stored.
         editor.set_param_exposed(delay, 0, true);
-        editor.set_param_exposed(delay, 3, false);
-        assert_eq!(editor.node(delay).unwrap().exposed, None);
-        // A choice can't be exposed.
-        editor.set_param_exposed(delay, 1, true);
+        editor.set_param_exposed(delay, 2, false);
         assert_eq!(editor.node(delay).unwrap().exposed, None);
     }
 
@@ -177,7 +174,7 @@ mod tests {
     fn parameter_wires_round_trip_through_graph_files() {
         let (mut editor, delay) = editor_with_delay();
         let audio = editor.key_of("audio").unwrap();
-        editor.connect((audio, 0), (delay, param_port(2)));
+        editor.connect((audio, 0), (delay, param_port(1)));
         editor.node_mut(delay).unwrap().modulation.insert(
             "feedback".into(),
             Modulation {
@@ -195,6 +192,6 @@ mod tests {
         assert!(again.warnings.is_empty(), "{:?}", again.warnings);
         assert_eq!(again.to_desc(), desc);
         let node = again.node(again.key_of("delay").unwrap()).unwrap();
-        assert_eq!(again.modulation_of(node, 2).amount, 0.4);
+        assert_eq!(again.modulation_of(node, 1).amount, 0.4);
     }
 }

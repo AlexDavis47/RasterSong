@@ -16,7 +16,8 @@ page and a mockup disagree, this page wins; fix the mockup.
 2. **The graph reads at a glance.** Node text at 12 to 13 px, a category colour strip along the top of each node,
    a legend for wire colours.
 3. **The inspector follows the selection**: a node, a graph item or a track, each with the same layout.
-4. **Nothing hides behind a tab that doesn't need to.** Media and Graphs share the Resources panel.
+4. **Nothing hides behind a tab that doesn't need to.** (Media and Graphs shared the Resources panel at first;
+   since October 2026 they are two tabs, so a panel shows more cards of one kind without scrolling.)
 5. **Destructive actions are one step removed.** Removing a track or a resource moves into menus, out of the
    headers and cards where a stray click hits it.
 6. **The hidden gestures are taught where they apply.** The status bar names the modifier keys for what is under
@@ -139,7 +140,7 @@ board's *Show node* button or its line about the last good frame.
   that the preview shows the last good frame, and has *Show node*.
 - A **legend** in the corner names the wire colours (video, audio, R G B, low mid high) and that thickness is RMS.
 - The canvas header names the open graph and where it is placed ("on Graph track 1 · 0:00–0:03"), with *Add node*
-  (Tab) and *Bypass graphs*.
+  (Tab).
 - **Node search** opens as a palette over the canvas: a search field, what it connects to when opened from a
   dropped wire, results grouped by category with a one-line description each, and the keys (↑↓, Enter, Esc) at the
   bottom.
@@ -189,9 +190,11 @@ keeps the error red rather than the board's dashed amber, and says *missing* (th
 beside Relocate…); the video's picture is an icon on the video colour, not its first frame; the hint sits under the
 graphs rather than pinned to the panel's bottom; and the groups stack when the panel is narrowed below 360 px.
 
-Media and Graphs show **together**, as two labelled groups with counts ("Media · 4", "Graphs · 2"), not two tabs.
-A filter field at the top narrows both. Cards keep `resource_card`; a missing file keeps its red card and
-Relocate… button. A hint line at the bottom names the drag and double-click gestures.
+Media and Graphs first showed **together**, as two labelled groups of rows. Since October 2026 they are two tabs
+with counts ("Media · 4", "Graphs · 2") over a wrapping grid of 4:3 cards, which fits more resources in the panel;
+see [Resources](app.md#resources) for how it works now. A filter field at the top narrows both. Cards keep
+`resource_card`; a missing file keeps its red card and Relocate… button. A hint line under the cards names the
+drag and double-click gestures.
 
 ## Timeline
 
