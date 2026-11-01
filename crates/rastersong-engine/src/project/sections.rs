@@ -24,11 +24,12 @@ impl Project {
             .filter_map(|i| {
                 let track = &self.tracks[i];
                 let resource = self.track_resource(track).filter(|r| readable(r))?;
+                let file = resource.file()?;
                 Some(TrackSpec {
                     name: track.name.clone(),
                     kind: track.kind,
-                    path: resource.path.clone(),
-                    stream: resource.stream,
+                    path: file.path.clone(),
+                    stream: file.stream,
                     items: track.items.clone(),
                     bus: track.bus.clone(),
                     gain: self.mix_gain(i),

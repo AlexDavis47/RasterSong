@@ -42,6 +42,7 @@ dialog.remove = Remove
 dialog.remove_bus.title = Remove the bus {bus}?
 dialog.remove_bus.tracks = These tracks are routed to it and will move to {master}: {tracks}.
 dialog.remove_bus.outputs = These Audio Bus Outputs write to it and won't be rendered until set to another bus: {outputs}.
+dialog.remove_bus.output = {graph} › {output}
 dialog.import.title = Found multiple tracks in this media
 dialog.import.body = Choose the streams of {file} to import. Each becomes its own resource.
 dialog.import.confirm = Import

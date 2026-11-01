@@ -350,7 +350,22 @@ Reusable widgets, built once in `rastersong-gui` (a `widgets/` module) and used 
 - [x] **feature** Resource label colours: **Color** in a media resource's menu picks one of eight labels, which
   its card and all its items on the timeline are drawn in ([Resources](app.md#resources),
   [Decisions](decisions.md#resource-colours-are-labels-not-free-colours-october-2026)).
-- [ ] **feature** Label colours for graph resources too, which their graph items take.
+- [ ] **feature** Label colours for graph resources too, which their graph items take. The project stores them
+  since graphs became resources; the Resources menu and the graph lane draw them once the panel and the timeline
+  share one path (below).
+- [ ] **chore** One resource, one track, one item (October 2026). Media and graphs grew two parallel copies of
+  everything (storage, tracks, items, editing, the renderer's input, the panel and the timeline), so each feature
+  landed on one side only ([Decisions](decisions.md#graphs-are-resources-october-2026)). Staged:
+  - [x] Graphs are resources: one `Resource` with a media or graph `content`, one name set, colour, duplicate,
+    remove and "used by" for both; which graph the editor shows is the app's, not the project's
+    ([Projects](graph-format.md#projects)).
+  - [ ] One track type, one item type and one editing API for every section; items never overlap (placing one
+    trims what it lands on).
+  - [ ] One projection to the renderer, the one-graph CLI route a project; graph-only projects render.
+  - [ ] Per-item resources in the renderer and one stacking rule for video and graph tracks.
+  - [ ] One path in the Resources panel (colour, multi-select, multi-drag and Add to timeline for graphs).
+  - [ ] One selection, clipboard, action set and drop path on the timeline; then one lane, header, menu and
+    inspector for every kind of track.
 - [x] **feature** Graph inputs and outputs live on the graph: fixed Video In, Audio In, Output and master Audio
   Output in every graph, Video Source and Audio Source nodes that pick what they read, and Named Outputs for graphs
   above; the per-item source mapping is gone ([Node graph](app.md#node-graph),

@@ -39,7 +39,8 @@ The transport sits under the picture in two rows that don't wrap:
 Our own editor, drawn on a pannable, zoomable canvas (see [Decisions](decisions.md#own-node-graph)).
 
 A header over the canvas names the open graph (**Graph › name ▾**: click the name for a menu of the project's
-graphs, and pick one to edit it instead), counts its problems
+graphs, and pick one to edit it instead; which graph is open isn't saved, and a project opens on its first graph),
+counts its problems
 ("1 error · 1 warning"), and holds **+ Add node** and **Frame graph** (as F). Each node has a
 strip in its category's colour along its top edge, with its title under it. Opening a graph frames it, zooming out
 no further than 85%: a graph wider than that starts from its inputs on the left, and the rest is a pan away.
@@ -186,14 +187,16 @@ right-click menu, for any resource): pick where the file is now, and the other s
 Until it is found, the tracks that play it read as gaps and say so in their lanes. The panel checks about once a
 second, so a file that comes back (a drive plugged in) is picked up by itself.
 
-**Graphs** are resources too, in their own tab. A project can hold any number; **+ New** adds the template (the
-video wired to Video Output, the sound to Audio Output) and opens it. Double-click a graph (or right-click → Open in
-editor, or pick it from the canvas header's graph menu) to open it in the node editor, which swaps it with the open
-one; with **Open graphs with a single click** on in Settings, one click opens it. The open graph is shown in bold,
+**Graphs** are resources too, kept in the project and listed in their own tab; their names share one set with the
+media's. A project can hold any number; **+ New** adds the template (the video wired to Video Output, the sound to
+Audio Output) and opens it. Double-click a graph (or right-click → Open in editor, or pick it from the canvas
+header's graph menu) to show it in the node editor instead of the open one; with **Open graphs with a single click**
+on in Settings, one click opens it. Opening a graph changes nothing in the render. The open graph is shown in bold,
 its card raised. A graph
 applies only where it is placed as a **graph item** on a [graph track](#graph-tracks): with none placed, the preview
 and the CLI play the plain mixes, and the open graph is only a description to edit. Right-click also renames,
-duplicates or removes a graph (the open graph can't be removed; removing one removes its graph items). Drag a graph
+duplicates or removes a graph (the open graph can't be removed; removing one removes its graph items and leaves
+their graph tracks). Undoing back to before a graph was made shows the first graph again. Drag a graph
 card into the Graphs section of the timeline to place it. **File → Import Graph…** and **Export Graph…** read and
 write a graph as its own file.
 

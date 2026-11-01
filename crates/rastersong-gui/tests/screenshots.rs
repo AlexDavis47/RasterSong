@@ -111,7 +111,8 @@ fn unit_chip_screenshots() {
             project.tempo.beats_per_bar = 6;
             project.tempo.beat_unit = 8;
             let bands = project
-                .graph
+                .graph_mut(Project::FIRST_GRAPH)
+                .unwrap()
                 .nodes
                 .iter_mut()
                 .find(|n| n.kind == "three_band")
@@ -296,7 +297,8 @@ fn capture(theme: ThemeChoice, theme_name: &str) {
     // no picture has.
     let failing = app_edited(theme, 1, TimelineMode::Time, |project| {
         let node = project
-            .graph
+            .graph_mut(Project::FIRST_GRAPH)
+            .unwrap()
             .nodes
             .iter_mut()
             .find(|n| n.id == "combine")
@@ -307,7 +309,7 @@ fn capture(theme: ThemeChoice, theme_name: &str) {
             rastersong_engine::ParamValue::Number(7.0),
         );
         // Only a placed graph renders, so only a placed graph can fail.
-        let graph = project.graph_id;
+        let graph = Project::FIRST_GRAPH;
         let track = project.add_graph_track("Graphs");
         project.place_graph(&track, graph, 0.0, 4.0);
     });
@@ -329,15 +331,16 @@ fn capture(theme: ThemeChoice, theme_name: &str) {
 
     // A warning: Interleave can't run once per channel, so it runs on them together.
     let warned = app_edited(theme, 1, TimelineMode::Time, |project| {
-        project.graph = rastersong_engine::GraphDesc::from_json(
-            r#"{ "version": 0, "nodes": [ { "id": "v", "type": "video_input" },
+        *project.graph_mut(Project::FIRST_GRAPH).unwrap() =
+            rastersong_engine::GraphDesc::from_json(
+                r#"{ "version": 0, "nodes": [ { "id": "v", "type": "video_input" },
                 { "id": "s", "type": "interleave", "channels": "separate" },
                 { "id": "p", "type": "pack" }, { "id": "o", "type": "output" } ],
               "connections": [ { "from": "v", "to": "s" }, { "from": "s", "to": "p" },
                 { "from": "p", "to": "o" } ] }"#,
-        )
-        .unwrap();
-        let graph = project.graph_id;
+            )
+            .unwrap();
+        let graph = Project::FIRST_GRAPH;
         let track = project.add_graph_track("Graphs");
         project.place_graph(&track, graph, 0.0, 4.0);
     });
@@ -374,7 +377,7 @@ fn capture(theme: ThemeChoice, theme_name: &str) {
     )
     .unwrap();
     let mut project = harness.state().project().clone();
-    project.graph = graph;
+    *project.graph_mut(Project::FIRST_GRAPH).unwrap() = graph;
     project.loop_region = Some(rastersong_engine::LoopRegion {
         start: 1.0,
         end: 2.5,
@@ -643,7 +646,7 @@ fn graph_track_screenshots() {
                 .unwrap(),
             ),
         );
-        let open = project.graph_id;
+        let open = Project::FIRST_GRAPH;
         let bottom = project.add_graph_track("Graphs");
         project.place_graph(&bottom, open, 0.0, 2.0);
         let top = project.add_graph_track("Graphs");
@@ -790,7 +793,7 @@ fn export_screenshots() {
 fn graph_stats_screenshots() {
     for (theme, name) in [(ThemeChoice::Dark, "dark"), (ThemeChoice::Light, "light")] {
         let app = app_edited(theme, 1, TimelineMode::Time, |project| {
-            project.graph = GraphDesc::from_json(
+            *project.graph_mut(Project::FIRST_GRAPH).unwrap() = GraphDesc::from_json(
                 r#"{ "version": 0,
                     "nodes": [
                         { "id": "video", "type": "video_input", "position": [0, 0] },
@@ -801,7 +804,7 @@ fn graph_stats_screenshots() {
                     "connections": [ { "from": "video", "to": "delay" }, { "from": "delay", "to": "out" } ] }"#,
             )
             .unwrap();
-            let graph = project.graph_id;
+            let graph = Project::FIRST_GRAPH;
             let track = project.add_graph_track("Graphs");
             project.place_graph(&track, graph, 0.0, 4.0);
         });
@@ -830,7 +833,7 @@ fn resources_screenshots() {
                 "gone/drums.wav",
                 None,
             );
-            let graph = project.graph_id;
+            let graph = Project::FIRST_GRAPH;
             let track = project.add_graph_track("Graphs");
             project.place_graph(&track, graph, 0.0, 4.0);
             project.add_graph("Sidechain", None);
@@ -855,7 +858,7 @@ fn resources_screenshots() {
 #[ignore = "needs a GPU; run explicitly to look at the UI"]
 fn timeline_screenshots() {
     let app = app_edited(ThemeChoice::Dark, 2, TimelineMode::Time, |project| {
-        let graph = project.graph_id;
+        let graph = Project::FIRST_GRAPH;
         let track = project.add_graph_track("Graph track 1");
         project.place_graph(&track, graph, 0.0, 3.0);
         project.loop_region = Some(rastersong_engine::LoopRegion {
@@ -898,9 +901,9 @@ fn meter_screenshots() {
     .unwrap();
     let mut app = app(theme);
     let mut project = app.project().clone();
-    project.graph = graph;
+    *project.graph_mut(Project::FIRST_GRAPH).unwrap() = graph;
     // Only a placed graph renders, so only a placed graph has something to inspect.
-    let id = project.graph_id;
+    let id = Project::FIRST_GRAPH;
     let track = project.add_graph_track("Graphs");
     project.place_graph(&track, id, 0.0, 4.0);
     app = App::new(
@@ -1093,7 +1096,7 @@ fn resources_and_colors_screenshots() {
         harness.get_by_label_contains("Graphs ·").click();
         harness.run_steps(3);
         save(&mut harness, &format!("{name}-31-graphs-tab"));
-        let open = harness.state().project().graph_name.clone();
+        let open = harness.state().open_graph_name().to_owned();
         let header = harness
             .get(
                 egui_kittest::kittest::By::new()

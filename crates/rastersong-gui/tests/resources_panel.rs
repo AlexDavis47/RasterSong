@@ -13,6 +13,8 @@ use rastersong_gui::resources::{ResourceAction, resources_panel};
 
 struct State {
     project: Project,
+    /// The graph the editor shows.
+    open_graph: ResourceId,
     missing: HashSet<ResourceId>,
     streams: HashMap<std::path::PathBuf, Vec<StreamInfo>>,
     actions: Vec<ResourceAction>,
@@ -42,9 +44,11 @@ fn harness_with(
     missing_first: bool,
     builder: egui_kittest::HarnessBuilder<State>,
 ) -> Harness<'static, State> {
-    let mut project = Project::new(GraphDesc::from_json(STARTER_GRAPH).unwrap());
+    // The media first, then the graphs, as the panel lists them.
+    let mut project = Project::empty();
     project.add_track(TrackKind::Video, "video", "clip");
     project.add_track(TrackKind::Audio, "audio", "song");
+    let open_graph = project.add_graph("Graph", Some(GraphDesc::from_json(STARTER_GRAPH).unwrap()));
     project.add_graph("Second graph", None);
     let mut missing = HashSet::new();
     if missing_first {
@@ -61,7 +65,7 @@ fn harness_with(
     };
     let mut streams = HashMap::new();
     streams.insert(
-        project.resources[0].path.clone(),
+        project.resources[0].path().unwrap().to_owned(),
         vec![stream(StreamKind::Video {
             width: 320,
             height: 180,
@@ -69,7 +73,7 @@ fn harness_with(
         })],
     );
     streams.insert(
-        project.resources[1].path.clone(),
+        project.resources[1].path().unwrap().to_owned(),
         vec![stream(StreamKind::Audio {
             sample_rate: 44_100,
             channels: 2,
@@ -77,6 +81,7 @@ fn harness_with(
     );
     let state = State {
         project,
+        open_graph,
         missing,
         streams,
         actions: Vec::new(),
@@ -92,6 +97,7 @@ fn harness_with(
             let actions = resources_panel(
                 ui,
                 &state.project,
+                state.open_graph,
                 &state.missing,
                 &state.streams,
                 state.open_on_click,
@@ -178,9 +184,14 @@ fn graphs_tab(harness: &mut Harness<'_, State>) {
 }
 
 /// The graph that isn't open: its id and name.
-fn graph_name(harness: &Harness<'_, State>) -> (u32, String) {
-    let entry = harness.state().project.graph_entries()[1].clone();
-    (entry.id, entry.name)
+fn graph_name(harness: &Harness<'_, State>) -> (ResourceId, String) {
+    let state = harness.state();
+    let other = state
+        .project
+        .graph_ids()
+        .find(|&id| id != state.open_graph)
+        .unwrap();
+    (other, state.project.resource(other).unwrap().name.clone())
 }
 
 fn has(harness: &Harness<'_, State>, action: &ResourceAction) -> bool {

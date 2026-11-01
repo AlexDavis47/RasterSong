@@ -17,8 +17,10 @@ mod sections;
 
 pub use editing::{Edge, ItemRef, MIN_ITEM_LENGTH, RATE_RANGE, snap_offset};
 pub use graph_tracks::GraphTrack;
-pub use graphs::{GraphEntry, PASSTHROUGH_GRAPH, StoredGraph};
-pub use resources::{Resource, ResourceId, ResourceKind, resource_name_for};
+pub use graphs::{DEFAULT_GRAPH_NAME, PASSTHROUGH_GRAPH};
+pub use resources::{
+    MediaFile, Resource, ResourceContent, ResourceId, ResourceKind, resource_name_for,
+};
 
 /// The project file format version. Like the graph format it stays 0 until 1.0: files change
 /// freely, with no migrations, and projects saved by another version are rejected.
@@ -35,7 +37,7 @@ pub struct Project {
     /// or [`Timebase::DEFAULT`] without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timebase: Option<Timebase>,
-    /// The media the project uses, in the order the Resources panel lists them.
+    /// The media and graphs the project uses, in the order the Resources panel lists them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resources: Vec<Resource>,
     /// The Video and Audio sections: the video tracks top first, then the audio tracks.
@@ -48,16 +50,6 @@ pub struct Project {
     /// Audio Output writes to one. Never empty; Main, stereo, by default.
     #[serde(default = "default_buses", skip_serializing_if = "is_default_buses")]
     pub buses: Vec<Bus>,
-    /// The open graph: what the editor shows.
-    pub graph: GraphDesc,
-    /// The open graph's id and name among the project's graphs.
-    #[serde(default = "graphs::first_graph_id")]
-    pub graph_id: u32,
-    #[serde(default = "graphs::default_graph_name")]
-    pub graph_name: String,
-    /// The project's other graphs, kept until one is opened.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub graphs: Vec<StoredGraph>,
     /// The loop region on the timeline, if one has been made.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loop_region: Option<LoopRegion>,
@@ -259,7 +251,20 @@ impl ProjectTrack {
 }
 
 impl Project {
+    /// A project holding one resource: `graph`, as [`Self::FIRST_GRAPH`] called
+    /// [`DEFAULT_GRAPH_NAME`].
     pub fn new(graph: GraphDesc) -> Self {
+        let mut project = Self::empty();
+        let id = project.add_graph(DEFAULT_GRAPH_NAME, Some(graph));
+        debug_assert_eq!(id, Self::FIRST_GRAPH);
+        project
+    }
+
+    /// The id of the graph [`Self::new`] makes.
+    pub const FIRST_GRAPH: ResourceId = ResourceId(1);
+
+    /// A project with nothing in it.
+    pub fn empty() -> Self {
         Self {
             version: PROJECT_VERSION,
             timebase: None,
@@ -267,10 +272,6 @@ impl Project {
             tracks: Vec::new(),
             graph_tracks: Vec::new(),
             buses: default_buses(),
-            graph,
-            graph_id: graphs::first_graph_id(),
-            graph_name: graphs::default_graph_name(),
-            graphs: Vec::new(),
             loop_region: None,
             tempo: Tempo::default(),
             timeline_mode: TimelineMode::default(),
@@ -297,9 +298,9 @@ impl Project {
             .unwrap()
     }
 
-    /// What removing bus `name` affects: the audio tracks routed to it, and the ids of the
-    /// graph's Audio Bus Outputs that write to it.
-    pub fn bus_users(&self, name: &str) -> (Vec<String>, Vec<String>) {
+    /// What removing bus `name` affects: the audio tracks routed to it, and the Audio Bus
+    /// Outputs that write to it, in every graph, as (graph name, node id).
+    pub fn bus_users(&self, name: &str) -> (Vec<String>, Vec<(String, String)>) {
         let tracks = self
             .tracks
             .iter()
@@ -307,11 +308,15 @@ impl Project {
             .map(|t| t.name.clone())
             .collect();
         let outputs = self
-            .graph
-            .nodes
+            .resources
             .iter()
-            .filter(|n| n.kind == AUDIO_BUS_OUTPUT && audio_output_bus(n) == name)
-            .map(|n| n.id.clone())
+            .filter_map(|r| Some((&r.name, r.graph()?)))
+            .flat_map(|(graph, desc)| {
+                desc.nodes
+                    .iter()
+                    .filter(|n| n.kind == AUDIO_BUS_OUTPUT && audio_output_bus(n) == name)
+                    .map(|n| (graph.clone(), n.id.clone()))
+            })
             .collect();
         (tracks, outputs)
     }
@@ -350,7 +355,7 @@ impl Project {
                 track.bus = new.to_owned();
             }
         }
-        for node in &mut self.graph.nodes {
+        for node in self.graphs_mut().flat_map(|g| &mut g.nodes) {
             if node.kind == AUDIO_BUS_OUTPUT && audio_output_bus(node) == old {
                 node.params
                     .insert(BUS_PARAM.to_owned(), ParamValue::Text(new.to_owned()));
@@ -473,27 +478,42 @@ impl Project {
         } else {
             DEFAULT_INSPECT_RATE
         };
-        project.graph.upgrade();
+        for graph in project.graphs_mut() {
+            graph.upgrade();
+        }
         project.buses = sanitized_buses(std::mem::take(&mut project.buses));
         let dir = path.parent().unwrap_or(Path::new(""));
-        for resource in &mut project.resources {
-            if resource.path.is_relative() {
-                resource.path = dir.join(&resource.path);
+        for file in project.resources.iter_mut().filter_map(Resource::file_mut) {
+            if file.path.is_relative() {
+                file.path = dir.join(&file.path);
             }
         }
-        let resources = &project.resources;
-        // A track must play a resource the project has, of its own kind.
-        let unknown = project.tracks.iter().find(|t| {
-            t.resource.is_some_and(|id| {
-                !resources
-                    .iter()
-                    .any(|r| r.id == id && r.kind.track_kind() == t.kind)
+        // Every track and item must play a resource the project has, of its own kind.
+        let kind_of = |id: ResourceId| project.resource(id).map(Resource::kind);
+        let unknown = project
+            .tracks
+            .iter()
+            .find(|t| {
+                t.resource.is_some_and(|id| {
+                    kind_of(id).and_then(ResourceKind::track_kind) != Some(t.kind)
+                })
             })
-        });
+            .map(|t| t.name.clone())
+            .or_else(|| {
+                project
+                    .graph_tracks
+                    .iter()
+                    .find(|t| {
+                        t.items
+                            .iter()
+                            .any(|i| kind_of(i.graph) != Some(ResourceKind::Graph))
+                    })
+                    .map(|t| t.name.clone())
+            });
         if let Some(track) = unknown {
             return Err(error(&tr_args(
-                "error.project.track_resource",
-                &[("track", &track.name)],
+                "error.project.unknown_resource",
+                &[("track", &track)],
             )));
         }
         project.sanitize_sections();
@@ -510,9 +530,9 @@ impl Project {
     pub fn save(&self, path: &Path) -> Result<(), String> {
         let dir = path.parent().unwrap_or(Path::new(""));
         let mut saved = self.clone();
-        for resource in &mut saved.resources {
-            if let Ok(relative) = resource.path.strip_prefix(dir) {
-                resource.path = relative.to_path_buf();
+        for file in saved.resources.iter_mut().filter_map(Resource::file_mut) {
+            if let Ok(relative) = file.path.strip_prefix(dir) {
+                file.path = relative.to_path_buf();
             }
         }
         let json = serde_json::to_string_pretty(&saved).expect("projects always serialize");
@@ -596,8 +616,8 @@ mod tests {
         assert_eq!(project.video_display_name(), None);
         let video = PathBuf::from("clips/take 3.mp4");
         // The video's own sound is named without the extension, so it doesn't clash.
-        assert_eq!(resource_name_for(&video, ResourceKind::Video), "take 3.mp4");
-        assert_eq!(resource_name_for(&video, ResourceKind::Audio), "take 3");
+        assert_eq!(resource_name_for(&video, TrackKind::Video), "take 3.mp4");
+        assert_eq!(resource_name_for(&video, TrackKind::Audio), "take 3");
         let id = project.add_resource(ResourceKind::Video, "take 3.mp4", &video, None);
         assert_eq!(
             project.add_track_for(id, 0.0).as_deref(),
@@ -634,7 +654,10 @@ mod tests {
         assert_eq!(timeline.tracks[0].gain, 0.5);
         assert_eq!(
             project.bus_users("Stems"),
-            (vec!["kick".to_owned()], vec!["stems".to_owned()])
+            (
+                vec!["kick".to_owned()],
+                vec![("Graph".to_owned(), "stems".to_owned())]
+            )
         );
 
         // Renaming follows the tracks and bus outputs; the Audio Output has no bus to follow.
@@ -643,7 +666,8 @@ mod tests {
         assert!(project.rename_bus("Main", "Music"));
         assert_eq!(project.tracks[0].bus, "Drums");
         let bus_of = |p: &Project, id: &str| {
-            audio_output_bus(p.graph.nodes.iter().find(|n| n.id == id).unwrap()).to_owned()
+            let graph = p.graph(Project::FIRST_GRAPH).unwrap();
+            audio_output_bus(graph.nodes.iter().find(|n| n.id == id).unwrap()).to_owned()
         };
         assert_eq!(bus_of(&project, "sound"), "");
         assert_eq!(bus_of(&project, "stems"), "Drums");
@@ -654,6 +678,25 @@ mod tests {
         assert_eq!(project.tracks[0].bus, "Music");
         assert_eq!(bus_of(&project, "stems"), "Drums");
         assert!(!project.remove_bus("Music"));
+    }
+
+    #[test]
+    fn renaming_a_bus_follows_audio_bus_outputs_in_every_graph() {
+        let mut project = Project::new(graph());
+        project.buses.push(Bus::new("Stems", 2));
+        let stems = GraphDesc::from_json(
+            r#"{ "version": 0, "nodes": [
+                { "id": "out", "type": "audio_bus_output", "params": { "bus": "Stems" } } ] }"#,
+        )
+        .unwrap();
+        let other = project.add_graph("Other", Some(stems));
+        assert_eq!(
+            project.bus_users("Stems").1,
+            [("Other".to_owned(), "out".to_owned())]
+        );
+        assert!(project.rename_bus("Stems", "Drums"));
+        let node = &project.graph(other).unwrap().nodes[0];
+        assert_eq!(audio_output_bus(node), "Drums");
     }
 
     #[test]
@@ -687,7 +730,11 @@ mod tests {
             crate::SOURCE_PARAM.into(),
             ParamValue::Text("track:a".into()),
         );
-        project.graph.nodes.push(kick);
+        project
+            .graph_mut(Project::FIRST_GRAPH)
+            .unwrap()
+            .nodes
+            .push(kick);
         // Taken, empty and unknown names are refused; its own name is fine.
         assert!(!project.rename_track("a", "b"));
         assert!(!project.rename_track("a", "  "));
@@ -696,7 +743,10 @@ mod tests {
         assert!(project.rename_track("a", " kick "));
         assert!(project.has_track("kick") && !project.has_track("a"));
         assert_eq!(
-            crate::input_ports(&project.graph).last().unwrap().source,
+            crate::input_ports(project.graph(Project::FIRST_GRAPH).unwrap())
+                .last()
+                .unwrap()
+                .source,
             crate::Source::Track("kick".into())
         );
         // Graph tracks share the names.
@@ -894,11 +944,7 @@ mod tests {
         project.save(&path).unwrap();
         assert_eq!(Project::load(&path).unwrap().max_warmup_frames, 400);
 
-        std::fs::write(
-            &path,
-            r#"{ "version": 0, "max_warmup_frames": 1000000, "graph": { "version": 0, "nodes": [] } }"#,
-        )
-        .unwrap();
+        std::fs::write(&path, r#"{ "version": 0, "max_warmup_frames": 1000000 }"#).unwrap();
         assert_eq!(
             Project::load(&path).unwrap().max_warmup_frames,
             MAX_WARMUP_FRAMES_LIMIT
@@ -920,6 +966,7 @@ mod tests {
 #[cfg(test)]
 mod inspect_rate_tests {
     use super::*;
+    use crate::timeline::LabelColor;
 
     #[test]
     fn inspect_rate_round_trips_defaults_and_is_limited_on_load() {
@@ -939,55 +986,105 @@ mod inspect_rate_tests {
         project.save(&path).unwrap();
         assert_eq!(Project::load(&path).unwrap().inspect_rate, 12.0);
 
-        std::fs::write(
-            &path,
-            r#"{ "version": 0, "inspect_rate": 5000, "graph": { "version": 0, "nodes": [] } }"#,
-        )
-        .unwrap();
+        std::fs::write(&path, r#"{ "version": 0, "inspect_rate": 5000 }"#).unwrap();
         assert_eq!(Project::load(&path).unwrap().inspect_rate, 30.0);
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
-    fn graphs_are_kept_and_swapped_in_when_opened() {
+    fn graph_resources_are_added_duplicated_renamed_and_removed() {
         let starter = GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap();
         let mut project = Project::new(starter.clone());
-        assert_eq!(project.graph_entries().len(), 1);
-        let new = project.add_graph("Graph", None);
-        // Names stay unique, and the template is the passthrough.
-        assert_eq!(project.graph_entries()[1].name, "Graph_2");
-        assert_eq!(project.graphs[0].graph.nodes.len(), 4);
-
-        assert!(project.open_graph(new));
-        assert_eq!(project.graph.nodes.len(), 4);
         assert_eq!(
-            (project.graph_id, project.graph_name.as_str()),
-            (new, "Graph_2")
+            project.graph_ids().collect::<Vec<_>>(),
+            [Project::FIRST_GRAPH]
         );
-        // The graph that was open is stored in its place, as it was.
-        assert_eq!(project.graphs[0].graph, starter);
-        // The open graph can't be opened again or removed; a stored one can.
-        assert!(!project.open_graph(new));
-        assert!(!project.remove_graph(new));
-        let copy = project.duplicate_graph(new).unwrap();
-        assert!(project.rename_graph(copy, "Copy"));
-        assert!(project.remove_graph(copy));
-        assert!(project.rename_graph(1, "Graph_2"));
-        assert_eq!(
-            project
-                .graph_entries()
-                .iter()
-                .filter(|g| g.name == "Graph_2")
-                .count(),
-            1
-        );
+        let new = project.add_graph("", None);
+        // Names stay unique, a blank name is the default, and the template is the passthrough.
+        let new_graph = project.resource(new).unwrap();
+        assert_eq!(new_graph.name, "Graph_2");
+        assert_eq!(new_graph.kind(), ResourceKind::Graph);
+        assert_eq!(project.graph(new).unwrap().nodes.len(), 4);
+        assert_eq!(project.graph(Project::FIRST_GRAPH), Some(&starter));
 
-        // They survive saving.
+        // A copy is a graph of its own with the original's colour; a stream of a file can't be
+        // copied.
+        project.set_resource_color(new, Some(LabelColor::Pink));
+        let copy = project.duplicate_resource(new).unwrap();
+        assert_eq!(project.resource(copy).unwrap().name, "Graph_2 copy");
+        assert_eq!(
+            project.resource(copy).unwrap().color,
+            Some(LabelColor::Pink)
+        );
+        project.graph_mut(copy).unwrap().nodes.clear();
+        assert_eq!(project.graph(new).unwrap().nodes.len(), 4);
+        let song = project.add_resource(ResourceKind::Audio, "song", "song.wav", None);
+        assert_eq!(project.duplicate_resource(song), None);
+        project.remove_resource(song);
+
+        assert!(project.rename_resource(copy, "Copy"));
+        assert!(project.rename_resource(Project::FIRST_GRAPH, "Graph_2"));
+        assert_eq!(
+            project.resource(Project::FIRST_GRAPH).unwrap().name,
+            "Graph_2_2"
+        );
+        project.remove_resource(copy);
+        assert_eq!(project.graph_ids().count(), 2);
+
+        // They survive saving, kind and all.
         let dir = std::env::temp_dir().join("rastersong-graph-resources");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("p.rastersong");
         project.save(&path).unwrap();
+        let json = std::fs::read_to_string(&path).unwrap();
+        assert!(json.contains(r#""kind": "graph""#), "{json}");
         assert_eq!(Project::load(&path).unwrap(), project);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn graphs_and_media_share_one_name_namespace() {
+        let mut project =
+            Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
+        let song = project.add_resource(ResourceKind::Audio, "Graph", "song.wav", None);
+        assert_eq!(project.resource(song).unwrap().name, "Graph_2");
+        let graph = project.add_graph("song", None);
+        assert!(project.rename_resource(song, "song"));
+        assert_eq!(project.resource(song).unwrap().name, "song_2");
+        assert_eq!(project.resource(graph).unwrap().name, "song");
+    }
+
+    #[test]
+    fn graph_resources_take_label_colours() {
+        let mut project =
+            Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
+        assert!(project.set_resource_color(Project::FIRST_GRAPH, Some(LabelColor::Green)));
+        let json = serde_json::to_string(&project).unwrap();
+        let back: Project = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            back.resource(Project::FIRST_GRAPH).unwrap().color,
+            Some(LabelColor::Green)
+        );
+    }
+
+    #[test]
+    fn a_graph_item_of_an_unknown_graph_or_of_media_is_rejected_on_load() {
+        let dir = std::env::temp_dir().join(format!("rastersong-unknown-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("p.rastersong");
+        let mut project =
+            Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
+        let song = project.add_resource(ResourceKind::Audio, "song", "song.wav", None);
+        let track = project.add_graph_track("FX");
+        project.place_graph(&track, Project::FIRST_GRAPH, 0.0, 1.0);
+        project.save(&path).unwrap();
+        assert!(Project::load(&path).is_ok());
+        for wrong in [ResourceId(99), song] {
+            project.graph_tracks[0].items[0].graph = wrong;
+            project.save(&path).unwrap();
+            let error = Project::load(&path).unwrap_err();
+            assert!(error.contains("\"FX\""), "{error}");
+        }
         std::fs::remove_dir_all(&dir).ok();
     }
 

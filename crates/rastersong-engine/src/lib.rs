@@ -26,16 +26,18 @@ pub use audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE};
 pub use cache::{CacheKey, Frame, FrameCache};
 pub use clock::PlaybackClock;
 pub use composition::{
-    ComposedGraphTrack, Composition, InputKind, InputPort, MediaTrack, input_ports, port_of,
+    ComposedGraph, ComposedGraphTrack, Composition, InputKind, InputPort, MediaTrack, input_ports,
+    port_of,
 };
 pub use error::EngineError;
 pub use listen::ListenTarget;
 pub use offline::{FrameSink, RenderSettings, RenderedFrame, render};
 pub use project::{
-    DEFAULT_INSPECT_RATE, DEFAULT_MAX_WARMUP_FRAMES, Edge, GraphEntry, GraphTrack,
-    INSPECT_RATE_RANGE, ItemRef, LoopRegion, MAX_WARMUP_FRAMES_LIMIT, MIN_ITEM_LENGTH,
+    DEFAULT_GRAPH_NAME, DEFAULT_INSPECT_RATE, DEFAULT_MAX_WARMUP_FRAMES, Edge, GraphTrack,
+    INSPECT_RATE_RANGE, ItemRef, LoopRegion, MAX_WARMUP_FRAMES_LIMIT, MIN_ITEM_LENGTH, MediaFile,
     PASSTHROUGH_GRAPH, PROJECT_EXTENSION, PROJECT_VERSION, Project, ProjectTrack, RATE_RANGE,
-    Resource, ResourceId, ResourceKind, StoredGraph, TimelineMode, resource_name_for, snap_offset,
+    Resource, ResourceContent, ResourceId, ResourceKind, TimelineMode, resource_name_for,
+    snap_offset,
 };
 pub use rastersong_graph::dsp::Fft;
 pub use rastersong_graph::nodes::support::UNBOUNDED_WARMUP;
@@ -59,8 +61,8 @@ pub use rastersong_media::{
     VideoInfo, export_formats, lgpl_url,
 };
 pub use renderer::{
-    DEFAULT_AUDIO_TRACK, OutputSize, RenderInfo, RenderTrack, Renderer, TrackMedia, VIDEO_SOURCE,
-    single_composition,
+    DEFAULT_AUDIO_TRACK, OutputSize, RenderInfo, RenderTrack, Renderer, SINGLE_GRAPH, TrackMedia,
+    VIDEO_SOURCE, single_composition,
 };
 pub use service::{
     CacheUse, Engine, EngineConfig, EngineStatus, Failure, LoadedTrack, PreviewScale, RenderDelays,

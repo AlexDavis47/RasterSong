@@ -13,8 +13,8 @@ use rastersong_media::{MediaBackend, MediaError, Rational, VideoSource};
 use crate::EngineError;
 use crate::audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE, SinkResampler};
 use crate::compose::{Compose, ComposePlan, MediaInfo, MediaReader, Stream, mix_layout};
-use crate::composition::{ComposedGraphTrack, Composition, MediaTrack};
-use crate::project::{DEFAULT_MAX_WARMUP_FRAMES, MAX_WARMUP_FRAMES_LIMIT};
+use crate::composition::{ComposedGraph, ComposedGraphTrack, Composition, MediaTrack};
+use crate::project::{DEFAULT_MAX_WARMUP_FRAMES, MAX_WARMUP_FRAMES_LIMIT, ResourceId};
 use crate::sources::{Modulator, fill_video, to_rgb8};
 use crate::timeline::{Bus, GraphItem, Item, Timebase, TrackKind, item_at, items_end};
 
@@ -257,10 +257,13 @@ impl std::fmt::Debug for Renderer {
     }
 }
 
-/// The composition of a render of one graph: every track, and `graph` (id 0) on one graph track
-/// for the whole timeline, its main inputs reading the mix.
-pub fn single_composition(tracks: &[RenderTrack]) -> Composition {
-    let item = GraphItem::new(0, 0.0, f64::INFINITY);
+/// The id [`single_composition`] gives its graph.
+pub const SINGLE_GRAPH: ResourceId = ResourceId(0);
+
+/// The composition of a render of one graph: every track, and `graph` (as [`SINGLE_GRAPH`]) on
+/// one graph track for the whole timeline, its main inputs reading the mix.
+pub fn single_composition(tracks: &[RenderTrack], graph: &GraphDesc) -> Composition {
+    let item = GraphItem::new(SINGLE_GRAPH, 0.0, f64::INFINITY);
     Composition {
         tracks: tracks
             .iter()
@@ -279,8 +282,11 @@ pub fn single_composition(tracks: &[RenderTrack]) -> Composition {
             name: String::new(),
             items: vec![item],
         }],
-        graphs: Vec::new(),
-        open: 0,
+        graphs: vec![ComposedGraph {
+            id: SINGLE_GRAPH,
+            name: String::new(),
+            desc: graph.clone(),
+        }],
     }
 }
 
@@ -301,13 +307,13 @@ impl Renderer {
         registry: &Registry,
         size: OutputSize,
     ) -> Result<Self, EngineError> {
-        let composition = single_composition(tracks);
+        let composition = single_composition(tracks, graph);
         Self::build(
             backend,
             timebase,
             tracks,
             &composition,
-            graph,
+            Some(SINGLE_GRAPH),
             true,
             tempo,
             bus,
@@ -317,15 +323,15 @@ impl Renderer {
     }
 
     /// [`Self::new`] for a project's composition: `tracks` are the tracks that play media, by
-    /// the names `composition` gives them, and `open` is the open graph's description, which the
-    /// composition leaves out.
+    /// the names `composition` gives them, and `inspect` is the graph editors inspect: taps,
+    /// levels and stats come from its items first.
     #[allow(clippy::too_many_arguments)]
     pub fn with_composition(
         backend: &dyn MediaBackend,
         timebase: Option<Timebase>,
         tracks: &[RenderTrack],
         composition: &Composition,
-        open: &GraphDesc,
+        inspect: Option<ResourceId>,
         tempo: Tempo,
         bus: &Bus,
         registry: &Registry,
@@ -336,7 +342,7 @@ impl Renderer {
             timebase,
             tracks,
             composition,
-            open,
+            inspect,
             false,
             tempo,
             bus,
@@ -351,7 +357,7 @@ impl Renderer {
         timebase: Option<Timebase>,
         tracks: &[RenderTrack],
         composition: &Composition,
-        open: &GraphDesc,
+        inspect: Option<ResourceId>,
         single: bool,
         tempo: Tempo,
         bus: &Bus,
@@ -460,7 +466,7 @@ impl Renderer {
             .collect();
         let compose = Compose::build(ComposePlan {
             composition,
-            open,
+            inspect,
             media,
             registry,
             options: &options,
@@ -580,14 +586,14 @@ impl Renderer {
     /// `None` if there is no such output (the node doesn't feed the graph's output).
     /// Read-only: nothing about the render changes.
     ///
-    /// This reads the FX that ran in the last processed source frame, those playing the open
-    /// graph first, the master's before the tracks'.
+    /// This reads the FX that ran in the last processed source frame, those playing the
+    /// inspected graph first, the master's before the tracks'.
     pub fn tap(&self, node: &str, output: usize) -> Option<&Signal> {
         self.compose.tap(node, output)
     }
 
     /// The level of every node output in the last rendered frame: of the first FX that ran
-    /// playing the open graph, else the first FX that ran; likewise for the costs, meters and
+    /// playing the inspected graph, else the first FX that ran; likewise for the costs, meters and
     /// parameter levels below.
     pub fn levels(&self) -> Vec<OutputLevel> {
         self.compose.levels()
@@ -612,13 +618,13 @@ impl Renderer {
         &self.info
     }
 
-    /// The sources, frame rate, tempo and output size the open graph was compiled against: as
+    /// The sources, frame rate, tempo and output size the inspected graph was compiled against: as
     /// its first FX, else as the master's.
     pub fn compile_options(&self) -> &CompileOptions {
         self.compose.compile_options().unwrap_or(&self.options)
     }
 
-    /// Each node's own latency and warmup: the open graph's first FX's, else the first FX's.
+    /// Each node's own latency and warmup: the inspected graph's first FX's, else the first FX's.
     pub fn node_stats(&self) -> &[rastersong_graph::NodeStats] {
         self.compose.node_stats()
     }

@@ -17,7 +17,7 @@ use crate::cache::{CacheKey, Frame, FrameCache};
 use crate::composition::Composition;
 use crate::listen::{self, ListenTarget, Listened};
 use crate::playback::RenderedSource;
-use crate::project::{DEFAULT_MAX_WARMUP_FRAMES, MAX_WARMUP_FRAMES_LIMIT};
+use crate::project::{DEFAULT_MAX_WARMUP_FRAMES, MAX_WARMUP_FRAMES_LIMIT, ResourceId};
 use crate::renderer;
 use crate::sources::Modulator;
 use crate::tap::{self, TapOutcome, TapRequest};
@@ -128,9 +128,9 @@ pub struct Failure {
     pub node: Option<String>,
     /// The message without the "node `id`:" lead-in, for showing under the node's name.
     pub detail: String,
-    /// The placed graph at fault, by id, when a graph item's graph failed; `None` when the graph
+    /// The graph resource at fault, when a graph item's graph failed; `None` when the graph
     /// given to [`Engine::set_graph`] did. `node` is a node of this graph.
-    pub graph: Option<u32>,
+    pub graph: Option<ResourceId>,
 }
 
 impl Failure {
@@ -263,6 +263,8 @@ struct State {
     /// The project's composition; `None` renders `graph` over the whole timeline, its ports
     /// named after tracks reading them.
     composition: Option<Composition>,
+    /// The graph editors inspect.
+    inspected: Option<ResourceId>,
     /// Skips every graph: the output is the mix.
     bypass_all: bool,
     tempo: Tempo,
@@ -299,10 +301,12 @@ struct State {
 /// The parts of the project a renderer is built from.
 struct Snapshot {
     timeline: Timeline,
-    /// The open graph.
-    graph: GraphDesc,
+    /// The graph rendered over the whole timeline when there is no composition.
+    graph: Option<GraphDesc>,
     /// The project's composition, if it has one.
     composition: Option<Composition>,
+    /// The graph editors inspect.
+    inspected: Option<ResourceId>,
     /// Skips every graph.
     bypass_all: bool,
     tempo: Tempo,
@@ -313,8 +317,8 @@ struct Snapshot {
 /// A renderer built for one version of the project.
 struct Built {
     id: BuildId,
-    /// The open graph it was built with, if it renders a composition.
-    open: Option<u32>,
+    /// The graph editors inspected when it was built.
+    inspected: Option<ResourceId>,
     renderer: Renderer,
 }
 
@@ -325,30 +329,10 @@ impl State {
             rebuilds: self.rebuilds,
         }
     }
-}
 
-/// What the frames are rendered from, out of the open graph and the composition: with a
-/// composition, every graph by id whichever one is open; without, the open graph.
-fn rendered_graphs(
-    graph: Option<&GraphDesc>,
-    composition: Option<&Composition>,
-) -> (Option<GraphDesc>, Option<Composition>) {
-    let registry = Registry::shared();
-    match composition {
-        None => (graph.map(|g| render_form(g, registry)), None),
-        Some(composition) => {
-            let mut composition = composition.clone();
-            let open = composition.open;
-            composition.graphs.retain(|(id, _)| *id != open);
-            if let Some(graph) = graph {
-                composition
-                    .graphs
-                    .push((open, render_form(graph, registry)));
-            }
-            composition.graphs.sort_by_key(|(id, _)| *id);
-            composition.open = 0;
-            (None, Some(composition))
-        }
+    /// Whether there is something to render: tracks, and a composition or a graph.
+    fn renders(&self) -> bool {
+        !self.timeline.tracks.is_empty() && (self.composition.is_some() || self.graph.is_some())
     }
 }
 
@@ -366,6 +350,7 @@ impl Engine {
                 timeline: Timeline::default(),
                 graph: None,
                 composition: None,
+                inspected: None,
                 bypass_all: false,
                 tempo: Tempo::default(),
                 key,
@@ -463,51 +448,44 @@ impl Engine {
         self.change_graphs(None, Some(composition));
     }
 
-    /// Sets the open graph and the composition at once, as [`Self::set_graph`] and
-    /// [`Self::set_composition`] would. Opening another graph swaps the open graph with one of
-    /// the composition's, which renders the same frames: setting both together sees that and
-    /// keeps every rendered frame, only rebuilding for what the editor inspects.
-    pub fn set_graphs(&self, graph: GraphDesc, composition: Option<Composition>) {
-        self.change_graphs(Some(graph), Some(composition));
+    /// The graph editors inspect: taps, levels, costs, meters and node stats come from the
+    /// items playing it first. Inspecting another graph renders the same frames, so it keeps
+    /// every rendered frame and only rebuilds for what is inspected.
+    pub fn set_inspected(&self, graph: Option<ResourceId>) {
+        let mut state = lock(&self.shared.state);
+        if state.inspected == graph {
+            return;
+        }
+        state.inspected = graph;
+        state.rebuilds += 1;
+        state.changes += 1;
+        self.shared.changed.notify_all();
     }
 
-    /// Replaces the open graph and the composition, each if given. An edit only when the
-    /// rendered frames change.
+    /// Replaces the graph and the composition, each if given, in their render form. An edit
+    /// only when the rendered frames change.
     fn change_graphs(&self, graph: Option<GraphDesc>, composition: Option<Option<Composition>>) {
         let registry = Registry::shared();
+        let graph = graph.map(|graph| render_form(&graph, registry));
         let composition = composition.map(|composition| {
             composition.map(|mut composition| {
-                for (_, graph) in &mut composition.graphs {
-                    *graph = render_form(graph, registry);
+                for graph in &mut composition.graphs {
+                    graph.desc = render_form(&graph.desc, registry);
                 }
                 composition
             })
         });
-        let mut state = lock(&self.shared.state);
+        let state = lock(&self.shared.state);
         let graph = graph.or_else(|| state.graph.clone());
         let composition = composition.unwrap_or_else(|| state.composition.clone());
         if graph == state.graph && composition == state.composition {
             return;
         }
-        let before = rendered_graphs(state.graph.as_ref(), state.composition.as_ref());
-        if before != rendered_graphs(graph.as_ref(), composition.as_ref()) {
-            drop(state);
-            self.edit(|state| {
-                state.graph = graph;
-                state.composition = composition;
-            });
-            return;
-        }
-        let open = |c: &Option<Composition>| c.as_ref().map(|c| c.open);
-        let reopened = open(&state.composition) != open(&composition);
-        state.graph = graph;
-        state.composition = composition;
-        if reopened {
-            // The same frames, but the editor inspects another graph's nodes.
-            state.rebuilds += 1;
-            state.changes += 1;
-            self.shared.changed.notify_all();
-        }
+        drop(state);
+        self.edit(|state| {
+            state.graph = graph;
+            state.composition = composition;
+        });
     }
 
     /// Skips every graph: the output shows and plays the mix.
@@ -656,10 +634,7 @@ impl Engine {
     /// is kept, and an answer is dropped when the project is edited.
     pub fn tap(&self, request: &TapRequest) -> TapOutcome {
         let mut state = lock(&self.shared.state);
-        if matches!(state.status, EngineStatus::Failed(_))
-            || state.timeline.tracks.is_empty()
-            || state.graph.is_none()
-        {
+        if matches!(state.status, EngineStatus::Failed(_)) || !state.renders() {
             return TapOutcome::NotRendered;
         }
         if let Some(done) = &*lock(&self.shared.tap_done)
@@ -948,8 +923,7 @@ impl Worker {
     /// The render thread's next job: build the renderer, or render ahead.
     fn render_job(&self, state: &mut State) -> Option<Job> {
         let stuck = self.failed_at == Some(state.changes);
-        if let (false, Some(graph), false) = (state.timeline.tracks.is_empty(), &state.graph, stuck)
-        {
+        if state.renders() && !stuck {
             if self
                 .built
                 .as_ref()
@@ -962,12 +936,12 @@ impl Worker {
             let job = Job::Build {
                 id: state.build_id(),
                 edits: self.shared.edits.load(Ordering::SeqCst),
-                project: Self::snapshot(state, graph),
+                project: Self::snapshot(state),
             };
             state.status = EngineStatus::Loading;
             return Some(job);
         }
-        if state.timeline.tracks.is_empty() || state.graph.is_none() {
+        if !state.renders() {
             state.status = EngineStatus::Idle;
         }
         None
@@ -986,8 +960,7 @@ impl Worker {
             // Nothing is asking, and what it would answer with is out of date.
             self.tap_built = None;
         }
-        let graph = state.graph.as_ref()?;
-        if state.timeline.tracks.is_empty()
+        if !state.renders()
             || (state.tap.is_none() && state.listen.is_none())
             || self.tap_failed == Some(state.build_id())
         {
@@ -1001,7 +974,7 @@ impl Worker {
             return Some(Job::BuildTap {
                 id: state.build_id(),
                 edits: self.shared.edits.load(Ordering::SeqCst),
-                project: Self::snapshot(state, graph),
+                project: Self::snapshot(state),
             });
         }
         if let Some(request) = state.tap.clone() {
@@ -1017,11 +990,12 @@ impl Worker {
     }
 
     /// The parts of the project a renderer is built from.
-    fn snapshot(state: &State, graph: &GraphDesc) -> Snapshot {
+    fn snapshot(state: &State) -> Snapshot {
         Snapshot {
             timeline: state.timeline.clone(),
-            graph: render_form(graph, Registry::shared()),
+            graph: state.graph.clone(),
             composition: state.composition.clone(),
+            inspected: state.inspected,
             bypass_all: state.bypass_all,
             tempo: state.tempo,
             audio_rate: state.audio_rate,
@@ -1079,7 +1053,7 @@ impl Worker {
                 state.audio_sink = renderer.audio_sink();
                 self.built = Some(Built {
                     id,
-                    open: project.composition.as_ref().map(|c| c.open),
+                    inspected: project.inspected,
                     renderer,
                 });
                 self.failed_at = None;
@@ -1109,21 +1083,22 @@ impl Worker {
         let (timebase, bus) = (project.timeline.timebase, project.timeline.master());
         let size = key.scale.output_size();
         let registry = Registry::shared();
-        match (&project.composition, project.bypass_all) {
-            (None, false) => Renderer::new(
+        let graph = project.graph.as_ref();
+        match (&project.composition, graph, project.bypass_all) {
+            (None, Some(graph), false) => Renderer::new(
                 backend,
                 timebase,
                 tracks,
-                &project.graph,
+                graph,
                 project.tempo,
                 &bus,
                 registry,
                 size,
             ),
-            (composition, bypass) => {
-                let composition = composition
-                    .clone()
-                    .unwrap_or_else(|| single_composition(tracks));
+            (composition, graph, bypass) => {
+                let composition = composition.clone().unwrap_or_else(|| {
+                    single_composition(tracks, graph.expect("something to render"))
+                });
                 let composition = if bypass {
                     composition.without_graphs()
                 } else {
@@ -1134,7 +1109,7 @@ impl Worker {
                     timebase,
                     tracks,
                     &composition,
-                    &project.graph,
+                    project.inspected,
                     project.tempo,
                     &bus,
                     registry,
@@ -1164,7 +1139,7 @@ impl Worker {
             Ok(renderer) => {
                 self.tap_built = Some(Built {
                     id,
-                    open: project.composition.as_ref().map(|c| c.open),
+                    inspected: project.inspected,
                     renderer,
                 });
             }
@@ -1493,7 +1468,7 @@ impl Worker {
                     costs: built.renderer.costs().into(),
                     meters: built.renderer.meters().into(),
                     audio: built.renderer.audio().cloned().map(Arc::new),
-                    open: built.open,
+                    inspected: built.inspected,
                 };
                 let playhead = self.shared.playhead.load(Ordering::SeqCst);
                 let inserted = lock(&self.shared.cache).insert(built.id.key, frame, playhead);

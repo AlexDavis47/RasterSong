@@ -22,6 +22,7 @@ use rastersong_graph::{
 
 use crate::EngineError;
 use crate::composition::{Composition, InputKind, input_ports};
+use crate::project::ResourceId;
 use crate::timeline::{GraphItem, Source, TrackKind};
 
 /// The sound the mix and the graph tracks are in: this many samples a second, in the bus's
@@ -191,7 +192,7 @@ impl Sources for PortSources<'_> {
 /// One item's graph, compiled.
 struct FxRt {
     graph: Graph,
-    graph_id: u32,
+    graph_id: ResourceId,
     /// What it was compiled against, for editors inspecting the graph the same way.
     options: CompileOptions,
     latency: usize,
@@ -252,7 +253,7 @@ impl ChainRt {
         outputs: &OutputsView,
         base: i64,
         out: &mut Stream,
-    ) -> Result<(), (GraphError, u32)> {
+    ) -> Result<(), (GraphError, ResourceId)> {
         let mut latency = self.latency_in;
         for k in 0..self.fx.len() {
             let (before, rest) = self.fx.split_at_mut(k);
@@ -304,7 +305,7 @@ impl ChainRt {
             while flags.len() > *own + 1 {
                 flags.pop_front();
             }
-            let _span = tracing::trace_span!("graph", id = *graph_id).entered();
+            let _span = tracing::trace_span!("graph", id = graph_id.0).entered();
             graph
                 .process((f_in + base).max(0) as u64, &PortSources(ports))
                 .map_err(|e| (e, *graph_id))?;
@@ -393,7 +394,7 @@ impl ItemsRt {
         raw: &Stream,
         outputs: &OutputsView,
         cap: usize,
-    ) -> Result<(), (GraphError, u32)> {
+    ) -> Result<(), (GraphError, ResourceId)> {
         let (latency, latency_in) = (self.latency, self.latency_in);
         if latency > latency_in {
             self.raw.push(m - latency_in as i64, raw);
@@ -548,8 +549,8 @@ pub(crate) struct MediaInfo {
 /// What a composition is built from.
 pub(crate) struct ComposePlan<'a> {
     pub composition: &'a Composition,
-    /// The open graph's description, which the composition leaves out.
-    pub open: &'a GraphDesc,
+    /// The graph editors inspect: what taps, levels and stats come from first.
+    pub inspect: Option<ResourceId>,
     /// Each composition track's media, if it plays any that could be opened.
     pub media: Vec<Option<MediaInfo>>,
     pub registry: &'a Registry,
@@ -568,7 +569,9 @@ pub(crate) struct Compose {
     outputs: Vec<NodeOut>,
     /// The node whose output is the master: the top graph track, or the mix.
     master: usize,
-    open: u32,
+    inspect: Option<ResourceId>,
+    /// Every graph's name, for errors.
+    names: HashMap<ResourceId, String>,
     single: bool,
     /// The master's latency: the composition's.
     latency: usize,
@@ -640,6 +643,7 @@ impl Compose {
             }
         }
         let single = self.single;
+        let names = &self.names;
         let empty = Stream::default();
         for n in 0..self.nodes.len() {
             let (before, rest) = self.outputs.split_at_mut(n);
@@ -694,7 +698,7 @@ impl Compose {
                         .unwrap_or(&empty);
                     items
                         .run(m, below, &view, cap)
-                        .map_err(|(e, id)| fx_error(e, id, single))?;
+                        .map_err(|(e, id)| fx_error(e, id, names, single))?;
                     this.out.assign(&items.out);
                 }
             }
@@ -713,17 +717,22 @@ impl Compose {
         self.nodes.iter().rev().flat_map(NodeRt::fx)
     }
 
-    /// The graph editors inspect: the first active one playing the open graph, else the first
-    /// active one.
+    /// Whether `fx` plays the graph editors inspect.
+    fn is_inspected(&self, fx: &FxRt) -> bool {
+        Some(fx.graph_id) == self.inspect
+    }
+
+    /// The graph editors inspect: the first active one playing the inspected graph, else the
+    /// first active one.
     fn inspected(&self) -> Option<&FxRt> {
         self.active()
-            .find(|f| f.graph_id == self.open)
+            .find(|f| self.is_inspected(f))
             .or_else(|| self.active().next())
     }
 
     pub fn tap(&self, node: &str, output: usize) -> Option<&Signal> {
         self.active()
-            .filter(|f| f.graph_id == self.open)
+            .filter(|f| self.is_inspected(f))
             .chain(self.active())
             .find_map(|f| f.graph.tap(node, output))
     }
@@ -752,31 +761,42 @@ impl Compose {
             .unwrap_or_default()
     }
 
-    /// The first item playing the open graph, else the first item.
+    /// The first item playing the inspected graph, else the first item.
     fn stats_fx(&self) -> Option<&FxRt> {
         self.all_fx()
-            .find(|f| f.graph_id == self.open)
+            .find(|f| self.is_inspected(f))
             .or_else(|| self.all_fx().next())
     }
 
-    /// Each node's own latency and warmup, for the open graph's first item.
+    /// Each node's own latency and warmup, for the inspected graph's first item.
     pub fn node_stats(&self) -> &[NodeStats] {
         self.stats_fx().map_or(&[], |f| f.graph.node_stats())
     }
 
-    /// What the open graph's first item was compiled against.
+    /// What the inspected graph's first item was compiled against.
     pub fn compile_options(&self) -> Option<&CompileOptions> {
         self.all_fx()
-            .find(|f| f.graph_id == self.open)
+            .find(|f| self.is_inspected(f))
             .map(|f| &f.options)
     }
 }
 
-fn fx_error(error: GraphError, graph: u32, single: bool) -> EngineError {
+/// The error of graph `graph` failing, named by `names`; a render of one graph fails with the
+/// graph's own error.
+fn fx_error(
+    error: GraphError,
+    graph: ResourceId,
+    names: &HashMap<ResourceId, String>,
+    single: bool,
+) -> EngineError {
     if single {
         EngineError::Graph(error)
     } else {
-        EngineError::Fx { graph, error }
+        EngineError::Fx {
+            graph,
+            name: names.get(&graph).cloned().unwrap_or_default(),
+            error,
+        }
     }
 }
 
@@ -795,7 +815,8 @@ fn item_base(item: &GraphItem, fps: f64) -> i64 {
 /// Compiles a composition.
 struct Builder<'a> {
     plan: &'a ComposePlan<'a>,
-    graphs: HashMap<u32, &'a GraphDesc>,
+    graphs: HashMap<ResourceId, &'a GraphDesc>,
+    names: HashMap<ResourceId, String>,
     video_layout: Layout,
     mix: Layout,
     /// The mix's node; the tracks' are before it, the graph tracks' after it.
@@ -815,12 +836,12 @@ impl<'a> Builder<'a> {
     fn new(plan: &'a ComposePlan<'a>) -> Self {
         let comp = plan.composition;
         let nodes = comp.tracks.len() + 1 + comp.graph_tracks.len();
-        let mut graphs: HashMap<u32, &GraphDesc> =
-            comp.graphs.iter().map(|(id, g)| (*id, g)).collect();
-        graphs.insert(comp.open, plan.open);
+        let graphs = comp.graphs.iter().map(|g| (g.id, &g.desc)).collect();
+        let names = comp.graphs.iter().map(|g| (g.id, g.name.clone())).collect();
         Self {
             plan,
             graphs,
+            names,
             video_layout: plan.options.output,
             mix: mix_layout(plan.bus.channels, plan.fps),
             mix_node: comp.tracks.len(),
@@ -1005,7 +1026,8 @@ impl<'a> Builder<'a> {
             nodes,
             outputs,
             master,
-            open: comp.open,
+            inspect: self.plan.inspect,
+            names: std::mem::take(&mut self.names),
             single: self.plan.single,
             warmup: warmups[master],
             renders_audio: !self.mix_sound[master],
@@ -1099,7 +1121,7 @@ impl<'a> Builder<'a> {
             ..self.plan.options.clone()
         };
         let graph = Graph::compile(desc, self.plan.registry, &options)
-            .map_err(|e| fx_error(e, item.graph, self.plan.single))?;
+            .map_err(|e| fx_error(e, item.graph, &self.names, self.plan.single))?;
         // The item's sound is the mix when its Audio Output is wired straight from a port that
         // reads the mix: what is below, when that is the mix, or the mix itself. A render of one
         // graph keeps the old rule that a graph without an Audio Output leaves the sound alone.

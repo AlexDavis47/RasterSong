@@ -3,7 +3,7 @@
 //! here, so nothing else holds a colour literal.
 
 use eframe::egui::{self, Color32, CornerRadius};
-use rastersong_engine::{Category, Kind, LabelColor, Part, Tag, TagRule, TrackKind};
+use rastersong_engine::{Category, Kind, LabelColor, Part, ResourceKind, Tag, TagRule, TrackKind};
 use rastersong_lang::tr;
 use serde::{Deserialize, Serialize};
 
@@ -482,6 +482,16 @@ impl Theme {
     /// How label colour `label` is drawn.
     pub fn label_colors(&self, label: LabelColor) -> &ItemColors {
         &self.item_labels[label as usize]
+    }
+
+    /// How a resource of `kind` and its items are drawn: in its label colour when it has one.
+    pub fn resource_colors(&self, kind: ResourceKind, label: Option<LabelColor>) -> &ItemColors {
+        match (label, kind) {
+            (Some(label), _) => self.label_colors(label),
+            (None, ResourceKind::Video) => &self.video_item,
+            (None, ResourceKind::Audio) => &self.audio_item,
+            (None, ResourceKind::Graph) => &self.graph_item,
+        }
     }
 
     /// How an item on a track of `kind` is drawn: in its resource's label colour when it has one.

@@ -28,9 +28,9 @@ pub struct RenderSettings {
     pub audio_rate: Option<u32>,
     /// The output bus whose sound is rendered.
     pub bus: Bus,
-    /// The project's composition ([`crate::Project::composition`]), with `graph` the open
-    /// graph's description. `None` renders `graph` over the whole timeline, its ports named
-    /// after tracks reading them.
+    /// The project's composition ([`crate::Project::composition`]); `graph` is unused with one.
+    /// `None` renders `graph` over the whole timeline, its ports named after tracks reading
+    /// them.
     pub composition: Option<Composition>,
 }
 
@@ -76,7 +76,7 @@ pub fn render(
             settings.timebase,
             tracks,
             composition,
-            graph,
+            None,
             settings.tempo,
             &settings.bus,
             Registry::shared(),

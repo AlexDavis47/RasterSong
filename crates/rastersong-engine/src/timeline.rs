@@ -12,6 +12,8 @@ use rastersong_graph::nodes::DEFAULT_BUS;
 use rastersong_media::{AudioOptions, Rational};
 use serde::{Deserialize, Serialize};
 
+use crate::project::ResourceId;
+
 /// Seconds over which audio fades in at the start of each item and out at its end, so cuts
 /// don't click. Fixed for now; never more than half the item.
 pub const EDGE_FADE: f64 = 0.005;
@@ -180,8 +182,8 @@ impl Source {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GraphItem {
-    /// The graph, by its id among the project's graphs.
-    pub graph: u32,
+    /// The graph, by its resource's id.
+    pub graph: ResourceId,
     /// Seconds into the project where the item starts.
     pub position: f64,
     /// How long it lasts, in seconds.
@@ -201,7 +203,7 @@ pub struct GraphItem {
 
 impl GraphItem {
     /// Graph `graph` from `position` for `length` seconds.
-    pub fn new(graph: u32, position: f64, length: f64) -> Self {
+    pub fn new(graph: ResourceId, position: f64, length: f64) -> Self {
         Self {
             graph,
             position,

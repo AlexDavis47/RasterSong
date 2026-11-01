@@ -202,12 +202,13 @@ renders a connection's sound ahead of a position, for the listen key. Both are r
 A project hands the engine its **composition** (`Project::composition`, `Engine::set_composition`): the video and
 audio tracks, video first, each with its volume, bus and whether it is in the mix (not muted, not left out by a
 solo); the graph tracks, top first, with the items that play (muted tracks and items are left out, and bypassing
-graphs leaves out all of them); and the stored graphs. The open graph's description comes separately because it
-changes as it is edited; the app sends both at once with `Engine::set_graphs`. Graphs are normalised with
-`render_form`, so labels and positions are not edits; any other change cancels and re-renders. Which graph is open
-is not an edit either: the frames are compared as rendered from every graph by id, so opening another graph keeps
-the cache and only rebuilds the renderer for what the editor inspects. A kept frame records the graph that was open
-(`Frame::open`), and the app shows its levels, parameters, costs and meters only while that graph is still open. Offline, the CLI's `rastersong render <project>
+graphs leaves out all of them); and every graph resource (`ComposedGraph`: its id, name and description), the one
+the editor shows included, as it is now. Graphs are normalised with `render_form`, so labels and positions are not
+edits; any other change cancels and re-renders. Which graph the editor shows is not part of the composition:
+`Engine::set_inspected` names the graph resource whose taps, levels and statistics the editor wants. Inspecting
+another graph renders the same frames, so it keeps the cache and only rebuilds the renderer for what is inspected.
+A kept frame records the graph inspected when it was rendered (`Frame::inspected`), and the app shows its levels,
+parameters, costs and meters only while that graph is still the open one. Offline, the CLI's `rastersong render <project>
 <out>` passes the composition in `RenderSettings::composition`.
 
 **Graph items.** A `GraphItem` places a graph on a graph track: position, length, `start` (seconds into the graph's
@@ -239,8 +240,8 @@ setting names (`below` by default); a Named Input reads a Named Output by its `t
 
 The graph is filled by name: `Video` and `Audio` for inputs reading what is below, and for the others a name
 built from their kind and settings (`source_key`, `named_key`), so nodes reading the same thing share one signal and a picture and a sound of
-one track never mix. With no composition (`None`), the engine renders the open graph over the whole timeline on one
-graph track (`single_composition`), its main inputs reading the mix, which the CLI's `render <video> <audio>
+one track never mix. With no composition (`None`), the engine renders the graph given to `Engine::set_graph` over the
+whole timeline on one graph track (`single_composition`, the graph as `SINGLE_GRAPH`), its main inputs reading the mix, which the CLI's `render <video> <audio>
 <graph>` and the tests rely on.
 
 **No passthrough.** Every graph needs its Output (compiling one without fails). A graph with no Audio Output on the
@@ -280,13 +281,13 @@ wired straight from a port reading the mix, at its own volume, directly or throu
 plays the mix (`AudioSink::TrackMix`), which keeps playback real-time. Otherwise the render's sound is the master's
 (`AudioSink::Rendered`), through the same sink as one graph's (resample, sanitize, clip).
 
-**Taps, levels and statistics.** `tap` looks in the graphs that ran in the last source step, those of the open graph
-first, the top graph track's first. `levels`, `costs`, `meters` and `param_levels` come from the first graph that
-ran playing the open graph, else the first that ran; `node_stats` and `compile_options` describe the open graph's
-first item, else the first. The tap renderer is built the same way as the render-ahead renderer.
+**Taps, levels and statistics.** `tap` looks in the graphs that ran in the last source step, those of the inspected
+graph first, the top graph track's first. `levels`, `costs`, `meters` and `param_levels` come from the first graph
+that ran playing the inspected graph, else the first that ran; `node_stats` and `compile_options` describe the
+inspected graph's first item, else the first. The tap renderer is built the same way as the render-ahead renderer.
 
-**Errors.** A graph that cannot compile fails the build (`EngineError::Fx`), and the failure names the graph's id
-and the node at fault.
+**Errors.** A graph that cannot compile fails the build (`EngineError::Fx`): the message names the graph resource,
+and the failure carries its id (`Failure::graph`) and the node at fault.
 
 ## Export / Offline Rendering
 
@@ -298,8 +299,8 @@ a `progress` callback, which cancels the render (`EngineError::Cancelled`) by re
 
 `export::export` is the one export path, used by the CLI and the GUI:
 
-- `ExportJob::from_project` takes the timeline, the render form of the open graph, the composition, tempo and audio
-  rate. `ExportJob::load` decodes each audio track (through the audio cache) into the render's tracks and the
+- `ExportJob::from_project` takes the timeline, the composition with every graph in its render form, the tempo and
+  the audio rate. `ExportJob::load` decodes each audio track (through the audio cache) into the render's tracks and the
   sources of the track mix.
 - `FileSink` writes the frames through `MediaWriter` (see [Media](media.md)) with the bus's sound: the graph's
   Audio Output as it renders, or else the track mix of the tracks routed to the bus.

@@ -752,6 +752,28 @@ colour of their own. A resource's colour is one of eight named labels rather tha
 bar and text that stay legible (the theme test checks their contrast) and the file stores a word, not a colour that
 only suits one theme.
 
+### Graphs are resources (October 2026)
+
+Media and graphs had grown two parallel copies of every layer: graphs were not resources but an open graph plus a
+list of stored ones that swapped places, graph tracks and graph items had their own types and their own one-item
+editing calls, and the panel and the timeline had a second path for each. Every feature since landed on one side
+only (colours, groups and multi-select on media; moving across tracks on graphs), and a few bugs hid in the gaps.
+They are being merged into one resource, one track, one item and one path, in stages ([Roadmap](roadmap.md#timeline)).
+The first stage:
+
+- **A graph is a resource.** `Resource` holds its `content`: a stream of a linked file (video or audio) or a graph.
+  Names, colours, rename, remove, duplicate and "used by" are the same calls for both, and one set of names covers
+  every resource. Kind-specific behaviour asks the kind (`ResourceKind::reads_file` for missing files and
+  Relocate, `duplicates` for Duplicate) instead of taking a second path. This completes the stepping stone noted in
+  [Empty tracks, Relocate and graph resources](#empty-tracks-relocate-and-graph-resources-october-2026).
+- **Which graph the editor shows is the app's state, not the project's.** The project no longer has an open graph:
+  the engine gets every graph in the composition and is told which one the editor inspects
+  (`Engine::set_inspected`), which renders the same frames and only changes where taps, levels and statistics come
+  from. It isn't saved; a project opens on its first graph. Saving it would make opening a graph an unsaved change.
+- **Removing a graph removes its items and leaves its graph tracks.** A graph track isn't tied to one graph, unlike a
+  media track to its resource (until tracks are merged too).
+- **Errors name graphs by name.** A failing graph is named by its resource's name rather than its id.
+
 ### No Bypass graphs switch (October 2026)
 
 The canvas header's **Bypass graphs** button and the project's `bypass_graph` flag are gone. The preview's

@@ -27,10 +27,9 @@ pub fn graph_item_inspector(
     };
     let theme = Theme::of(ui.ctx());
     let name = project
-        .graph_entries()
-        .into_iter()
-        .find(|g| g.id == it.graph)
-        .map(|g| g.name);
+        .graph(it.graph)
+        .and_then(|_| project.resource(it.graph))
+        .map(|r| r.name.clone());
     inspector_header(ui, |ui| {
         kind_row(
             ui,

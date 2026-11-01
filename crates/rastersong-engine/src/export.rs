@@ -20,10 +20,11 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct ExportJob {
     pub timeline: Timeline,
-    /// The graph rendered over the whole timeline, or, with `composition`, the description of
-    /// the open graph among the project's graphs. A project without graph items renders its mix.
+    /// The graph rendered over the whole timeline when there is no `composition`; unused with
+    /// one.
     pub graph: GraphDesc,
-    /// The project's composition; `None` renders `graph` over the whole timeline.
+    /// The project's composition, its graphs in their render form; `None` renders `graph` over
+    /// the whole timeline. A project without graph items renders its mix.
     pub composition: Option<Composition>,
     pub tempo: Tempo,
     pub audio_rate: u32,
@@ -31,12 +32,18 @@ pub struct ExportJob {
 
 impl ExportJob {
     pub fn from_project(project: &Project) -> Self {
+        let mut composition = project.composition();
+        for graph in &mut composition.graphs {
+            graph.desc = render_form(&graph.desc, Registry::shared());
+        }
         Self {
             timeline: project.timeline(),
-            // The open graph is applied only where a graph item uses it; without one the mix
-            // is rendered.
-            graph: render_form(&project.graph, Registry::shared()),
-            composition: Some(project.composition()),
+            graph: GraphDesc {
+                version: rastersong_graph::FORMAT_VERSION,
+                nodes: Vec::new(),
+                connections: Vec::new(),
+            },
+            composition: Some(composition),
             tempo: project.tempo,
             audio_rate: project.audio_rate,
         }

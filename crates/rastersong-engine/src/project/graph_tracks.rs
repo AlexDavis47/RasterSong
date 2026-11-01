@@ -4,12 +4,12 @@
 //! frame the topmost active item's outputs are the master. What a graph reads is set on its input
 //! nodes, not on its items. See [Composition](../../../../docs/engine.md#composition).
 
+use rastersong_graph::ParamValue;
 use rastersong_graph::nodes::{AUDIO_INPUT, NAMED_INPUT, SOURCE_PARAM, TRACK_PARAM, VIDEO_INPUT};
-use rastersong_graph::{GraphDesc, ParamValue};
 use serde::{Deserialize, Serialize};
 
-use super::{Edge, MIN_ITEM_LENGTH, Project};
-use crate::composition::{ComposedGraphTrack, Composition, MediaTrack};
+use super::{Edge, MIN_ITEM_LENGTH, Project, ResourceId};
+use crate::composition::{ComposedGraph, ComposedGraphTrack, Composition, MediaTrack};
 use crate::timeline::{GraphItem, Source};
 
 /// A track of graph items.
@@ -41,15 +41,6 @@ impl GraphTrack {
 }
 
 impl Project {
-    /// The description of graph `id`, open or stored.
-    pub fn graph_desc(&self, id: u32) -> Option<&GraphDesc> {
-        if id == self.graph_id {
-            Some(&self.graph)
-        } else {
-            self.graphs.iter().find(|g| g.id == id).map(|g| &g.graph)
-        }
-    }
-
     /// Whether any graph item plays. Without one nothing is applied: the output is the plain
     /// mix.
     pub fn has_graph_items(&self) -> bool {
@@ -112,8 +103,14 @@ impl Project {
     /// Places graph `graph` on graph track `track` from `at` for `length` seconds, trimming
     /// whatever it lands on. Returns the item's index, or `None` for a track or graph that
     /// doesn't exist.
-    pub fn place_graph(&mut self, track: &str, graph: u32, at: f64, length: f64) -> Option<usize> {
-        self.graph_desc(graph)?;
+    pub fn place_graph(
+        &mut self,
+        track: &str,
+        graph: ResourceId,
+        at: f64,
+        length: f64,
+    ) -> Option<usize> {
+        self.graph(graph)?;
         let item = GraphItem::new(graph, at.max(0.0), length.max(MIN_ITEM_LENGTH));
         let track = self.graph_track_mut(track)?;
         Some(insert_over(&mut track.items, item))
@@ -233,18 +230,6 @@ impl Project {
         self.graph_track_mut(track)?.items.get_mut(item)
     }
 
-    /// Replaces the open graph with `graph`, its edited version.
-    pub fn set_open_graph(&mut self, graph: GraphDesc) {
-        self.graph = graph;
-    }
-
-    /// Removes every item that places graph `graph`; used when the graph is deleted.
-    pub fn remove_graph_items(&mut self, graph: u32) {
-        for track in &mut self.graph_tracks {
-            track.items.retain(|i| i.graph != graph);
-        }
-    }
-
     /// Whether `source` names something the project has: a track for a stem, a graph track for
     /// a graph track's output. Whether a graph track is below the item reading it depends on
     /// where the item is, so it isn't checked.
@@ -259,9 +244,7 @@ impl Project {
     /// Points every input reading track `old` (a stem or a graph track), in every graph, at
     /// `new`.
     pub(super) fn rename_sources(&mut self, old: &str, new: &str) {
-        let graphs =
-            std::iter::once(&mut self.graph).chain(self.graphs.iter_mut().map(|g| &mut g.graph));
-        for node in graphs.flat_map(|g| &mut g.nodes) {
+        for node in self.graphs_mut().flat_map(|g| &mut g.nodes) {
             match node.kind.as_str() {
                 VIDEO_INPUT | AUDIO_INPUT => {
                     let Some(ParamValue::Text(source)) = node.params.get_mut(SOURCE_PARAM) else {
@@ -286,7 +269,7 @@ impl Project {
     }
 
     /// What the engine composes: the video and audio tracks (solos leave out the other tracks
-    /// of their kind from the mix), the graph tracks that play, and the stored graphs.
+    /// of their kind from the mix), the graph tracks that play, and every graph.
     pub fn composition(&self) -> Composition {
         let tracks = self
             .tracks
@@ -313,11 +296,16 @@ impl Project {
             tracks,
             graph_tracks,
             graphs: self
-                .graphs
+                .resources
                 .iter()
-                .map(|g| (g.id, g.graph.clone()))
+                .filter_map(|r| {
+                    Some(ComposedGraph {
+                        id: r.id,
+                        name: r.name.clone(),
+                        desc: r.graph()?.clone(),
+                    })
+                })
                 .collect(),
-            open: self.graph_id,
         }
     }
 }
@@ -373,6 +361,8 @@ pub(super) fn sanitize(tracks: &mut [GraphTrack]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rastersong_graph::GraphDesc;
+
     use crate::composition::input_ports;
     use crate::timeline::TrackKind;
 
@@ -415,7 +405,7 @@ mod tests {
     #[test]
     fn a_pasted_graph_item_keeps_its_trim_and_trims_what_it_lands_on() {
         let mut project = project();
-        let id = project.graph_id;
+        let id = Project::FIRST_GRAPH;
         project.place_graph("Graphs", id, 0.0, 4.0).unwrap();
         let mut copied = project.graph_tracks[0].items[0].clone();
         copied.start = 0.5;
@@ -433,16 +423,20 @@ mod tests {
     #[test]
     fn placing_needs_the_track_and_the_graph() {
         let mut project = project();
-        let id = project.graph_id;
+        let id = Project::FIRST_GRAPH;
         assert!(project.place_graph("Graphs", id, 1.0, 2.0).is_some());
-        assert!(project.place_graph("Graphs", 99, 0.0, 1.0).is_none());
+        assert!(
+            project
+                .place_graph("Graphs", ResourceId(99), 0.0, 1.0)
+                .is_none()
+        );
         assert!(project.place_graph("Nope", id, 0.0, 1.0).is_none());
     }
 
     #[test]
     fn placing_over_items_trims_and_cuts_them() {
         let mut project = project();
-        let id = project.graph_id;
+        let id = Project::FIRST_GRAPH;
         project.place_graph("Graphs", id, 0.0, 4.0);
         project.place_graph("Graphs", id, 4.0, 4.0);
         // Lands across the join: both are trimmed.
@@ -462,7 +456,7 @@ mod tests {
     #[test]
     fn moving_trims_what_it_lands_on_and_can_change_track() {
         let mut project = project();
-        let id = project.graph_id;
+        let id = Project::FIRST_GRAPH;
         project.place_graph("Graphs", id, 0.0, 2.0);
         project.place_graph("Graphs", id, 3.0, 2.0);
         let at = project.move_graph_item("Graphs", 1, -2.0).unwrap();
@@ -482,7 +476,7 @@ mod tests {
     #[test]
     fn trimming_the_left_edge_keeps_what_follows() {
         let mut project = project();
-        let id = project.graph_id;
+        let id = Project::FIRST_GRAPH;
         project.place_graph("Graphs", id, 2.0, 4.0);
         project.place_graph("Graphs", id, 7.0, 1.0);
         project.trim_graph_item("Graphs", 0, Edge::Start, 3.0);
@@ -499,7 +493,7 @@ mod tests {
     #[test]
     fn splitting_keeps_graph_time() {
         let mut project = project();
-        let id = project.graph_id;
+        let id = Project::FIRST_GRAPH;
         project.place_graph("Graphs", id, 1.0, 4.0);
         assert_eq!(project.split_graph_item("Graphs", 0, 0.5), None);
         let second = project.split_graph_item("Graphs", 0, 2.0).unwrap();
@@ -513,7 +507,7 @@ mod tests {
         project.add_track(TrackKind::Audio, "kick", "kick.wav");
         let lower = project.add_graph_track("Lower");
         let stored = project.add_graph("B", None);
-        let mut b = project.graph_desc(stored).unwrap().clone();
+        let b = project.graph_mut(stored).unwrap();
         b.nodes
             .push(rastersong_graph::NodeDesc::new("g".into(), VIDEO_INPUT));
         b.nodes.last_mut().unwrap().params.insert(
@@ -529,27 +523,24 @@ mod tests {
             ParamValue::Text("Glow".into()),
         );
         b.nodes.push(named);
-        project
-            .graphs
-            .iter_mut()
-            .find(|g| g.id == stored)
-            .unwrap()
-            .graph = b;
         let kick = Source::Track("kick".into());
         assert!(project.source_exists(&kick));
         assert!(project.rename_track("kick", "drum"));
         assert!(project.rename_track(&lower, "Bottom"));
         assert!(!project.source_exists(&kick));
-        let sources = |desc: &GraphDesc| -> Vec<Source> {
+        let sources = |desc: &rastersong_graph::GraphDesc| -> Vec<Source> {
             input_ports(desc)
                 .into_iter()
                 .map(|p| p.source)
                 .filter(|s| *s != Source::Below)
                 .collect()
         };
-        assert_eq!(sources(&project.graph), [Source::Track("drum".into())]);
         assert_eq!(
-            sources(project.graph_desc(stored).unwrap()),
+            sources(project.graph(Project::FIRST_GRAPH).unwrap()),
+            [Source::Track("drum".into())]
+        );
+        assert_eq!(
+            sources(project.graph(stored).unwrap()),
             [
                 Source::Graph("Bottom".into()),
                 Source::Named {
@@ -564,7 +555,7 @@ mod tests {
     #[test]
     fn the_composition_leaves_out_muted_graph_tracks_and_items() {
         let mut project = project();
-        let id = project.graph_id;
+        let id = Project::FIRST_GRAPH;
         project.place_graph("Graphs", id, 0.0, 2.0);
         project.place_graph("Graphs", id, 3.0, 2.0);
         project.graph_tracks[0].items[1].muted = true;
@@ -588,7 +579,7 @@ mod tests {
     #[test]
     fn graph_tracks_round_trip_and_overlaps_are_repaired() {
         let mut project = project();
-        let id = project.graph_id;
+        let id = Project::FIRST_GRAPH;
         project.place_graph("Graphs", id, 1.0, 2.0);
         let json = serde_json::to_string(&project).unwrap();
         let back: Project = serde_json::from_str(&json).unwrap();
@@ -603,14 +594,23 @@ mod tests {
     }
 
     #[test]
-    fn deleting_a_graph_removes_its_items() {
+    fn removing_a_graph_removes_only_its_items() {
         let mut project = project();
-        let id = project.graph_id;
+        let id = Project::FIRST_GRAPH;
         let other = project.add_graph("B", None);
         project.place_graph("Graphs", id, 0.0, 1.0);
         project.place_graph("Graphs", other, 1.0, 1.0);
-        project.remove_graph_items(other);
+        assert_eq!(project.resource_users(other), ["Graphs"]);
+        assert_eq!(project.resource_item_count(id), 1);
+        assert_eq!(project.remove_resource(other), ["Graphs"]);
         assert_eq!(project.graph_tracks[0].items.len(), 1);
         assert_eq!(project.graph_tracks[0].items[0].graph, id);
+        // Its graph track stays; a graph nothing places is in no track.
+        assert_eq!(project.graph_tracks.len(), 1);
+        assert!(project.resource(other).is_none());
+        let unplaced = project.add_graph("C", None);
+        assert!(project.resource_users(unplaced).is_empty());
+        assert!(project.remove_resource(unplaced).is_empty());
+        assert_eq!(project.graph_tracks[0].items.len(), 1);
     }
 }

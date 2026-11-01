@@ -9,6 +9,7 @@ use rastersong_graph::nodes::{
 };
 use rastersong_graph::{GraphDesc, ParamValue};
 
+use crate::project::ResourceId;
 use crate::timeline::{GraphItem, Source, TrackKind};
 
 /// Whether an input node reads pictures or sound, or (a Named Input) whatever was sent.
@@ -119,6 +120,15 @@ pub struct ComposedGraphTrack {
     pub items: Vec<GraphItem>,
 }
 
+/// A graph an item may use: a graph resource.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ComposedGraph {
+    pub id: ResourceId,
+    /// What errors call it.
+    pub name: String,
+    pub desc: GraphDesc,
+}
+
 /// What the renderer composes.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Composition {
@@ -126,11 +136,8 @@ pub struct Composition {
     pub tracks: Vec<MediaTrack>,
     /// Graph tracks, top first: the topmost active item's outputs are the master.
     pub graph_tracks: Vec<ComposedGraphTrack>,
-    /// Every graph an item may use, by id, but the open one, which comes separately because it
-    /// changes as it is edited.
-    pub graphs: Vec<(u32, GraphDesc)>,
-    /// The id of the open graph.
-    pub open: u32,
+    /// Every graph an item may use.
+    pub graphs: Vec<ComposedGraph>,
 }
 
 impl Composition {

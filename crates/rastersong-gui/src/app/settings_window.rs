@@ -215,14 +215,20 @@ impl App {
             .to_owned();
         let output_names: Vec<String> = outputs
             .iter()
-            .map(|id| {
-                self.project
-                    .graph
-                    .nodes
+            .map(|(graph, id)| {
+                let label = self
+                    .project
+                    .resources
                     .iter()
-                    .find(|n| n.id == *id)
+                    .find(|r| r.name == *graph)
+                    .and_then(|r| r.graph())
+                    .and_then(|g| g.nodes.iter().find(|n| n.id == *id))
                     .and_then(|n| n.label.clone())
-                    .unwrap_or_else(|| id.clone())
+                    .unwrap_or_else(|| id.clone());
+                tr_args(
+                    "dialog.remove_bus.output",
+                    &[("graph", graph), ("output", &label)],
+                )
             })
             .collect();
         let mut close = false;

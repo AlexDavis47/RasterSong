@@ -8,16 +8,13 @@ use std::sync::Arc;
 
 use common::{FRAMES, backend, tracks, wait_until};
 use rastersong_engine::{
-    AudioSink, Bus, ComposedGraphTrack, Composition, Engine, EngineConfig, EngineError,
-    EngineStatus, FakeVideo, FrameSink, GraphDesc, GraphItem, Item, MediaTrack, OutputSize,
-    Rational, Registry, RenderInfo, RenderSettings, RenderTrack, RenderedFrame, Renderer, Timeline,
-    TrackKind, TrackSpec, render,
+    AudioSink, Bus, ComposedGraph, ComposedGraphTrack, Composition, Engine, EngineConfig,
+    EngineError, EngineStatus, FakeVideo, FrameSink, GraphDesc, GraphItem, Item, MediaTrack,
+    OutputSize, Rational, Registry, RenderInfo, RenderSettings, RenderTrack, RenderedFrame,
+    Renderer, ResourceId, Timeline, TrackKind, TrackSpec, render,
 };
 
 const FPS: f64 = 30.0;
-
-/// The open graph, which none of these tests uses unless they say so.
-const OPEN: u32 = 0;
 
 fn graph(nodes: &str, connections: &str) -> String {
     format!(r#"{{ "version": 0, "nodes": [ {nodes} ], "connections": [ {connections} ] }}"#)
@@ -88,7 +85,11 @@ fn shifted() -> String {
 
 /// Graph `graph` placed over frames `from..to`.
 fn span(from: usize, to: usize, graph: u32) -> GraphItem {
-    GraphItem::new(graph, from as f64 / FPS, (to - from) as f64 / FPS)
+    GraphItem::new(
+        ResourceId(graph),
+        from as f64 / FPS,
+        (to - from) as f64 / FPS,
+    )
 }
 
 /// A graph track called `name` holding `items`.
@@ -115,9 +116,12 @@ fn composition(tracks: &[RenderTrack], graphs: &[(u32, String)]) -> Composition 
         graph_tracks: Vec::new(),
         graphs: graphs
             .iter()
-            .map(|(id, json)| (*id, GraphDesc::from_json(json).unwrap()))
+            .map(|(id, json)| ComposedGraph {
+                id: ResourceId(*id),
+                name: format!("graph {id}"),
+                desc: GraphDesc::from_json(json).unwrap(),
+            })
             .collect(),
-        open: OPEN,
     }
 }
 
@@ -127,7 +131,7 @@ fn build(composition: &Composition, tracks: &[RenderTrack]) -> Result<Renderer, 
         None,
         tracks,
         composition,
-        &GraphDesc::from_json(&passthrough()).unwrap(),
+        None,
         Default::default(),
         &Bus::main(),
         &Registry::default(),
@@ -234,7 +238,7 @@ fn an_items_beats_land_where_the_metronome_clicks_with_a_first_beat_offset() {
         None,
         &tracks,
         &comp,
-        &GraphDesc::from_json(&passthrough()).unwrap(),
+        None,
         tempo,
         &Bus::main(),
         &Registry::default(),
@@ -331,7 +335,7 @@ fn the_top_graph_wins_and_reads_the_one_below_unless_told_otherwise() {
         )
     };
     let mut reading = |source: &str| {
-        comp.graphs[1].1 = GraphDesc::from_json(&crush_of(source)).unwrap();
+        comp.graphs[1].desc = GraphDesc::from_json(&crush_of(source)).unwrap();
         all_frames(&mut renderer_for(&comp, &tracks), 10)
     };
     let rendered = reading("mix");
@@ -380,8 +384,8 @@ fn a_named_output_is_read_by_graphs_above_without_changing_its_tracks_picture() 
         graph_track("Bottom", vec![span(0, 6, 1)]),
     ];
     // The host renders each graph's render form, which keeps the Named Output.
-    for (_, desc) in &mut comp.graphs {
-        *desc = rastersong_engine::render_form(desc, Registry::shared());
+    for graph in &mut comp.graphs {
+        graph.desc = rastersong_engine::render_form(&graph.desc, Registry::shared());
     }
     let (plain, inverted) = (reference(&passthrough(), 10), reference(&invert(), 10));
     let rendered = all_frames(&mut renderer_for(&comp, &tracks), 10);
@@ -435,7 +439,7 @@ fn ports_read_a_tracks_stem_even_when_it_is_out_of_the_mix() {
     }
 
     // Without a source the node reads zeros.
-    comp.graphs[0].1 = GraphDesc::from_json(&show("", "")).unwrap();
+    comp.graphs[0].desc = GraphDesc::from_json(&show("", "")).unwrap();
     let rendered = all_frames(&mut renderer_for(&comp, &tracks), 8);
     assert!(rendered.iter().flatten().all(|&b| b == 0));
 
@@ -572,10 +576,17 @@ fn a_graph_that_cannot_compile_fails_the_build_naming_it() {
     comp.graph_tracks = vec![graph_track("G", vec![span(0, 4, 7)])];
     let error = build(&comp, &tracks).unwrap_err();
     assert!(
-        matches!(error, EngineError::Fx { graph: 7, .. }),
+        matches!(
+            error,
+            EngineError::Fx {
+                graph: ResourceId(7),
+                ..
+            }
+        ),
         "{error:?}"
     );
-    assert!(error.to_string().contains('7'), "{error}");
+    // Named by its resource's name, not its id.
+    assert!(error.to_string().contains("graph 7"), "{error}");
 }
 
 fn song() -> RenderTrack {
@@ -629,7 +640,7 @@ fn a_graph_hears_the_mix_at_the_tracks_volume_or_a_stem_as_it_is() {
         "a muted track is silent in the mix"
     );
     // Its stem is there as it is, at full level.
-    comp.graphs[0].1 = GraphDesc::from_json(&louder_of(
+    comp.graphs[0].desc = GraphDesc::from_json(&louder_of(
         r#"{ "id": "a", "type": "audio_input", "params": { "source": "track:song" } }"#,
     ))
     .unwrap();
@@ -658,7 +669,7 @@ fn a_graph_passing_the_mix_through_leaves_the_sound_to_the_mixer_and_one_without
         AudioSink::TrackMix
     ));
     // A graph with no Audio Output is silent where it plays: nothing passes through.
-    comp.graph_tracks[0].items[0].graph = 2;
+    comp.graph_tracks[0].items[0].graph = ResourceId(2);
     assert!(peak(&comp, &tracks) < 1e-6);
 }
 
@@ -743,7 +754,7 @@ fn the_service_renders_the_composition_and_it_is_part_of_the_cache_key() {
     let kept = engine.frame(3).unwrap();
     engine.set_composition(Some(comp.clone()));
     let mut labelled = comp.clone();
-    labelled.graphs[0].1.nodes[0].label = Some("Picture".into());
+    labelled.graphs[0].desc.nodes[0].label = Some("Picture".into());
     engine.set_composition(Some(labelled));
     assert!(Arc::ptr_eq(&kept, &engine.frame(3).unwrap()));
 
@@ -770,41 +781,32 @@ fn the_service_renders_the_composition_and_it_is_part_of_the_cache_key() {
 }
 
 #[test]
-fn opening_another_graph_keeps_every_rendered_frame() {
+fn inspecting_another_graph_keeps_every_rendered_frame() {
     let engine = engine();
     engine.set_timeline(video_timeline());
-    let open_one = |open: u32, other: (u32, String)| {
-        let mut comp = composition(&video_track(), &[other]);
-        comp.open = open;
+    let two = |first: String| {
+        let mut comp = composition(&video_track(), &[(1, first), (2, crush())]);
         comp.graph_tracks = vec![graph_track("G", vec![span(0, 4, 1), span(4, FRAMES, 2)])];
         comp
     };
     let has_node = |id: &str| engine.node_stats().iter().any(|s| &*s.node == id);
-    engine.set_graphs(
-        GraphDesc::from_json(&invert()).unwrap(),
-        Some(open_one(1, (2, crush()))),
-    );
+    engine.set_composition(Some(two(invert())));
+    engine.set_inspected(Some(ResourceId(1)));
     let rendered = engine_frames(&engine, 8);
-    assert!(has_node("i"));
+    wait_until("graph 1's stats", || has_node("i"));
     let kept = engine.frame(3).unwrap();
-    assert_eq!(kept.open, Some(1));
+    assert_eq!(kept.inspected, Some(ResourceId(1)));
 
-    // Graph 2 opened: graph 1 goes back among the stored graphs, which renders the same.
-    engine.set_graphs(
-        GraphDesc::from_json(&crush()).unwrap(),
-        Some(open_one(2, (1, invert()))),
-    );
-    // Rebuilt for the editor, which now inspects graph 2's item...
-    wait_until("the open graph's stats", || has_node("c"));
+    // Inspecting graph 2 renders the same frames...
+    engine.set_inspected(Some(ResourceId(2)));
+    // ...so it rebuilds only for the editor, which now inspects graph 2's item...
+    wait_until("graph 2's stats", || has_node("c"));
     // ...with the frames all kept.
     assert!(Arc::ptr_eq(&kept, &engine.frame(3).unwrap()));
     assert_eq!(engine_frames(&engine, 8), rendered);
 
-    // Editing the open graph is still an edit.
-    engine.set_graphs(
-        GraphDesc::from_json(&passthrough()).unwrap(),
-        Some(open_one(2, (1, invert()))),
-    );
+    // Editing a graph is still an edit.
+    engine.set_composition(Some(two(passthrough())));
     wait_until("the edit", || {
         engine.frame(3).is_none_or(|f| !Arc::ptr_eq(&kept, &f))
     });
@@ -828,8 +830,8 @@ fn the_service_reports_a_graph_that_cannot_compile() {
     let EngineStatus::Failed(failure) = engine.status() else {
         unreachable!()
     };
-    assert!(failure.message.contains('7'), "{}", failure.message);
+    assert!(failure.message.contains("graph 7"), "{}", failure.message);
     // The node at fault is named with the graph it belongs to.
-    assert_eq!(failure.graph, Some(7));
+    assert_eq!(failure.graph, Some(ResourceId(7)));
     assert_eq!(failure.node.as_deref(), Some("b"));
 }

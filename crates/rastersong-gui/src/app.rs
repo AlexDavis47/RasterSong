@@ -15,10 +15,11 @@ use eframe::egui::{
 use rastersong_engine::LoadedTrack;
 use rastersong_engine::playback::{MixTrack, Mixer};
 use rastersong_engine::{
-    AudioSink, BackendInfo, CompileOptions, Engine, EngineConfig, EngineStatus, Frame, Graph,
-    GraphDesc, GraphItem, Item, ItemRef, MediaBackend, NodeStats, PROJECT_EXTENSION, PlaybackClock,
-    PreviewScale, Project, ProjectTrack, Registry, RenderInfo, ResourceId, ResourceKind,
-    Thumbnails, Timeline, TimelineMode, TrackKind, VideoInfo, VideoKey, resource_name_for,
+    AudioSink, BackendInfo, CompileOptions, DEFAULT_GRAPH_NAME, Engine, EngineConfig, EngineStatus,
+    Frame, Graph, GraphDesc, GraphItem, Item, ItemRef, MediaBackend, NodeStats, PROJECT_EXTENSION,
+    PlaybackClock, PreviewScale, Project, ProjectTrack, Registry, RenderInfo, ResourceId,
+    ResourceKind, Thumbnails, Timeline, TimelineMode, TrackKind, VideoInfo, VideoKey,
+    resource_name_for,
 };
 use rastersong_lang::{tr, tr_args};
 
@@ -60,11 +61,6 @@ use crate::widgets::{
 
 /// The graph a new project starts with: the basic workflow from docs/concepts.md.
 pub const STARTER_GRAPH: &str = include_str!("../../../examples/graphs/am_bands.json");
-
-/// What the source engine renders: the video, untouched.
-const SOURCE_GRAPH: &str = r#"{ "version": 0,
-    "nodes": [ { "id": "video", "type": "video_input" }, { "id": "out", "type": "output" } ],
-    "connections": [ { "from": "video", "to": "out" } ] }"#;
 
 /// The shortest a graph dropped on the timeline lasts, in seconds, when the project is shorter.
 const MIN_GRAPH_ITEM_SECONDS: f64 = 5.0;
@@ -138,7 +134,10 @@ pub struct App {
     /// The user chose to close without saving.
     allow_close: bool,
     editor: GraphEditor,
-    /// The graph (without layout) the engine is rendering.
+    /// The graph resource the editor shows. The project always has it: a project without a
+    /// graph gets one when it is opened.
+    open_graph: ResourceId,
+    /// The open graph (without layout) as last handed to the engine.
     sent_graph: GraphDesc,
     /// The graph and compile options last inspected, and what inspecting them found: every
     /// node's layouts, tags and warnings, including nodes that don't feed the output.
@@ -239,11 +238,13 @@ impl App {
     ) -> Self {
         let engine = Engine::new(backend.clone(), EngineConfig::default());
         let source_engine = Engine::new(backend.clone(), EngineConfig::default());
-        let editor = graph_editor(&project);
+        let open_graph = first_graph(&mut project);
+        let editor = graph_editor(&project, open_graph);
         // The editor fills in positions, full port names and a missing output; that isn't an
         // unsaved change.
-        project.graph = editor.to_desc();
+        *project.graph_mut(open_graph).expect("the first graph") = editor.to_desc();
         let mut app = Self {
+            open_graph,
             engine,
             backend,
             thumbnails: HashMap::new(),
@@ -310,8 +311,6 @@ impl App {
             title: String::new(),
         };
         app.send_project();
-        app.source_engine
-            .set_graph(GraphDesc::from_json(SOURCE_GRAPH).expect("the source graph is valid"));
         app
     }
 
@@ -433,21 +432,23 @@ impl App {
         self.engine.set_preview_scale(self.settings.preview_scale());
         self.refresh_missing(true);
         self.engine.set_timeline(self.timeline_of(&self.project));
-        self.sent_graph = without_layout(&self.project.graph);
+        self.sent_graph = without_layout(self.open_desc());
         self.engine
-            .set_graphs(self.sent_graph.clone(), Some(self.project.composition()));
+            .set_composition(Some(self.project.composition()));
+        self.engine.set_inspected(Some(self.open_graph));
         self.engine.set_tempo(self.project.tempo);
         self.engine.set_bypass_all(self.project.plays_track_mix());
         self.sent_mix = None;
     }
 
     fn load_project(&mut self, mut project: Project, path: Option<PathBuf>) {
-        self.editor = graph_editor(&project);
+        self.open_graph = first_graph(&mut project);
+        self.editor = graph_editor(&project, self.open_graph);
         if !self.editor.warnings.is_empty() {
             self.error = Some(self.editor.warnings.join("\n"));
         }
         // The editor fills in positions and full port names; that isn't an unsaved change.
-        project.graph = self.editor.to_desc();
+        *project.graph_mut(self.open_graph).expect("the first graph") = self.editor.to_desc();
         self.saved = project.clone();
         self.history = History::new(project.clone());
         self.selected_track = None;
@@ -478,18 +479,18 @@ impl App {
         {
             self.project.remove_track(i);
         }
-        let name = resource_name_for(&path, ResourceKind::Video);
+        let name = resource_name_for(&path, TrackKind::Video);
         let id = self
             .project
             .add_resource(ResourceKind::Video, &name, &path, None);
         let known = self.project.tracks_of(TrackKind::Audio).any(|t| {
             self.project
                 .track_resource(t)
-                .is_some_and(|r| r.path == path && r.stream.is_none())
+                .is_some_and(|r| r.path() == Some(path.as_path()) && r.stream().is_none())
         });
         let with_sound = has_audio && !known;
         if with_sound {
-            let name = resource_name_for(&path, ResourceKind::Audio);
+            let name = resource_name_for(&path, TrackKind::Audio);
             self.project
                 .add_resource(ResourceKind::Audio, &name, &path, None);
         }
@@ -503,7 +504,7 @@ impl App {
     /// the file.
     pub fn add_audio_tracks(&mut self, paths: impl IntoIterator<Item = PathBuf>) {
         for path in paths {
-            let name = resource_name_for(&path, ResourceKind::Audio);
+            let name = resource_name_for(&path, TrackKind::Audio);
             let id = self
                 .project
                 .add_resource(ResourceKind::Audio, &name, &path, None);
@@ -668,25 +669,60 @@ impl App {
     }
 
     /// Adds a passthrough graph and opens it. Returns its id.
-    pub fn new_graph(&mut self) -> u32 {
-        self.project.set_open_graph(self.editor.to_desc());
-        let id = self.project.add_graph("Graph", None);
+    pub fn new_graph(&mut self) -> ResourceId {
+        self.store_editor();
+        let id = self.project.add_graph(DEFAULT_GRAPH_NAME, None);
         self.open_graph(id);
         id
     }
 
-    /// Opens a graph from the Resources panel in the editor. It is the graph rendered, too:
-    /// there is one at a time until graph layers can place several.
-    pub fn open_graph(&mut self, id: u32) {
-        self.project.set_open_graph(self.editor.to_desc());
-        if !self.project.open_graph(id) {
+    /// Shows graph resource `id` in the editor. Opening a graph changes nothing in the render:
+    /// graph items say where each graph plays.
+    pub fn open_graph(&mut self, id: ResourceId) {
+        self.store_editor();
+        if id == self.open_graph || self.project.graph(id).is_none() {
             return;
         }
-        self.editor = graph_editor(&self.project);
+        self.show_graph(id);
+    }
+
+    /// The graph resource the editor shows.
+    pub fn open_graph_id(&self) -> ResourceId {
+        self.open_graph
+    }
+
+    /// Points the editor at graph resource `id`, which the project has.
+    fn show_graph(&mut self, id: ResourceId) {
+        self.open_graph = id;
+        self.editor = graph_editor(&self.project, id);
         if !self.editor.warnings.is_empty() {
             self.error = Some(self.editor.warnings.join("\n"));
         }
-        self.project.graph = self.editor.to_desc();
+        // The editor fills in positions and full port names; that isn't an edit.
+        if let Some(graph) = self.project.graph_mut(id) {
+            *graph = self.editor.to_desc();
+        }
+    }
+
+    /// Writes the editor's graph back into its resource.
+    fn store_editor(&mut self) {
+        if let Some(graph) = self.project.graph_mut(self.open_graph) {
+            *graph = self.editor.to_desc();
+        }
+    }
+
+    /// The open graph as the project holds it.
+    pub fn open_desc(&self) -> &GraphDesc {
+        self.project
+            .graph(self.open_graph)
+            .expect("the project has its open graph")
+    }
+
+    /// The open graph's name.
+    pub fn open_graph_name(&self) -> &str {
+        self.project
+            .resource(self.open_graph)
+            .map_or("", |r| r.name.as_str())
     }
 
     /// Points the resource's file (and the other streams of it) at `path`.
@@ -711,18 +747,23 @@ impl App {
             return;
         }
         self.missing_checked = Some(Instant::now());
-        self.missing = self
-            .project
-            .resources
-            .iter()
-            .filter(|r| !self.backend.exists(&r.path))
-            .map(|r| r.id)
+        let files = || {
+            self.project
+                .resources
+                .iter()
+                .filter_map(|r| Some((r.id, r.path()?)))
+        };
+        self.missing = files()
+            .filter(|(_, path)| !self.backend.exists(path))
+            .map(|(id, _)| id)
             .collect();
-        for resource in &self.project.resources {
-            if !self.missing.contains(&resource.id) && !self.streams.contains_key(&resource.path) {
-                let streams = self.backend.streams(&resource.path).unwrap_or_default();
-                self.streams.insert(resource.path.clone(), streams);
-            }
+        let unread: Vec<PathBuf> = files()
+            .filter(|(id, path)| !self.missing.contains(id) && !self.streams.contains_key(*path))
+            .map(|(_, path)| path.to_owned())
+            .collect();
+        for path in unread {
+            let streams = self.backend.streams(&path).unwrap_or_default();
+            self.streams.insert(path, streams);
         }
     }
 
@@ -750,18 +791,26 @@ impl App {
             }
             ResourceAction::OpenGraph(id) => self.open_graph(id),
             ResourceAction::RenameGraph(id, name) => {
-                self.project.rename_graph(id, &name);
+                self.project.rename_resource(id, &name);
             }
             ResourceAction::DuplicateGraph(id) => {
                 // The open graph is copied as it is in the editor now.
-                self.project.set_open_graph(self.editor.to_desc());
-                self.project.duplicate_graph(id);
+                self.store_editor();
+                self.project.duplicate_resource(id);
             }
             ResourceAction::RemoveGraph(id) => {
-                self.project.remove_graph(id);
+                // The open graph stays: the editor always shows one.
+                if id != self.open_graph {
+                    self.project.remove_resource(id);
+                }
             }
             ResourceAction::Relocate(id) => {
-                let Some(old) = self.project.resource(id).map(|r| r.path.clone()) else {
+                let Some(old) = self
+                    .project
+                    .resource(id)
+                    .and_then(|r| r.path())
+                    .map(Path::to_owned)
+                else {
                     return;
                 };
                 let mut dialog = rfd::FileDialog::new();
@@ -946,12 +995,20 @@ impl App {
 
     /// Puts the project back to an earlier (or later) state from the history.
     fn restore(&mut self, project: Project) {
-        self.engine.set_timeline(self.timeline_of(&project));
-        self.sent_graph = without_layout(&project.graph);
-        self.engine
-            .set_graphs(self.sent_graph.clone(), Some(project.composition()));
-        self.editor.restore(&project.graph);
         self.project = project;
+        // A graph made since is gone: the editor shows the first graph there is instead.
+        match self.project.graph(self.open_graph) {
+            Some(graph) => self.editor.restore(graph),
+            None => {
+                let first = first_graph(&mut self.project);
+                self.show_graph(first);
+            }
+        }
+        self.engine.set_timeline(self.timeline_of(&self.project));
+        self.sent_graph = without_layout(self.open_desc());
+        self.engine
+            .set_composition(Some(self.project.composition()));
+        self.engine.set_inspected(Some(self.open_graph));
         self.tidy_track_selection();
     }
 
@@ -1088,6 +1145,7 @@ impl App {
                         let actions = resources_panel(
                             ui,
                             &self.project,
+                            self.open_graph,
                             &self.missing,
                             &self.streams,
                             self.settings.open_graphs_on_click,
@@ -1242,7 +1300,7 @@ impl App {
     fn inspected_frame(&self) -> Option<Arc<Frame>> {
         self.engine
             .frame(self.clock.frame())
-            .filter(|f| f.open.is_none_or(|open| open == self.project.graph_id))
+            .filter(|f| f.inspected.is_none_or(|g| g == self.open_graph))
     }
 
     /// Why the project can't render, if it can't. The editor shows the open graph, so a node of
@@ -1251,7 +1309,7 @@ impl App {
         let EngineStatus::Failed(mut failure) = self.engine.status() else {
             return None;
         };
-        if failure.graph.is_some_and(|g| g != self.project.graph_id) {
+        if failure.graph.is_some_and(|g| g != self.open_graph) {
             failure.node = None;
         }
         Some(failure)
@@ -1421,7 +1479,7 @@ impl App {
         ui: &mut Ui,
         failure: Option<&rastersong_engine::Failure>,
         theme: &Theme,
-    ) -> Option<u32> {
+    ) -> Option<ResourceId> {
         ui.label(egui::RichText::new(tr("editor.header.kind")).color(theme.surfaces.text_faint));
         // The chevron between the kind and the name.
         let (r, _) = ui.allocate_exact_size(vec2(8.0, 10.0), egui::Sense::hover());
@@ -1434,9 +1492,8 @@ impl App {
             Stroke::new(1.4, theme.tick),
         ));
         let picked = self.graph_switcher(ui, theme);
-        let errors = usize::from(
-            failure.is_some_and(|f| f.graph.is_none_or(|g| g == self.project.graph_id)),
-        );
+        let errors =
+            usize::from(failure.is_some_and(|f| f.graph.is_none_or(|g| g == self.open_graph)));
         let count =
             problem_count(errors, self.editor.warning_count(), theme).map(|(text, color)| {
                 let galley =
@@ -1455,17 +1512,15 @@ impl App {
 
     /// The open graph's name with a ▾, which opens a menu of the project's graphs. Returns the
     /// one clicked, unless it is the open one.
-    fn graph_switcher(&self, ui: &mut Ui, theme: &Theme) -> Option<u32> {
-        let name = &self.project.graph_name;
+    fn graph_switcher(&self, ui: &mut Ui, theme: &Theme) -> Option<ResourceId> {
+        let name = self.open_graph_name();
         let font = crate::theme::semibold(crate::theme::TITLE_SIZE);
         let galley = ui
             .painter()
-            .layout_no_wrap(name.clone(), font, theme.surfaces.text);
+            .layout_no_wrap(name.to_owned(), font, theme.surfaces.text);
         let size = vec2(galley.size().x + 26.0, HEADER_BUTTON_HEIGHT);
         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-        response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, name.as_str())
-        });
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, name));
         let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&response));
         if response.hovered() || open {
             ui.painter().rect_filled(
@@ -1490,13 +1545,12 @@ impl App {
         let mut picked = None;
         egui::Popup::menu(&response).show(|ui| {
             ui.set_min_width(rect.width().max(160.0));
-            for entry in self.project.graph_entries() {
-                if ui
-                    .add(egui::Button::new(&entry.name).selected(entry.open))
-                    .clicked()
-                {
-                    if !entry.open {
-                        picked = Some(entry.id);
+            for id in self.project.graph_ids() {
+                let open = id == self.open_graph;
+                let name = self.project.resource(id).map_or("", |r| r.name.as_str());
+                if ui.add(egui::Button::new(name).selected(open)).clicked() {
+                    if !open {
+                        picked = Some(id);
                     }
                     ui.close();
                 }
@@ -1572,15 +1626,14 @@ impl App {
 
     /// Sends edits to the engine and the audio output.
     fn sync(&mut self) {
-        let graph = self.editor.to_desc();
-        self.sent_graph = without_layout(&graph);
-        // An input port renamed in the editor keeps its items' sources.
-        self.project.set_open_graph(graph);
+        self.store_editor();
+        self.sent_graph = without_layout(self.open_desc());
         self.refresh_missing(false);
         self.engine.set_timeline(self.timeline_of(&self.project));
-        // Together, so opening another graph is seen to render the same frames.
         self.engine
-            .set_graphs(self.sent_graph.clone(), Some(self.project.composition()));
+            .set_composition(Some(self.project.composition()));
+        // Opening another graph renders the same frames; only what is inspected changes.
+        self.engine.set_inspected(Some(self.open_graph));
         self.engine.set_tempo(self.project.tempo);
         self.engine.set_bypass_all(self.project.plays_track_mix());
         self.engine.set_audio_rate(self.project.audio_rate);
@@ -2086,7 +2139,7 @@ impl App {
         else {
             return;
         };
-        if let Err(e) = std::fs::write(&path, self.project.graph.to_json()) {
+        if let Err(e) = std::fs::write(&path, self.open_desc().to_json()) {
             self.error = Some(format!("{}: {e}", path.display()));
         }
     }
@@ -2719,7 +2772,7 @@ impl App {
                 .project
                 .resources
                 .iter()
-                .map(|r| (r.id, r.name.clone(), r.kind.track_kind()))
+                .filter_map(|r| Some((r.id, r.name.clone(), r.kind().track_kind()?)))
                 .collect(),
             drop_ghost: self.drop_ghost(ui),
         };
@@ -2846,11 +2899,11 @@ impl App {
 
     /// The graph tracks as the timeline shows them.
     fn graph_track_views(&self) -> Vec<GraphTrackView> {
-        let names: HashMap<u32, String> = self
+        let names: HashMap<ResourceId, String> = self
             .project
-            .graph_entries()
-            .into_iter()
-            .map(|g| (g.id, g.name))
+            .resources
+            .iter()
+            .map(|r| (r.id, r.name.clone()))
             .collect();
         self.project
             .graph_tracks
@@ -2909,7 +2962,7 @@ impl App {
                     let resource = self.project.resource(id)?;
                     let row = match target {
                         Some(name) => GhostRow::Track(self.project.track_index(&name)?),
-                        None => GhostRow::New(resource.kind.track_kind()),
+                        None => GhostRow::New(resource.kind().track_kind()?),
                     };
                     Some(GhostItem {
                         name: resource.name.clone(),
@@ -2921,12 +2974,7 @@ impl App {
             return Some(DropGhost::Media(items));
         }
         let graph = egui::DragAndDrop::payload::<DraggedGraph>(ctx)?.0;
-        let name = self
-            .project
-            .graph_entries()
-            .into_iter()
-            .find(|g| g.id == graph)?
-            .name;
+        let name = self.project.resource(graph)?.name.clone();
         Some(DropGhost::Graph {
             name,
             length: self.graph_item_length(),
@@ -2956,7 +3004,7 @@ impl App {
     /// name and the item's place on it.
     pub fn drop_graph(
         &mut self,
-        graph: u32,
+        graph: ResourceId,
         target: GraphDrop,
         at: f64,
     ) -> Option<(String, usize)> {
@@ -3253,8 +3301,8 @@ impl App {
 
     /// The stream of a file a video track plays, which thumbnails are made of.
     fn video_key(&self, track: &ProjectTrack) -> Option<VideoKey> {
-        let resource = self.project.track_resource(track)?;
-        Some((resource.path.clone(), resource.stream))
+        let file = self.project.track_resource(track)?.file()?;
+        Some((file.path.clone(), file.stream))
     }
 
     /// The first video track's file, which the project's picture size follows.
@@ -3761,7 +3809,7 @@ fn dropped_resources(ui: &Ui, area: egui::Rect) -> Option<Vec<ResourceId>> {
 }
 
 /// The graph dragged from the Resources panel and released over `area` this frame, taken.
-fn dropped_graph(ui: &Ui, area: egui::Rect) -> Option<u32> {
+fn dropped_graph(ui: &Ui, area: egui::Rect) -> Option<ResourceId> {
     dropped_payload::<DraggedGraph>(ui, area).map(|p| p.0)
 }
 
@@ -3852,7 +3900,7 @@ fn named_outputs(project: &Project) -> Vec<(String, String)> {
     let mut choices: Vec<(String, String)> = Vec::new();
     for t in &project.graph_tracks {
         for item in &t.items {
-            let Some(desc) = project.graph_desc(item.graph) else {
+            let Some(desc) = project.graph(item.graph) else {
                 continue;
             };
             for node in desc
@@ -3878,11 +3926,21 @@ fn named_outputs(project: &Project) -> Vec<(String, String)> {
     choices
 }
 
-/// An editor for the project's open graph, with its base nodes in place.
-fn graph_editor(project: &Project) -> GraphEditor {
-    let mut editor = GraphEditor::new(&project.graph);
+/// An editor for graph resource `id` of `project`, with its base nodes in place.
+fn graph_editor(project: &Project, id: ResourceId) -> GraphEditor {
+    let mut editor = GraphEditor::new(project.graph(id).expect("a graph resource"));
     editor.ensure_ports();
     editor
+}
+
+/// The graph a project opens on: its first graph, or a new passthrough when it has none, so the
+/// editor always has a graph to show.
+fn first_graph(project: &mut Project) -> ResourceId {
+    let first = project.graph_ids().next();
+    match first {
+        Some(id) => id,
+        None => project.add_graph(DEFAULT_GRAPH_NAME, None),
+    }
 }
 
 /// Puts `frame` in `slot`'s texture, making the texture the first time. Does nothing if the frame
