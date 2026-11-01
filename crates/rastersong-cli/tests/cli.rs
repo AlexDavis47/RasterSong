@@ -203,9 +203,13 @@ fn a_project_with_graph_items_renders_them() {
         rastersong_engine::SOURCE_PARAM.into(),
         rastersong_engine::ParamValue::Text("track:Nope".into()),
     );
-    project.add_graph_track("Graphs");
+    project.add_empty_track(TrackKind::Graph, "Graphs");
+    let lengths = rastersong_engine::ItemLengths {
+        new_graph_length: 2.0 / fps,
+        ..Default::default()
+    };
     project
-        .place_graph("Graphs", graph, 2.0 / fps, 2.0 / fps)
+        .place_resource("Graphs", graph, 2.0 / fps, &lengths)
         .unwrap();
     let layered = tmp.join("layered.rastersong");
     project.save(&layered).unwrap();

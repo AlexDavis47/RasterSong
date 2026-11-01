@@ -16,7 +16,7 @@ use crate::compose::{Compose, ComposePlan, MediaInfo, MediaReader, Stream, mix_l
 use crate::composition::{ComposedGraph, ComposedGraphTrack, Composition, MediaTrack};
 use crate::project::{DEFAULT_MAX_WARMUP_FRAMES, MAX_WARMUP_FRAMES_LIMIT, ResourceId};
 use crate::sources::{Modulator, fill_video, to_rgb8};
-use crate::timeline::{Bus, GraphItem, Item, Timebase, TrackKind, item_at, items_end};
+use crate::timeline::{Bus, Item, Timebase, TrackKind, item_at, items_end};
 
 /// The name the CLI and the tests give a lone video track.
 pub const VIDEO_SOURCE: &str = DEFAULT_VIDEO;
@@ -52,7 +52,7 @@ impl RenderTrack {
         Self {
             name: name.into(),
             media: TrackMedia::Audio(modulator),
-            items: vec![Item::whole(position)],
+            items: vec![Item::whole(ResourceId(0), position)],
             in_mix: true,
         }
     }
@@ -65,7 +65,7 @@ impl RenderTrack {
                 path: path.into(),
                 stream: None,
             },
-            items: vec![Item::whole(0.0)],
+            items: vec![Item::whole(ResourceId(0), 0.0)],
             in_mix: true,
         }
     }
@@ -263,7 +263,7 @@ pub const SINGLE_GRAPH: ResourceId = ResourceId(0);
 /// The composition of a render of one graph: every track, and `graph` (as [`SINGLE_GRAPH`]) on
 /// one graph track for the whole timeline, its main inputs reading the mix.
 pub fn single_composition(tracks: &[RenderTrack], graph: &GraphDesc) -> Composition {
-    let item = GraphItem::new(SINGLE_GRAPH, 0.0, f64::INFINITY);
+    let item = Item::whole(SINGLE_GRAPH, 0.0);
     Composition {
         tracks: tracks
             .iter()

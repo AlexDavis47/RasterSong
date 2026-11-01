@@ -6,50 +6,15 @@ use std::path::{Path, PathBuf};
 use rastersong_graph::GraphDesc;
 use serde::{Deserialize, Serialize};
 
-use super::{ItemRef, Project, ProjectTrack};
+use super::{ItemLengths, ItemRef, Project, ProjectTrack};
 use crate::timeline::{Item, LabelColor, TrackKind};
 
-/// Identifies a resource within its project: what tracks and graph items point at. Unique
-/// among the project's resources (and those its tracks and items name), not across time: a new
-/// resource can take a removed one's id once nothing points at it.
+/// Identifies a resource within its project: what items point at. Unique among the project's
+/// resources (and those its items name), not across time: a new resource can take a removed
+/// one's id once nothing points at it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ResourceId(pub u32);
-
-/// What a resource holds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ResourceKind {
-    /// One video stream.
-    Video,
-    /// One audio stream, any channel count.
-    Audio,
-    /// A graph.
-    Graph,
-}
-
-impl ResourceKind {
-    /// The kind of video or audio track that plays it; `None` for a graph, which graph tracks
-    /// play.
-    pub fn track_kind(self) -> Option<TrackKind> {
-        match self {
-            Self::Video => Some(TrackKind::Video),
-            Self::Audio => Some(TrackKind::Audio),
-            Self::Graph => None,
-        }
-    }
-
-    /// Whether its resources read a linked file, which can go missing and be relocated.
-    pub fn reads_file(self) -> bool {
-        matches!(self, Self::Video | Self::Audio)
-    }
-
-    /// Whether a resource of this kind can be duplicated: a graph, which the project holds, can;
-    /// a stream of a file is the same stream however many times it is listed.
-    pub fn duplicates(self) -> bool {
-        self == Self::Graph
-    }
-}
 
 /// A linked file's stream.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,11 +54,12 @@ pub struct Resource {
 }
 
 impl Resource {
-    pub fn kind(&self) -> ResourceKind {
+    /// What it is, and so which tracks can play it.
+    pub fn kind(&self) -> TrackKind {
         match self.content {
-            ResourceContent::Video(_) => ResourceKind::Video,
-            ResourceContent::Audio(_) => ResourceKind::Audio,
-            ResourceContent::Graph { .. } => ResourceKind::Graph,
+            ResourceContent::Video(_) => TrackKind::Video,
+            ResourceContent::Audio(_) => TrackKind::Audio,
+            ResourceContent::Graph { .. } => TrackKind::Graph,
         }
     }
 
@@ -148,9 +114,10 @@ impl Project {
         self.resources.iter_mut().find(|r| r.id == id)
     }
 
-    /// The resource `track` plays.
+    /// The resource `track`'s first item plays: what a video or audio track plays, while each
+    /// plays one resource.
     pub fn track_resource(&self, track: &ProjectTrack) -> Option<&Resource> {
-        self.resource(track.resource?)
+        self.resource(track.items.first()?.resource)
     }
 
     /// The file `track` plays.
@@ -163,7 +130,7 @@ impl Project {
     /// the same stream already in the project is returned instead of adding another.
     pub fn add_resource(
         &mut self,
-        kind: ResourceKind,
+        kind: TrackKind,
         name: &str,
         path: impl Into<PathBuf>,
         stream: Option<usize>,
@@ -180,9 +147,9 @@ impl Project {
             return known.id;
         }
         let content = match kind {
-            ResourceKind::Video => ResourceContent::Video(file),
-            ResourceKind::Audio => ResourceContent::Audio(file),
-            ResourceKind::Graph => panic!("a graph resource has no file"),
+            TrackKind::Video => ResourceContent::Video(file),
+            TrackKind::Audio => ResourceContent::Audio(file),
+            TrackKind::Graph => panic!("a graph resource has no file"),
         };
         self.push_resource(name, content)
     }
@@ -201,14 +168,9 @@ impl Project {
         id
     }
 
-    /// One past the highest id a resource has or a track or item names.
+    /// One past the highest id a resource has or an item names.
     fn next_resource_id(&self) -> u32 {
-        let named = self.tracks().filter_map(|t| t.resource).chain(
-            self.graph_tracks
-                .iter()
-                .flat_map(|t| &t.items)
-                .map(|i| i.graph),
-        );
+        let named = self.tracks().flat_map(|t| &t.items).map(|i| i.resource);
         self.resources
             .iter()
             .map(|r| r.id)
@@ -234,39 +196,32 @@ impl Project {
             .unwrap()
     }
 
-    /// The names of the tracks that play `id`: the video and audio tracks playing it, and the
-    /// graph tracks with an item of it.
+    /// The names of the tracks with an item of `id`.
     pub fn resource_users(&self, id: ResourceId) -> Vec<String> {
         self.tracks()
-            .filter(|t| t.resource == Some(id))
+            .filter(|t| t.items.iter().any(|i| i.resource == id))
             .map(|t| t.name.clone())
-            .chain(
-                self.graph_tracks
-                    .iter()
-                    .filter(|t| t.items.iter().any(|i| i.graph == id))
-                    .map(|t| t.name.clone()),
-            )
             .collect()
     }
 
     /// How many items play `id`, on every track.
     pub fn resource_item_count(&self, id: ResourceId) -> usize {
-        let media = self
-            .tracks()
-            .filter(|t| t.resource == Some(id))
-            .map(|t| t.items.len());
-        let graphs = self
-            .graph_tracks
-            .iter()
-            .map(|t| t.items.iter().filter(|i| i.graph == id).count());
-        media.chain(graphs).sum()
+        self.tracks()
+            .flat_map(|t| &t.items)
+            .filter(|i| i.resource == id)
+            .count()
     }
 
-    /// Adds a track playing the whole resource from `position` seconds, named after it (made
-    /// unique among tracks), at the bottom of its section, and returns its name. `None` if there
-    /// is no such resource.
-    pub fn add_track_for(&mut self, id: ResourceId, position: f64) -> Option<String> {
-        self.add_track_for_at(id, position, None)
+    /// Adds a track with one item of resource `id` from `position` seconds (see
+    /// [`Self::place_resource`]), named after it (made unique among tracks), at the bottom of its
+    /// section, and returns its name. `None` if there is no such resource.
+    pub fn add_track_for(
+        &mut self,
+        id: ResourceId,
+        position: f64,
+        lengths: &ItemLengths,
+    ) -> Option<String> {
+        self.add_track_for_at(id, position, None, lengths)
     }
 
     /// As [`Self::add_track_for`], but before the track now at index `slot` when that is in the
@@ -276,13 +231,12 @@ impl Project {
         id: ResourceId,
         position: f64,
         slot: Option<usize>,
+        lengths: &ItemLengths,
     ) -> Option<String> {
         let resource = self.resource(id)?;
-        let kind = resource.kind().track_kind()?;
-        let name = self.unique_name(&resource.name);
-        let mut track = ProjectTrack::new(name.clone(), kind, id);
-        track.items[0].position = position.max(0.0);
-        self.insert_new_track_at(track, slot);
+        let (kind, name) = (resource.kind(), resource.name.clone());
+        let name = self.add_empty_track_at(kind, &name, slot);
+        self.place_resource(&name, id, position, lengths);
         Some(name)
     }
 
@@ -308,40 +262,32 @@ impl Project {
     }
 
     /// Adds an empty track of `kind`, named `name`, `name_2`, … (unique among tracks), at the
-    /// bottom of its section, and returns its name. It takes the first resource of its kind
-    /// dropped on it.
+    /// bottom of its section, and returns its name.
     pub fn add_empty_track(&mut self, kind: TrackKind, name: &str) -> String {
+        self.add_empty_track_at(kind, name, None)
+    }
+
+    /// As [`Self::add_empty_track`], but before the track now at index `slot` when that is in
+    /// its section (or just past its last).
+    pub fn add_empty_track_at(
+        &mut self,
+        kind: TrackKind,
+        name: &str,
+        slot: Option<usize>,
+    ) -> String {
         let name = self.unique_name(name);
-        self.insert_new_track(ProjectTrack::empty(name.clone(), kind));
+        self.insert_new_track_at(ProjectTrack::new(name.clone(), kind), slot);
         name
     }
 
-    /// Whether [`Self::place_resource`] would put resource `id` on track `track`: an empty track
-    /// of its kind, or a track already playing it.
+    /// Whether [`Self::place_resource`] would put resource `id` on track `track`: a track of its
+    /// kind. A video or audio track takes another resource only while it is empty, until the
+    /// renderer reads a file per item.
     pub fn can_place_resource(&self, track: &str, id: ResourceId) -> bool {
-        let Some(resource) = self.resource(id) else {
+        let (Some(resource), Some(index)) = (self.resource(id), self.track_index(track)) else {
             return false;
         };
-        self.track(track).is_some_and(|t| {
-            Some(t.kind) == resource.kind().track_kind() && t.resource.is_none_or(|r| r == id)
-        })
-    }
-
-    /// Puts the whole resource `id` on track `track` from `position` seconds. An empty track
-    /// takes the resource; a track holds items of one resource only, so any other resource is
-    /// refused (false), and so is a resource of the other kind.
-    pub fn place_resource(&mut self, track: &str, id: ResourceId, position: f64) -> bool {
-        if !self.can_place_resource(track, id) {
-            return false;
-        }
-        let Some(track) = self.tracks.iter_mut().find(|t| t.name == track) else {
-            return false;
-        };
-        track.resource = Some(id);
-        let mut item = Item::whole(0.0);
-        item.position = position.max(0.0);
-        track.items.push(item);
-        true
+        self.tracks[index].kind == resource.kind() && !self.mixes_resources(index, &[id], &[])
     }
 
     /// Resource `id` and the other resources from the same file (its other streams), `id`
@@ -404,18 +350,19 @@ impl Project {
         hovered: Option<&str>,
         position: f64,
         linked: bool,
+        lengths: &ItemLengths,
     ) -> Vec<ItemRef> {
         let mut placed = Vec::new();
         for (res, target) in self.plan_linked(id, hovered, linked) {
-            let name = match target {
-                Some(name) if self.place_resource(&name, res, position) => name,
-                _ => match self.add_track_for(res, position) {
-                    Some(name) => name,
-                    None => continue,
-                },
-            };
-            let item = self.track(&name).map_or(0, |t| t.items.len() - 1);
-            placed.push(ItemRef::new(name, item));
+            let landed = target.and_then(|name| {
+                let item = self.place_resource(&name, res, position, lengths)?;
+                Some(ItemRef::new(name, item))
+            });
+            let landed = landed.or_else(|| {
+                let name = self.add_track_for(res, position, lengths)?;
+                Some(ItemRef::new(name, 0))
+            });
+            placed.extend(landed);
         }
         self.group_items(&placed);
         placed
@@ -431,8 +378,9 @@ impl Project {
         slot: usize,
         position: f64,
         linked: bool,
+        lengths: &ItemLengths,
     ) -> Vec<ItemRef> {
-        self.place_many_at(&[id], slot, position, linked)
+        self.place_many_at(&[id], slot, position, linked, lengths)
     }
 
     /// As [`Self::place_linked_at`] for several resources dragged together (stems, say): each
@@ -444,6 +392,7 @@ impl Project {
         slot: usize,
         position: f64,
         linked: bool,
+        lengths: &ItemLengths,
     ) -> Vec<ItemRef> {
         let mut slot = slot;
         let mut done: Vec<ResourceId> = Vec::new();
@@ -460,7 +409,7 @@ impl Project {
                     continue;
                 }
                 done.push(res);
-                let Some(name) = self.add_track_for_at(res, position, Some(slot)) else {
+                let Some(name) = self.add_track_for_at(res, position, Some(slot), lengths) else {
                     continue;
                 };
                 // Everything from the new track on shifts down one.
@@ -484,32 +433,28 @@ impl Project {
         path: impl Into<PathBuf>,
     ) -> &mut ProjectTrack {
         let path = path.into();
-        let resource_kind = match kind {
-            TrackKind::Video => ResourceKind::Video,
-            TrackKind::Audio => ResourceKind::Audio,
-        };
         let resource_name = resource_name_for(&path, kind);
-        let id = self.add_resource(resource_kind, &resource_name, path, None);
-        let at = self.insert_new_track(ProjectTrack::new(name.into(), kind, id));
+        let id = self.add_resource(kind, &resource_name, path, None);
+        let mut track = ProjectTrack::new(name.into(), kind);
+        track.items.push(Item::whole(id, 0.0));
+        let at = self.insert_new_track(track);
         &mut self.tracks[at]
     }
 
-    /// Removes a resource and what plays it: every video or audio track playing it, and every
-    /// graph item of it (graph tracks stay). Returns the names of the tracks it was on.
+    /// Removes a resource and its items, from every track. The tracks stay. Returns the names of
+    /// the tracks it was on.
     pub fn remove_resource(&mut self, id: ResourceId) -> Vec<String> {
         let users = self.resource_users(id);
-        while let Some(i) = self.tracks.iter().position(|t| t.resource == Some(id)) {
-            self.remove_track(i);
+        for track in &mut self.tracks {
+            track.items.retain(|i| i.resource != id);
         }
-        for track in &mut self.graph_tracks {
-            track.items.retain(|i| i.graph != id);
-        }
+        self.tidy_groups();
         self.resources.retain(|r| r.id != id);
         users
     }
 
     /// Adds a copy of resource `id` named after it, with its colour, and returns the copy's
-    /// id. Only kinds that [duplicate](ResourceKind::duplicates) can be copied.
+    /// id. Only kinds that [duplicate](TrackKind::duplicates) can be copied.
     pub fn duplicate_resource(&mut self, id: ResourceId) -> Option<ResourceId> {
         let resource = self.resource(id).filter(|r| r.kind().duplicates())?;
         let name = format!("{} copy", resource.name);
@@ -554,13 +499,13 @@ impl Project {
 /// without its extension for audio, so a video's own sound doesn't share its video's name.
 pub fn resource_name_for(path: &Path, kind: TrackKind) -> String {
     let name = match kind {
-        TrackKind::Video => path.file_name(),
         TrackKind::Audio => path.file_stem(),
+        _ => path.file_name(),
     };
     name.map(|s| s.to_string_lossy().trim().to_owned())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| match kind {
-            TrackKind::Video => crate::VIDEO_SOURCE.to_owned(),
             TrackKind::Audio => crate::DEFAULT_AUDIO_TRACK.to_owned(),
+            _ => crate::VIDEO_SOURCE.to_owned(),
         })
 }

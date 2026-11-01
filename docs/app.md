@@ -196,7 +196,8 @@ its card raised. A graph
 applies only where it is placed as a **graph item** on a [graph track](#graph-tracks): with none placed, the preview
 and the CLI play the plain mixes, and the open graph is only a description to edit. Right-click also renames,
 duplicates or removes a graph (the open graph can't be removed; removing one removes its graph items and leaves
-their graph tracks). Undoing back to before a graph was made shows the first graph again. Drag a graph
+their graph tracks, as removing media removes its items and leaves their tracks). Undoing back to before a graph
+was made shows the first graph again. Drag a graph
 card into the Graphs section of the timeline to place it. **File → Import Graph…** and **Export Graph…** read and
 write a graph as its own file.
 
@@ -237,8 +238,9 @@ track's lane has its own outline (the selected track's is the accent color), so 
 tell apart. The project lasts to the end of its last item and runs at its [timebase](engine.md#timeline). There is
 no way to make an empty track: a track appears when a resource is placed (File → Add Audio Tracks… places several
 audio files at once, each named after its file).
-Dropping a resource on a track puts it there from the drop point: a track of the same resource gets another item,
-and any other track (a track holds one resource only) makes a new track instead. Dropped **on the line between two
+Dropping a resource on a track puts it there from the drop point, trimming what it lands on: a track of the same
+resource gets another item, and any other track (for now a video or audio track plays one resource) makes a new
+track instead. Dropped **on the line between two
 tracks**, or above the first or below the last track of a section, the resource gets a new track there, whatever
 it is dropped on: a thick **ghost line** shows the place. A track's right-click menu has **New track above** and
 **New track below**, which list the resources of its kind and put the one chosen on a new track there, at the
@@ -263,17 +265,21 @@ first video track.
 Every item has a **header bar** along its top with the track's name (cut short before the mute button) and a mute button (a muted item reads as a gap,
 for graphs too). Drag the bar to move the item; the area below it shows the item's content, thumbnails of the
 source video (decoded by a separate small decoder so they never slow rendering and survive graph edits) or the
-audio's waveform, and behaves like empty lane space. Items can't start before the timeline does.
+audio's waveform, and behaves like empty lane space. Items can't start before the timeline does, and items on a
+track never overlap, on every kind of track: whatever is put down (a drop, a move, a paste) trims what it lands
+on, and cuts an item it lands inside in two.
 
 **Editing items:**
 
 - Click an item's bar to select it, Ctrl+click to add it to the selection or take it out; clicking empty lane
   space selects none. **Drag over lane space** (empty, or an item's content) to box-select the items the box
   touches, on any tracks; Ctrl or Shift adds them to the selection. Selected items are outlined. Dragging a
-  selected item moves every selected item, and every edit below applies to all of them.
+  selected item moves every selected item, and every edit below applies to all of them. While an item is dragged
+  it is drawn where it would land; the move applies when you let go, so it trims only where it lands, not what
+  it passes over.
 - Drag an item's left or right edge (over its whole height) to **trim** it over its file; it stops at the file's
-  ends. **Alt+drag** an edge to change the item's **rate** instead, keeping its in and out points: longer plays
-  slower and lower, like tape (from 0.05× to 20×).
+  ends and at the items either side. **Alt+drag** an edge to change the item's **rate** instead, keeping its in
+  and out points: longer plays slower and lower, like tape (from 0.05× to 20×). Graph items have no rate.
 - **S** splits at the playhead: the selected items, or with none selected every item under it. The first half of
   each split item stays selected, so the second half can be dragged on its own.
 - **Ctrl+A** selects every item in every section, graph items too, while the pointer is over the timeline.
@@ -324,9 +330,8 @@ like an adjustment layer in a video editor. How they render is described in
   track there, anywhere else a new track on top. An empty section says *Drag a graph here to make a graph track*.
 - **The topmost graph item playing is the master.** At each frame the picture and sound you see and hear are the
   Video Output and Audio Output of the item on the highest graph track that has one there, or the plain mixes where
-  none does. Items on one track never overlap: placing or moving one trims what it lands on. A muted graph track
-  or item is skipped, so what is below it shows through. The preview's **Original** shows the mix without any
-  graph, to compare.
+  none does. A muted graph track or item is skipped, so what is below it shows through, and while a graph track is
+  soloed only soloed graph tracks play. The preview's **Original** shows the mix without any graph, to compare.
 - **Items** have the same bar, trim, split, mute, copy, paste and group commands as other items, and **pre-roll**
   (on by default): the graph warms up as if it had run before the item, so trimming the left edge changes nothing
   after it. Dragging a graph item moves it along its track, or up or down onto another graph track, applied when

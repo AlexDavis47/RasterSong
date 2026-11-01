@@ -9,9 +9,9 @@ use std::sync::Arc;
 use common::{FRAMES, backend, tracks, wait_until};
 use rastersong_engine::{
     AudioSink, Bus, ComposedGraph, ComposedGraphTrack, Composition, Engine, EngineConfig,
-    EngineError, EngineStatus, FakeVideo, FrameSink, GraphDesc, GraphItem, Item, MediaTrack,
-    OutputSize, Rational, Registry, RenderInfo, RenderSettings, RenderTrack, RenderedFrame,
-    Renderer, ResourceId, Timeline, TrackKind, TrackSpec, render,
+    EngineError, EngineStatus, FakeVideo, FrameSink, GraphDesc, Item, MediaTrack, OutputSize,
+    Rational, Registry, RenderInfo, RenderSettings, RenderTrack, RenderedFrame, Renderer,
+    ResourceId, Timeline, TrackKind, TrackSpec, render,
 };
 
 const FPS: f64 = 30.0;
@@ -84,16 +84,26 @@ fn shifted() -> String {
 }
 
 /// Graph `graph` placed over frames `from..to`.
-fn span(from: usize, to: usize, graph: u32) -> GraphItem {
-    GraphItem::new(
+fn span(from: usize, to: usize, graph: u32) -> Item {
+    Item::graph(
         ResourceId(graph),
         from as f64 / FPS,
         (to - from) as f64 / FPS,
     )
 }
 
+/// `item` from `start` seconds into its graph's own time, lasting as long.
+fn from(item: Item, start: f64) -> Item {
+    let length = item.end.unwrap() - item.start;
+    Item {
+        start,
+        end: Some(start + length),
+        ..item
+    }
+}
+
 /// A graph track called `name` holding `items`.
-fn graph_track(name: &str, items: Vec<GraphItem>) -> ComposedGraphTrack {
+fn graph_track(name: &str, items: Vec<Item>) -> ComposedGraphTrack {
     ComposedGraphTrack {
         name: name.to_owned(),
         items,
@@ -162,7 +172,7 @@ fn video_track() -> Vec<RenderTrack> {
 /// A video track `name` playing the `other` clip 2 frames late.
 fn late(name: &str) -> RenderTrack {
     let mut other = RenderTrack::video(name, "other");
-    other.items = vec![Item::whole(2.0 / FPS)];
+    other.items = vec![Item::whole(ResourceId(0), 2.0 / FPS)];
     other
 }
 
@@ -210,8 +220,7 @@ fn an_item_starting_mid_timeline_keeps_the_projects_beat_grid() {
     let tracks = video_track();
     let mut comp = composition(&tracks, &[(1, beat())]);
     // Five frames in, a third of a beat, and trimmed by two frames at its start.
-    let mut item = span(5, 20, 1);
-    item.start = 2.0 / FPS;
+    let item = from(span(5, 20, 1), 2.0 / FPS);
     comp.graph_tracks = vec![graph_track("G", vec![item])];
     let rendered = all_frames(&mut renderer_for(&comp, &tracks), 20);
     let whole = reference(&beat(), 20);
@@ -230,8 +239,7 @@ fn an_items_beats_land_where_the_metronome_clicks_with_a_first_beat_offset() {
     };
     let tracks = video_track();
     let mut comp = composition(&tracks, &[(1, beat())]);
-    let mut item = span(7, 40, 1);
-    item.start = 3.0 / FPS;
+    let item = from(span(7, 40, 1), 3.0 / FPS);
     comp.graph_tracks = vec![graph_track("G", vec![item])];
     let mut r = Renderer::with_composition(
         &other_backend(),
@@ -261,8 +269,7 @@ fn graph_progress_goes_across_the_item_wherever_it_is() {
     );
     let tracks = video_track();
     let mut comp = composition(&tracks, &[(1, progress)]);
-    let mut item = span(5, 25, 1);
-    item.start = 2.0 / FPS;
+    let item = from(span(5, 25, 1), 2.0 / FPS);
     comp.graph_tracks = vec![graph_track("G", vec![item])];
     let rendered = all_frames(&mut renderer_for(&comp, &tracks), 25);
     // The first pixel of each frame: 0 on the item's first frame, half way at its middle.
@@ -490,7 +497,7 @@ fn the_mix_shows_the_top_video_track_playing() {
     let top = RenderTrack {
         items: vec![Item {
             end: Some(0.5),
-            ..Item::whole(1.0)
+            ..Item::whole(ResourceId(0), 1.0)
         }],
         ..RenderTrack::video("top", common::VIDEO)
     };
@@ -669,7 +676,7 @@ fn a_graph_passing_the_mix_through_leaves_the_sound_to_the_mixer_and_one_without
         AudioSink::TrackMix
     ));
     // A graph with no Audio Output is silent where it plays: nothing passes through.
-    comp.graph_tracks[0].items[0].graph = ResourceId(2);
+    comp.graph_tracks[0].items[0].resource = ResourceId(2);
     assert!(peak(&comp, &tracks) < 1e-6);
 }
 

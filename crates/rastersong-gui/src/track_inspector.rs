@@ -14,8 +14,8 @@ use crate::widgets::{
     setting_row, setting_toggle,
 };
 
-/// Shows the inspector of the track in row `row` (of [`Project::tracks`]) and returns what the
-/// user changed, as the timeline's track header would.
+/// Shows the inspector of the video or audio track in row `row` (of the timeline's video and
+/// audio rows) and returns what the user changed, as the timeline's track header would.
 pub fn track_inspector(
     ui: &mut Ui,
     project: &Project,
@@ -23,11 +23,12 @@ pub fn track_inspector(
     row: usize,
 ) -> Vec<TrackAction> {
     let mut actions = Vec::new();
-    let Some(track) = project.tracks().nth(row) else {
+    let Some(track) = project.tracks().filter(|t| t.kind.reads_file()).nth(row) else {
         return actions;
     };
     let theme = Theme::of(ui.ctx());
     let (kind, color) = match track.kind {
+        TrackKind::Graph => (tr("resources.kind.graph"), theme.graph_block),
         TrackKind::Video => (tr("resources.kind.video"), theme.ports.video),
         TrackKind::Audio => (tr("resources.kind.audio"), theme.ports.audio),
     };
@@ -43,10 +44,7 @@ pub fn track_inspector(
         if let Some(name) = edit.committed {
             actions.push(TrackAction::Rename(row, name));
         }
-        let resource = track
-            .resource
-            .and_then(|id| project.resource(id))
-            .map(|r| r.name.as_str());
+        let resource = project.track_resource(track).map(|r| r.name.as_str());
         let line = match resource {
             Some(resource) if track.items.len() == 1 => {
                 tr_args("inspector.track.about_one", &[("resource", resource)])

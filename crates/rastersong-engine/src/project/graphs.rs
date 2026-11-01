@@ -1,11 +1,12 @@
 //! Graph resources: a project holds any number of graphs, as resources beside its media.
-//! Graph items place them on graph tracks. Which graph the editor shows is the app's business,
+//! Items on graph tracks place them. Which graph the editor shows is the app's business,
 //! not the project's.
 
 use rastersong_graph::GraphDesc;
 
 use super::Project;
-use super::resources::{ResourceContent, ResourceId, ResourceKind};
+use super::resources::{ResourceContent, ResourceId};
+use crate::timeline::TrackKind;
 
 /// A new graph: the video wired to Video Output and the sound to Audio Output, so effects are
 /// inserted into the wires and a graph that only changes the picture leaves the sound alone.
@@ -53,7 +54,7 @@ impl Project {
     pub fn graph_ids(&self) -> impl Iterator<Item = ResourceId> + '_ {
         self.resources
             .iter()
-            .filter(|r| r.kind() == ResourceKind::Graph)
+            .filter(|r| r.kind() == TrackKind::Graph)
             .map(|r| r.id)
     }
 

@@ -2,7 +2,7 @@
 //! and pre-roll. What the graph reads is set on its input nodes, not here.
 
 use eframe::egui::{RichText, Ui};
-use rastersong_engine::Project;
+use rastersong_engine::{ItemRef, Project};
 use rastersong_lang::{tr, tr_args};
 
 use crate::theme::{self, Theme};
@@ -22,13 +22,13 @@ pub fn graph_item_inspector(
     item: usize,
 ) -> Vec<ItemEdit> {
     let mut edits = Vec::new();
-    let Some(it) = project.graph_item(track, item) else {
+    let Some(it) = project.item(&ItemRef::new(track, item)) else {
         return edits;
     };
     let theme = Theme::of(ui.ctx());
     let name = project
-        .graph(it.graph)
-        .and_then(|_| project.resource(it.graph))
+        .graph(it.resource)
+        .and_then(|_| project.resource(it.resource))
         .map(|r| r.name.clone());
     inspector_header(ui, |ui| {
         kind_row(

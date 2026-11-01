@@ -21,7 +21,7 @@ fn engine() -> Engine {
 fn set_tracks(engine: &Engine, audio: &[(&str, f64)]) {
     let video = TrackSpec::new("Video", TrackKind::Video, PathBuf::from(VIDEO));
     let tracks = audio.iter().map(|&(name, position)| TrackSpec {
-        items: vec![Item::whole(position)],
+        items: vec![Item::whole(rastersong_engine::ResourceId(0), position)],
         ..TrackSpec::new(name, TrackKind::Audio, PathBuf::from(AUDIO))
     });
     engine.set_timeline(Timeline {

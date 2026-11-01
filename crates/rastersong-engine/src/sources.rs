@@ -267,7 +267,7 @@ mod tests {
         // From 0.2 s in, the file from its sample 3.
         let item = Item {
             start: 0.3,
-            ..Item::whole(0.2)
+            ..Item::whole(crate::ResourceId(0), 0.2)
         };
         m.fill_items(std::slice::from_ref(&item), 0.0, 0.5, &mut block);
         assert_eq!(block, [0.0, 0.0, 3.0, 4.0, 5.0]);
@@ -281,14 +281,14 @@ mod tests {
         // At double speed it is resampled: each output sample reads the middle of its span.
         let item = Item {
             rate: 2.0,
-            ..Item::whole(0.0)
+            ..Item::whole(crate::ResourceId(0), 0.0)
         };
         m.fill_items(&[item], 0.5, 1.0, &mut block);
         assert_eq!(block, [10.5, 12.5, 14.5, 16.5, 18.5]);
         // Muted, or no items: silence.
         let muted = Item {
             muted: true,
-            ..Item::whole(0.0)
+            ..Item::whole(crate::ResourceId(0), 0.0)
         };
         m.fill_items(&[muted], 0.0, 0.5, &mut block);
         assert_eq!(block, [0.0; 5]);
@@ -304,7 +304,12 @@ mod tests {
         let fade = (EDGE_FADE * f64::from(rate)) as usize;
         let low = modulator(vec![0.25; 1000], rate);
         let mut block = vec![9.0; 100];
-        low.fill_items(&[Item::whole(0.02)], 0.0, 0.1, &mut block);
+        low.fill_items(
+            &[Item::whole(crate::ResourceId(0), 0.02)],
+            0.0,
+            0.1,
+            &mut block,
+        );
         assert_eq!(block[..20], [0.0; 20]);
         // Each sample's gain is taken at its centre: 0.1, 0.3, … of the way in.
         for k in 0..fade {
@@ -317,7 +322,12 @@ mod tests {
         }
         assert_eq!(block[20 + fade..], [0.25; 100 - 20 - 5]);
         // At the end of the file it fades out the same way.
-        low.fill_items(&[Item::whole(0.0)], 0.95, 1.05, &mut block);
+        low.fill_items(
+            &[Item::whole(crate::ResourceId(0), 0.0)],
+            0.95,
+            1.05,
+            &mut block,
+        );
         assert_eq!(block[..45], [0.25; 45]);
         assert!((block[45] - 0.25 * 0.9).abs() < 1e-6, "{}", block[45]);
         assert_eq!(block[50..], [0.0; 50]);
@@ -328,7 +338,10 @@ mod tests {
         // One file, a ramp, placed twice: the second item, from 50 ms, plays the file from its
         // start again. Inside its fade the two crossfade; after it, only the second plays.
         let ramp = modulator((0..1000).map(|i| i as f32).collect(), 1000);
-        let items = [Item::whole(0.0), Item::whole(0.05)];
+        let items = [
+            Item::whole(crate::ResourceId(0), 0.0),
+            Item::whole(crate::ResourceId(0), 0.05),
+        ];
         let mut block = vec![0.0; 100];
         ramp.fill_items(&items, 0.0, 0.1, &mut block);
         assert_eq!(

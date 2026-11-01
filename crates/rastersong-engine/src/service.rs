@@ -1302,6 +1302,8 @@ impl Worker {
         let mut loaded = Vec::with_capacity(specs.len());
         for spec in specs {
             let media = match spec.kind {
+                // A timeline holds only tracks that read files.
+                TrackKind::Graph => continue,
                 TrackKind::Video => TrackMedia::Video {
                     path: spec.path.clone(),
                     stream: spec.stream,
@@ -1363,6 +1365,7 @@ impl Worker {
         let mut end = 0.0_f64;
         for track in &timeline.tracks {
             let duration = match track.kind {
+                TrackKind::Graph => continue,
                 TrackKind::Video => {
                     let Ok(video) = backend.open_video_stream(&track.path, track.stream) else {
                         continue;

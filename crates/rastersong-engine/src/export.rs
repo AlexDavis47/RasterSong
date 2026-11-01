@@ -76,6 +76,8 @@ impl ExportJob {
         let mut sources = Vec::new();
         for spec in &self.timeline.tracks {
             let media = match spec.kind {
+                // A timeline holds only tracks that read files.
+                TrackKind::Graph => continue,
                 TrackKind::Video => TrackMedia::Video {
                     path: spec.path.clone(),
                     stream: spec.stream,
@@ -412,7 +414,7 @@ mod tests {
                 bus: "Main".into(),
                 track: MixTrack {
                     clip: clip(0.5),
-                    items: vec![Item::whole(0.0)],
+                    items: vec![Item::whole(crate::ResourceId(0), 0.0)],
                     gain: 1.0,
                 },
             },
@@ -420,7 +422,7 @@ mod tests {
                 bus: "Stems".into(),
                 track: MixTrack {
                     clip: clip(0.25),
-                    items: vec![Item::whole(1.0)],
+                    items: vec![Item::whole(crate::ResourceId(0), 1.0)],
                     gain: 0.5,
                 },
             },

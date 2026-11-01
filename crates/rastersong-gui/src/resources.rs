@@ -10,7 +10,7 @@ use eframe::egui::{
     Stroke, StrokeKind, Ui, Vec2, pos2, vec2,
 };
 use rastersong_engine::{
-    LabelColor, Project, Resource, ResourceId, ResourceKind, StreamInfo, StreamKind, TrackKind,
+    LabelColor, Project, Resource, ResourceId, StreamInfo, StreamKind, TrackKind,
 };
 use rastersong_lang::{tr, tr_args};
 
@@ -64,15 +64,7 @@ impl PendingImport {
 }
 
 /// The kind of resource a stream becomes.
-pub fn resource_kind(stream: &StreamInfo) -> ResourceKind {
-    match stream.kind {
-        StreamKind::Video { .. } => ResourceKind::Video,
-        StreamKind::Audio { .. } => ResourceKind::Audio,
-    }
-}
-
-/// The kind of track that plays what `stream` becomes.
-fn stream_track_kind(stream: &StreamInfo) -> TrackKind {
+pub fn resource_kind(stream: &StreamInfo) -> TrackKind {
     match stream.kind {
         StreamKind::Video { .. } => TrackKind::Video,
         StreamKind::Audio { .. } => TrackKind::Audio,
@@ -82,7 +74,7 @@ fn stream_track_kind(stream: &StreamInfo) -> TrackKind {
 /// A name for the resource made from `stream` of the file at `path`: the file's (see
 /// [`rastersong_engine::resource_name_for`]), with the stream's title when it has one.
 pub fn resource_name(path: &Path, stream: &StreamInfo) -> String {
-    let name = rastersong_engine::resource_name_for(path, stream_track_kind(stream));
+    let name = rastersong_engine::resource_name_for(path, resource_kind(stream));
     match &stream.title {
         Some(title) => format!("{name} {title}"),
         None => name,
@@ -297,7 +289,7 @@ fn paint_thumb(painter: &Painter, rect: Rect, thumb: Thumb, missing: bool, theme
 /// at the end of the row and the `current` one checked. Returns the one clicked.
 fn label_color_menu(
     ui: &mut Ui,
-    kind: ResourceKind,
+    kind: TrackKind,
     current: Option<LabelColor>,
 ) -> Option<Option<LabelColor>> {
     let theme = Theme::of(ui.ctx());
@@ -308,7 +300,7 @@ fn label_color_menu(
             .selected(current == color)
             .min_size(vec2(140.0, 0.0));
         let response = ui.add(button);
-        let colors = theme.resource_colors(kind, color);
+        let colors = theme.item_colors(kind, color);
         let dot = Rect::from_center_size(
             pos2(response.rect.right() - 12.0, response.rect.center().y),
             Vec2::splat(10.0),
@@ -561,7 +553,7 @@ pub fn resources_panel(
     let graphs: Vec<&Resource> = project
         .resources
         .iter()
-        .filter(|r| r.kind() == ResourceKind::Graph && matches(&r.name))
+        .filter(|r| r.kind() == TrackKind::Graph && matches(&r.name))
         .collect();
     let tab_id = Id::new("resources-tab");
     let mut tab: Tab = ui.data(|d| d.get_temp(tab_id)).unwrap_or_default();
@@ -649,7 +641,7 @@ fn faint_note(ui: &mut Ui, text: &str) {
 /// ("video · 320×180 · 30 fps", "audio · stereo · 48 kHz").
 pub fn media_detail(resource: &Resource, stream: Option<&StreamInfo>) -> String {
     let mut parts = vec![match resource.kind() {
-        ResourceKind::Video => tr("resources.detail.video").to_owned(),
+        TrackKind::Video => tr("resources.detail.video").to_owned(),
         _ => tr("resources.detail.audio").to_owned(),
     }];
     match stream.map(|s| s.kind) {
@@ -723,7 +715,7 @@ fn media_group(
         let missing = missing.contains(&resource.id);
         let users = project.resource_users(resource.id).len();
         let (glyph, thumb) = match resource.kind() {
-            ResourceKind::Video => ("🎞", Thumb::Video),
+            TrackKind::Video => ("🎞", Thumb::Video),
             _ => ("🔊", Thumb::Audio),
         };
         let path = resource.path().unwrap_or(Path::new(""));

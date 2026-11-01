@@ -1,10 +1,11 @@
 //! The project's timeline: its timebase, and tracks of items placed on it.
 //!
 //! The project is the clock, like a Premiere sequence: it has its own resolution and frame rate,
-//! and every track is conformed to that grid on its way into a graph. A track holds items of one
-//! resource (a video or an audio file); an item places a stretch of the resource, between its in
-//! and out points, at a position on the timeline, played at a rate. Positions and in/out points
-//! are times in seconds, so they survive a change of frame rate. Gaps between items read zeros.
+//! and every track is conformed to that grid on its way into a graph. A track holds items of
+//! resources of its kind (graphs, video or audio); an item places a stretch of its resource,
+//! between its in and out points, at a position on the timeline, played at a rate. Positions and
+//! in/out points are times in seconds, so they survive a change of frame rate. Items on a track
+//! never overlap, and gaps between them read zeros.
 
 use std::path::PathBuf;
 
@@ -56,18 +57,59 @@ impl Timebase {
     }
 }
 
-/// What a track holds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// What a resource is, and so what a track of its resources holds. Tracks are listed in this
+/// order, a section of each: the graphs on top, then the video, then the audio.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TrackKind {
+    /// A graph.
+    Graph,
+    /// One video stream of a file.
     Video,
+    /// One audio stream of a file, any channel count.
     Audio,
 }
 
-/// A stretch of a track's resource placed on the timeline.
+impl TrackKind {
+    /// Whether its resources have a length of their own (a file's), which items can't play
+    /// past. A graph runs for as long as its item lasts.
+    pub fn has_duration(self) -> bool {
+        self.reads_file()
+    }
+
+    /// Whether its items can play at another rate than their resource's own.
+    pub fn stretches(self) -> bool {
+        self.reads_file()
+    }
+
+    /// Whether its resources read a linked file, which can go missing and be relocated.
+    pub fn reads_file(self) -> bool {
+        matches!(self, Self::Video | Self::Audio)
+    }
+
+    /// Whether its tracks have a level and an output bus in the mix.
+    pub fn has_level(self) -> bool {
+        self == Self::Audio
+    }
+
+    /// Whether its items can warm up as if they had been playing before their left edge.
+    pub fn pre_rolls(self) -> bool {
+        self == Self::Graph
+    }
+
+    /// Whether a resource of this kind can be duplicated: a graph, which the project holds, can;
+    /// a stream of a file is the same stream however many times it is listed.
+    pub fn duplicates(self) -> bool {
+        self == Self::Graph
+    }
+}
+
+/// A stretch of a resource placed on a track.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Item {
+    /// What it plays: a resource of its track's kind.
+    pub resource: ResourceId,
     /// Seconds into the project where the item starts.
     #[serde(default)]
     pub position: f64,
@@ -75,11 +117,12 @@ pub struct Item {
     #[serde(default, skip_serializing_if = "is_zero")]
     pub start: f64,
     /// Seconds into the resource where the item ends: its out point. `None` plays to the end of
-    /// the resource, whatever its length.
+    /// the resource, whatever its length; a graph item always has one, as a graph has no end.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub end: Option<f64>,
     /// Seconds of resource played per second of timeline: 2 plays twice as fast. Video holds or
-    /// skips frames; audio is resampled, so its pitch moves like tape.
+    /// skips frames; audio is resampled, so its pitch moves like tape. Always 1 for kinds that
+    /// don't [stretch](TrackKind::stretches).
     #[serde(default = "one", skip_serializing_if = "is_one")]
     pub rate: f64,
     /// A muted item reads as a gap.
@@ -88,6 +131,11 @@ pub struct Item {
     /// Items with the same group move, trim, split and delete together.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<u32>,
+    /// For kinds that [pre-roll](TrackKind::pre_rolls): whether the graph warms up as if it had
+    /// been running before the item, so trimming its left edge never changes what follows.
+    /// Off, it starts cold at the edge.
+    #[serde(default = "yes", skip_serializing_if = "is_yes")]
+    pub pre_roll: bool,
 }
 
 /// A label colour for a resource, picked from a fixed set so every theme can draw it legibly.
@@ -177,65 +225,6 @@ impl Source {
     }
 }
 
-/// A graph placed on a graph track. Graph items have no resource and no rate: the graph runs
-/// in its own time from `start` at the item's left edge.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GraphItem {
-    /// The graph, by its resource's id.
-    pub graph: ResourceId,
-    /// Seconds into the project where the item starts.
-    pub position: f64,
-    /// How long it lasts, in seconds.
-    pub length: f64,
-    /// Seconds into the graph's own time at the left edge: trimming the edge moves it, so what
-    /// follows doesn't change.
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub start: f64,
-    /// A muted item plays nothing, as if it weren't there.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub muted: bool,
-    /// Whether the graph warms up as if it had been running before the item, so trimming its
-    /// left edge never changes what follows. Off, it starts cold at the edge.
-    #[serde(default = "yes", skip_serializing_if = "is_yes")]
-    pub pre_roll: bool,
-}
-
-impl GraphItem {
-    /// Graph `graph` from `position` for `length` seconds.
-    pub fn new(graph: ResourceId, position: f64, length: f64) -> Self {
-        Self {
-            graph,
-            position,
-            length,
-            start: 0.0,
-            muted: false,
-            pre_roll: true,
-        }
-    }
-
-    /// Where the item ends on the timeline, in seconds.
-    pub fn end(&self) -> f64 {
-        self.position + self.length
-    }
-
-    /// Whether the item plays at timeline time `t`.
-    pub fn plays_at(&self, t: f64) -> bool {
-        !self.muted && t >= self.position && t < self.end()
-    }
-
-    /// The item with nonsense (non-finite or negative times) replaced.
-    pub fn sanitized(self) -> Self {
-        let finite = |v: f64| if v.is_finite() { v.max(0.0) } else { 0.0 };
-        Self {
-            position: finite(self.position),
-            length: finite(self.length),
-            start: finite(self.start),
-            ..self
-        }
-    }
-}
-
 fn yes() -> bool {
     true
 }
@@ -257,15 +246,25 @@ fn is_one(v: &f64) -> bool {
 }
 
 impl Item {
-    /// The whole resource at `position`, at its own speed.
-    pub fn whole(position: f64) -> Self {
+    /// The whole of resource `resource` at `position`, at its own speed.
+    pub fn whole(resource: ResourceId, position: f64) -> Self {
         Self {
+            resource,
             position,
             start: 0.0,
             end: None,
             rate: 1.0,
             muted: false,
             group: None,
+            pre_roll: true,
+        }
+    }
+
+    /// Graph `graph` from `position` for `length` seconds, from the start of its own time.
+    pub fn graph(graph: ResourceId, position: f64, length: f64) -> Self {
+        Self {
+            end: Some(length),
+            ..Self::whole(graph, position)
         }
     }
 
@@ -281,8 +280,7 @@ impl Item {
             rate: Some(self.rate)
                 .filter(|r| r.is_finite() && *r > 0.0)
                 .unwrap_or(1.0),
-            muted: self.muted,
-            group: self.group,
+            ..self
         }
     }
 
@@ -314,8 +312,8 @@ impl Item {
 
     /// The gain of the item's audio at timeline time `t`: 0 outside the item or when muted,
     /// rising linearly to 1 over the fade at its start and falling back to 0 over the fade at
-    /// its end. Where items overlap, each later item is mixed over what is below it by its gain,
-    /// so a cut between overlapping items crossfades rather than dipping.
+    /// its end. Where items overlap (only in files written by hand), each later item is mixed
+    /// over what is below it by its gain.
     pub fn gain_at(&self, t: f64, duration: f64) -> f64 {
         let end = self.timeline_end(duration);
         if self.muted || t < self.position || t >= end {
@@ -336,7 +334,7 @@ impl Item {
 }
 
 /// The item of `items` that plays at timeline time `t`, and the resource time it plays: the last
-/// one listed when items overlap.
+/// one listed if items overlap.
 pub fn item_at(items: &[Item], t: f64, duration: f64) -> Option<(&Item, f64)> {
     items
         .iter()
@@ -378,7 +376,7 @@ impl TrackSpec {
             kind,
             path: path.into(),
             stream: None,
-            items: vec![Item::whole(0.0)],
+            items: vec![Item::whole(ResourceId(0), 0.0)],
             bus: DEFAULT_BUS.to_owned(),
             gain: 1.0,
         }
@@ -538,7 +536,7 @@ mod tests {
             end: Some(5.0),
             rate: 2.0,
             muted: false,
-            ..Item::whole(0.0)
+            ..Item::whole(ResourceId(1), 0.0)
         };
         // 4 s of resource at double speed lasts 2 s.
         assert_eq!(item.length(10.0), 2.0);
@@ -556,12 +554,14 @@ mod tests {
             None
         );
         // Without an out point the item plays to the end of the resource.
-        assert_eq!(Item::whole(1.5).timeline_end(3.0), 4.5);
+        assert_eq!(Item::whole(ResourceId(1), 1.5).timeline_end(3.0), 4.5);
+        // A graph item lasts as long as it is placed for, whatever the resource's length.
+        assert_eq!(Item::graph(ResourceId(2), 1.0, 2.0).timeline_end(1.0), 3.0);
     }
 
     #[test]
     fn audio_fades_in_and_out_at_item_edges() {
-        let item = Item::whole(1.0);
+        let item = Item::whole(ResourceId(1), 1.0);
         // A 2 s resource: fades of EDGE_FADE at both ends.
         assert_eq!(item.gain_at(0.999, 2.0), 0.0);
         assert_eq!(item.gain_at(1.0, 2.0), 0.0);
@@ -581,7 +581,10 @@ mod tests {
 
     #[test]
     fn later_items_win_where_items_overlap() {
-        let items = [Item::whole(0.0), Item::whole(1.0)];
+        let items = [
+            Item::whole(ResourceId(1), 0.0),
+            Item::whole(ResourceId(1), 1.0),
+        ];
         assert_eq!(item_at(&items, 0.5, 2.0).map(|(_, s)| s), Some(0.5));
         assert_eq!(item_at(&items, 1.5, 2.0).map(|(_, s)| s), Some(0.5));
         assert_eq!(item_at(&items, 3.5, 2.0), None);
@@ -597,7 +600,7 @@ mod tests {
             end: Some(-3.0),
             rate: 0.0,
             muted: false,
-            ..Item::whole(0.0)
+            ..Item::whole(ResourceId(1), 0.0)
         }
         .sanitized();
         assert_eq!(
@@ -608,7 +611,7 @@ mod tests {
                 end: Some(0.0),
                 rate: 1.0,
                 muted: false,
-                ..Item::whole(0.0)
+                ..Item::whole(ResourceId(1), 0.0)
             }
         );
     }

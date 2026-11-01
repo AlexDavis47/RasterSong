@@ -474,7 +474,7 @@ fn items_place_the_video_and_gaps_read_zeros() {
         start: 10.0 / 30.0,
         end: Some(1.0),
         rate: 2.0,
-        ..Item::whole(0.5)
+        ..Item::whole(rastersong_engine::ResourceId(0), 0.5)
     }];
     let (info, reds) = passthrough_frames(None, video.clone());
     assert_eq!(info.frames, 25);
@@ -533,7 +533,7 @@ fn without_graphs_the_top_video_track_playing_shows() {
     let top_track = || RenderTrack {
         items: vec![Item {
             end: Some(0.5),
-            ..Item::whole(1.0)
+            ..Item::whole(rastersong_engine::ResourceId(0), 1.0)
         }],
         ..RenderTrack::video("top", common::VIDEO)
     };

@@ -10,17 +10,14 @@ use serde::{Deserialize, Serialize};
 use crate::timeline::{Bus, Item, Timebase, TrackKind};
 
 mod editing;
-mod graph_tracks;
 mod graphs;
 mod resources;
 mod sections;
+mod sources;
 
-pub use editing::{Edge, ItemRef, MIN_ITEM_LENGTH, RATE_RANGE, snap_offset};
-pub use graph_tracks::GraphTrack;
+pub use editing::{Edge, ItemLengths, ItemRef, MIN_ITEM_LENGTH, RATE_RANGE, snap_offset};
 pub use graphs::{DEFAULT_GRAPH_NAME, PASSTHROUGH_GRAPH};
-pub use resources::{
-    MediaFile, Resource, ResourceContent, ResourceId, ResourceKind, resource_name_for,
-};
+pub use resources::{MediaFile, Resource, ResourceContent, ResourceId, resource_name_for};
 
 /// The project file format version. Like the graph format it stays 0 until 1.0: files change
 /// freely, with no migrations, and projects saved by another version are rejected.
@@ -40,12 +37,11 @@ pub struct Project {
     /// The media and graphs the project uses, in the order the Resources panel lists them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resources: Vec<Resource>,
-    /// The Video and Audio sections: the video tracks top first, then the audio tracks.
+    /// The tracks, a section of each kind in [`TrackKind`]'s order, each top first: the graph
+    /// tracks (the topmost active graph item's outputs are the master), then the video tracks,
+    /// then the audio tracks.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tracks: Vec<ProjectTrack>,
-    /// The Graphs section, top first: the topmost active graph item's outputs are the master.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub graph_tracks: Vec<GraphTrack>,
     /// The output buses, master first: audio tracks are summed into them in the mix, and each
     /// Audio Output writes to one. Never empty; Main, stereo, by default.
     #[serde(default = "default_buses", skip_serializing_if = "is_default_buses")]
@@ -162,7 +158,7 @@ impl LoopRegion {
     }
 }
 
-/// A video or audio track: items of one resource.
+/// A track: items of resources of its kind, in order and never overlapping.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectTrack {
@@ -170,18 +166,16 @@ pub struct ProjectTrack {
     pub name: String,
     /// Its section: what it plays.
     pub kind: TrackKind,
-    /// What the track plays: `None` for an empty track, which takes the first resource of its
-    /// kind dropped on it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resource: Option<ResourceId>,
-    /// Where the resource plays on the timeline.
-    #[serde(default = "whole")]
+    /// What plays where on the timeline, by position.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub items: Vec<Item>,
-    /// Level in the audio mix, 0 to 1. Graphs read the track as it is.
-    #[serde(default = "full_volume")]
+    /// Level in the audio mix, 0 to 1, for kinds that [have one](TrackKind::has_level). Graphs
+    /// read the track as it is.
+    #[serde(default = "full_volume", skip_serializing_if = "is_full_volume")]
     pub volume: f32,
-    /// Left out of the mix. Graphs still read the track.
-    #[serde(default)]
+    /// Left out of the mix: a muted graph track is skipped, so what is below it shows through.
+    /// Graphs still read a muted video or audio track.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub muted: bool,
     /// The output bus an audio track is summed into in the mix.
     #[serde(default = "main_bus", skip_serializing_if = "is_main_bus")]
@@ -199,32 +193,22 @@ fn full_volume() -> f32 {
     1.0
 }
 
-fn whole() -> Vec<Item> {
-    vec![Item::whole(0.0)]
+fn is_full_volume(volume: &f32) -> bool {
+    *volume == 1.0
 }
 
 impl ProjectTrack {
-    /// A track of `kind` playing the whole resource from the start of the timeline.
-    pub fn new(name: String, kind: TrackKind, resource: ResourceId) -> Self {
+    /// An empty track of `kind`.
+    pub fn new(name: String, kind: TrackKind) -> Self {
         Self {
             name,
             kind,
-            resource: Some(resource),
-            items: whole(),
+            items: Vec::new(),
             volume: 1.0,
             muted: false,
             bus: main_bus(),
             solo: false,
             height: None,
-        }
-    }
-
-    /// A track of `kind` with no resource and no items yet.
-    pub fn empty(name: String, kind: TrackKind) -> Self {
-        Self {
-            resource: None,
-            items: Vec::new(),
-            ..Self::new(name, kind, ResourceId(0))
         }
     }
 
@@ -270,7 +254,6 @@ impl Project {
             timebase: None,
             resources: Vec::new(),
             tracks: Vec::new(),
-            graph_tracks: Vec::new(),
             buses: default_buses(),
             loop_region: None,
             tempo: Tempo::default(),
@@ -364,10 +347,9 @@ impl Project {
         true
     }
 
-    /// Renames track `old` (a video, audio or graph track) to `new`, and the graph sources that
-    /// read it. Refused
-    /// (false, nothing changed) when there is no such track, or `new` is empty or another
-    /// track's. Renaming a track to its own name succeeds.
+    /// Renames track `old` to `new`, and the graph sources that read it. Refused (false, nothing
+    /// changed) when there is no such track, or `new` is empty or another track's. Renaming a
+    /// track to its own name succeeds.
     pub fn rename_track(&mut self, old: &str, new: &str) -> bool {
         let new = new.trim();
         if !self.has_track(old) || new.is_empty() {
@@ -382,19 +364,16 @@ impl Project {
         for track in self.tracks_mut().filter(|t| t.name == old) {
             track.name = new.to_owned();
         }
-        for track in self.graph_tracks.iter_mut().filter(|t| t.name == old) {
-            track.name = new.to_owned();
-        }
         self.rename_sources(old, new);
         true
     }
 
-    /// The video or audio track called `name`.
+    /// The track called `name`.
     pub fn track(&self, name: &str) -> Option<&ProjectTrack> {
         self.tracks().find(|t| t.name == name)
     }
 
-    /// Every video and audio track, top first.
+    /// Every track, top first.
     pub fn tracks(&self) -> impl Iterator<Item = &ProjectTrack> {
         self.tracks.iter()
     }
@@ -403,14 +382,9 @@ impl Project {
         self.tracks.iter_mut()
     }
 
-    /// Whether a video or audio track is called `name`.
-    pub fn has_media_track(&self, name: &str) -> bool {
-        self.tracks().any(|t| t.name == name)
-    }
-
-    /// Whether any track (video, audio or graph) is called `name`.
+    /// Whether any track is called `name`.
     pub fn has_track(&self, name: &str) -> bool {
-        self.has_media_track(name) || self.graph_tracks.iter().any(|t| t.name == name)
+        self.track(name).is_some()
     }
 
     /// The first `name`, `name_2`, `name_3`, … that no track has.
@@ -430,7 +404,7 @@ impl Project {
     /// The video: the first video track that plays something, top down.
     pub fn video(&self) -> Option<&ProjectTrack> {
         self.tracks_of(TrackKind::Video)
-            .find(|t| t.resource.is_some())
+            .find(|t| !t.items.is_empty())
     }
 
     /// The video's file.
@@ -488,42 +462,21 @@ impl Project {
                 file.path = dir.join(&file.path);
             }
         }
-        // Every track and item must play a resource the project has, of its own kind.
+        // Every item must play a resource the project has, of its track's kind.
         let kind_of = |id: ResourceId| project.resource(id).map(Resource::kind);
         let unknown = project
             .tracks
             .iter()
-            .find(|t| {
-                t.resource.is_some_and(|id| {
-                    kind_of(id).and_then(ResourceKind::track_kind) != Some(t.kind)
-                })
-            })
-            .map(|t| t.name.clone())
-            .or_else(|| {
-                project
-                    .graph_tracks
-                    .iter()
-                    .find(|t| {
-                        t.items
-                            .iter()
-                            .any(|i| kind_of(i.graph) != Some(ResourceKind::Graph))
-                    })
-                    .map(|t| t.name.clone())
-            });
+            .find(|t| t.items.iter().any(|i| kind_of(i.resource) != Some(t.kind)));
         if let Some(track) = unknown {
             return Err(error(&tr_args(
                 "error.project.unknown_resource",
-                &[("track", &track)],
+                &[("track", &track.name)],
             )));
         }
         project.sanitize_sections();
-        graph_tracks::sanitize(&mut project.graph_tracks);
+        project.sanitize_items();
         project.tidy_groups();
-        for track in project.tracks_mut() {
-            for item in &mut track.items {
-                *item = item.clone().sanitized();
-            }
-        }
         Ok(project)
     }
 
@@ -618,14 +571,18 @@ mod tests {
         // The video's own sound is named without the extension, so it doesn't clash.
         assert_eq!(resource_name_for(&video, TrackKind::Video), "take 3.mp4");
         assert_eq!(resource_name_for(&video, TrackKind::Audio), "take 3");
-        let id = project.add_resource(ResourceKind::Video, "take 3.mp4", &video, None);
+        let id = project.add_resource(TrackKind::Video, "take 3.mp4", &video, None);
         assert_eq!(
-            project.add_track_for(id, 0.0).as_deref(),
+            project
+                .add_track_for(id, 0.0, &ItemLengths::default())
+                .as_deref(),
             Some("take 3.mp4")
         );
         assert_eq!(project.video_display_name().as_deref(), Some("take 3.mp4"));
         assert_eq!(
-            project.add_track_for(id, 2.0).as_deref(),
+            project
+                .add_track_for(id, 2.0, &ItemLengths::default())
+                .as_deref(),
             Some("take 3.mp4_2")
         );
         assert_eq!(project.tracks[1].items[0].position, 2.0);
@@ -724,7 +681,7 @@ mod tests {
     #[test]
     fn renaming_a_track_follows_through_to_sources() {
         let mut project = three_tracks();
-        project.add_graph_track("Graphs");
+        project.add_empty_track(TrackKind::Graph, "Graphs");
         let mut kick = rastersong_graph::NodeDesc::new("k".into(), crate::AUDIO_INPUT);
         kick.params.insert(
             crate::SOURCE_PARAM.into(),
@@ -751,14 +708,15 @@ mod tests {
         );
         // Graph tracks share the names.
         assert!(!project.rename_track("kick", "Graphs"));
-        // Video tracks are renamed the same way.
+        // Video tracks are renamed the same way (below the graph track).
         assert!(project.rename_track("v", "clip"));
-        assert_eq!(project.tracks[0].name, "clip");
+        assert_eq!(project.tracks[1].name, "clip");
     }
 
     #[test]
     fn offsets_move_the_first_item_and_never_before_the_start() {
-        let mut track = ProjectTrack::new("a".into(), TrackKind::Audio, ResourceId(1));
+        let mut track = ProjectTrack::new("a".into(), TrackKind::Audio);
+        track.items.push(Item::whole(ResourceId(1), 0.0));
         assert_eq!(track.offset(), 0.0);
         track.set_offset(1.5);
         assert_eq!((track.items[0].position, track.items[0].start), (1.5, 0.0));
@@ -796,42 +754,34 @@ mod tests {
     fn resources_are_named_uniquely_and_found_again_by_stream() {
         let mut project =
             Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
-        let loop_a = project.add_resource(
-            ResourceKind::Audio,
-            "Drum Loop",
-            "music/Drum Loop.wav",
-            None,
-        );
-        let loop_b = project.add_resource(
-            ResourceKind::Audio,
-            "Drum Loop",
-            "other/Drum Loop.mp3",
-            None,
-        );
+        let loop_a =
+            project.add_resource(TrackKind::Audio, "Drum Loop", "music/Drum Loop.wav", None);
+        let loop_b =
+            project.add_resource(TrackKind::Audio, "Drum Loop", "other/Drum Loop.mp3", None);
         assert_ne!(loop_a, loop_b);
         assert_eq!(project.resource(loop_b).unwrap().name, "Drum Loop_2");
         // The same stream again is the same resource; another stream of the file is another.
         assert_eq!(
-            project.add_resource(ResourceKind::Audio, "x", "music/Drum Loop.wav", None),
+            project.add_resource(TrackKind::Audio, "x", "music/Drum Loop.wav", None),
             loop_a
         );
-        let second = project.add_resource(ResourceKind::Audio, "x", "music/Drum Loop.wav", Some(2));
+        let second = project.add_resource(TrackKind::Audio, "x", "music/Drum Loop.wav", Some(2));
         assert_ne!(second, loop_a);
-        // Renames stay unique; removing a resource removes its tracks.
+        // Renames stay unique; removing a resource removes its items, not its tracks.
         assert!(project.rename_resource(loop_b, "Drum Loop"));
         assert_eq!(project.resource(loop_b).unwrap().name, "Drum Loop_2");
         assert!(!project.rename_resource(loop_b, "  "));
-        project.add_track_for(second, 0.0);
+        project.add_track_for(second, 0.0, &ItemLengths::default());
         assert_eq!(project.resource_users(second), ["x"]);
         assert_eq!(project.remove_resource(second), ["x"]);
-        assert!(project.tracks.is_empty());
+        assert!(project.tracks[0].items.is_empty());
         assert!(project.resource(second).is_none());
     }
 
     #[test]
     fn resource_colors_are_set_cleared_and_saved() {
         let mut project = Project::new(graph());
-        let id = project.add_resource(ResourceKind::Audio, "loop", "loop.wav", None);
+        let id = project.add_resource(TrackKind::Audio, "loop", "loop.wav", None);
         assert!(project.set_resource_color(id, Some(LabelColor::Teal)));
         assert!(!project.set_resource_color(id, Some(LabelColor::Teal)));
         assert!(!project.set_resource_color(ResourceId(99), Some(LabelColor::Red)));
@@ -857,33 +807,33 @@ mod tests {
         project.add_track(TrackKind::Video, "clip", dir.join("media/clip.mp4"));
         // Absolute and outside the project folder on every platform.
         let elsewhere = std::env::current_dir().unwrap().join("elsewhere-song.wav");
-        let elsewhere = project.add_resource(ResourceKind::Audio, "elsewhere", elsewhere, None);
+        let elsewhere = project.add_resource(TrackKind::Audio, "elsewhere", elsewhere, None);
         project.tracks.push(ProjectTrack {
             items: vec![
                 Item {
                     start: 1.25,
                     end: Some(3.0),
-                    ..Item::whole(0.0)
+                    ..Item::whole(elsewhere, 0.0)
                 },
                 Item {
                     rate: 0.5,
                     muted: true,
-                    ..Item::whole(4.0)
+                    ..Item::whole(elsewhere, 4.0)
                 },
             ],
             volume: 0.5,
             muted: true,
-            ..ProjectTrack::new("audio".into(), TrackKind::Audio, elsewhere)
+            ..ProjectTrack::new("audio".into(), TrackKind::Audio)
         });
         project.add_track(TrackKind::Audio, "drums", dir.join("media/drums.wav"));
         // A chosen stream is kept.
         let voice = project.add_resource(
-            ResourceKind::Audio,
+            TrackKind::Audio,
             "voice",
             dir.join("media/clip.mp4"),
             Some(2),
         );
-        project.add_track_for(voice, 1.0);
+        project.add_track_for(voice, 1.0, &ItemLengths::default());
         project.save(&path).unwrap();
 
         let json = std::fs::read_to_string(&path).unwrap();
@@ -898,8 +848,8 @@ mod tests {
 
         assert_eq!(Project::load(&path).unwrap(), project);
 
-        // A track must play a resource the project has.
-        project.tracks[1].resource = Some(ResourceId(999));
+        // An item must play a resource the project has.
+        project.tracks[1].items[0].resource = ResourceId(999);
         project.save(&path).unwrap();
         let error = Project::load(&path).unwrap_err();
         assert!(error.contains("\"audio\""), "{error}");
@@ -1003,7 +953,7 @@ mod inspect_rate_tests {
         // Names stay unique, a blank name is the default, and the template is the passthrough.
         let new_graph = project.resource(new).unwrap();
         assert_eq!(new_graph.name, "Graph_2");
-        assert_eq!(new_graph.kind(), ResourceKind::Graph);
+        assert_eq!(new_graph.kind(), TrackKind::Graph);
         assert_eq!(project.graph(new).unwrap().nodes.len(), 4);
         assert_eq!(project.graph(Project::FIRST_GRAPH), Some(&starter));
 
@@ -1018,7 +968,7 @@ mod inspect_rate_tests {
         );
         project.graph_mut(copy).unwrap().nodes.clear();
         assert_eq!(project.graph(new).unwrap().nodes.len(), 4);
-        let song = project.add_resource(ResourceKind::Audio, "song", "song.wav", None);
+        let song = project.add_resource(TrackKind::Audio, "song", "song.wav", None);
         assert_eq!(project.duplicate_resource(song), None);
         project.remove_resource(song);
 
@@ -1046,7 +996,7 @@ mod inspect_rate_tests {
     fn graphs_and_media_share_one_name_namespace() {
         let mut project =
             Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
-        let song = project.add_resource(ResourceKind::Audio, "Graph", "song.wav", None);
+        let song = project.add_resource(TrackKind::Audio, "Graph", "song.wav", None);
         assert_eq!(project.resource(song).unwrap().name, "Graph_2");
         let graph = project.add_graph("song", None);
         assert!(project.rename_resource(song, "song"));
@@ -1074,13 +1024,15 @@ mod inspect_rate_tests {
         let path = dir.join("p.rastersong");
         let mut project =
             Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
-        let song = project.add_resource(ResourceKind::Audio, "song", "song.wav", None);
-        let track = project.add_graph_track("FX");
-        project.place_graph(&track, Project::FIRST_GRAPH, 0.0, 1.0);
+        let song = project.add_resource(TrackKind::Audio, "song", "song.wav", None);
+        let track = project.add_empty_track(TrackKind::Graph, "FX");
+        project
+            .place_resource(&track, Project::FIRST_GRAPH, 0.0, &ItemLengths::default())
+            .unwrap();
         project.save(&path).unwrap();
         assert!(Project::load(&path).is_ok());
         for wrong in [ResourceId(99), song] {
-            project.graph_tracks[0].items[0].graph = wrong;
+            project.tracks[0].items[0].resource = wrong;
             project.save(&path).unwrap();
             let error = Project::load(&path).unwrap_err();
             assert!(error.contains("\"FX\""), "{error}");
@@ -1092,9 +1044,9 @@ mod inspect_rate_tests {
     fn an_empty_track_takes_the_first_resource_of_its_kind_dropped_on_it() {
         let mut project =
             Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
-        let clip = project.add_resource(ResourceKind::Video, "clip", "clip.mp4", None);
-        let other = project.add_resource(ResourceKind::Video, "other", "other.mp4", None);
-        let song = project.add_resource(ResourceKind::Audio, "song", "song.wav", None);
+        let clip = project.add_resource(TrackKind::Video, "clip", "clip.mp4", None);
+        let other = project.add_resource(TrackKind::Video, "other", "other.mp4", None);
+        let song = project.add_resource(TrackKind::Audio, "song", "song.wav", None);
         let name = project.add_empty_track(TrackKind::Video, "Video");
         let second = project.add_empty_track(TrackKind::Audio, "Audio");
         assert_eq!(
@@ -1106,15 +1058,35 @@ mod inspect_rate_tests {
         assert!(project.video().is_none());
 
         // Only its own kind fills an empty track.
-        assert!(!project.place_resource(&name, song, 0.0));
-        assert!(project.place_resource(&name, clip, 1.0));
+        assert!(
+            project
+                .place_resource(&name, song, 0.0, &ItemLengths::default())
+                .is_none()
+        );
+        assert!(
+            project
+                .place_resource(&name, clip, 1.0, &ItemLengths::default())
+                .is_some()
+        );
         assert_eq!(project.tracks[0].items[0].position, 1.0);
         assert_eq!(project.video().unwrap().name, name);
-        assert!(project.place_resource(&second, song, 0.0));
+        assert!(
+            project
+                .place_resource(&second, song, 0.0, &ItemLengths::default())
+                .is_some()
+        );
         // The same resource adds an item; another resource is refused.
-        assert!(project.place_resource(&name, clip, 5.0));
+        assert!(
+            project
+                .place_resource(&name, clip, 5.0, &ItemLengths::default())
+                .is_some()
+        );
         assert_eq!(project.tracks[0].items.len(), 2);
-        assert!(!project.place_resource(&name, other, 0.0));
+        assert!(
+            project
+                .place_resource(&name, other, 0.0, &ItemLengths::default())
+                .is_none()
+        );
         assert_eq!(project.timeline().tracks.len(), 2);
     }
 
@@ -1124,11 +1096,11 @@ mod inspect_rate_tests {
             Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
         let stems: Vec<_> = ["drums", "bass", "keys"]
             .iter()
-            .map(|n| project.add_resource(ResourceKind::Audio, n, format!("{n}.wav"), None))
+            .map(|n| project.add_resource(TrackKind::Audio, n, format!("{n}.wav"), None))
             .collect();
-        let existing = project.add_resource(ResourceKind::Audio, "old", "old.wav", None);
-        project.place_linked(existing, None, 0.0, false);
-        let placed = project.place_many_at(&stems, 0, 1.5, true);
+        let existing = project.add_resource(TrackKind::Audio, "old", "old.wav", None);
+        project.place_linked(existing, None, 0.0, false, &ItemLengths::default());
+        let placed = project.place_many_at(&stems, 0, 1.5, true, &ItemLengths::default());
         let names: Vec<&str> = project.tracks.iter().map(|t| t.name.as_str()).collect();
         assert_eq!(names, ["drums", "bass", "keys", "old"]);
         assert_eq!(placed.len(), 3);
@@ -1140,7 +1112,8 @@ mod inspect_rate_tests {
         // Each is on its own: they are not grouped with one another.
         assert_eq!(project.with_grouped(&placed[..1]).len(), 1);
         // Asked for twice, a resource is placed once.
-        let again = project.place_many_at(&[stems[0], stems[0]], 4, 0.0, true);
+        let again =
+            project.place_many_at(&[stems[0], stems[0]], 4, 0.0, true, &ItemLengths::default());
         assert_eq!(again.len(), 1);
     }
 
@@ -1148,21 +1121,21 @@ mod inspect_rate_tests {
     fn dropping_on_a_line_between_tracks_makes_new_tracks_there() {
         let mut project =
             Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
-        let picture = project.add_resource(ResourceKind::Video, "take.mp4", "take.mp4", None);
-        let sound = project.add_resource(ResourceKind::Audio, "take", "take.mp4", Some(1));
-        let song = project.add_resource(ResourceKind::Audio, "song", "song.wav", None);
+        let picture = project.add_resource(TrackKind::Video, "take.mp4", "take.mp4", None);
+        let sound = project.add_resource(TrackKind::Audio, "take", "take.mp4", Some(1));
+        let song = project.add_resource(TrackKind::Audio, "song", "song.wav", None);
         let names =
             |p: &Project| -> Vec<String> { p.tracks.iter().map(|t| t.name.clone()).collect() };
-        project.place_linked(picture, None, 0.0, true);
-        project.place_linked(song, None, 0.0, false);
+        project.place_linked(picture, None, 0.0, true, &ItemLengths::default());
+        project.place_linked(song, None, 0.0, false, &ItemLengths::default());
         assert_eq!(names(&project), ["take.mp4", "take", "song"]);
 
         // Above the first track, even though the resource already has a track.
-        project.place_linked_at(picture, 0, 1.0, false);
+        project.place_linked_at(picture, 0, 1.0, false, &ItemLengths::default());
         assert_eq!(names(&project), ["take.mp4_2", "take.mp4", "take", "song"]);
         // Linked at the line under the videos: the picture goes there, the sound to the top of
         // the audio tracks (the same index), grouped.
-        let placed = project.place_linked_at(picture, 2, 2.0, true);
+        let placed = project.place_linked_at(picture, 2, 2.0, true, &ItemLengths::default());
         assert_eq!(
             names(&project),
             [
@@ -1176,7 +1149,7 @@ mod inspect_rate_tests {
         );
         assert_eq!(project.with_grouped(&placed[..1]).len(), 2);
         // A line outside the resource's section: its own section's bottom.
-        project.place_linked_at(song, 0, 0.0, false);
+        project.place_linked_at(song, 0, 0.0, false, &ItemLengths::default());
         assert_eq!(project.tracks.last().unwrap().name, "song_2");
         let _ = sound;
     }
@@ -1185,16 +1158,17 @@ mod inspect_rate_tests {
     fn dropping_a_resource_places_its_whole_file_grouped_unless_asked_for_one() {
         let mut project =
             Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
-        let picture = project.add_resource(ResourceKind::Video, "take.mp4", "take.mp4", None);
-        let sound = project.add_resource(ResourceKind::Audio, "take", "take.mp4", Some(1));
-        let commentary = project.add_resource(ResourceKind::Audio, "voice", "take.mp4", Some(2));
-        let song = project.add_resource(ResourceKind::Audio, "song", "song.wav", None);
+        let picture = project.add_resource(TrackKind::Video, "take.mp4", "take.mp4", None);
+        let sound = project.add_resource(TrackKind::Audio, "take", "take.mp4", Some(1));
+        let commentary = project.add_resource(TrackKind::Audio, "voice", "take.mp4", Some(2));
+        let song = project.add_resource(TrackKind::Audio, "song", "song.wav", None);
         assert_eq!(project.siblings(sound), [sound, picture, commentary]);
         assert_eq!(project.siblings(song), [song]);
         let empty = project.add_empty_track(TrackKind::Audio, "Audio");
 
         // Over the empty audio track: the first sound goes there, the rest on new tracks.
-        let placed = project.place_linked(picture, Some(&empty), 2.0, true);
+        let placed =
+            project.place_linked(picture, Some(&empty), 2.0, true, &ItemLengths::default());
         let tracks: Vec<&str> = placed.iter().map(|at| at.track.as_str()).collect();
         assert_eq!(tracks, ["take.mp4", "Audio", "voice"]);
         let names: Vec<&str> = project.tracks.iter().map(|t| t.name.as_str()).collect();
@@ -1207,13 +1181,13 @@ mod inspect_rate_tests {
         );
 
         // Again: each goes on the track already playing it, as a new group.
-        let again = project.place_linked(sound, None, 10.0, true);
+        let again = project.place_linked(sound, None, 10.0, true, &ItemLengths::default());
         assert_eq!(again.len(), 3);
         assert_eq!(project.tracks.len(), 3);
         assert_eq!(project.with_grouped(&again[..1]).len(), 3);
 
         // Only the one dragged.
-        let one = project.place_linked(sound, None, 20.0, false);
+        let one = project.place_linked(sound, None, 20.0, false, &ItemLengths::default());
         assert_eq!(one, [ItemRef::new("Audio", 2)]);
         assert_eq!(project.with_grouped(&one).len(), 1);
     }
@@ -1222,14 +1196,20 @@ mod inspect_rate_tests {
     fn two_video_tracks_may_play_one_resource() {
         let mut project =
             Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
-        let clip = project.add_resource(ResourceKind::Video, "clip", "clip.mp4", None);
-        let a = project.add_track_for(clip, 0.0).unwrap();
-        let b = project.add_track_for(clip, 0.0).unwrap();
+        let clip = project.add_resource(TrackKind::Video, "clip", "clip.mp4", None);
+        let a = project
+            .add_track_for(clip, 0.0, &ItemLengths::default())
+            .unwrap();
+        let b = project
+            .add_track_for(clip, 0.0, &ItemLengths::default())
+            .unwrap();
         assert_eq!((a.as_str(), b.as_str()), ("clip", "clip_2"));
         let timeline = project.timeline();
         assert_eq!(timeline.tracks.len(), 2);
         assert_eq!(timeline.tracks[0].path, timeline.tracks[1].path);
-        // Removing the resource takes both tracks.
+        // Removing the resource takes its items from both tracks; the tracks stay.
         assert_eq!(project.remove_resource(clip).len(), 2);
+        assert_eq!(project.tracks.len(), 2);
+        assert!(project.tracks.iter().all(|t| t.items.is_empty()));
     }
 }

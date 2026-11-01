@@ -359,8 +359,9 @@ Reusable widgets, built once in `rastersong-gui` (a `widgets/` module) and used 
   - [x] Graphs are resources: one `Resource` with a media or graph `content`, one name set, colour, duplicate,
     remove and "used by" for both; which graph the editor shows is the app's, not the project's
     ([Projects](graph-format.md#projects)).
-  - [ ] One track type, one item type and one editing API for every section; items never overlap (placing one
-    trims what it lands on).
+  - [x] One track type, one item type and one editing API for every section; items never overlap (placing one
+    trims what it lands on), and video and audio drags apply on release
+    ([Decisions](decisions.md#one-track-type-one-item-type-items-never-overlap-october-2026)).
   - [ ] One projection to the renderer, the one-graph CLI route a project; graph-only projects render.
   - [ ] Per-item resources in the renderer and one stacking rule for video and graph tracks.
   - [ ] One path in the Resources panel (colour, multi-select, multi-drag and Add to timeline for graphs).

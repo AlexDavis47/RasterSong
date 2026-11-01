@@ -33,11 +33,10 @@ pub use error::EngineError;
 pub use listen::ListenTarget;
 pub use offline::{FrameSink, RenderSettings, RenderedFrame, render};
 pub use project::{
-    DEFAULT_GRAPH_NAME, DEFAULT_INSPECT_RATE, DEFAULT_MAX_WARMUP_FRAMES, Edge, GraphTrack,
-    INSPECT_RATE_RANGE, ItemRef, LoopRegion, MAX_WARMUP_FRAMES_LIMIT, MIN_ITEM_LENGTH, MediaFile,
+    DEFAULT_GRAPH_NAME, DEFAULT_INSPECT_RATE, DEFAULT_MAX_WARMUP_FRAMES, Edge, INSPECT_RATE_RANGE,
+    ItemLengths, ItemRef, LoopRegion, MAX_WARMUP_FRAMES_LIMIT, MIN_ITEM_LENGTH, MediaFile,
     PASSTHROUGH_GRAPH, PROJECT_EXTENSION, PROJECT_VERSION, Project, ProjectTrack, RATE_RANGE,
-    Resource, ResourceContent, ResourceId, ResourceKind, TimelineMode, resource_name_for,
-    snap_offset,
+    Resource, ResourceContent, ResourceId, TimelineMode, resource_name_for, snap_offset,
 };
 pub use rastersong_graph::dsp::Fft;
 pub use rastersong_graph::nodes::support::UNBOUNDED_WARMUP;
@@ -71,8 +70,7 @@ pub use service::{
 pub use tap::{PICTURE_SIDE, Picture, Tap, TapOutcome, TapRequest, picture_size};
 pub use thumbnails::{THUMBNAIL_HEIGHT, Thumbnails, VideoKey};
 pub use timeline::{
-    Bus, GraphItem, Item, LabelColor, MAX_BUS_CHANNELS, Source, Timebase, Timeline, TrackKind,
-    TrackSpec,
+    Bus, Item, LabelColor, MAX_BUS_CHANNELS, Source, Timebase, Timeline, TrackKind, TrackSpec,
 };
 pub use waveform::Waveform;
 

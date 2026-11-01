@@ -19,7 +19,7 @@ use rastersong_engine::{
 use rastersong_gui::theme::WireStyle;
 
 mod common;
-use common::TrackLists;
+use common::{TrackLists, add_graph_track, place_graph};
 use rastersong_gui::{App, AudioOut, STARTER_GRAPH, ThemeChoice};
 
 fn app(theme: ThemeChoice) -> App {
@@ -310,8 +310,8 @@ fn capture(theme: ThemeChoice, theme_name: &str) {
         );
         // Only a placed graph renders, so only a placed graph can fail.
         let graph = Project::FIRST_GRAPH;
-        let track = project.add_graph_track("Graphs");
-        project.place_graph(&track, graph, 0.0, 4.0);
+        let track = add_graph_track(project, "Graphs");
+        place_graph(project, &track, graph, 0.0, 4.0);
     });
     let mut failed = gpu_harness(failing);
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -341,8 +341,8 @@ fn capture(theme: ThemeChoice, theme_name: &str) {
             )
             .unwrap();
         let graph = Project::FIRST_GRAPH;
-        let track = project.add_graph_track("Graphs");
-        project.place_graph(&track, graph, 0.0, 4.0);
+        let track = add_graph_track(project, "Graphs");
+        place_graph(project, &track, graph, 0.0, 4.0);
     });
     let mut warned = gpu_harness(warned);
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -647,10 +647,10 @@ fn graph_track_screenshots() {
             ),
         );
         let open = Project::FIRST_GRAPH;
-        let bottom = project.add_graph_track("Graphs");
-        project.place_graph(&bottom, open, 0.0, 2.0);
-        let top = project.add_graph_track("Graphs");
-        project.place_graph(&top, side, 0.5, 1.0);
+        let bottom = add_graph_track(project, "Graphs");
+        place_graph(project, &bottom, open, 0.0, 2.0);
+        let top = add_graph_track(project, "Graphs");
+        place_graph(project, &top, side, 0.5, 1.0);
     });
     let mut harness = gpu_harness(app);
     wait_for_frames(&mut harness, 10);
@@ -680,26 +680,41 @@ fn graph_track_screenshots() {
 fn item_screenshots() {
     use rastersong_engine::Item;
     let app = app_edited(ThemeChoice::Dark, 2, TimelineMode::Time, |project| {
+        let playing = |project: &rastersong_engine::Project, kind, n: usize| {
+            project.tracks_of(kind).nth(n).unwrap().items[0].resource
+        };
+        let (video, sound, other) = (
+            playing(project, TrackKind::Video, 0),
+            playing(project, TrackKind::Audio, 0),
+            playing(project, TrackKind::Audio, 1),
+        );
         project.track_of_mut(TrackKind::Video, 0).items = vec![
             Item {
                 end: Some(1.5),
-                ..Item::whole(0.0)
+                ..Item::whole(video, 0.0)
             },
             Item {
                 start: 2.0,
-                ..Item::whole(2.0)
+                ..Item::whole(video, 2.0)
             },
         ];
-        project.track_of_mut(TrackKind::Audio, 0).items = project.videos()[0].items.clone();
+        project.track_of_mut(TrackKind::Audio, 0).items = project.videos()[0]
+            .items
+            .iter()
+            .map(|i| Item {
+                resource: sound,
+                ..i.clone()
+            })
+            .collect();
         project.track_of_mut(TrackKind::Audio, 1).items = vec![
             Item {
                 end: Some(1.0),
-                ..Item::whole(0.5)
+                ..Item::whole(other, 0.5)
             },
             Item {
                 muted: true,
                 start: 1.0,
-                ..Item::whole(2.5)
+                ..Item::whole(other, 2.5)
             },
         ];
         project.track_of_mut(TrackKind::Audio, 1).height = Some(110.0);
@@ -805,8 +820,8 @@ fn graph_stats_screenshots() {
             )
             .unwrap();
             let graph = Project::FIRST_GRAPH;
-            let track = project.add_graph_track("Graphs");
-            project.place_graph(&track, graph, 0.0, 4.0);
+            let track = add_graph_track(project, "Graphs");
+            place_graph(project, &track, graph, 0.0, 4.0);
         });
         let mut harness = gpu_harness(app);
         wait_for_frames(&mut harness, 30);
@@ -828,14 +843,14 @@ fn resources_screenshots() {
     for (theme, name) in [(ThemeChoice::Dark, "dark"), (ThemeChoice::Light, "light")] {
         let app = app_edited(theme, 1, TimelineMode::Time, |project| {
             project.add_resource(
-                rastersong_engine::ResourceKind::Audio,
+                rastersong_engine::TrackKind::Audio,
                 "drums",
                 "gone/drums.wav",
                 None,
             );
             let graph = Project::FIRST_GRAPH;
-            let track = project.add_graph_track("Graphs");
-            project.place_graph(&track, graph, 0.0, 4.0);
+            let track = add_graph_track(project, "Graphs");
+            place_graph(project, &track, graph, 0.0, 4.0);
             project.add_graph("Sidechain", None);
         });
         let mut harness = gpu_harness(app);
@@ -859,8 +874,8 @@ fn resources_screenshots() {
 fn timeline_screenshots() {
     let app = app_edited(ThemeChoice::Dark, 2, TimelineMode::Time, |project| {
         let graph = Project::FIRST_GRAPH;
-        let track = project.add_graph_track("Graph track 1");
-        project.place_graph(&track, graph, 0.0, 3.0);
+        let track = add_graph_track(project, "Graph track 1");
+        place_graph(project, &track, graph, 0.0, 3.0);
         project.loop_region = Some(rastersong_engine::LoopRegion {
             start: 1.0,
             end: 3.0,
@@ -904,8 +919,8 @@ fn meter_screenshots() {
     *project.graph_mut(Project::FIRST_GRAPH).unwrap() = graph;
     // Only a placed graph renders, so only a placed graph has something to inspect.
     let id = Project::FIRST_GRAPH;
-    let track = project.add_graph_track("Graphs");
-    project.place_graph(&track, id, 0.0, 4.0);
+    let track = add_graph_track(&mut project, "Graphs");
+    place_graph(&mut project, &track, id, 0.0, 4.0);
     app = App::new(
         Arc::new(
             FakeBackend::new()

@@ -23,7 +23,7 @@ use rastersong_graph::{
 use crate::EngineError;
 use crate::composition::{Composition, InputKind, input_ports};
 use crate::project::ResourceId;
-use crate::timeline::{GraphItem, Source, TrackKind};
+use crate::timeline::{Item, Source};
 
 /// The sound the mix and the graph tracks are in: this many samples a second, in the bus's
 /// channels, one block per frame. What leaves the render is resampled to the project's audio
@@ -808,8 +808,14 @@ fn frame_of(t: f64, fps: f64) -> i64 {
 
 /// What is added to an output frame to get `item`'s graph's own frame: its graph counts from the
 /// item's trimmed start, not from the start of the project.
-fn item_base(item: &GraphItem, fps: f64) -> i64 {
+fn item_base(item: &Item, fps: f64) -> i64 {
     (item.start * fps).round() as i64 - frame_of(item.position, fps)
+}
+
+/// Where graph item `item` ends on the timeline: a graph has no length of its own, so it is its
+/// out point's, or never for an item without one (a render of one graph).
+fn graph_end(item: &Item) -> f64 {
+    item.timeline_end(f64::INFINITY)
 }
 
 /// Compiles a composition.
@@ -862,11 +868,13 @@ impl<'a> Builder<'a> {
     }
 
     /// The items of graph track `index` that play: with a graph the project has, and a length.
-    fn playing(&self, index: usize) -> Vec<&'a GraphItem> {
+    fn playing(&self, index: usize) -> Vec<&'a Item> {
         self.comp().graph_tracks[index]
             .items
             .iter()
-            .filter(|i| !i.muted && i.length > 0.0 && self.graphs.contains_key(&i.graph))
+            .filter(|i| {
+                !i.muted && graph_end(i) > i.position && self.graphs.contains_key(&i.resource)
+            })
             .collect()
     }
 
@@ -876,7 +884,7 @@ impl<'a> Builder<'a> {
         // A track is read when it is in the mix or a graph that plays reads its stem.
         let stems: Vec<String> = (0..comp.graph_tracks.len())
             .flat_map(|g| self.playing(g))
-            .flat_map(|i| input_ports(self.graphs[&i.graph]))
+            .flat_map(|i| input_ports(self.graphs[&i.resource]))
             .filter_map(|p| match p.source {
                 Source::Track(name) => Some(name),
                 _ => None,
@@ -905,9 +913,10 @@ impl<'a> Builder<'a> {
             .enumerate()
             .filter(|(_, t)| t.in_mix)
             .map(|(i, t)| {
-                let gain = match t.kind {
-                    TrackKind::Video => Some(1.0),
-                    TrackKind::Audio => (t.bus == self.plan.bus.name).then_some(t.volume),
+                let gain = if t.kind.has_level() {
+                    (t.bus == self.plan.bus.name).then_some(t.volume)
+                } else {
+                    Some(1.0)
                 };
                 (i, gain)
             })
@@ -931,7 +940,7 @@ impl<'a> Builder<'a> {
             let mut items = Vec::new();
             let mut mix_sound = self.mix_sound[host];
             for item in self.playing(index) {
-                let (first, end) = (frame_of(item.position, fps), frame_of(item.end(), fps));
+                let (first, end) = (frame_of(item.position, fps), frame_of(graph_end(item), fps));
                 if end <= first {
                     continue;
                 }
@@ -1040,10 +1049,10 @@ impl<'a> Builder<'a> {
     fn build_item(
         &mut self,
         node: usize,
-        item: &GraphItem,
+        item: &Item,
         latency_in: usize,
     ) -> Result<(ChainRt, bool), EngineError> {
-        let desc = self.graphs[&item.graph];
+        let desc = self.graphs[&item.resource];
         let ports = input_ports(desc);
         let fills: Vec<Fill> = ports
             .iter()
@@ -1105,11 +1114,11 @@ impl<'a> Builder<'a> {
         tempo.offset_secs += item_base(item, fps) as f64 / fps;
         // What the item plays of the graph's own time, in whole frames as it is rendered; an
         // item without end (a render of one graph) plays the project.
-        let span = if item.length.is_finite() {
+        let span = if graph_end(item).is_finite() {
             let first = frame_of(item.position, fps);
             Span {
                 start: (first + item_base(item, fps)) as f64 / fps,
-                length: (frame_of(item.end(), fps) - first) as f64 / fps,
+                length: (frame_of(graph_end(item), fps) - first) as f64 / fps,
             }
         } else {
             self.plan.options.span
@@ -1121,7 +1130,7 @@ impl<'a> Builder<'a> {
             ..self.plan.options.clone()
         };
         let graph = Graph::compile(desc, self.plan.registry, &options)
-            .map_err(|e| fx_error(e, item.graph, &self.names, self.plan.single))?;
+            .map_err(|e| fx_error(e, item.resource, &self.names, self.plan.single))?;
         // The item's sound is the mix when its Audio Output is wired straight from a port that
         // reads the mix: what is below, when that is the mix, or the mix itself. A render of one
         // graph keeps the old rule that a graph without an Audio Output leaves the sound alone.
@@ -1141,7 +1150,7 @@ impl<'a> Builder<'a> {
         let host_delay = align - latency_in;
         let audio_layout = graph.audio_layout().unwrap_or(self.mix);
         let fx = FxRt {
-            graph_id: item.graph,
+            graph_id: item.resource,
             options,
             latency: own,
             warmup: graph.warmup_frames() as usize,

@@ -396,7 +396,7 @@ mod tests {
     fn mixer(clip: Arc<AudioClip>) -> Mixer {
         Mixer::new(vec![MixTrack {
             clip,
-            items: vec![Item::whole(0.0)],
+            items: vec![Item::whole(crate::ResourceId(0), 0.0)],
             gain: 1.0,
         }])
     }
@@ -437,12 +437,12 @@ mod tests {
         let mixer = Mixer::new(vec![
             MixTrack {
                 clip: clip.clone(),
-                items: vec![Item::whole(1.0)],
+                items: vec![Item::whole(crate::ResourceId(0), 1.0)],
                 gain: 0.5,
             },
             MixTrack {
                 clip,
-                items: vec![Item::whole(0.0)],
+                items: vec![Item::whole(crate::ResourceId(0), 0.0)],
                 gain: 0.0,
             },
         ]);

@@ -820,6 +820,7 @@ impl Section {
 
     fn of(kind: TrackKind) -> Self {
         match kind {
+            TrackKind::Graph => Self::Graphs,
             TrackKind::Video => Self::Video,
             TrackKind::Audio => Self::Audio,
         }
@@ -1532,6 +1533,7 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         });
         grip.context_menu(|ui| track_menu(ui, model, row, &areas, &mut response));
         let (color, kind) = match track.kind {
+            TrackKind::Graph => (theme.graph_block, tr("timeline.graph_track.kind")),
             TrackKind::Video => (theme.ports.video, tr("timeline.track.kind.video")),
             TrackKind::Audio => (theme.ports.audio, tr("timeline.track.kind.audio")),
         };
@@ -2079,6 +2081,9 @@ impl Lane<'_> {
             );
             return;
         };
+        // Items being dragged are drawn where they would land; the move applies on release.
+        let moving = ui.ctx().data(|d| d.get_temp::<ItemMove>(ItemMove::id()));
+        let shown = |r: Rect| r.intersect(self.clip).is_positive();
         for (k, item) in track.items.iter().enumerate() {
             let block = Rect::from_min_max(
                 pos2(view.x(lane.left(), item.position), lane.top() + 1.0),
@@ -2087,15 +2092,38 @@ impl Lane<'_> {
                     lane.bottom() - 1.0,
                 ),
             );
-            let visible = block.intersect(self.clip);
-            if visible.width() <= 0.0 || visible.height() <= 0.0 {
+            let shift = moving
+                .as_ref()
+                .filter(|m| m.moves(model, (row, k)))
+                .map_or(0.0, |m| m.delta);
+            let landing = block.translate(vec2((shift * view.px_per_sec) as f32, 0.0));
+            // A dragged item is kept where it was for the pointer, so its drag goes on while it
+            // is drawn out of view.
+            if !shown(block)
+                && !shown(landing)
+                && !ui.ctx().is_being_dragged(Self::grab_id(ui, row, k))
+            {
                 continue;
             }
-            self.item(ui, painter, model, view, theme, (k, item, block), response);
+            self.item(
+                ui,
+                painter,
+                model,
+                view,
+                theme,
+                (k, item, block, shift),
+                response,
+            );
         }
     }
 
-    /// Item `k`, drawn in `block`: its content, then the header bar that drags it and mutes it.
+    /// The id of the bar that drags item `k` of row `row`.
+    fn grab_id(ui: &Ui, row: usize, k: usize) -> egui::Id {
+        ui.id().with(("item-bar", row, k))
+    }
+
+    /// Item `k`, at `block`: its content, then the header bar that drags it and mutes it. While
+    /// it moves with a drag, it is drawn `shift` seconds along, where it would land.
     #[allow(clippy::too_many_arguments)]
     fn item(
         &self,
@@ -2104,15 +2132,14 @@ impl Lane<'_> {
         model: &TimelineModel,
         view: &TimelineView,
         theme: &Theme,
-        (k, item, block): (usize, &Item, Rect),
+        (k, item, block, shift): (usize, &Item, Rect, f64),
         response: &mut TimelineResponse,
     ) {
         let (track, row, lane) = (self.track, self.row, self.rect);
-        let visible = block.intersect(self.clip);
         let bar = Rect::from_min_max(block.min, pos2(block.right(), block.top() + ITEM_BAR));
         let grab = ui.interact(
             bar.intersect(self.clip),
-            ui.id().with(("item-bar", row, k)),
+            Self::grab_id(ui, row, k),
             Sense::click_and_drag(),
         );
         let hovered = grab.hovered() || grab.dragged();
@@ -2142,6 +2169,20 @@ impl Lane<'_> {
                 });
             },
         );
+        // Where a drag starts from, before the item is drawn where it would land.
+        let origin = item.position;
+        let moved;
+        let (item, block, bar) = if shift == 0.0 {
+            (item, block, bar)
+        } else {
+            moved = Item {
+                position: item.position + shift,
+                ..item.clone()
+            };
+            let by = vec2((shift * view.px_per_sec) as f32, 0.0);
+            (&moved, block.translate(by), bar.translate(by))
+        };
+        let visible = block.intersect(self.clip);
         let colors = theme.item_colors(track.kind, track.color);
         let dim = item.muted || track.silenced;
         item_body(painter, block, colors, None, hovered, dim);
@@ -2162,7 +2203,7 @@ impl Lane<'_> {
                     response,
                 );
             }
-            TrackKind::Video => {}
+            TrackKind::Graph | TrackKind::Video => {}
             TrackKind::Audio => {
                 if let Some(waveform) = &track.waveform {
                     let color = theme
@@ -2234,22 +2275,39 @@ impl Lane<'_> {
             }
             let drag = ItemDrag {
                 edge: None,
-                origin: item.position,
+                origin,
                 length: span.map_or(f64::INFINITY, |(s, e)| e - s),
                 targets: snap_targets(model, row, k, selected || ctrl),
             };
-            ui.ctx().data_mut(|d| d.insert_temp(drag_id, drag));
+            let moving = ItemMove {
+                item: (row, k),
+                with_selection: selected || ctrl,
+                delta: 0.0,
+            };
+            ui.ctx().data_mut(|d| {
+                d.insert_temp(drag_id, drag);
+                d.insert_temp(ItemMove::id(), moving);
+            });
         }
         if grab.dragged_by(PointerButton::Primary)
             && let Some(drag) = ui.ctx().data(|d| d.get_temp::<ItemDrag>(drag_id))
             && let Some(to) = drag_to(ui, model, view, &drag)
-            && to != item.position
+            && let Some(mut moving) = ui.ctx().data(|d| d.get_temp::<ItemMove>(ItemMove::id()))
         {
-            response.actions.push(TrackAction::MoveItem {
-                row,
-                item: k,
-                delta: to - item.position,
-            });
+            moving.delta = to.max(0.0) - drag.origin;
+            ui.ctx().data_mut(|d| d.insert_temp(ItemMove::id(), moving));
+        }
+        if grab.drag_stopped()
+            && let Some(moving) = ui.ctx().data(|d| d.get_temp::<ItemMove>(ItemMove::id()))
+        {
+            ui.ctx().data_mut(|d| d.remove::<ItemMove>(ItemMove::id()));
+            if moving.delta != 0.0 {
+                response.actions.push(TrackAction::MoveItem {
+                    row,
+                    item: k,
+                    delta: moving.delta,
+                });
+            }
         }
         grab.context_menu(|ui| item_menu(ui, model, item, response));
         if hovered {
@@ -2611,22 +2669,56 @@ fn paint_ghost(
 /// edges of the items that don't move with it (the selected ones, when `with_selection`, and
 /// those grouped with it).
 fn snap_targets(model: &TimelineModel, row: usize, k: usize, with_selection: bool) -> Vec<f64> {
-    let group = model.tracks[row].items.get(k).and_then(|i| i.group);
+    let moving = ItemMove {
+        item: (row, k),
+        with_selection,
+        delta: 0.0,
+    };
     let mut targets = vec![0.0, model.playhead as f64 / model.frame_rate];
     for (r, track) in model.tracks.iter().enumerate() {
         for (j, item) in track.items.iter().enumerate() {
             let Some((start, end)) = track.item_span(item) else {
                 continue;
             };
-            let moving = (r == row && j == k)
-                || (with_selection && track.selected_items.contains(&j))
-                || (group.is_some() && item.group == group);
-            if !moving {
+            if !moving.moves(model, (r, j)) {
                 targets.extend([start, end]);
             }
         }
     }
     targets
+}
+
+/// A move of video and audio items being dragged: the item grabbed, by row and place, and how
+/// far it has been dragged. It applies when the drag ends, so what it passes over isn't
+/// trimmed on the way.
+#[derive(Debug, Clone)]
+struct ItemMove {
+    item: (usize, usize),
+    /// Whether the selection moves with it (the item was selected, or Ctrl was held).
+    with_selection: bool,
+    /// Seconds the item has been dragged.
+    delta: f64,
+}
+
+impl ItemMove {
+    /// Where the move being dragged is remembered.
+    fn id() -> egui::Id {
+        egui::Id::new("timeline-item-move")
+    }
+
+    /// Whether item `(row, k)` moves with it: it is the item grabbed, in its group, or (when the
+    /// selection moves) selected.
+    fn moves(&self, model: &TimelineModel, (row, k): (usize, usize)) -> bool {
+        let item_of = |(r, j): (usize, usize)| model.tracks.get(r)?.items.get(j);
+        let group = item_of(self.item).and_then(|i| i.group);
+        (row, k) == self.item
+            || (self.with_selection
+                && model
+                    .tracks
+                    .get(row)
+                    .is_some_and(|t| t.selected_items.contains(&k)))
+            || (group.is_some() && item_of((row, k)).and_then(|i| i.group) == group)
+    }
 }
 
 /// The item keys, while the pointer is over the timeline: S splits at the playhead, Delete and
@@ -2890,6 +2982,7 @@ fn drop_slot(y: f32, boundaries: &[f32]) -> usize {
 /// The glyph a track is marked with while it is dragged.
 fn track_icon(kind: TrackKind) -> &'static str {
     match kind {
+        TrackKind::Graph => GRAPH_ICON,
         TrackKind::Video => "▣",
         TrackKind::Audio => "♪",
     }
@@ -2932,6 +3025,7 @@ fn track_header(
         }
         ui.horizontal(|ui| match track.kind {
             _ if track.empty => detail(ui, tr("timeline.track.empty")),
+            TrackKind::Graph => {}
             TrackKind::Video => {
                 if let Some(details) = &track.details {
                     detail(ui, details);

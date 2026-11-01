@@ -26,9 +26,14 @@ sets it on the Project page of Settings. One block
 of every graph is one project frame, frame `n` covering `n / fps` to `(n + 1) / fps` seconds, and the project
 lasts to the end of its last item (`timeline.rs`).
 
-Tracks hold **items** of one media file: a position on the timeline, in and out points in the file and a rate,
-all in seconds so they survive a change of frame rate. Each track is read for the [composition](#composition) through a
-track reader in the renderer:
+Every track holds **items** (`Item`) of resources of its kind, a graph, a video stream or an audio stream: the
+resource it plays, a position on the timeline, in and out points in the resource and a rate, all in seconds so they
+survive a change of frame rate. What differs between kinds is a capability of the kind (`TrackKind`), which the
+one code path checks: whether its resources have a length of their own (`has_duration`), stretch to another rate
+(`stretches`), read a file (`reads_file`), whether its tracks have a level in the mix (`has_level`), and whether
+its items pre-roll (`pre_rolls`). For now a video or audio track plays one resource, until the renderer reads a
+file per item. Each video and audio track is read for the [composition](#composition) through a track reader in
+the renderer:
 
 - **Video tracks** are conformed to the grid: project frame `n` shows the file's frame displayed at the item's
   time for `n` (frames are held or skipped when the rates differ), scaled to the project size the way Video
@@ -36,8 +41,18 @@ track reader in the renderer:
 - **Audio tracks** fill each frame's block with the audio of exactly that frame's time span, item by item
   (`Modulator::fill_items`), resampled when an item's rate isn't 1. The samples are read from the audio cache's
   memory map ([Media](media.md)), shared with the preview mixer and the waveform rather than copied.
-- **Gaps read zeros**, as do muted items and input ports nothing fills. Where items overlap, the later one in
-  the list plays (for audio, crossfading at its edges; see below).
+- **Gaps read zeros**, as do muted items and input ports nothing fills. Items on a track never overlap once
+  edited; where a file holds overlapping items whose length isn't known on load, the later one in the list plays
+  (for audio, crossfading at its edges; see below).
+
+**Editing** goes through one API for every kind (`project/editing.rs`), naming items by track and place
+(`ItemRef`) and taking the lengths it needs as `ItemLengths` (each file's length once read, and how long a new
+graph item lasts). Whatever an edit puts down trims what it lands on, cutting an item it lands inside in two
+(`place_resource`, `move_items`, `paste_items`); a trim stops at the items either side and at the resource's ends,
+and stretches only kinds that stretch (`trim_item`). An item whose length isn't known yet neither trims nor is
+trimmed. Items move by time and across tracks within their section; a move that would leave its section, or put a
+second file on a video or audio track, moves nothing. Grouped items move, trim, split and delete together, on every
+kind of track. Removing a resource removes its items; its tracks stay.
 
 **Audio item edges fade** over a fixed 5 ms (`EDGE_FADE`, at most half the item), linearly, so cuts don't click.
 Each item is mixed over the items listed before it by its gain (`Item::gain_at`): inside the item it replaces
@@ -211,10 +226,11 @@ A kept frame records the graph inspected when it was rendered (`Frame::inspected
 parameters, costs and meters only while that graph is still the open one. Offline, the CLI's `rastersong render <project>
 <out>` passes the composition in `RenderSettings::composition`.
 
-**Graph items.** A `GraphItem` places a graph on a graph track: position, length, `start` (seconds into the graph's
-own time at the left edge), mute and pre-roll. What its graph reads is set on the graph's input nodes. Items on one track never overlap
-(`Project::place_graph` trims what an item lands on, and loading a file repairs overlaps). Each item is compiled
-with its own state, so a graph used twice is compiled twice. Items of graphs the project doesn't have are left out.
+**Graph items.** An item on a graph track places a graph: its position, its in and out points in the graph's own
+time (`start` at the left edge, `end`, always set, as a graph has no end of its own), mute and pre-roll. What its
+graph reads is set on the graph's input nodes. Items on one track never overlap (see [Editing](#timeline)). Each
+item is compiled with its own state, so a graph used twice is compiled twice. Items of graphs the project doesn't
+have are left out.
 **The beat grid is the project's.** Beat-locked nodes follow the same grid as the metronome and the ruler's ticks
 (the project's tempo and first beat), never one that starts with the item. A graph counts its frames from the item's
 `start`, so its compile options carry the first beat moved into that count; where an item is placed or trimmed

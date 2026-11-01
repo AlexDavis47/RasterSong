@@ -49,7 +49,7 @@ the tempo and the loop region:
 - `timebase`: the project's `width`, `height` and `frame_rate` (`"30"` or `"30000/1001"`). Left out, the first
   video track's are used, or 1920×1080 at 30 fps without one. See [Timeline](engine.md#timeline).
 - `resources`: the media and graphs the project uses, as the Resources panel lists them. Each has an `id` (what
-  tracks and graph items point at), a `name` (unique among resources of every kind), its label `color` (`"red"`,
+  items point at), a `name` (unique among resources of every kind), its label `color` (`"red"`,
   `"orange"`, `"yellow"`, `"green"`, `"teal"`, `"blue"`, `"violet"` or `"pink"`; left out, its items are drawn in
   their track's colour) and its `content`, whose `kind` says what it is:
   - `"video"` or `"audio"`: one stream of a linked file, with the file's `path` and the `stream` it plays, by its
@@ -58,23 +58,24 @@ the tempo and the loop region:
 
   Which graph the editor shows isn't saved: a project opens on its first graph, and gets a passthrough graph when
   it has none.
-- `tracks`: the Video and Audio sections, video tracks first, each section top first, as the timeline lists them.
-  Each track has a `name` (what graph sources read it by, unique among all tracks), its `kind` (`video` or
-  `audio`), the `resource` it plays, its `items`, `volume`, `muted` and `solo` for the mix, its `bus` (audio only)
-  and its `height` on the timeline. Left out, `items` is one item playing the whole resource from the start. A
-  track with no `resource` is empty (and has no items) until a resource is dropped on it.
-- `graph_tracks`: the Graphs section, top first. Each has a `name` (unique among all tracks), `items`, `muted` and
-  `height`. A graph item has the `graph` it runs (a graph resource's id), `position` and `length` (seconds on the timeline), `start`
-  (seconds into the graph's own time at its left edge), `muted`, `pre_roll` (true by default: the graph warms up as
-  if it had run before the item). What the graph reads is set on its own input nodes, not on the item: a
-  `video_input` or `audio_input` node's `source` is `"below"` (the default), `"mix"`, `"track:<name>"` (a track's
-  stem), `"graph:<graph track>"` (the main output of that graph track, which must be below the item's) or empty
-  (nothing); a `named_input` node's `track` and `name` name a `named_output` of that graph track's graphs. Items on
-  one track never overlap; a file with overlaps is repaired on load. See [Composition](engine.md#composition).
-- An item on a video or audio track: `position` (seconds into the project), `start` and `end` (its in and out
-  points, in seconds of the file; no `end` plays to the end of the file), `rate` (seconds of file per second of
-  timeline, 1 by default), `muted`, its `group` (items with the same number move, trim, split and delete
-  together; a group of one is dropped on load).
+- `tracks`: the Graphs, Video and Audio sections, in that order, each top first, as the timeline lists them. Each
+  track has a `name` (what graph sources read it by, unique among all tracks), its `kind` (`graph`, `video` or
+  `audio`), its `items`, `volume` (audio only), `muted` and `solo` for the mix, its `bus` (audio only) and its
+  `height` on the timeline. A track with no `items` is empty. A muted graph track is skipped: what is below it
+  shows through.
+- An item: the `resource` it plays (one of the track's kind), `position` (seconds into the project), `start` and
+  `end` (its in and out points, in seconds of the resource; no `end` plays to the end of the file, and a graph
+  item always has one, as a graph has no end of its own), `rate` (seconds of file per second of timeline, 1 by
+  default; always 1 for a graph), `muted`, its `group` (items with the same number move, trim, split and delete
+  together; a group of one is dropped on load) and, for a graph, `pre_roll` (true by default: the graph warms up
+  as if it had run before the item). For now a video or audio track's items all play one resource. Items on a
+  track never overlap: a file with overlaps is put in order and repaired on load, where their lengths are known
+  without reading the files (a graph item's always are, a file's item without an `end` isn't).
+
+  What a graph reads is set on its own input nodes, not on its item: a `video_input` or `audio_input` node's
+  `source` is `"below"` (the default), `"mix"`, `"track:<name>"` (a track's stem), `"graph:<graph track>"` (the
+  main output of that graph track, which must be below the item's) or empty (nothing); a `named_input` node's
+  `track` and `name` name a `named_output` of that graph track's graphs. See [Composition](engine.md#composition).
 - `loop_region` (`start` and `end` in seconds, and whether it is `enabled`), `tempo` (`bpm`, `beats_per_bar`,
   `offset_secs`), and `timeline_mode` (`"time"` or `"tempo"`).
 
@@ -86,17 +87,19 @@ the tempo and the loop region:
     { "id": 2, "name": "song", "content": { "kind": "audio", "path": "media/song.wav" } },
     { "id": 3, "name": "kick", "color": "teal", "content": { "kind": "audio", "path": "media/kick.wav" } },
     { "id": 4, "name": "Graph", "content": { "kind": "graph", "graph": { "version": 0, "nodes": [] } } } ],
-  "tracks": [ { "name": "clip.mp4", "kind": "video", "resource": 1 },
-              { "name": "song", "kind": "audio", "resource": 2,
-                "items": [ { "position": 1.5, "start": 12.0, "end": 40.0 } ], "volume": 0.8 },
-              { "name": "kick", "kind": "audio", "resource": 3, "bus": "Stems" } ],
-  "graph_tracks": [ { "name": "Graphs 1", "items": [ { "graph": 4, "position": 0.0, "length": 20.0 } ] } ],
+  "tracks": [ { "name": "Graphs 1", "kind": "graph",
+                "items": [ { "resource": 4, "position": 0.0, "end": 20.0 } ] },
+              { "name": "clip.mp4", "kind": "video", "items": [ { "resource": 1, "position": 0.0 } ] },
+              { "name": "song", "kind": "audio", "volume": 0.8,
+                "items": [ { "resource": 2, "position": 1.5, "start": 12.0, "end": 40.0 } ] },
+              { "name": "kick", "kind": "audio", "bus": "Stems",
+                "items": [ { "resource": 3, "position": 0.0 } ] } ],
   "buses": [ { "name": "Main", "channels": 2 }, { "name": "Stems", "channels": 1 } ] }
 ```
 
 Resource paths inside the project's folder are saved relative to it, so a project folder can be moved or shared.
-A track or graph item pointing at a resource the project doesn't have, or at one of another kind, is an error on
-open. Every graph resource is brought up to date on open, as a graph file is (see Versioning).
+An item pointing at a resource the project doesn't have, or at one of another kind than its track's, is an error
+on open. Every graph resource is brought up to date on open, as a graph file is (see Versioning).
 Project files have the same version-0 policy. Graphs can also be imported and exported on their own. The project
 also keeps `audio_rate` (the Audio Output rate), `max_warmup_frames` and `inspect_rate` (how often connection
 inspection updates while playing, 5 a second by default), each omitted from the file while at its default.

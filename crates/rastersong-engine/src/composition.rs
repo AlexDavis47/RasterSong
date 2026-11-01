@@ -10,7 +10,7 @@ use rastersong_graph::nodes::{
 use rastersong_graph::{GraphDesc, ParamValue};
 
 use crate::project::ResourceId;
-use crate::timeline::{GraphItem, Source, TrackKind};
+use crate::timeline::{Item, Source, TrackKind};
 
 /// Whether an input node reads pictures or sound, or (a Named Input) whatever was sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,7 +117,7 @@ impl MediaTrack {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ComposedGraphTrack {
     pub name: String,
-    pub items: Vec<GraphItem>,
+    pub items: Vec<Item>,
 }
 
 /// A graph an item may use: a graph resource.
