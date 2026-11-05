@@ -214,17 +214,23 @@ renders a connection's sound ahead of a position, for the listen key. Both are r
 
 ## Composition
 
-A project hands the engine its **composition** (`Project::composition`, `Engine::set_composition`): the video and
-audio tracks, video first, each with its volume, bus and whether it is in the mix (not muted, not left out by a
-solo); the graph tracks, top first, with the items that play (muted tracks and items are left out, and bypassing
-graphs leaves out all of them); and every graph resource (`ComposedGraph`: its id, name and description), the one
-the editor shows included, as it is now. Graphs are normalised with `render_form`, so labels and positions are not
-edits; any other change cancels and re-renders. Which graph the editor shows is not part of the composition:
+A project hands the engine its **composition** (`Project::composition`, `Engine::set_composition`), the one thing
+the renderer, the preview service, export and the CLI render: the timebase, the buses, every track top first (the
+graph tracks, then the video, then the audio; `ComposedTrack`: its name, kind, items, level, bus and whether it is
+in the mix, that is not muted and not left out by a solo), and the resources their items play (`ComposedResource`:
+id, name and content, a file's stream or a graph). The app leaves out resources whose files are missing
+(`Project::composition_with`), so their items read as gaps; bypassing graphs leaves out the graph tracks
+(`Composition::bypassed`). A project whose items play nothing (`Composition::is_empty`) is idle; one with only
+graph items renders them, its length the end of its last item (`Composition::end`, which counts graph items as long
+as they are placed for and files' items as long as their files). Graphs are normalised with `render_form`, so labels
+and positions are not edits; any other change cancels and re-renders, except audio levels and routing while no graph
+item plays (`Composition::renders_like`): they only shape the track mix, which the app's mixer plays. Which graph the
+editor shows is not part of the composition:
 `Engine::set_inspected` names the graph resource whose taps, levels and statistics the editor wants. Inspecting
 another graph renders the same frames, so it keeps the cache and only rebuilds the renderer for what is inspected.
 A kept frame records the graph inspected when it was rendered (`Frame::inspected`), and the app shows its levels,
-parameters, costs and meters only while that graph is still the open one. Offline, the CLI's `rastersong render <project>
-<out>` passes the composition in `RenderSettings::composition`.
+parameters, costs and meters only while that graph is still the open one. Offline, `offline::render` takes the
+composition and its decoded audio (`AudioResources`, by resource) beside the `RenderSettings`.
 
 **Graph items.** An item on a graph track places a graph: its position, its in and out points in the graph's own
 time (`start` at the left edge, `end`, always set, as a graph has no end of its own), mute and pre-roll. What its
@@ -256,13 +262,12 @@ setting names (`below` by default); a Named Input reads a Named Output by its `t
 
 The graph is filled by name: `Video` and `Audio` for inputs reading what is below, and for the others a name
 built from their kind and settings (`source_key`, `named_key`), so nodes reading the same thing share one signal and a picture and a sound of
-one track never mix. With no composition (`None`), the engine renders the graph given to `Engine::set_graph` over the
-whole timeline on one graph track (`single_composition`, the graph as `SINGLE_GRAPH`), its main inputs reading the mix, which the CLI's `render <video> <audio>
-<graph>` and the tests rely on.
+one track never mix. There is no other way in: the CLI's `render <video> <audio> <graph>` is a project too
+(`Project::from_files`: the two files on a video and an audio track, and the graph on a graph track for as long as
+either file plays).
 
 **No passthrough.** Every graph needs its Output (compiling one without fails). A graph with no Audio Output on the
-rendered bus is silent where it plays; nothing is wired through for it. Only the one-graph form keeps the old rule
-that a graph without an Audio Output leaves the sound to the mix.
+rendered bus is silent where it plays; nothing is wired through for it, in the app, the export and the CLI alike.
 
 **Mixing.** The renderer runs the nodes once per source frame in order: each track's stem, the mix, then the graph
 tracks from the bottom up.
@@ -302,8 +307,9 @@ graph first, the top graph track's first. `levels`, `costs`, `meters` and `param
 that ran playing the inspected graph, else the first that ran; `node_stats` and `compile_options` describe the
 inspected graph's first item, else the first. The tap renderer is built the same way as the render-ahead renderer.
 
-**Errors.** A graph that cannot compile fails the build (`EngineError::Fx`): the message names the graph resource,
-and the failure carries its id (`Failure::graph`) and the node at fault.
+**Errors.** A graph that cannot compile fails the build (`EngineError::Fx`, always, since every graph is a
+resource): the message names the graph resource, and the failure carries its id (`Failure::graph`) and the node at
+fault.
 
 ## Export / Offline Rendering
 
@@ -315,9 +321,10 @@ a `progress` callback, which cancels the render (`EngineError::Cancelled`) by re
 
 `export::export` is the one export path, used by the CLI and the GUI:
 
-- `ExportJob::from_project` takes the timeline, the composition with every graph in its render form, the tempo and
-  the audio rate. `ExportJob::load` decodes each audio track (through the audio cache) into the render's tracks and the
-  sources of the track mix.
+- `ExportJob::from_project` (or `from_project_with`, leaving out missing files as the preview does) takes the
+  composition with every graph in its render form, the tempo and the audio rate. `ExportJob::load` decodes the audio
+  each audio track plays (through the audio cache), once per resource, into the render's `AudioResources` and the
+  sources of the track mix. The CLI's two routes both build an `ExportJob` from a project.
 - `FileSink` writes the frames through `MediaWriter` (see [Media](media.md)) with the bus's sound: the graph's
   Audio Output as it renders, or else the track mix of the tracks routed to the bus.
 - A failed or cancelled export removes the file.

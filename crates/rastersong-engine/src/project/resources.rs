@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use rastersong_graph::GraphDesc;
+use rastersong_media::AudioOptions;
 use serde::{Deserialize, Serialize};
 
 use super::{ItemLengths, ItemRef, Project, ProjectTrack};
@@ -53,22 +54,52 @@ pub struct Resource {
     pub content: ResourceContent,
 }
 
-impl Resource {
+impl MediaFile {
+    /// How its audio is decoded: its stream, at its own rate and channels.
+    pub fn audio_options(&self) -> AudioOptions {
+        AudioOptions {
+            stream: self.stream,
+            ..AudioOptions::default()
+        }
+    }
+}
+
+impl ResourceContent {
     /// What it is, and so which tracks can play it.
     pub fn kind(&self) -> TrackKind {
-        match self.content {
-            ResourceContent::Video(_) => TrackKind::Video,
-            ResourceContent::Audio(_) => TrackKind::Audio,
-            ResourceContent::Graph { .. } => TrackKind::Graph,
+        match self {
+            Self::Video(_) => TrackKind::Video,
+            Self::Audio(_) => TrackKind::Audio,
+            Self::Graph { .. } => TrackKind::Graph,
         }
     }
 
     /// The linked file's stream, for a media resource.
     pub fn file(&self) -> Option<&MediaFile> {
-        match &self.content {
-            ResourceContent::Video(file) | ResourceContent::Audio(file) => Some(file),
-            ResourceContent::Graph { .. } => None,
+        match self {
+            Self::Video(file) | Self::Audio(file) => Some(file),
+            Self::Graph { .. } => None,
         }
+    }
+
+    /// The graph, for a graph resource.
+    pub fn graph(&self) -> Option<&GraphDesc> {
+        match self {
+            Self::Graph { graph } => Some(graph),
+            _ => None,
+        }
+    }
+}
+
+impl Resource {
+    /// What it is, and so which tracks can play it.
+    pub fn kind(&self) -> TrackKind {
+        self.content.kind()
+    }
+
+    /// The linked file's stream, for a media resource.
+    pub fn file(&self) -> Option<&MediaFile> {
+        self.content.file()
     }
 
     pub fn file_mut(&mut self) -> Option<&mut MediaFile> {
@@ -90,10 +121,7 @@ impl Resource {
 
     /// The graph, for a graph resource.
     pub fn graph(&self) -> Option<&GraphDesc> {
-        match &self.content {
-            ResourceContent::Graph { graph } => Some(graph),
-            _ => None,
-        }
+        self.content.graph()
     }
 
     pub fn graph_mut(&mut self) -> Option<&mut GraphDesc> {

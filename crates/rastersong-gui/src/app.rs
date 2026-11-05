@@ -15,11 +15,10 @@ use eframe::egui::{
 use rastersong_engine::LoadedTrack;
 use rastersong_engine::playback::{MixTrack, Mixer};
 use rastersong_engine::{
-    AudioSink, BackendInfo, CompileOptions, DEFAULT_GRAPH_NAME, Engine, EngineConfig, EngineStatus,
-    Frame, Graph, GraphDesc, Item, ItemLengths, ItemRef, MediaBackend, NodeStats,
+    AudioSink, BackendInfo, CompileOptions, Composition, DEFAULT_GRAPH_NAME, Engine, EngineConfig,
+    EngineStatus, Frame, Graph, GraphDesc, Item, ItemLengths, ItemRef, MediaBackend, NodeStats,
     PROJECT_EXTENSION, PlaybackClock, PreviewScale, Project, ProjectTrack, Registry, RenderInfo,
-    ResourceId, Thumbnails, Timeline, TimelineMode, TrackKind, VideoInfo, VideoKey,
-    resource_name_for,
+    ResourceId, Thumbnails, TimelineMode, TrackKind, VideoInfo, VideoKey, resource_name_for,
 };
 use rastersong_lang::{tr, tr_args};
 
@@ -183,7 +182,7 @@ pub struct App {
     /// preview shows it, so it costs nothing otherwise.
     source_engine: Engine,
     /// The video the source engine was given.
-    source_video_sent: Option<Timeline>,
+    source_video_sent: Option<Composition>,
     /// Resources whose files aren't there, checked about once a second.
     missing: HashSet<ResourceId>,
     /// The streams of each linked file found so far, for the Resources panel's detail lines.
@@ -431,10 +430,9 @@ impl App {
     fn send_project(&mut self) {
         self.engine.set_preview_scale(self.settings.preview_scale());
         self.refresh_missing(true);
-        self.engine.set_timeline(self.timeline_of(&self.project));
-        self.sent_graph = without_layout(self.open_desc());
         self.engine
-            .set_composition(Some(self.project.composition()));
+            .set_composition(self.composition_of(&self.project));
+        self.sent_graph = without_layout(self.open_desc());
         self.engine.set_inspected(Some(self.open_graph));
         self.engine.set_tempo(self.project.tempo);
         self.engine.set_bypass_all(self.project.plays_track_mix());
@@ -499,7 +497,8 @@ impl App {
             .project
             .place_linked(id, None, 0.0, with_sound, &lengths);
         self.selected_track = placed.first().map(|at| at.track.clone());
-        self.engine.set_timeline(self.timeline_of(&self.project));
+        self.engine
+            .set_composition(self.composition_of(&self.project));
         self.clock.seek(0);
     }
 
@@ -766,9 +765,9 @@ impl App {
         }
     }
 
-    /// What the engine plays: the tracks whose files are there.
-    fn timeline_of(&self, project: &Project) -> Timeline {
-        project.timeline_with(|r| !self.missing.contains(&r.id))
+    /// What the engine plays: the project without the resources whose files are missing.
+    fn composition_of(&self, project: &Project) -> Composition {
+        project.composition_with(|r| !self.missing.contains(&r.id))
     }
 
     /// Looks for resources whose files are gone, at most once a second unless `now`.
@@ -1041,10 +1040,9 @@ impl App {
                 self.show_graph(first);
             }
         }
-        self.engine.set_timeline(self.timeline_of(&self.project));
-        self.sent_graph = without_layout(self.open_desc());
         self.engine
-            .set_composition(Some(self.project.composition()));
+            .set_composition(self.composition_of(&self.project));
+        self.sent_graph = without_layout(self.open_desc());
         self.engine.set_inspected(Some(self.open_graph));
         self.tidy_track_selection();
     }
@@ -1608,18 +1606,14 @@ impl App {
         let video = self
             .wants_source()
             .then(|| {
-                let mut timeline = self.timeline_of(&self.project);
-                timeline.tracks.retain(|t| t.kind == TrackKind::Video);
-                timeline
+                let mut composition = self.composition_of(&self.project).bypassed();
+                composition.tracks.retain(|t| t.kind == TrackKind::Video);
+                composition
             })
-            .filter(|timeline| !timeline.tracks.is_empty());
+            .filter(|composition| !composition.is_empty());
         if self.source_video_sent != video {
-            let mut composition = self.project.composition().without_graphs();
-            composition.tracks.retain(|t| t.kind == TrackKind::Video);
-            composition.graphs.clear();
-            self.source_engine.set_composition(Some(composition));
             self.source_engine
-                .set_timeline(video.clone().unwrap_or_default());
+                .set_composition(video.clone().unwrap_or_default());
             self.source_video_sent = video;
             if self.source_video_sent.is_none() {
                 self.source_preview = None;
@@ -1666,9 +1660,8 @@ impl App {
         self.store_editor();
         self.sent_graph = without_layout(self.open_desc());
         self.refresh_missing(false);
-        self.engine.set_timeline(self.timeline_of(&self.project));
         self.engine
-            .set_composition(Some(self.project.composition()));
+            .set_composition(self.composition_of(&self.project));
         // Opening another graph renders the same frames; only what is inspected changes.
         self.engine.set_inspected(Some(self.open_graph));
         self.engine.set_tempo(self.project.tempo);
@@ -1682,12 +1675,15 @@ impl App {
         // or when the graph starts or stops rendering its own sound. The preview plays the master
         // bus: its track mix is the tracks routed to it.
         let master = self.project.master_bus().to_owned();
-        let mix: Vec<MixEntry> = self
-            .timeline_of(&self.project)
-            .tracks
-            .into_iter()
-            .filter(|t| t.kind == TrackKind::Audio)
-            .map(|t| (t.name, t.items, t.gain, t.bus == master))
+        let composition = self.composition_of(&self.project);
+        // The tracks playing a file that is there.
+        let mix: Vec<MixEntry> = composition
+            .tracks_of(TrackKind::Audio)
+            .filter(|t| composition.track_resource(t).is_some())
+            .map(|t| {
+                let on_master = t.bus == master;
+                (t.name.clone(), t.items.clone(), t.mix_gain(), on_master)
+            })
             .collect();
         let loaded = self.engine.loaded_tracks();
         let decoded = mix

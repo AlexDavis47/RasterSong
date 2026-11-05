@@ -22,6 +22,17 @@ this page is the short list. If a rule here and a document disagree, fix the doc
    kind gets a new `Card` value, not a new widget.
 6. No parallel code paths for the same job (two ways to rename, label, drag, load). If a second one seems
    needed, change the first.
+6a. **Sibling-type gate (stop and ask).** This covers data types, editing APIs, projections and GUI models, not just
+   widgets. Before adding a struct, enum, function family or GUI type that is *shaped like* an existing one
+   (`FooItem` next to `BarItem`, `foo_tracks.rs` next to `tracks.rs`, `FooAction` next to `BarAction`, a "smaller"
+   or "simpler" version of something that exists), **stop and ask the maintainer before writing it.** State what
+   exists, what would differ, and how the difference fits inside the existing type (a field, an enum variant or a
+   capability check on the kind). "It's only a few lines", "the kinds differ a bit" and "it's faster for now" are
+   not reasons. The default answer is one shared type with kind-specific data and capability checks (rule 5). A
+   second type needs the maintainer's explicit yes and a [Decisions](docs/decisions.md) entry naming what must
+   never diverge between the two.
+6b. **Feature-on-one-side check.** When a feature is added to one kind and a sibling kind lacks it, treat that as
+   a symptom of rule 6a being broken. Unify first, then add the feature once.
 7. Don't use egui helpers or senses whose behaviour you haven't checked against the interaction you need.
    `Sense::drag()` never reports clicks or double-clicks; a widget that should also take a click, a double-click or
    a context menu needs `Sense::click_and_drag()`. `dnd_drag_source` senses drags only, so it never gets clicks or

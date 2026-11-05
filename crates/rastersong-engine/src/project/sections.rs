@@ -10,42 +10,47 @@
 use std::ops::Range;
 
 use super::{Project, ProjectTrack, Resource};
-use crate::composition::{ComposedGraph, ComposedGraphTrack, Composition, MediaTrack};
-use crate::timeline::{Timeline, TrackKind, TrackSpec};
+use crate::composition::{ComposedResource, ComposedTrack, Composition};
+use crate::timeline::TrackKind;
 
 impl Project {
-    /// What the engine renders: the timebase and every track that plays something.
-    pub fn timeline(&self) -> Timeline {
-        self.timeline_with(|_| true)
+    /// What the engine renders: every track, and every resource.
+    pub fn composition(&self) -> Composition {
+        self.composition_with(|_| true)
     }
 
-    /// [`Self::timeline`] without the tracks whose resource `readable` refuses (a file that is
-    /// missing): they read as gaps until the file is found. Video and audio tracks are listed
-    /// video first, each at its level in the mix.
-    pub fn timeline_with(&self, readable: impl Fn(&Resource) -> bool) -> Timeline {
-        let tracks = (0..self.tracks.len())
-            .filter_map(|i| {
-                let track = &self.tracks[i];
-                if !track.kind.reads_file() {
-                    return None;
-                }
-                let resource = self.track_resource(track).filter(|r| readable(r))?;
-                let file = resource.file()?;
-                Some(TrackSpec {
-                    name: track.name.clone(),
-                    kind: track.kind,
-                    path: file.path.clone(),
-                    stream: file.stream,
-                    items: track.items.clone(),
-                    bus: track.bus.clone(),
-                    gain: self.mix_gain(i),
-                })
+    /// [`Self::composition`] without the resources `readable` refuses (a file that is missing):
+    /// their items read as gaps until the file is found. Solos leave out the other tracks of their
+    /// kind from the mix.
+    pub fn composition_with(&self, readable: impl Fn(&Resource) -> bool) -> Composition {
+        let tracks = self
+            .tracks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| ComposedTrack {
+                name: t.name.clone(),
+                kind: t.kind,
+                items: t.items.clone(),
+                in_mix: self.in_mix(i),
+                gain: t.volume,
+                bus: t.bus.clone(),
             })
             .collect();
-        Timeline {
+        let resources = self
+            .resources
+            .iter()
+            .filter(|r| readable(r))
+            .map(|r| ComposedResource {
+                id: r.id,
+                name: r.name.clone(),
+                content: r.content.clone(),
+            })
+            .collect();
+        Composition {
             timebase: self.timebase,
-            tracks,
             buses: self.buses.clone(),
+            tracks,
+            resources,
         }
     }
 
@@ -58,47 +63,6 @@ impl Project {
     pub fn section(&self, kind: TrackKind) -> Range<usize> {
         let start = self.tracks.iter().filter(|t| t.kind < kind).count();
         start..start + self.tracks_of(kind).count()
-    }
-
-    /// What the engine composes: the video and audio tracks (solos leave out the other tracks
-    /// of their kind from the mix), the graph tracks in the mix with the items that play, and
-    /// every graph.
-    pub fn composition(&self) -> Composition {
-        let mut tracks = Vec::new();
-        let mut graph_tracks = Vec::new();
-        for (i, t) in self.tracks.iter().enumerate() {
-            if t.kind == TrackKind::Graph {
-                if self.in_mix(i) {
-                    graph_tracks.push(ComposedGraphTrack {
-                        name: t.name.clone(),
-                        items: t.items.iter().filter(|i| !i.muted).cloned().collect(),
-                    });
-                }
-                continue;
-            }
-            tracks.push(MediaTrack {
-                name: t.name.clone(),
-                kind: t.kind,
-                volume: t.volume,
-                in_mix: self.in_mix(i),
-                bus: t.bus.clone(),
-            });
-        }
-        Composition {
-            tracks,
-            graph_tracks,
-            graphs: self
-                .resources
-                .iter()
-                .filter_map(|r| {
-                    Some(ComposedGraph {
-                        id: r.id,
-                        name: r.name.clone(),
-                        desc: r.graph()?.clone(),
-                    })
-                })
-                .collect(),
-        }
     }
 
     /// Where the track called `name` is in the list.
@@ -294,9 +258,9 @@ mod tests {
         }
         let playing = |p: &Project| -> Vec<String> {
             p.composition()
-                .graph_tracks
-                .into_iter()
-                .map(|t| t.name)
+                .tracks_of(TrackKind::Graph)
+                .filter(|t| t.in_mix)
+                .map(|t| t.name.clone())
                 .collect()
         };
         assert_eq!(playing(&p), ["g", "h"]);
@@ -310,7 +274,7 @@ mod tests {
     }
 
     #[test]
-    fn the_composition_leaves_out_muted_graph_tracks_and_items() {
+    fn the_composition_marks_muted_graph_tracks_and_items() {
         let mut p = with_graphs();
         let graph = Project::FIRST_GRAPH;
         p.place_resource("h", graph, 0.0, &graph_lengths());
@@ -319,9 +283,9 @@ mod tests {
         p.place_resource("g", graph, 0.0, &graph_lengths());
         let lens = |p: &Project| -> Vec<usize> {
             p.composition()
-                .graph_tracks
-                .iter()
-                .map(|t| t.items.len())
+                .tracks_of(TrackKind::Graph)
+                .filter(|t| t.in_mix)
+                .map(|t| t.items.iter().filter(|i| !i.muted).count())
                 .collect()
         };
         assert_eq!(lens(&p), [1, 1]);
@@ -330,8 +294,7 @@ mod tests {
         p.tracks[0].muted = true;
         assert!(lens(&p).is_empty());
         assert!(p.plays_track_mix());
-        // The video and audio tracks are all there, the graph tracks never.
-        assert_eq!(p.composition().tracks.len(), 4);
-        assert_eq!(p.timeline().tracks.len(), 4);
+        // Every track is there, in the mix or not.
+        assert_eq!(p.composition().tracks.len(), 6);
     }
 }

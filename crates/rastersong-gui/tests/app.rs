@@ -2122,13 +2122,9 @@ fn resources_become_tracks_and_take_their_items_with_them() {
     let project = app.project();
     assert_eq!(project.audios()[0].items[0].position, 1.5);
     assert_eq!(project.videos().len(), 1);
-    let band = project.timeline();
-    let band = band
-        .tracks
-        .iter()
-        .find(|t| t.name == "concert Band")
-        .unwrap();
-    assert_eq!((band.kind, band.stream), (TrackKind::Audio, Some(1)));
+    let band = project.track("concert Band").unwrap();
+    let stream = project.track_resource(band).and_then(|r| r.stream());
+    assert_eq!((band.kind, stream), (TrackKind::Audio, Some(1)));
 
     // A cancelled import adds nothing.
     app.import_files([PathBuf::from("concert.mkv")]);

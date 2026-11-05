@@ -275,16 +275,13 @@ impl App {
             return;
         };
         // Resources whose files are missing are left out, as in the preview.
-        let job = ExportJob {
-            timeline: self.timeline_of(&self.project),
-            ..ExportJob::from_project(&self.project)
-        };
+        let job = ExportJob::from_project_with(&self.project, |r| !self.missing.contains(&r.id));
         let bus = self
             .export
             .bus
             .as_deref()
             .and_then(|name| job.bus(name))
-            .unwrap_or_else(|| job.timeline.master());
+            .unwrap_or_else(|| job.composition.master());
         let settings = ExportSettings {
             format,
             size: self.export.size,

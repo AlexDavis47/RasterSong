@@ -7,10 +7,8 @@
 //! in/out points are times in seconds, so they survive a change of frame rate. Items on a track
 //! never overlap, and gaps between them read zeros.
 
-use std::path::PathBuf;
-
 use rastersong_graph::nodes::DEFAULT_BUS;
-use rastersong_media::{AudioOptions, Rational};
+use rastersong_media::Rational;
 use serde::{Deserialize, Serialize};
 
 use crate::project::ResourceId;
@@ -350,47 +348,6 @@ pub fn items_end(items: &[Item], duration: f64) -> f64 {
         .fold(0.0, f64::max)
 }
 
-/// A track as the engine renders it.
-#[derive(Debug, Clone, PartialEq)]
-pub struct TrackSpec {
-    /// The name the graph's input nodes select it by.
-    pub name: String,
-    pub kind: TrackKind,
-    pub path: PathBuf,
-    /// The stream of the file the track plays, by its index in the file. `None` is the file's
-    /// best stream of the track's kind.
-    pub stream: Option<usize>,
-    pub items: Vec<Item>,
-    /// The output bus an audio track is summed into in the track mix.
-    pub bus: String,
-    /// The track's level in the track mix: its volume (1 for video), or 0 when it is muted or
-    /// another track of its kind is soloed. Graphs read the track as it is, whatever its level.
-    pub gain: f32,
-}
-
-impl TrackSpec {
-    /// A track at full level on the master bus.
-    pub fn new(name: impl Into<String>, kind: TrackKind, path: impl Into<PathBuf>) -> Self {
-        Self {
-            name: name.into(),
-            kind,
-            path: path.into(),
-            stream: None,
-            items: vec![Item::whole(ResourceId(0), 0.0)],
-            bus: DEFAULT_BUS.to_owned(),
-            gain: 1.0,
-        }
-    }
-
-    /// How an audio track's file is decoded: its stream, at its own rate and channels.
-    pub fn audio_options(&self) -> AudioOptions {
-        AudioOptions {
-            stream: self.stream,
-            ..AudioOptions::default()
-        }
-    }
-}
-
 /// The most channels a bus can have.
 pub const MAX_BUS_CHANNELS: u32 = 8;
 
@@ -446,56 +403,6 @@ impl Bus {
             channels: self.channels.clamp(1, MAX_BUS_CHANNELS),
             ..self
         }
-    }
-}
-
-/// What the engine renders: the timebase, the tracks and the output buses.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct Timeline {
-    /// The project's timebase. `None` takes it from the first video track, or
-    /// [`Timebase::DEFAULT`] when there is none.
-    pub timebase: Option<Timebase>,
-    /// Video tracks top first, then audio tracks.
-    pub tracks: Vec<TrackSpec>,
-    /// The output buses, master first. Empty means just [`Bus::main`].
-    pub buses: Vec<Bus>,
-}
-
-impl Timeline {
-    /// The first video track, which a project without a timebase of its own takes it from.
-    pub fn first_video(&self) -> Option<&TrackSpec> {
-        self.tracks.iter().find(|t| t.kind == TrackKind::Video)
-    }
-
-    /// The master bus: the first, which the preview plays and the export writes.
-    pub fn master(&self) -> Bus {
-        self.buses
-            .first()
-            .cloned()
-            .map_or_else(Bus::main, |bus| Bus {
-                master: true,
-                ..bus
-            })
-    }
-
-    /// Whether the two render the same frames and graph sound: they differ at most in the
-    /// audio tracks' levels and routing, and in buses other than the master, which only shape
-    /// the track mix's sound. Muting or soloing a video track changes the track mix's picture.
-    pub fn renders_like(&self, other: &Self) -> bool {
-        self.timebase == other.timebase
-            && self.master() == other.master()
-            && self.tracks.len() == other.tracks.len()
-            && self.tracks.iter().zip(&other.tracks).all(|(a, b)| {
-                (&a.name, a.kind, &a.path, &a.items) == (&b.name, b.kind, &b.path, &b.items)
-                    && (a.kind == TrackKind::Audio || (a.gain > 0.0) == (b.gain > 0.0))
-            })
-    }
-
-    /// The audio tracks summed into `bus` in the track mix.
-    pub fn tracks_on<'a>(&'a self, bus: &'a str) -> impl Iterator<Item = &'a TrackSpec> {
-        self.tracks
-            .iter()
-            .filter(move |t| t.kind == TrackKind::Audio && t.bus == bus)
     }
 }
 

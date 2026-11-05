@@ -362,7 +362,9 @@ Reusable widgets, built once in `rastersong-gui` (a `widgets/` module) and used 
   - [x] One track type, one item type and one editing API for every section; items never overlap (placing one
     trims what it lands on), and video and audio drags apply on release
     ([Decisions](decisions.md#one-track-type-one-item-type-items-never-overlap-october-2026)).
-  - [ ] One projection to the renderer, the one-graph CLI route a project; graph-only projects render.
+  - [x] One projection to the renderer, the one-graph CLI route a project; graph-only projects render
+    ([Decisions](decisions.md#one-projection-the-one-graph-route-is-a-project-november-2026),
+    [Composition](engine.md#composition)).
   - [ ] Per-item resources in the renderer and one stacking rule for video and graph tracks.
   - [ ] One path in the Resources panel (colour, multi-select, multi-drag and Add to timeline for graphs).
   - [ ] One selection, clipboard, action set and drop path on the timeline; then one lane, header, menu and
@@ -583,8 +585,9 @@ raw.
    - [x] **feature** Short fixed fades on audio item edges *(5 ms, crossfading where items overlap; see
      [Timeline](engine.md#timeline))*.
    - [x] **chore** New project file contents (still plain JSON at this stage); CLI `render <project> <out>` *(the
-     old `render <video> <audio> <graph> <out>` stays; without an Audio Output the CLI writes the mix of the audio
-     tracks)*.
+     old `render <video> <audio> <graph> <out>` stays, as a project of the two files since
+     [One projection](decisions.md#one-projection-the-one-graph-route-is-a-project-november-2026); without graph
+     items the CLI writes the mix of the audio tracks)*.
 2. **Resources and graphs**
    - [x] **feature** Resources panel (linked resources only) and the multi-stream import dialog *(done: see
      [Resources](app.md#resources) and [Decisions](decisions.md#resources-panel-october-2026))*.

@@ -1,5 +1,5 @@
-//! What the renderer composes: the video and audio tracks, the graph tracks above them, and the
-//! graphs their items use. See [Composition](../../../docs/engine.md#composition).
+//! What the renderer composes: every track (the graph tracks above the video and audio) and the
+//! resources their items play. See [Composition](../../../docs/engine.md#composition).
 
 use std::collections::BTreeMap;
 
@@ -9,8 +9,8 @@ use rastersong_graph::nodes::{
 };
 use rastersong_graph::{GraphDesc, ParamValue};
 
-use crate::project::ResourceId;
-use crate::timeline::{Item, Source, TrackKind};
+use crate::project::{MediaFile, ResourceContent, ResourceId};
+use crate::timeline::{Bus, Item, Source, Timebase, TrackKind};
 
 /// Whether an input node reads pictures or sound, or (a Named Input) whatever was sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,71 +85,190 @@ pub fn input_ports(desc: &GraphDesc) -> Vec<InputPort> {
     ports
 }
 
-/// A video or audio track as the renderer composes it.
+/// A track as the renderer composes it: graph, video and audio tracks alike.
 #[derive(Debug, Clone, PartialEq)]
-pub struct MediaTrack {
+pub struct ComposedTrack {
+    /// The name sources select it by.
     pub name: String,
     pub kind: TrackKind,
-    /// Its level in the audio mix (a video track's is ignored).
-    pub volume: f32,
-    /// Whether it is in the mix: not muted, and not left out by a solo. Graphs read its stem
-    /// either way.
+    /// Its items, muted ones included: a muted item reads as a gap.
+    pub items: Vec<Item>,
+    /// Whether it is in the mix: not muted, and not left out by a solo on another track of its
+    /// kind. Graphs read a video or audio track's stem either way.
     pub in_mix: bool,
+    /// Its level in the audio mix, for kinds that [have one](TrackKind::has_level).
+    pub gain: f32,
     /// The bus an audio track is summed into.
     pub bus: String,
 }
 
-impl MediaTrack {
-    /// A track of `kind` in the mix at full level, on the master bus.
-    pub fn new(name: impl Into<String>, kind: TrackKind) -> Self {
+impl ComposedTrack {
+    /// A track of `kind` holding `items`, in the mix at full level on the master bus.
+    pub fn new(name: impl Into<String>, kind: TrackKind, items: Vec<Item>) -> Self {
         Self {
             name: name.into(),
             kind,
-            volume: 1.0,
+            items,
             in_mix: true,
+            gain: 1.0,
             bus: rastersong_graph::nodes::DEFAULT_BUS.to_owned(),
+        }
+    }
+
+    /// Its level in the mix: its gain where its kind has a level (all or nothing otherwise), or
+    /// 0 when it is out of the mix.
+    pub fn mix_gain(&self) -> f32 {
+        match (self.in_mix, self.kind.has_level()) {
+            (false, _) => 0.0,
+            (true, false) => 1.0,
+            (true, true) => self.gain,
         }
     }
 }
 
-/// A graph track as the renderer composes it: the items that play (muted ones and muted tracks
-/// are left out).
+/// A resource the composition's items may play.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ComposedGraphTrack {
-    pub name: String,
-    pub items: Vec<Item>,
-}
-
-/// A graph an item may use: a graph resource.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ComposedGraph {
+pub struct ComposedResource {
     pub id: ResourceId,
     /// What errors call it.
     pub name: String,
-    pub desc: GraphDesc,
+    pub content: ResourceContent,
 }
 
-/// What the renderer composes.
+impl ComposedResource {
+    pub fn kind(&self) -> TrackKind {
+        self.content.kind()
+    }
+
+    /// The file a video or audio resource reads.
+    pub fn file(&self) -> Option<&MediaFile> {
+        self.content.file()
+    }
+
+    /// A graph resource's graph.
+    pub fn graph(&self) -> Option<&GraphDesc> {
+        self.content.graph()
+    }
+}
+
+/// What the renderer composes: the project's timebase, buses, tracks and the resources their
+/// items play. See [Composition](../../../docs/engine.md#composition).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Composition {
-    /// Video tracks top first, then audio tracks.
-    pub tracks: Vec<MediaTrack>,
-    /// Graph tracks, top first: the topmost active item's outputs are the master.
-    pub graph_tracks: Vec<ComposedGraphTrack>,
-    /// Every graph an item may use.
-    pub graphs: Vec<ComposedGraph>,
+    /// The project's timebase. `None` takes it from the first video track, or
+    /// [`Timebase::DEFAULT`] when there is none.
+    pub timebase: Option<Timebase>,
+    /// The output buses, master first. Empty means just [`Bus::main`].
+    pub buses: Vec<Bus>,
+    /// Every track, top first: the graph tracks, then the video tracks, then the audio tracks.
+    /// Over the mix, the topmost graph track with an item playing wins.
+    pub tracks: Vec<ComposedTrack>,
+    /// Every resource an item may play. An item of a resource not listed (a file that is
+    /// missing) reads as a gap.
+    pub resources: Vec<ComposedResource>,
 }
 
 impl Composition {
-    /// The composition with every graph track left out: the plain mix.
-    pub fn without_graphs(mut self) -> Self {
-        self.graph_tracks.clear();
+    /// The master bus: the first, which the preview plays and the export writes.
+    pub fn master(&self) -> Bus {
+        self.buses
+            .first()
+            .cloned()
+            .map_or_else(Bus::main, |bus| Bus {
+                master: true,
+                ..bus
+            })
+    }
+
+    /// The buses that can be rendered: the composition's, or the stereo main bus when it lists
+    /// none.
+    pub fn render_buses(&self) -> Vec<Bus> {
+        if self.buses.is_empty() {
+            vec![Bus::main()]
+        } else {
+            let mut buses = self.buses.clone();
+            Bus::mark_master(&mut buses);
+            buses
+        }
+    }
+
+    /// The resource `id`, if the composition has it.
+    pub fn resource(&self, id: ResourceId) -> Option<&ComposedResource> {
+        self.resources.iter().find(|r| r.id == id)
+    }
+
+    /// The resource a video or audio track plays: its first item's, while each such track plays
+    /// one resource.
+    pub fn track_resource(&self, track: &ComposedTrack) -> Option<&ComposedResource> {
+        self.resource(track.items.first()?.resource)
+    }
+
+    /// The tracks of `kind`, top first.
+    pub fn tracks_of(&self, kind: TrackKind) -> impl Iterator<Item = &ComposedTrack> {
+        self.tracks.iter().filter(move |t| t.kind == kind)
+    }
+
+    /// The audio tracks summed into `bus` in the track mix.
+    pub fn tracks_on<'a>(&'a self, bus: &'a str) -> impl Iterator<Item = &'a ComposedTrack> {
+        self.tracks_of(TrackKind::Audio)
+            .filter(move |t| t.bus == bus)
+    }
+
+    /// The items that can play: those of a resource the composition has.
+    fn playable(&self) -> impl Iterator<Item = &Item> {
+        self.tracks
+            .iter()
+            .flat_map(|t| &t.items)
+            .filter(|i| self.resource(i.resource).is_some())
+    }
+
+    /// Whether nothing can play: no item of a resource the composition has.
+    pub fn is_empty(&self) -> bool {
+        self.playable().next().is_none()
+    }
+
+    /// Where the last item that can play ends, in seconds (0 with none), each file's resource
+    /// lasting `duration(id)` seconds (none when it isn't known). A graph item lasts as long as it
+    /// is placed for.
+    pub fn end(&self, duration: impl Fn(ResourceId) -> Option<f64>) -> f64 {
+        self.playable()
+            .map(|i| i.timeline_end(duration(i.resource).unwrap_or(0.0)))
+            .fold(0.0, f64::max)
+    }
+
+    /// Whether a graph item plays: one of a graph the composition has, not muted, on a graph
+    /// track in the mix.
+    pub fn has_graph_items(&self) -> bool {
+        self.tracks_of(TrackKind::Graph)
+            .filter(|t| t.in_mix)
+            .flat_map(|t| &t.items)
+            .any(|i| !i.muted && self.resource(i.resource).is_some())
+    }
+
+    /// The composition with every graph track left out: the plain mix, as a render with every
+    /// graph bypassed shows and plays it.
+    pub fn bypassed(mut self) -> Self {
+        self.tracks.retain(|t| t.kind != TrackKind::Graph);
+        self.resources.retain(|r| r.kind() != TrackKind::Graph);
         self
     }
 
-    /// Whether any graph item plays.
-    pub fn has_graphs(&self) -> bool {
-        self.graph_tracks.iter().any(|t| !t.items.is_empty())
+    /// Whether the two render the same frames and graph sound. With no graph item playing, the
+    /// audio tracks' levels and routing and the buses other than the master only shape the track
+    /// mix's sound, which is played, not rendered (muting or soloing a video track still changes
+    /// the picture). With graph items playing, graphs hear the mix, so everything counts.
+    pub fn renders_like(&self, other: &Self) -> bool {
+        if self.has_graph_items() || other.has_graph_items() {
+            return self == other;
+        }
+        self.timebase == other.timebase
+            && self.master() == other.master()
+            && self.resources == other.resources
+            && self.tracks.len() == other.tracks.len()
+            && self.tracks.iter().zip(&other.tracks).all(|(a, b)| {
+                (&a.name, a.kind, &a.items) == (&b.name, b.kind, &b.items)
+                    && (a.kind == TrackKind::Audio || a.in_mix == b.in_mix)
+            })
     }
 }
 
@@ -196,6 +315,38 @@ mod tests {
                 (InputKind::Video, Source::Nothing),
             ]
         );
+    }
+
+    #[test]
+    fn a_composition_differing_only_in_audio_levels_renders_like() {
+        use crate::{GraphDesc, ItemLengths, Project};
+
+        let mut project =
+            Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
+        project.add_track(TrackKind::Video, "v", "v.mp4");
+        project.add_track(TrackKind::Audio, "a", "a.wav");
+        let before = project.composition();
+        // Levels and routing only shape the track mix's sound.
+        project.tracks[1].volume = 0.5;
+        project.tracks[1].muted = true;
+        project.tracks[1].bus = "Other".into();
+        assert!(project.composition().renders_like(&before));
+        assert_ne!(project.composition(), before);
+        // Muting the video changes the picture.
+        project.tracks[0].muted = true;
+        assert!(!project.composition().renders_like(&before));
+        project.tracks[0].muted = false;
+
+        // With a graph item playing, graphs hear the mix: levels count.
+        let lengths = ItemLengths {
+            new_graph_length: 1.0,
+            ..ItemLengths::default()
+        };
+        project.add_track_for(Project::FIRST_GRAPH, 0.0, &lengths);
+        let before = project.composition();
+        let a = project.track_index("a").unwrap();
+        project.tracks[a].volume = 0.25;
+        assert!(!project.composition().renders_like(&before));
     }
 
     #[test]

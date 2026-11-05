@@ -42,8 +42,9 @@ Deferred on purpose:
 - Variable frame rate: the compiler assumes a constant frame rate; blocks keep their real timestamps, so VFR video
   works but its sound is resampled as if the rate were constant.
 - Export from the app: the engine and the CLI's `.mkv` mux handle the rendered sound, but there is no GUI export
-  yet. *(Resolved since: without an Audio Output the CLI writes the bus's track mix; see
-  [Track mix and output buses](#track-mix-and-output-buses-october-2026).)*
+  yet. *(Resolved since: without graph items the CLI writes the bus's track mix, see
+  [Track mix and output buses](#track-mix-and-output-buses-october-2026); a graph without an Audio Output is
+  silent, see [One projection](#one-projection-the-one-graph-route-is-a-project-november-2026).)*
 
 ### Resampling is only applied when needed
 
@@ -510,7 +511,8 @@ started on a guess (the track of the same name).
 - **Graph-track sources still point down.** A source naming a graph track that isn't below the item reads zeros, so
   graphs can't loop. Whether the track is below depends on where the item is, so the picker lists every graph track.
 - **Buses stay on Audio Outputs.** The base one writes the master; one more per other bus can be added.
-- **The one-graph render** (the CLI's `render <video> <audio> <graph>`) no longer feeds a port named after a track:
+- **The one-graph render** (the CLI's `render <video> <audio> <graph>`, a project since [One
+  projection](#one-projection-the-one-graph-route-is-a-project-november-2026)) no longer feeds a port named after a track:
   Video In and Audio In read the mix, which changes the golden frames slightly (the sound reaches the graph at the
   mix rate).
 
@@ -810,6 +812,31 @@ The second stage of merging media and graphs ([Graphs are resources](#graphs-are
   holds items takes no other resource until it reads per item (the renderer stage), and the timeline draws per
   item (the last stage). This replaces *One resource per track* above as a rule, keeping it only as a temporary
   limit; the timeline's media rows and graph rows stay apart in the app until the timeline stage merges them.
+
+### One projection; the one-graph route is a project (November 2026)
+
+The third stage of merging media and graphs ([One track type, one item
+type](#one-track-type-one-item-type-items-never-overlap-october-2026)).
+
+- **One `Composition` is what every renderer gets.** It holds the timebase, the buses, every track top first
+  (`ComposedTrack`, one type for the three sections) and the resources their items play (`ComposedResource`).
+  `Timeline`, `TrackSpec`, `MediaTrack`, `ComposedGraphTrack` and `ComposedGraph` are gone, and so are the parallel
+  setters (`Engine::set_timeline`, `Engine::set_graph`) and the second constructor (`Renderer::with_composition`):
+  the engine had been handed the tracks twice, once for the files and once for the mix, and could disagree with
+  itself (the composition listed missing files the timeline left out). Missing files are now left out once, as
+  resources.
+- **The one-graph route is a project.** `rastersong render <video> <audio> <graph> <out>` builds a project
+  (`Project::from_files`) and exports it like any other, instead of the engine rendering a loose graph over the
+  whole timeline (`single_composition`). Its graph plays for as long as either file does. The tests build projects
+  the same way.
+- **A graph without an Audio Output is silent everywhere.** The one-graph route kept the old rule that such a graph
+  left the sound to the mix; it now follows the app's *No passthrough rule* ([Premiere-style
+  timeline](#premiere-style-timeline-october-2026)). A CLI render of a graph without an Audio Output therefore has silent sound,
+  which the release notes must say. Compile errors are likewise always an item's (`EngineError::Fx`).
+- **Graph-only projects render.** The service used to wait for a file; a project whose only items are graph items
+  now renders them, its length theirs.
+- **Audio levels keep the cache only while no graph plays.** With no graph item, audio levels and routing only shape
+  the track mix, which the app's mixer plays; with one, graphs hear the mix, so a level change is an edit.
 
 ### No Bypass graphs switch (October 2026)
 

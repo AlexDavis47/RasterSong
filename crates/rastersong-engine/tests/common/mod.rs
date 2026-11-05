@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 
 use rastersong_engine::sources::Modulator;
 use rastersong_engine::{
-    AudioClip, FakeBackend, FakeVideo, GraphDesc, OutputSize, Rational, Registry, RenderTrack,
-    Renderer,
+    AudioClip, AudioResources, Bus, Composition, EngineError, FakeBackend, FakeVideo, GraphDesc,
+    OutputSize, Project, Rational, Registry, Renderer, TrackKind,
 };
 
 pub const FRAMES: usize = 60;
@@ -82,29 +82,64 @@ pub fn crush(bits: u32) -> String {
     )
 }
 
-pub fn renderer_with(graph: &str, registry: &Registry, size: OutputSize) -> Renderer {
+/// How long the clip lasts, in seconds.
+pub const SECONDS: f64 = FRAMES as f64 / 30.0;
+
+/// What `rastersong render clip song <graph>` renders: the clip on the track `Video`, the song
+/// on the track `Audio`, and `graph` over the whole clip.
+pub fn project(graph: &str) -> Project {
+    Project::from_files(
+        VIDEO,
+        AUDIO,
+        GraphDesc::from_json(graph).unwrap(),
+        0.0,
+        SECONDS,
+    )
+}
+
+/// The sound of every audio resource of `composition`: the clip of `clips` its file is named
+/// in, or the song.
+pub fn decoded(composition: &Composition, clips: &[(&str, &AudioClip)]) -> AudioResources {
+    composition
+        .resources
+        .iter()
+        .filter(|r| r.kind() == TrackKind::Audio)
+        .map(|r| {
+            let path = r.file().unwrap().path.to_string_lossy().into_owned();
+            let song = audio();
+            let clip = clips
+                .iter()
+                .find(|(p, _)| *p == path)
+                .map_or(&song, |(_, c)| *c);
+            (r.id, Arc::new(Modulator::new(clip)))
+        })
+        .collect()
+}
+
+/// A renderer of `project`, its audio files' sound from `clips` (the song otherwise), with the
+/// sound of `bus`.
+pub fn renderer_of(
+    project: &Project,
+    clips: &[(&str, &AudioClip)],
+    bus: &Bus,
+    registry: &Registry,
+    size: OutputSize,
+) -> Result<Renderer, EngineError> {
+    let composition = project.composition();
     Renderer::new(
         &backend(),
+        &composition,
+        &decoded(&composition, clips),
         None,
-        &tracks(vec![RenderTrack::audio(
-            "Audio",
-            Arc::new(Modulator::new(&audio())),
-            0.0,
-        )]),
-        &GraphDesc::from_json(graph).unwrap(),
         Default::default(),
-        &rastersong_engine::Bus::main(),
+        bus,
         registry,
         size,
     )
-    .unwrap()
 }
 
-/// The video as the track `video`, followed by `audio`.
-pub fn tracks(audio: Vec<RenderTrack>) -> Vec<RenderTrack> {
-    std::iter::once(RenderTrack::video("Video", VIDEO))
-        .chain(audio)
-        .collect()
+pub fn renderer_with(graph: &str, registry: &Registry, size: OutputSize) -> Renderer {
+    renderer_of(&project(graph), &[], &Bus::main(), registry, size).unwrap()
 }
 
 pub fn renderer(graph: &str) -> Renderer {

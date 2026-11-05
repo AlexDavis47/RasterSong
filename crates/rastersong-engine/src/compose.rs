@@ -21,7 +21,7 @@ use rastersong_graph::{
 };
 
 use crate::EngineError;
-use crate::composition::{Composition, InputKind, input_ports};
+use crate::composition::{ComposedTrack, Composition, InputKind, input_ports};
 use crate::project::ResourceId;
 use crate::timeline::{Item, Source};
 
@@ -551,15 +551,14 @@ pub(crate) struct ComposePlan<'a> {
     pub composition: &'a Composition,
     /// The graph editors inspect: what taps, levels and stats come from first.
     pub inspect: Option<ResourceId>,
-    /// Each composition track's media, if it plays any that could be opened.
+    /// Each video and audio track's media (in the composition's order), if it plays any that
+    /// could be opened.
     pub media: Vec<Option<MediaInfo>>,
     pub registry: &'a Registry,
     /// What every graph is compiled against, but for the sources.
     pub options: &'a CompileOptions,
     pub bus: &'a crate::timeline::Bus,
     pub fps: f64,
-    /// A render of one graph, whose compile errors are the graph's rather than an item's.
-    pub single: bool,
 }
 
 /// The compiled composition: the nodes run in index order (the tracks, the mix, then the graph
@@ -572,7 +571,6 @@ pub(crate) struct Compose {
     inspect: Option<ResourceId>,
     /// Every graph's name, for errors.
     names: HashMap<ResourceId, String>,
-    single: bool,
     /// The master's latency: the composition's.
     latency: usize,
     warmup: usize,
@@ -642,7 +640,6 @@ impl Compose {
                 chain.fx.iter_mut().for_each(|f| f.active = false);
             }
         }
-        let single = self.single;
         let names = &self.names;
         let empty = Stream::default();
         for n in 0..self.nodes.len() {
@@ -698,7 +695,7 @@ impl Compose {
                         .unwrap_or(&empty);
                     items
                         .run(m, below, &view, cap)
-                        .map_err(|(e, id)| fx_error(e, id, names, single))?;
+                        .map_err(|(e, id)| fx_error(e, id, names))?;
                     this.out.assign(&items.out);
                 }
             }
@@ -781,22 +778,16 @@ impl Compose {
     }
 }
 
-/// The error of graph `graph` failing, named by `names`; a render of one graph fails with the
-/// graph's own error.
+/// The error of graph `graph` failing, named by `names`.
 fn fx_error(
     error: GraphError,
     graph: ResourceId,
     names: &HashMap<ResourceId, String>,
-    single: bool,
 ) -> EngineError {
-    if single {
-        EngineError::Graph(error)
-    } else {
-        EngineError::Fx {
-            graph,
-            name: names.get(&graph).cloned().unwrap_or_default(),
-            error,
-        }
+    EngineError::Fx {
+        graph,
+        name: names.get(&graph).cloned().unwrap_or_default(),
+        error,
     }
 }
 
@@ -813,14 +804,18 @@ fn item_base(item: &Item, fps: f64) -> i64 {
 }
 
 /// Where graph item `item` ends on the timeline: a graph has no length of its own, so it is its
-/// out point's, or never for an item without one (a render of one graph).
+/// out point's; an item without one plays nothing.
 fn graph_end(item: &Item) -> f64 {
-    item.timeline_end(f64::INFINITY)
+    item.timeline_end(item.start)
 }
 
 /// Compiles a composition.
 struct Builder<'a> {
     plan: &'a ComposePlan<'a>,
+    /// The video and audio tracks, top first: the first nodes.
+    media_tracks: Vec<&'a ComposedTrack>,
+    /// The graph tracks in the mix, top first.
+    graph_tracks: Vec<&'a ComposedTrack>,
     graphs: HashMap<ResourceId, &'a GraphDesc>,
     names: HashMap<ResourceId, String>,
     video_layout: Layout,
@@ -841,16 +836,35 @@ struct Builder<'a> {
 impl<'a> Builder<'a> {
     fn new(plan: &'a ComposePlan<'a>) -> Self {
         let comp = plan.composition;
-        let nodes = comp.tracks.len() + 1 + comp.graph_tracks.len();
-        let graphs = comp.graphs.iter().map(|g| (g.id, &g.desc)).collect();
-        let names = comp.graphs.iter().map(|g| (g.id, g.name.clone())).collect();
+        let media_tracks: Vec<&ComposedTrack> =
+            comp.tracks.iter().filter(|t| t.kind.reads_file()).collect();
+        // A graph track out of the mix is left out.
+        let graph_tracks: Vec<&ComposedTrack> = comp
+            .tracks
+            .iter()
+            .filter(|t| !t.kind.reads_file() && t.in_mix)
+            .collect();
+        let nodes = media_tracks.len() + 1 + graph_tracks.len();
+        let graphs = comp
+            .resources
+            .iter()
+            .filter_map(|r| Some((r.id, r.graph()?)))
+            .collect();
+        let names = comp
+            .resources
+            .iter()
+            .filter(|r| r.graph().is_some())
+            .map(|r| (r.id, r.name.clone()))
+            .collect();
         Self {
             plan,
+            mix_node: media_tracks.len(),
+            media_tracks,
+            graph_tracks,
             graphs,
             names,
             video_layout: plan.options.output,
             mix: mix_layout(plan.bus.channels, plan.fps),
-            mix_node: comp.tracks.len(),
             compiled: vec![None; nodes],
             reads: vec![Vec::new(); nodes],
             mix_sound: vec![false; nodes],
@@ -858,18 +872,14 @@ impl<'a> Builder<'a> {
         }
     }
 
-    fn comp(&self) -> &'a Composition {
-        self.plan.composition
-    }
-
     /// The node of the graph track at `index` (top first) in the composition.
     fn graph_node(&self, index: usize) -> usize {
-        self.mix_node + self.comp().graph_tracks.len() - index
+        self.mix_node + self.graph_tracks.len() - index
     }
 
     /// The items of graph track `index` that play: with a graph the project has, and a length.
     fn playing(&self, index: usize) -> Vec<&'a Item> {
-        self.comp().graph_tracks[index]
+        self.graph_tracks[index]
             .items
             .iter()
             .filter(|i| {
@@ -879,10 +889,9 @@ impl<'a> Builder<'a> {
     }
 
     fn build(mut self) -> Result<Compose, EngineError> {
-        let comp = self.comp();
         let mix_node = self.mix_node;
         // A track is read when it is in the mix or a graph that plays reads its stem.
-        let stems: Vec<String> = (0..comp.graph_tracks.len())
+        let stems: Vec<String> = (0..self.graph_tracks.len())
             .flat_map(|g| self.playing(g))
             .flat_map(|i| input_ports(self.graphs[&i.resource]))
             .filter_map(|p| match p.source {
@@ -890,8 +899,8 @@ impl<'a> Builder<'a> {
                 _ => None,
             })
             .collect();
-        let read: Vec<bool> = comp
-            .tracks
+        let read: Vec<bool> = self
+            .media_tracks
             .iter()
             .map(|t| t.in_mix || stems.contains(&t.name))
             .collect();
@@ -907,14 +916,14 @@ impl<'a> Builder<'a> {
         }
         // The mix: video tracks top first, the top one with a picture winning, and the audio
         // tracks on the rendered bus summed at their volumes.
-        let inputs: Vec<(usize, Option<f32>)> = comp
-            .tracks
+        let inputs: Vec<(usize, Option<f32>)> = self
+            .media_tracks
             .iter()
             .enumerate()
             .filter(|(_, t)| t.in_mix)
             .map(|(i, t)| {
                 let gain = if t.kind.has_level() {
-                    (t.bus == self.plan.bus.name).then_some(t.volume)
+                    (t.bus == self.plan.bus.name).then_some(t.gain)
                 } else {
                     Some(1.0)
                 };
@@ -931,7 +940,7 @@ impl<'a> Builder<'a> {
             audio_layout: self.mix,
         });
         // The graph tracks, bottom first, each on the one below.
-        for index in (0..comp.graph_tracks.len()).rev() {
+        for index in (0..self.graph_tracks.len()).rev() {
             let node = self.graph_node(index);
             let host = node - 1;
             let (host_latency, _) = self.compiled[host].expect("below is compiled first");
@@ -1037,7 +1046,6 @@ impl<'a> Builder<'a> {
             master,
             inspect: self.plan.inspect,
             names: std::mem::take(&mut self.names),
-            single: self.plan.single,
             warmup: warmups[master],
             renders_audio: !self.mix_sound[master],
         })
@@ -1112,16 +1120,11 @@ impl<'a> Builder<'a> {
         let fps = self.plan.fps;
         let mut tempo = self.plan.options.tempo;
         tempo.offset_secs += item_base(item, fps) as f64 / fps;
-        // What the item plays of the graph's own time, in whole frames as it is rendered; an
-        // item without end (a render of one graph) plays the project.
-        let span = if graph_end(item).is_finite() {
-            let first = frame_of(item.position, fps);
-            Span {
-                start: (first + item_base(item, fps)) as f64 / fps,
-                length: (frame_of(graph_end(item), fps) - first) as f64 / fps,
-            }
-        } else {
-            self.plan.options.span
+        // What the item plays of the graph's own time, in whole frames as it is rendered.
+        let first = frame_of(item.position, fps);
+        let span = Span {
+            start: (first + item_base(item, fps)) as f64 / fps,
+            length: (frame_of(graph_end(item), fps) - first) as f64 / fps,
         };
         let options = CompileOptions {
             sources,
@@ -1130,22 +1133,21 @@ impl<'a> Builder<'a> {
             ..self.plan.options.clone()
         };
         let graph = Graph::compile(desc, self.plan.registry, &options)
-            .map_err(|e| fx_error(e, item.resource, &self.names, self.plan.single))?;
+            .map_err(|e| fx_error(e, item.resource, &self.names))?;
         // The item's sound is the mix when its Audio Output is wired straight from a port that
-        // reads the mix: what is below, when that is the mix, or the mix itself. A render of one
-        // graph keeps the old rule that a graph without an Audio Output leaves the sound alone.
-        let passes_mix = (self.plan.single && !renders_audio)
-            || renders_audio
-                && graph.audio_passthrough().is_some_and(|key| {
-                    port_rts.iter().any(|p| {
-                        p.key == key
-                            && match p.fill {
-                                Fill::HostAudio => self.mix_sound[node - 1],
-                                Fill::Receive { node, video } => !video && self.mix_sound[node],
-                                _ => false,
-                            }
-                    })
-                });
+        // reads the mix: what is below, when that is the mix, or the mix itself. A graph without
+        // an Audio Output is silent.
+        let passes_mix = renders_audio
+            && graph.audio_passthrough().is_some_and(|key| {
+                port_rts.iter().any(|p| {
+                    p.key == key
+                        && match p.fill {
+                            Fill::HostAudio => self.mix_sound[node - 1],
+                            Fill::Receive { node, video } => !video && self.mix_sound[node],
+                            _ => false,
+                        }
+                })
+            });
         let own = graph.latency_frames() as usize;
         let host_delay = align - latency_in;
         let audio_layout = graph.audio_layout().unwrap_or(self.mix);
@@ -1179,7 +1181,6 @@ impl<'a> Builder<'a> {
     /// gets its signal.
     fn fill(&self, node: usize, source: &Source, kind: InputKind) -> Fill {
         let video = kind == InputKind::Video;
-        let comp = self.comp();
         match source {
             Source::Below if video => Fill::HostVideo,
             Source::Below => Fill::HostAudio,
@@ -1187,13 +1188,13 @@ impl<'a> Builder<'a> {
                 node: self.mix_node,
                 video,
             },
-            Source::Track(track) => comp
-                .tracks
+            Source::Track(track) => self
+                .media_tracks
                 .iter()
                 .position(|t| t.name == *track)
                 .map_or(Fill::Zeros, |node| Fill::Receive { node, video }),
             Source::Graph(_) | Source::Named { .. } => {
-                let Some(below) = comp
+                let Some(below) = self
                     .graph_tracks
                     .iter()
                     .position(|t| Some(t.name.as_str()) == source.graph_track())

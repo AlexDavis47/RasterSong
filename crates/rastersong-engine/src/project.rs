@@ -1,6 +1,6 @@
 //! Project files: the timeline, its media and the graph the user is working on.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rastersong_graph::nodes::{AUDIO_BUS_OUTPUT, BUS_PARAM, DEFAULT_BUS};
 use rastersong_graph::{GraphDesc, ParamValue, Tempo, audio_output_bus};
@@ -264,6 +264,32 @@ impl Project {
         }
     }
 
+    /// What `rastersong render <video> <audio> <graph>` renders: `graph` (as
+    /// [`Self::FIRST_GRAPH`]) on a graph track for the first `length` seconds, over the file at
+    /// `video` on the video track [`VIDEO_SOURCE`](crate::VIDEO_SOURCE) and the file at `audio` on
+    /// the audio track [`DEFAULT_AUDIO_TRACK`](crate::DEFAULT_AUDIO_TRACK). The audio starts
+    /// `audio_offset` seconds after the video; a negative offset starts it partway into the
+    /// audio.
+    pub fn from_files(
+        video: impl Into<PathBuf>,
+        audio: impl Into<PathBuf>,
+        graph: GraphDesc,
+        audio_offset: f64,
+        length: f64,
+    ) -> Self {
+        let mut project = Self::new(graph);
+        project.add_track(TrackKind::Video, crate::VIDEO_SOURCE, video);
+        let song = project.add_track(TrackKind::Audio, crate::DEFAULT_AUDIO_TRACK, audio);
+        song.items[0].position = audio_offset.max(0.0);
+        song.items[0].start = (-audio_offset).max(0.0);
+        let lengths = ItemLengths {
+            new_graph_length: length,
+            ..ItemLengths::default()
+        };
+        project.add_track_for(Self::FIRST_GRAPH, 0.0, &lengths);
+        project
+    }
+
     /// The master bus: the first, which the preview plays and the export writes.
     pub fn master_bus(&self) -> &str {
         self.buses.first().map_or(DEFAULT_BUS, |b| b.name.as_str())
@@ -516,8 +542,8 @@ fn sanitized_buses(buses: Vec<Bus>) -> Vec<Bus> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
+    use crate::ComposedTrack;
     use crate::timeline::{LabelColor, MAX_BUS_CHANNELS};
 
     fn graph() -> GraphDesc {
@@ -546,20 +572,25 @@ mod tests {
     fn soloing_leaves_the_other_tracks_of_its_kind_out_of_the_mix() {
         let mut project = three_tracks();
         project.tracks[2].solo = true;
-        let gains: Vec<f32> = project.timeline().tracks.iter().map(|t| t.gain).collect();
+        let gains = |p: &Project| -> Vec<f32> {
+            p.composition()
+                .tracks
+                .iter()
+                .map(ComposedTrack::mix_gain)
+                .collect()
+        };
         // The video isn't affected by an audio solo.
-        assert_eq!(gains, [1.0, 0.0, 1.0]);
+        assert_eq!(gains(&project), [1.0, 0.0, 1.0]);
         // A muted soloed track is still muted; the video solos among video tracks.
         project.tracks[2].muted = true;
         project.tracks[0].solo = true;
-        let gains: Vec<f32> = project.timeline().tracks.iter().map(|t| t.gain).collect();
-        assert_eq!(gains, [1.0, 0.0, 0.0]);
+        assert_eq!(gains(&project), [1.0, 0.0, 0.0]);
         // Muting a video track changes the picture; an audio level doesn't.
-        let before = project.timeline();
+        let before = project.composition();
         project.tracks[1].volume = 0.5;
-        assert!(project.timeline().renders_like(&before));
+        assert!(project.composition().renders_like(&before));
         project.tracks[0].muted = true;
-        assert!(!project.timeline().renders_like(&before));
+        assert!(!project.composition().renders_like(&before));
     }
 
     #[test]
@@ -605,10 +636,10 @@ mod tests {
         project.add_track(TrackKind::Audio, "kick", "kick.wav");
         project.tracks[0].bus = "Stems".into();
         project.tracks[0].volume = 0.5;
-        let timeline = project.timeline();
-        assert_eq!(timeline.master(), Bus::main());
-        assert_eq!(timeline.tracks_on("Stems").count(), 1);
-        assert_eq!(timeline.tracks[0].gain, 0.5);
+        let composition = project.composition();
+        assert_eq!(composition.master(), Bus::main());
+        assert_eq!(composition.tracks_on("Stems").count(), 1);
+        assert_eq!(composition.tracks[0].gain, 0.5);
         assert_eq!(
             project.bus_users("Stems"),
             (
@@ -728,13 +759,13 @@ mod tests {
     }
 
     #[test]
-    fn the_timeline_lists_video_tracks_before_audio_tracks() {
+    fn the_composition_lists_video_tracks_before_audio_tracks() {
         let mut project = Project::new(graph());
         project.add_track(TrackKind::Audio, "song", "song.wav");
         project.add_track(TrackKind::Video, "clip.mp4", "clip.mp4");
-        let timeline = project.timeline();
-        assert_eq!(timeline.timebase, None);
-        let kinds: Vec<_> = timeline
+        let composition = project.composition();
+        assert_eq!(composition.timebase, None);
+        let kinds: Vec<_> = composition
             .tracks
             .iter()
             .map(|t| (t.name.as_str(), t.kind))
@@ -744,8 +775,12 @@ mod tests {
             kinds,
             [("clip.mp4", TrackKind::Video), ("song", TrackKind::Audio)]
         );
+        let first_video = composition.tracks_of(TrackKind::Video).next().unwrap();
         assert_eq!(
-            timeline.first_video().map(|t| t.path.clone()),
+            composition
+                .track_resource(first_video)
+                .and_then(|r| r.file())
+                .map(|f| f.path.clone()),
             Some(PathBuf::from("clip.mp4"))
         );
     }
@@ -1053,8 +1088,8 @@ mod inspect_rate_tests {
             project.add_empty_track(TrackKind::Audio, "Audio"),
             "Audio_2"
         );
-        // Empty tracks play nothing: the engine isn't told about them.
-        assert!(project.timeline().tracks.is_empty());
+        // Empty tracks play nothing.
+        assert!(project.composition().is_empty());
         assert!(project.video().is_none());
 
         // Only its own kind fills an empty track.
@@ -1087,7 +1122,7 @@ mod inspect_rate_tests {
                 .place_resource(&name, other, 0.0, &ItemLengths::default())
                 .is_none()
         );
-        assert_eq!(project.timeline().tracks.len(), 2);
+        assert!(!project.composition().is_empty());
     }
 
     #[test]
@@ -1204,9 +1239,14 @@ mod inspect_rate_tests {
             .add_track_for(clip, 0.0, &ItemLengths::default())
             .unwrap();
         assert_eq!((a.as_str(), b.as_str()), ("clip", "clip_2"));
-        let timeline = project.timeline();
-        assert_eq!(timeline.tracks.len(), 2);
-        assert_eq!(timeline.tracks[0].path, timeline.tracks[1].path);
+        let composition = project.composition();
+        let paths: Vec<_> = composition
+            .tracks
+            .iter()
+            .map(|t| composition.track_resource(t).and_then(|r| r.file()))
+            .collect();
+        assert_eq!(paths.len(), 2);
+        assert_eq!(paths[0], paths[1]);
         // Removing the resource takes its items from both tracks; the tracks stay.
         assert_eq!(project.remove_resource(clip).len(), 2);
         assert_eq!(project.tracks.len(), 2);
