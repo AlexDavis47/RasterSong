@@ -350,7 +350,36 @@ Reusable widgets, built once in `rastersong-gui` (a `widgets/` module) and used 
 - [x] **feature** Resource label colours: **Color** in a media resource's menu picks one of eight labels, which
   its card and all its items on the timeline are drawn in ([Resources](app.md#resources),
   [Decisions](decisions.md#resource-colours-are-labels-not-free-colours-october-2026)).
-- [ ] **feature** Label colours for graph resources too, which their graph items take.
+- [x] **feature** Label colours for graph resources too: the Resources menu sets them, and the card and every
+  graph item of the graph on the timeline are drawn in them ([Resources](app.md#resources)).
+- [x] **chore** One resource, one track, one item (October 2026). Media and graphs grew two parallel copies of
+  everything (storage, tracks, items, editing, the renderer's input, the panel and the timeline), so each feature
+  landed on one side only ([Decisions](decisions.md#graphs-are-resources-october-2026)). Staged:
+  - [x] Graphs are resources: one `Resource` with a media or graph `content`, one name set, colour, duplicate,
+    remove and "used by" for both; which graph the editor shows is the app's, not the project's
+    ([Projects](graph-format.md#projects)).
+  - [x] One track type, one item type and one editing API for every section; items never overlap (placing one
+    trims what it lands on), and video and audio drags apply on release
+    ([Decisions](decisions.md#one-track-type-one-item-type-items-never-overlap-october-2026)).
+  - [x] One projection to the renderer, the one-graph CLI route a project; graph-only projects render
+    ([Decisions](decisions.md#one-projection-the-one-graph-route-is-a-project-november-2026),
+    [Composition](engine.md#composition)).
+  - [x] Per-item resources in the renderer and one stacking rule for video and graph tracks
+    ([Decisions](decisions.md#per-item-resources-one-stacking-rule-no-audio-crossfades-november-2026),
+    [Composition](engine.md#composition)).
+  - [x] One path in the Resources panel: one action set, drag payload, selection, card group and remove dialog
+    for every kind; graphs get colour, multi-select, multi-drag and Add to Timeline, and the open graph can be
+    removed ([Resources](app.md#resources)).
+  - [x] One selection, clipboard, action set and drop path on the timeline: graph rows are timeline rows, items
+    of every kind select, snap, copy and move together, and media items move across tracks too
+    ([Decisions](decisions.md#one-timeline-path-for-every-kind-of-track-november-2026), [Timeline](app.md#timeline)).
+  - [x] A track takes items of any file of its kind, every media file is read when it is imported, items are drawn
+    from their resource's view, and one item inspector and one track inspector cover every kind
+    ([Decisions](decisions.md#a-track-takes-any-file-one-item-inspector-november-2026),
+    [Inspector](app.md#inspector)).
+- [ ] **feature** Change an item's speed from the item inspector, not only by Alt+dragging an edge (it has to trim
+  or stop at the next item the way a stretch does).
+  - [ ] One lane, header, menu and inspector for every kind of track, and tracks that play several files.
 - [x] **feature** Graph inputs and outputs live on the graph: fixed Video In, Audio In, Output and master Audio
   Output in every graph, Video Source and Audio Source nodes that pick what they read, and Named Outputs for graphs
   above; the per-item source mapping is gone ([Node graph](app.md#node-graph),
@@ -448,8 +477,8 @@ timebase (done in stage 1).
 - **Sections.** The timeline has a **Graphs** section on top, then **Video**, then **Audio**, divided by a thick
   line; an **Automation** section joins with automation curves (stage 5). Each section has its own tracks and its
   own **+ Track** row, and tracks are reordered by dragging their header within their section.
-- A media track holds items from **one resource** only, which can be cut up and rearranged freely. This keeps each
-  source's layout fixed along the timeline, which graph compilation needs.
+- A track holds items of **any resource of its kind**, cut up and rearranged freely. A stem's layout is the widest
+  of its items' files ([Decisions](decisions.md#a-track-takes-any-file-one-item-inspector-november-2026)).
 - **Dropping media places its whole source.** Dragging a resource onto the timeline places every resource from the
   same file at the same time: the video on a video track, each audio stream on an audio track, grouped. The track
   under the pointer takes its kind if it can; the others go on the first track of their section that can take
@@ -567,8 +596,9 @@ raw.
    - [x] **feature** Short fixed fades on audio item edges *(5 ms, crossfading where items overlap; see
      [Timeline](engine.md#timeline))*.
    - [x] **chore** New project file contents (still plain JSON at this stage); CLI `render <project> <out>` *(the
-     old `render <video> <audio> <graph> <out>` stays; without an Audio Output the CLI writes the mix of the audio
-     tracks)*.
+     old `render <video> <audio> <graph> <out>` stays, as a project of the two files since
+     [One projection](decisions.md#one-projection-the-one-graph-route-is-a-project-november-2026); without graph
+     items the CLI writes the mix of the audio tracks)*.
 2. **Resources and graphs**
    - [x] **feature** Resources panel (linked resources only) and the multi-stream import dialog *(done: see
      [Resources](app.md#resources) and [Decisions](decisions.md#resources-panel-october-2026))*.

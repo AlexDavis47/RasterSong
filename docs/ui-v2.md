@@ -15,7 +15,7 @@ page and a mockup disagree, this page wins; fix the mockup.
    the Time/Tempo switch, the bypass toggle in the inspector next to the node it bypasses.
 2. **The graph reads at a glance.** Node text at 12 to 13 px, a category colour strip along the top of each node,
    a legend for wire colours.
-3. **The inspector follows the selection**: a node, a graph item or a track, each with the same layout.
+3. **The inspector follows the selection**: a node, an item or a track, each with the same layout.
 4. **Nothing hides behind a tab that doesn't need to.** (Media and Graphs shared the Resources panel at first;
    since October 2026 they are two tabs, so a panel shows more cards of one kind without scrolling.)
 5. **Destructive actions are one step removed.** Removing a track or a resource moves into menus, out of the
@@ -169,12 +169,12 @@ layout and tag, sample count included. *Readings* shows no box, since the number
 ## Inspector
 
 Board: [Main](design/ui-v2/Main.dc.html). **Shipped in stage 5**; the layout is `widgets/inspector.rs`, shared by
-the node, graph item and track inspectors. Where it differs from the board: a graph item's name is its graph's,
-shown but not edited there (graphs are renamed in the Resources panel); graph tracks aren't selectable, so only video
-and audio tracks have a track inspector; the meters under the outputs are still the shared ones. The knob's
+the node, item and track inspectors. Where it differs from the board: an item's name is its resource's, shown but
+not edited there (resources are renamed in the Resources panel); every kind of item and track has an inspector,
+showing only what its kind can do; the meters under the outputs are still the shared ones. The knob's
 right-click menu is gone, since everything it held is now in the card.
 
-Follows the selection, and every kind of selection uses one layout: a header with the kind ("Node", "Graph item",
+Follows the selection, and every kind of selection uses one layout: a header with the kind ("Node", "Item",
 "Track"), the name (editable through `name_edit`) and the actions that apply to it (Bypass with its Alt+click hint
 for a node), then sections with capital labels.
 
@@ -210,8 +210,9 @@ The three sections, items, trimming and graph items work as in [Timeline](app.md
 - Each section is named in a capital label above its tracks (GRAPHS in the graph colour, VIDEO, AUDIO in the audio
   colour), the thick line between two sections along the label's top. Tracks are 34 px (graphs), 52 px (video) and
   44 px (audio) until resized.
-- Items are a dark body of their kind's colour with a bar along the top in a step lighter, their name in semibold;
-  graph items are outlined in the graph colour.
+- Items are a dark body of their kind's colour (or their resource's label colour) with a bar along the top in a
+  step lighter, their resource's name in semibold; graph items without a label colour are outlined in the graph
+  colour.
 - Track headers are calmer: a bar of the kind's colour, the name with a faint detail line under it (size and
   frame rate, or a slim volume bar), and small M and S toggles (S yellow while on); **removing a track moves into
   its right-click menu**.

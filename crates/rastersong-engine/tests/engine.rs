@@ -2,44 +2,85 @@
 
 mod common;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use common::{
-    AUDIO, FINITE, FINITE_PASSTHROUGH, FRAMES, VIDEO, backend, crush, sequential, wait_until,
+    AUDIO, FINITE, FINITE_PASSTHROUGH, FRAMES, SECONDS, VIDEO, backend, crush, sequential,
+    wait_until,
 };
 use rastersong_engine::{
-    Engine, EngineConfig, EngineStatus, GraphDesc, Item, OutputSize, PreviewScale, Timeline,
-    TrackKind, TrackSpec,
+    Engine, EngineConfig, EngineStatus, GraphDesc, ItemLengths, OutputSize, PreviewScale, Project,
+    TrackKind,
 };
 
-fn engine() -> Engine {
-    Engine::new(Arc::new(backend()), EngineConfig::default())
+/// The engine, and the project it is given: the video, audio tracks of the song, and one graph
+/// over the whole video. Nothing is given until both the tracks and the graph are set.
+struct Session {
+    engine: Engine,
+    audio: Option<Vec<(String, f64)>>,
+    graph: Option<GraphDesc>,
 }
 
-/// The video, and an audio track of the song for each name, starting at the given time.
-fn set_tracks(engine: &Engine, audio: &[(&str, f64)]) {
-    let video = TrackSpec::new("Video", TrackKind::Video, PathBuf::from(VIDEO));
-    let tracks = audio.iter().map(|&(name, position)| TrackSpec {
-        items: vec![Item::whole(position)],
-        ..TrackSpec::new(name, TrackKind::Audio, PathBuf::from(AUDIO))
-    });
-    engine.set_timeline(Timeline {
-        tracks: std::iter::once(video).chain(tracks).collect(),
-        ..Timeline::default()
-    });
+impl std::ops::Deref for Session {
+    type Target = Engine;
+
+    fn deref(&self) -> &Engine {
+        &self.engine
+    }
 }
 
-fn load(engine: &Engine, graph: &str) {
-    set_tracks(engine, &[("Audio", 0.0)]);
+impl Session {
+    /// The video, and an audio track of the song for each name, starting at the given time.
+    fn set_tracks(&mut self, audio: &[(&str, f64)]) {
+        self.audio = Some(audio.iter().map(|&(n, at)| (n.to_owned(), at)).collect());
+        self.sync();
+    }
+
+    /// The graph played over the whole video.
+    fn set_graph(&mut self, graph: GraphDesc) {
+        self.graph = Some(graph);
+        self.sync();
+    }
+
+    fn sync(&self) {
+        let (Some(audio), Some(graph)) = (&self.audio, &self.graph) else {
+            return;
+        };
+        let mut project = Project::new(graph.clone());
+        project.add_track(TrackKind::Video, "Video", VIDEO);
+        for (name, position) in audio {
+            project
+                .add_track(TrackKind::Audio, name.as_str(), AUDIO)
+                .items[0]
+                .position = *position;
+        }
+        let lengths = ItemLengths {
+            new_graph_length: SECONDS,
+            ..ItemLengths::default()
+        };
+        project.add_track_for(Project::FIRST_GRAPH, 0.0, &lengths);
+        self.engine.set_composition(project.composition());
+    }
+}
+
+fn engine() -> Session {
+    Session {
+        engine: Engine::new(Arc::new(backend()), EngineConfig::default()),
+        audio: None,
+        graph: None,
+    }
+}
+
+fn load(engine: &mut Session, graph: &str) {
+    engine.set_tracks(&[("Audio", 0.0)]);
     engine.set_graph(GraphDesc::from_json(graph).unwrap());
 }
 
 #[test]
 fn renders_ahead_and_matches_a_full_render() {
-    let engine = engine();
+    let mut engine = engine();
     assert_eq!(engine.status(), EngineStatus::Idle);
-    load(&engine, FINITE);
+    load(&mut engine, FINITE);
     wait_until("all frames", || engine.buffered_from(0) == FRAMES);
     assert_eq!(engine.status(), EngineStatus::Ready);
     assert_eq!(engine.info().unwrap().frames, FRAMES);
@@ -52,9 +93,9 @@ fn renders_ahead_and_matches_a_full_render() {
 
 #[test]
 fn renders_from_the_playhead_after_a_seek() {
-    let engine = engine();
+    let mut engine = engine();
     engine.set_playhead(40);
-    load(&engine, FINITE);
+    load(&mut engine, FINITE);
     wait_until("frames from 40", || engine.buffered_from(40) == FRAMES - 40);
     assert!(
         engine.frame(0).is_none(),
@@ -69,8 +110,8 @@ fn renders_from_the_playhead_after_a_seek() {
 
 #[test]
 fn edits_never_serve_stale_frames() {
-    let engine = engine();
-    load(&engine, &crush(2));
+    let mut engine = engine();
+    load(&mut engine, &crush(2));
     wait_until("a few frames", || engine.buffered_from(0) >= 10);
 
     engine.set_graph(GraphDesc::from_json(&crush(6)).unwrap());
@@ -91,8 +132,8 @@ fn edits_never_serve_stale_frames() {
 
 #[test]
 fn edits_to_nodes_that_do_not_feed_the_output_keep_the_cache() {
-    let engine = engine();
-    load(&engine, FINITE);
+    let mut engine = engine();
+    load(&mut engine, FINITE);
     wait_until("all frames", || engine.buffered_from(0) == FRAMES);
     let before = engine.frame(5).unwrap();
 
@@ -117,8 +158,8 @@ fn edits_to_nodes_that_do_not_feed_the_output_keep_the_cache() {
 
 #[test]
 fn bypassing_the_whole_graph_renders_the_video() {
-    let engine = engine();
-    load(&engine, &crush(2));
+    let mut engine = engine();
+    load(&mut engine, &crush(2));
     wait_until("processed frames", || engine.buffered_from(0) == FRAMES);
     engine.set_bypass_all(true);
     wait_until("bypassed frames", || engine.buffered_from(0) == FRAMES);
@@ -136,8 +177,8 @@ fn bypassing_the_whole_graph_renders_the_video() {
 
 #[test]
 fn preview_scale_renders_smaller_frames() {
-    let engine = engine();
-    load(&engine, FINITE);
+    let mut engine = engine();
+    load(&mut engine, FINITE);
     engine.set_preview_scale(PreviewScale::Half);
     wait_until("half-scale frames", || engine.buffered_from(0) == FRAMES);
     let frame = engine.frame(3).unwrap();
@@ -147,10 +188,10 @@ fn preview_scale_renders_smaller_frames() {
 
 #[test]
 fn reports_errors_and_recovers() {
-    let engine = engine();
+    let mut engine = engine();
     // Valid JSON, but a node of a type that doesn't exist.
     load(
-        &engine,
+        &mut engine,
         r#"{ "version": 0, "nodes": [ { "id": "b", "type": "bogus" }, { "id": "o", "type": "output" } ],
             "connections": [ { "from": "b", "to": "o" } ] }"#,
     );
@@ -165,7 +206,7 @@ fn reports_errors_and_recovers() {
 
 #[test]
 fn notifies_when_frames_arrive() {
-    let engine = engine();
+    let mut engine = engine();
     let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     engine.on_update({
         let count = count.clone();
@@ -173,7 +214,7 @@ fn notifies_when_frames_arrive() {
             count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
     });
-    load(&engine, FINITE);
+    load(&mut engine, FINITE);
     wait_until("notifications", || {
         count.load(std::sync::atomic::Ordering::SeqCst) > FRAMES
     });
@@ -182,15 +223,31 @@ fn notifies_when_frames_arrive() {
 #[test]
 fn respects_the_cache_budget() {
     // Room for 20 frames of 16×8 RGB: the engine renders ahead only as far as fits.
-    let engine = Engine::new(
-        Arc::new(backend()),
-        EngineConfig {
-            cache_bytes: 20 * 16 * 8 * 3,
-            lookahead_secs: 10.0,
-            audio_cache: None,
-        },
-    );
-    load(&engine, FINITE);
+    let mut engine = Session {
+        engine: Engine::new(
+            Arc::new(backend()),
+            EngineConfig {
+                cache_bytes: 20 * 16 * 8 * 3,
+                lookahead_secs: 10.0,
+                audio_cache: None,
+            },
+        ),
+        audio: None,
+        graph: None,
+    };
+    // The sound passes through, so frames hold pictures only: a graph without an Audio Output
+    // is silent, which is rendered sound kept with each frame.
+    let sounding = FINITE
+        .replace(
+            r#"{ "id": "out", "type": "output" }"#,
+            r#"{ "id": "out", "type": "output" }, { "id": "sound", "type": "audio_output" }"#,
+        )
+        .replace(
+            r#"{ "from": "crush", "to": "out" }"#,
+            r#"{ "from": "crush", "to": "out" }, { "from": "audio", "to": "sound" }"#,
+        );
+    assert_ne!(sounding, FINITE);
+    load(&mut engine, &sounding);
     wait_until("the window", || engine.buffered_from(0) == 15);
     std::thread::sleep(std::time::Duration::from_millis(50));
     assert_eq!(
@@ -205,19 +262,19 @@ fn respects_the_cache_budget() {
 
 #[test]
 fn renders_without_audio_and_reports_cached_ranges() {
-    let engine = engine();
-    set_tracks(&engine, &[]);
+    let mut engine = engine();
+    engine.set_tracks(&[]);
     engine.set_graph(GraphDesc::from_json(FINITE).unwrap());
     wait_until("all frames", || engine.buffered_from(0) == FRAMES);
     assert_eq!(engine.cached_ranges(), vec![0..FRAMES]);
-    assert!(engine.loaded_tracks().is_empty());
+    assert!(engine.loaded_audio().is_empty());
 }
 
 #[test]
 fn reports_the_memory_rendered_frames_take() {
-    let engine = engine();
+    let mut engine = engine();
     assert_eq!(engine.cache_use().bytes, 0);
-    set_tracks(&engine, &[]);
+    engine.set_tracks(&[]);
     engine.set_graph(GraphDesc::from_json(FINITE).unwrap());
     wait_until("all frames", || engine.buffered_from(0) == FRAMES);
     let used = engine.cache_use();
@@ -227,13 +284,13 @@ fn reports_the_memory_rendered_frames_take() {
 
 #[test]
 fn audio_offset_changes_the_render_and_back() {
-    let engine = engine();
-    load(&engine, FINITE);
+    let mut engine = engine();
+    load(&mut engine, FINITE);
     wait_until("frames", || engine.buffered_from(0) == FRAMES);
-    assert!((engine.loaded_tracks()[0].clip.duration_secs() - 2.0).abs() < 1e-9);
+    assert!((engine.loaded_audio()[0].clip.duration_secs() - 2.0).abs() < 1e-9);
     let original = engine.frame(30).unwrap();
 
-    set_tracks(&engine, &[("Audio", 0.5)]);
+    engine.set_tracks(&[("Audio", 0.5)]);
     // The project runs to the end of the last item: the song now ends half a second later.
     wait_until("re-render", || engine.buffered_from(0) == FRAMES + 15);
     assert_eq!(engine.info().unwrap().frames, FRAMES + 15);
@@ -243,7 +300,7 @@ fn audio_offset_changes_the_render_and_back() {
         "the offset moves the modulation"
     );
 
-    set_tracks(&engine, &[("Audio", 0.0)]);
+    engine.set_tracks(&[("Audio", 0.0)]);
     wait_until("re-render", || engine.buffered_from(0) == FRAMES);
     assert_eq!(
         engine.frame(30).unwrap().rgb,
@@ -266,32 +323,33 @@ const DRUMS: &str = r#"{ "version": 0,
 
 #[test]
 fn audio_inputs_read_their_own_track_and_missing_tracks_are_silent() {
-    let engine = engine();
-    set_tracks(&engine, &[]);
+    let mut engine = engine();
+    engine.set_tracks(&[]);
     engine.set_graph(GraphDesc::from_json(DRUMS).unwrap());
     // Only an `audio` track: `drums` reads silence, so AM leaves the video unchanged.
-    set_tracks(&engine, &[("Audio", 0.0)]);
+    engine.set_tracks(&[("Audio", 0.0)]);
     wait_until("silent render", || engine.buffered_from(0) == FRAMES);
     assert_eq!(engine.status(), EngineStatus::Ready);
     let silent = engine.frame(20).unwrap();
     let plain = sequential(FINITE_PASSTHROUGH, OutputSize::Native);
     assert_eq!(silent.rgb, plain[20]);
 
-    set_tracks(&engine, &[("Audio", 0.0), ("drums", 0.0)]);
+    engine.set_tracks(&[("Audio", 0.0), ("drums", 0.0)]);
     wait_until("drums render", || engine.buffered_from(0) == FRAMES);
     assert_ne!(
         engine.frame(20).unwrap().rgb,
         silent.rgb,
         "the drums track now modulates"
     );
-    assert_eq!(engine.loaded_tracks().len(), 2);
+    // Both tracks play the same file, decoded once.
+    assert_eq!(engine.loaded_audio().len(), 1);
 }
 
 #[test]
 fn failures_name_the_node_at_fault() {
-    let engine = engine();
+    let mut engine = engine();
     load(
-        &engine,
+        &mut engine,
         r#"{ "version": 0, "nodes": [ { "id": "v", "type": "video_input" }, { "id": "c", "type": "pack", "params": { "channels": 7 } }, { "id": "o", "type": "output" } ],
             "connections": [ { "from": "v", "to": "c" }, { "from": "c", "to": "o" } ] }"#,
     );
@@ -306,8 +364,8 @@ fn failures_name_the_node_at_fault() {
 
 #[test]
 fn frames_carry_output_levels() {
-    let engine = engine();
-    load(&engine, FINITE);
+    let mut engine = engine();
+    load(&mut engine, FINITE);
     wait_until("frames", || engine.buffered_from(0) >= 5);
     let frame = engine.frame(3).unwrap();
     for node in ["video", "audio", "delay", "crush", "out"] {
@@ -326,9 +384,9 @@ fn frames_carry_output_levels() {
 
 #[test]
 fn reports_the_renders_latency_and_warmup_until_a_graph_fails() {
-    let engine = engine();
+    let mut engine = engine();
     assert_eq!(engine.delays(), None);
-    load(&engine, FINITE);
+    load(&mut engine, FINITE);
     wait_until("the build", || engine.status() == EngineStatus::Ready);
     let delays = engine.delays().expect("a compiled graph has delays");
     assert!(delays.warmup_frames >= 2, "the delay needs history");
@@ -347,9 +405,9 @@ fn reports_the_renders_latency_and_warmup_until_a_graph_fails() {
 
 #[test]
 fn graph_failures_keep_the_video_info() {
-    let engine = engine();
+    let mut engine = engine();
     load(
-        &engine,
+        &mut engine,
         r#"{ "version": 0, "nodes": [ { "id": "b", "type": "bogus" }, { "id": "o", "type": "output" } ],
             "connections": [ { "from": "b", "to": "o" } ] }"#,
     );
@@ -365,9 +423,9 @@ fn cached_frames_carry_rendered_sound_that_playback_reads() {
     use rastersong_engine::AudioSink;
     use rastersong_engine::playback::Mixer;
 
-    let engine = engine();
+    let mut engine = engine();
     load(
-        &engine,
+        &mut engine,
         r#"{ "version": 0,
           "nodes": [
             { "id": "video", "type": "video_input" }, { "id": "audio", "type": "audio_input" },
@@ -424,8 +482,8 @@ mod taps {
 
     #[test]
     fn a_tap_reads_a_connection_without_disturbing_the_render() {
-        let engine = engine();
-        load(&engine, FINITE);
+        let mut engine = engine();
+        load(&mut engine, FINITE);
         wait_until("some frames", || engine.buffered_from(0) >= 10);
 
         let TapOutcome::Ready(tap) = ask(&engine, &request(7, "crush")) else {
@@ -455,7 +513,7 @@ mod taps {
 
     #[test]
     fn a_connection_that_does_not_feed_the_output_is_not_rendered() {
-        let engine = engine();
+        let mut engine = engine();
         let graph = FINITE
             .replace(
                 r#"{ "id": "out", "type": "output" }"#,
@@ -465,7 +523,7 @@ mod taps {
                 r#""connections": ["#,
                 r#""connections": [ { "from": "video", "to": "dead" },"#,
             );
-        load(&engine, &graph);
+        load(&mut engine, &graph);
         wait_until("some frames", || engine.buffered_from(0) >= 2);
         assert_eq!(ask(&engine, &request(1, "dead")), TapOutcome::NotRendered);
         assert_eq!(
@@ -476,8 +534,8 @@ mod taps {
 
     #[test]
     fn an_edit_drops_the_answer() {
-        let engine = engine();
-        load(&engine, &crush(2));
+        let mut engine = engine();
+        load(&mut engine, &crush(2));
         let asked = request(3, "crush");
         assert!(matches!(ask(&engine, &asked), TapOutcome::Ready(_)));
         assert!(
@@ -515,8 +573,8 @@ mod listening {
 
     #[test]
     fn a_connection_is_heard_ahead_of_the_position_without_disturbing_the_render() {
-        let engine = engine();
-        load(&engine, FINITE);
+        let mut engine = engine();
+        load(&mut engine, FINITE);
         wait_until("some frames", || engine.buffered_from(0) >= 5);
         let source = engine.listened_audio();
 
@@ -577,7 +635,7 @@ mod listening {
         use std::sync::atomic::{AtomicBool, Ordering};
 
         // The render thread's first update parks it: listening still has to be heard.
-        let engine = engine();
+        let mut engine = engine();
         let gate = Arc::new(Gate::default());
         let first = AtomicBool::new(true);
         engine.on_update({
@@ -589,7 +647,7 @@ mod listening {
             }
         });
         let release = OpenOnDrop(gate.clone());
-        load(&engine, FINITE);
+        load(&mut engine, FINITE);
         wait_until("the render thread held", || gate.2.load(Ordering::SeqCst));
         let source = engine.listened_audio();
         wait_until("the sound while the render is held", || {
@@ -603,8 +661,8 @@ mod listening {
 
     #[test]
     fn a_connection_that_is_not_rendered_is_silent() {
-        let engine = engine();
-        load(&engine, FINITE);
+        let mut engine = engine();
+        load(&mut engine, FINITE);
         let source = engine.listened_audio();
         wait_until("silence", || {
             engine.listen(Some(target("nothing")), 2);
@@ -618,4 +676,21 @@ mod listening {
                 .all(|b| b.samples.is_empty())
         );
     }
+}
+
+#[test]
+fn audio_resources_no_track_plays_are_loaded_too() {
+    let engine = Engine::new(Arc::new(backend()), EngineConfig::default());
+    let mut project = Project::new(GraphDesc::from_json(FINITE).unwrap());
+    project.add_track(TrackKind::Video, "Video", VIDEO);
+    let song = project.add_resource(TrackKind::Audio, "song", AUDIO, None);
+    // A file that can't be read but isn't played doesn't stop the render.
+    project.add_resource(TrackKind::Audio, "gone", "gone.wav", None);
+    engine.set_composition(project.composition());
+    wait_until("the song", || !engine.loaded_audio().is_empty());
+    let loaded = engine.loaded_audio();
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].resource, song);
+    assert!((loaded[0].clip.duration_secs() - 2.0).abs() < 1e-9);
+    wait_until("ready", || engine.status() == EngineStatus::Ready);
 }

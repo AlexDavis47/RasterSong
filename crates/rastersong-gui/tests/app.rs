@@ -11,20 +11,29 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::{By, Queryable};
 use rastersong_engine::{
     AudioClip, FakeBackend, FakeVideo, GraphDesc, LabelColor, ParamValue, Project, Rational,
-    ResourceKind, StreamInfo, StreamKind, TrackKind,
+    ResourceId, StreamInfo, StreamKind, TrackKind,
 };
 use rastersong_gui::{App, AudioOut, STARTER_GRAPH};
 
 mod common;
-use common::TrackLists;
+use common::{TrackLists, add_graph_track, place_graph};
 
 fn app() -> App {
     app_with(|_| {})
 }
 
+/// The project's media resources, in the Resources panel's order: its graphs left out.
+fn media(app: &App) -> Vec<&rastersong_engine::Resource> {
+    app.project()
+        .resources
+        .iter()
+        .filter(|r| r.kind().reads_file())
+        .collect()
+}
+
 /// The app with the starter graph changed by `edit`.
 fn app_with(edit: impl FnOnce(&mut GraphDesc)) -> App {
-    app_with_project(|project| edit(&mut project.graph))
+    app_with_project(|project| edit(project.graph_mut(Project::FIRST_GRAPH).unwrap()))
 }
 
 /// The app with the starter project (the starter graph, the video and the song) changed by `edit`.
@@ -97,10 +106,15 @@ fn loaded_quick(app: App) -> Harness<'static, App> {
     )
 }
 
-/// Steps until the first second is rendered.
+/// Steps until the first second is rendered and the length of every video resource is known.
+/// The length comes from the thumbnail probe on its own thread, and until then the resource's
+/// items aren't drawn, so a click on one would land on a "loading" lane.
 fn settled(mut harness: Harness<'static, App>) -> Harness<'static, App> {
     step_until(&mut harness, "rendered frames", |app| {
         app.engine().buffered_from(0) >= 30
+    });
+    step_until(&mut harness, "video lengths", |app| {
+        app.video_durations().iter().all(Option::is_some)
     });
     harness.run_steps(2);
     harness
@@ -383,6 +397,22 @@ fn undo_and_redo_step_through_edits() {
 }
 
 #[test]
+fn undoing_a_new_graph_shows_the_first_graph_again() {
+    let mut harness = loaded();
+    let first = harness.state().open_graph_id().unwrap();
+    let nodes = harness.state().editor().node_count();
+    harness.state_mut().new_graph();
+    harness.run_steps(3);
+    assert_ne!(harness.state().open_graph_id().unwrap(), first);
+
+    shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
+    // The new graph is gone, so the editor shows the first one, as it was.
+    assert_eq!(harness.state().project().graph_ids().count(), 1);
+    assert_eq!(harness.state().open_graph_id().unwrap(), first);
+    assert_eq!(harness.state().editor().node_count(), nodes);
+}
+
+#[test]
 fn a_drag_is_one_undo_step() {
     let mut harness = loaded();
     let video = key(&harness, "video");
@@ -451,11 +481,39 @@ fn new_project_asks_before_dropping_changes() {
     );
 }
 
+use rastersong_engine::ItemRef;
 use rastersong_gui::timeline::{HEADER_WIDTH, LANE_HEIGHT};
 
-/// The lane of video or audio track row `row` (0 is the video), where it was last drawn.
+/// The lane of video or audio track row `row` (0 is the first video track), where it was last
+/// drawn: the timeline lists the graph tracks above them.
 fn lane(harness: &Harness<'_, App>, row: usize) -> egui::Rect {
-    harness.state().timeline_layout().lanes[row]
+    let graphs = harness
+        .state()
+        .project()
+        .tracks_of(TrackKind::Graph)
+        .count();
+    harness.state().timeline_layout().lanes[graphs + row]
+}
+
+/// The selected items that are on graph tracks.
+fn selected_graph_items(app: &App) -> Vec<ItemRef> {
+    app.selected_items()
+        .iter()
+        .filter(|at| {
+            app.project()
+                .track(&at.track)
+                .is_some_and(|t| t.kind == TrackKind::Graph)
+        })
+        .cloned()
+        .collect()
+}
+
+/// A point on the header bar of item `item` of the track in timeline row `row` (any kind; the
+/// graph tracks come first), a little in from its left edge.
+fn item_bar(harness: &Harness<'_, App>, row: usize, item: usize) -> Pos2 {
+    let position = harness.state().project().tracks[row].items[item].position;
+    let lane = harness.state().timeline_layout().lanes[row];
+    pos2(time_x(harness, position) + 8.0, lane.top() + 7.0)
 }
 
 /// Screen x of `seconds` in the timeline's lanes.
@@ -756,6 +814,45 @@ fn after_a_split_the_second_half_drags_alone() {
     assert!(moved[1] > 1.5, "{moved:?}");
 }
 
+#[test]
+fn dragging_a_media_item_previews_and_applies_on_release() {
+    let mut harness = loaded();
+    seek_on_ruler(&mut harness, 1.0);
+    harness.event(Event::PointerMoved(timeline_point(&harness, 1.5, 1)));
+    shortcut(&mut harness, Modifiers::NONE, egui::Key::S);
+    let audio = |harness: &Harness<'_, App>| -> Vec<f64> {
+        harness.state().project().audios()[0]
+            .items
+            .iter()
+            .map(|i| i.position)
+            .collect()
+    };
+    assert_eq!(audio(&harness), [0.0, 1.0]);
+    // Half a second right, over the second half: nothing changes while the button is held,
+    // so the move doesn't trim what it passes over on the way.
+    let from = item_bar_point(&harness, 0.5, 1);
+    let to = pos2(time_x(&harness, 1.0), from.y);
+    harness.event(Event::PointerMoved(from));
+    harness.run_steps(1);
+    press(&mut harness, from, PointerButton::Primary, true);
+    for t in [0.25, 0.5, 0.75, 1.0] {
+        harness.event(Event::PointerMoved(from + (to - from) * t));
+        harness.run_steps(1);
+    }
+    assert_eq!(
+        audio(&harness),
+        [0.0, 1.0],
+        "nothing moves before the release"
+    );
+    press(&mut harness, to, PointerButton::Primary, false);
+    harness.run_steps(1);
+    // Released: it lands half a second on and trims the start off the second half.
+    let moved = audio(&harness);
+    assert_eq!(moved.len(), 2, "{moved:?}");
+    assert!((moved[0] - 0.5).abs() < 0.02, "{moved:?}");
+    assert!((moved[1] - (moved[0] + 1.0)).abs() < 1e-9, "{moved:?}");
+}
+
 /// The system clipboard as the platform layer (egui-winit) handles it: Ctrl+C and Ctrl+X send
 /// copy and cut events, and whatever the app copies lands on the clipboard; Ctrl+V sends a paste
 /// event only when the clipboard holds text.
@@ -794,7 +891,7 @@ impl PlatformClipboard {
 fn copied_items_paste_at_the_playhead() {
     let mut harness = loaded();
     let mut clipboard = PlatformClipboard::default();
-    let nodes = harness.state().project().graph.nodes.len();
+    let nodes = harness.state().open_desc().unwrap().nodes.len();
     let bar = item_bar_point(&harness, 0.5, 1);
     click(&mut harness, bar, PointerButton::Primary);
     clipboard.copy(&mut harness);
@@ -809,7 +906,7 @@ fn copied_items_paste_at_the_playhead() {
     };
     assert_eq!(positions(&harness), [0.0, 1.0]);
     // Over the timeline the clipboard is the timeline's, not the graph's.
-    assert_eq!(harness.state().project().graph.nodes.len(), nodes);
+    assert_eq!(harness.state().open_desc().unwrap().nodes.len(), nodes);
 
     // Cut removes the selected (pasted) item and pastes it back.
     clipboard.cut(&mut harness);
@@ -827,9 +924,9 @@ fn copied_items_paste_at_the_playhead() {
 /// A project with a graph item 0 to 1 s and another 3 to 4 s on one graph track.
 fn two_graph_items() -> App {
     graph_app(|project, _, second| {
-        let track = project.add_graph_track("Effects");
-        project.place_graph(&track, second, 0.0, 1.0);
-        project.place_graph(&track, second, 3.0, 1.0);
+        let track = add_graph_track(project, "Effects");
+        place_graph(project, &track, second, 0.0, 1.0);
+        place_graph(project, &track, second, 3.0, 1.0);
     })
 }
 
@@ -843,7 +940,7 @@ fn ctrl_a_selects_every_item_in_every_section() {
     let media: usize = app.project().tracks().map(|t| t.items.len()).sum();
     assert!(media >= 2);
     assert_eq!(app.selected_items().len(), media);
-    assert_eq!(app.selected_graph_items().len(), 2);
+    assert_eq!(selected_graph_items(app).len(), 2);
 }
 
 #[test]
@@ -852,13 +949,13 @@ fn graph_items_copy_cut_and_paste_at_the_playhead() {
     let mut clipboard = PlatformClipboard::default();
     let bar = pos2(time_x(&harness, 0.5), graph_lane(&harness, 0).top() + 7.0);
     click(&mut harness, bar, PointerButton::Primary);
-    assert!(harness.state().selected_graph_item().is_some());
+    assert!(harness.state().inspected_item().is_some());
     clipboard.copy(&mut harness);
     seek_on_ruler(&mut harness, 1.5);
     harness.event(Event::PointerMoved(timeline_point(&harness, 1.5, 1)));
     clipboard.paste(&mut harness);
     let positions = |harness: &Harness<'_, App>| -> Vec<f64> {
-        harness.state().project().graph_tracks[0]
+        harness.state().project().graphs()[0]
             .items
             .iter()
             .map(|i| i.position)
@@ -866,7 +963,7 @@ fn graph_items_copy_cut_and_paste_at_the_playhead() {
     };
     assert_eq!(positions(&harness), [0.0, 1.5, 3.0]);
     assert_eq!(
-        harness.state().selected_graph_items().len(),
+        selected_graph_items(harness.state()).len(),
         1,
         "the paste is selected"
     );
@@ -882,9 +979,9 @@ fn clicking_in_the_graph_editor_deselects_the_timeline_items() {
     let mut harness = loaded_with(two_graph_items());
     let bar = pos2(time_x(&harness, 0.5), graph_lane(&harness, 0).top() + 7.0);
     click(&mut harness, bar, PointerButton::Primary);
-    assert!(harness.state().selected_graph_item().is_some());
+    assert!(harness.state().inspected_item().is_some());
     select(&mut harness, "split");
-    assert!(harness.state().selected_graph_items().is_empty());
+    assert!(selected_graph_items(harness.state()).is_empty());
     assert_eq!(
         harness.state().editor().active().map(|n| n.id.as_str()),
         Some("split"),
@@ -971,8 +1068,8 @@ fn double_clicking_a_headers_bottom_edge_resets_the_track_height() {
 #[test]
 fn every_track_starts_at_the_same_height_graph_tracks_included() {
     let harness = loaded_quick(graph_app(|project, _, second| {
-        let track = project.add_graph_track("Effects");
-        project.place_graph(&track, second, 0.0, 2.0);
+        let track = add_graph_track(project, "Effects");
+        place_graph(project, &track, second, 0.0, 2.0);
     }));
     let height = lane(&harness, 0).height();
     assert!((graph_lane(&harness, 0).height() - height).abs() < 0.5);
@@ -982,8 +1079,8 @@ fn every_track_starts_at_the_same_height_graph_tracks_included() {
 #[test]
 fn ctrl_scroll_changes_every_tracks_height_and_the_menu_resets_them() {
     let mut harness = loaded_quick(graph_app(|project, _, second| {
-        let track = project.add_graph_track("Effects");
-        project.place_graph(&track, second, 0.0, 2.0);
+        let track = add_graph_track(project, "Effects");
+        place_graph(project, &track, second, 0.0, 2.0);
     }));
     let before = lane(&harness, 0).height();
     harness.event(Event::PointerMoved(timeline_point(&harness, 1.0, 0)));
@@ -997,7 +1094,7 @@ fn ctrl_scroll_changes_every_tracks_height_and_the_menu_resets_them() {
     let after = lane(&harness, 0).height();
     assert!(after < before - 4.0, "{before} then {after}");
     assert!(graph_lane(&harness, 0).height() < before - 4.0);
-    assert!(harness.state().project().graph_tracks[0].height.is_some());
+    assert!(harness.state().project().graphs()[0].height.is_some());
 
     // Right-clicking a header offers both resets.
     let header = harness.state().timeline_layout().headers[0];
@@ -1013,7 +1110,7 @@ fn ctrl_scroll_changes_every_tracks_height_and_the_menu_resets_them() {
     harness.get_by_label("Reset all track heights").click();
     harness.run_steps(3);
     assert!((lane(&harness, 0).height() - before).abs() < 0.5);
-    assert!(harness.state().project().graph_tracks[0].height.is_none());
+    assert!(harness.state().project().graphs()[0].height.is_none());
     assert!(harness.state().project().videos()[0].height.is_none());
 }
 
@@ -1026,7 +1123,7 @@ fn thumbnails_of_the_source_video_arrive() {
 #[test]
 fn the_same_video_on_two_tracks_loads_both() {
     let mut harness = loaded();
-    let resource = harness.state().project().videos()[0].resource.unwrap();
+    let resource = harness.state().project().videos()[0].items[0].resource;
     harness.state_mut().add_resource_track(resource, 1.0);
     harness.state_mut().add_resource_track(resource, 2.0);
     harness.run_steps(2);
@@ -1043,7 +1140,7 @@ fn a_resource_dropped_on_its_own_track_adds_an_item_and_other_kinds_go_elsewhere
     let mut app = import_app();
     app.import_files([PathBuf::from("concert.mkv")]);
     app.finish_import(Some(&[true, true, false]));
-    let ids: Vec<_> = app.project().resources.iter().map(|r| r.id).collect();
+    let ids: Vec<_> = media(&app).into_iter().map(|r| r.id).collect();
     let (video, band) = (ids[0], ids[1]);
     // Dropped alone on the timeline, the video makes its track; the same again adds an item.
     let name = app.drop_resource(video, None, 2.0, false)[0].track.clone();
@@ -1068,7 +1165,7 @@ fn a_resource_dropped_on_a_line_between_tracks_gets_a_new_track_there() {
     let mut app = import_app();
     app.import_files([PathBuf::from("concert.mkv")]);
     app.finish_import(Some(&[true, true, false]));
-    let ids: Vec<_> = app.project().resources.iter().map(|r| r.id).collect();
+    let ids: Vec<_> = media(&app).into_iter().map(|r| r.id).collect();
     let (video, band) = (ids[0], ids[1]);
     app.drop_resource(video, None, 0.0, false);
     app.drop_resource(band, None, 0.0, false);
@@ -1093,7 +1190,7 @@ fn a_missing_file_leaves_its_tracks_as_gaps_until_relocated() {
     let mut app = import_app();
     app.import_files([PathBuf::from("concert.mkv")]);
     app.finish_import(Some(&[true, true, false]));
-    let ids: Vec<_> = app.project().resources.iter().map(|r| r.id).collect();
+    let ids: Vec<_> = media(&app).into_iter().map(|r| r.id).collect();
     app.add_resource_track(ids[0], 0.0);
     assert!(app.missing_resources().is_empty());
     // The file moves: the resource is missing until it is pointed at the new place.
@@ -1103,24 +1200,24 @@ fn a_missing_file_leaves_its_tracks_as_gaps_until_relocated() {
     app.relocate_resource(ids[0], PathBuf::from("concert.mkv"));
     assert!(app.missing_resources().is_empty());
     assert!(
-        app.project()
-            .resources
-            .iter()
-            .all(|r| r.path.as_path() == Path::new("concert.mkv"))
+        media(&app)
+            .into_iter()
+            .all(|r| r.path().unwrap() == Path::new("concert.mkv"))
     );
 }
 
 #[test]
 fn a_new_graph_opens_as_a_passthrough_and_the_old_one_is_kept() {
     let mut harness = loaded();
-    let before = harness.state().project().graph.clone();
+    let before = harness.state().open_desc().unwrap().clone();
     let id = harness.state_mut().new_graph();
     harness.run_steps(3);
     let app = harness.state();
-    assert_eq!(app.project().graph_id, id);
-    assert_eq!(app.project().graphs.len(), 1);
+    assert_eq!(app.open_graph_id().unwrap(), id);
+    let old = Project::FIRST_GRAPH;
+    assert_eq!(app.project().graph_ids().count(), 2);
     assert_eq!(
-        app.project().graphs[0].graph.nodes.len(),
+        app.project().graph(old).unwrap().nodes.len(),
         before.nodes.len()
     );
     // The editor shows the passthrough: the input nodes, Video Output and Audio Output.
@@ -1129,16 +1226,15 @@ fn a_new_graph_opens_as_a_passthrough_and_the_old_one_is_kept() {
         "{}",
         app.editor().node_count()
     );
-    let old = app.project().graphs[0].id;
     harness.state_mut().open_graph(old);
     harness.run_steps(3);
-    assert_eq!(harness.state().project().graph_id, old);
+    assert_eq!(harness.state().open_graph_id().unwrap(), old);
 }
 
 #[test]
 fn adding_tracks_names_them_after_their_files_and_leaves_the_graph_alone() {
     let mut harness = loaded();
-    let graph = harness.state().project().graph.clone();
+    let graph = harness.state().open_desc().unwrap().clone();
     harness
         .state_mut()
         .add_audio_tracks([PathBuf::from("song"), PathBuf::from("song")]);
@@ -1152,7 +1248,7 @@ fn adding_tracks_names_them_after_their_files_and_leaves_the_graph_alone() {
         .collect();
     assert_eq!(names, ["audio", "song", "song_2"]);
     // A graph's inputs are ports, filled where the graph is used, so tracks add no nodes.
-    assert_eq!(harness.state().project().graph, graph);
+    assert_eq!(harness.state().open_desc().unwrap(), &graph);
 }
 
 #[test]
@@ -1175,7 +1271,7 @@ fn dragging_a_wire_onto_a_parameter_pin_modulates_it() {
         .expect("the time pin is shown");
     drag(&mut harness, from, to);
     harness.run_steps(2);
-    let graph = &harness.state().project().graph;
+    let graph = &harness.state().open_desc().unwrap();
     assert!(
         graph
             .connections
@@ -1254,7 +1350,7 @@ fn pick(harness: &mut Harness<'_, App>, row: &str, choice: &str) {
 #[test]
 fn inputs_pick_what_they_read_and_named_inputs_list_the_named_outputs_below() {
     let mut harness = loaded_with(app_with_project(|project| {
-        let lower = project.add_graph_track("Lower");
+        let lower = add_graph_track(project, "Lower");
         let offers = GraphDesc::from_json(
             r#"{ "version": 0, "nodes": [
                 { "id": "v", "type": "video_input" }, { "id": "o", "type": "output" },
@@ -1263,7 +1359,7 @@ fn inputs_pick_what_they_read_and_named_inputs_list_the_named_outputs_below() {
         )
         .unwrap();
         let offering = project.add_graph("Offers", Some(offers));
-        project.place_graph(&lower, offering, 0.0, 2.0);
+        place_graph(project, &lower, offering, 0.0, 2.0);
         let mut side =
             rastersong_engine::NodeDesc::new("side".into(), rastersong_engine::AUDIO_INPUT);
         side.params.insert(
@@ -1271,11 +1367,19 @@ fn inputs_pick_what_they_read_and_named_inputs_list_the_named_outputs_below() {
             rastersong_engine::ParamValue::Text(String::new()),
         );
         side.position = Some([0.0, 300.0]);
-        project.graph.nodes.push(side);
+        project
+            .graph_mut(Project::FIRST_GRAPH)
+            .unwrap()
+            .nodes
+            .push(side);
         let mut glow =
             rastersong_engine::NodeDesc::new("glow".into(), rastersong_engine::NAMED_INPUT);
         glow.position = Some([0.0, 450.0]);
-        project.graph.nodes.push(glow);
+        project
+            .graph_mut(Project::FIRST_GRAPH)
+            .unwrap()
+            .nodes
+            .push(glow);
     }));
     let source = |harness: &Harness<'_, App>, id: &str| {
         let editor = harness.state().editor();
@@ -1494,11 +1598,11 @@ fn ctrl_dragging_along_the_ruler_makes_a_loop_region() {
 #[test]
 fn tracks_are_renamed_without_touching_the_graph() {
     let mut harness = loaded();
-    let graph = harness.state().project().graph.clone();
+    let graph = harness.state().open_desc().unwrap().clone();
     assert!(harness.state_mut().rename_track("audio", "drums"));
     harness.run_steps(2);
     assert_eq!(harness.state().project().audios()[0].name, "drums");
-    assert_eq!(harness.state().project().graph, graph);
+    assert_eq!(harness.state().open_desc().unwrap(), &graph);
 
     // A name another track has, or an empty one, is refused.
     harness
@@ -1605,7 +1709,10 @@ fn opening_a_video_with_sound_adds_its_audio_track_grouped_with_it() {
         .project()
         .audios()
         .iter()
-        .map(|t| (t.name.clone(), app.project().track_path(t)))
+        .map(|t| {
+            let file = app.project().resource(t.items[0].resource);
+            (t.name.clone(), file.and_then(|r| r.path()))
+        })
         .collect();
     assert_eq!(tracks, [("movie".to_owned(), Some(Path::new("movie.mp4")))]);
     // The picture and its sound are grouped.
@@ -1664,7 +1771,7 @@ fn the_single_click_setting_opens_graphs_from_resources_with_one_click() {
         .center();
     click(&mut harness, card, PointerButton::Primary);
     harness.run_steps(3);
-    assert_eq!(harness.state().project().graph_name, "Second graph");
+    assert_eq!(harness.state().open_graph_name(), "Second graph");
 }
 
 #[test]
@@ -2004,14 +2111,13 @@ fn importing_a_file_with_several_streams_asks_which_to_import() {
     let mut app = import_app();
     app.import_files([PathBuf::from("kick.wav"), PathBuf::from("concert.mkv")]);
     // One stream: imported at once.
-    let names = |app: &App| -> Vec<(String, ResourceKind, Option<usize>)> {
-        app.project()
-            .resources
-            .iter()
-            .map(|r| (r.name.clone(), r.kind, r.stream))
+    let names = |app: &App| -> Vec<(String, TrackKind, Option<usize>)> {
+        media(app)
+            .into_iter()
+            .map(|r| (r.name.clone(), r.kind(), r.stream()))
             .collect()
     };
-    assert_eq!(names(&app), [("kick".into(), ResourceKind::Audio, Some(0))]);
+    assert_eq!(names(&app), [("kick".into(), TrackKind::Audio, Some(0))]);
     assert_eq!(app.pending_import().unwrap().streams.len(), 3);
 
     let mut harness = harness(app);
@@ -2029,9 +2135,9 @@ fn importing_a_file_with_several_streams_asks_which_to_import() {
     assert_eq!(
         names(app),
         [
-            ("kick".into(), ResourceKind::Audio, Some(0)),
-            ("concert.mkv".into(), ResourceKind::Video, Some(0)),
-            ("concert Band".into(), ResourceKind::Audio, Some(1)),
+            ("kick".into(), TrackKind::Audio, Some(0)),
+            ("concert.mkv".into(), TrackKind::Video, Some(0)),
+            ("concert Band".into(), TrackKind::Audio, Some(1)),
         ]
     );
     // Nothing is on the timeline until a resource is placed there.
@@ -2039,11 +2145,11 @@ fn importing_a_file_with_several_streams_asks_which_to_import() {
 }
 
 #[test]
-fn resources_become_tracks_and_take_their_tracks_with_them() {
+fn resources_become_tracks_and_take_their_items_with_them() {
     let mut app = import_app();
     app.import_files([PathBuf::from("concert.mkv")]);
     app.finish_import(Some(&[true, true, false]));
-    let ids: Vec<_> = app.project().resources.iter().map(|r| r.id).collect();
+    let ids: Vec<_> = media(&app).into_iter().map(|r| r.id).collect();
     assert_eq!(
         app.add_resource_track(ids[1], 1.5).as_deref(),
         Some("concert Band")
@@ -2052,28 +2158,26 @@ fn resources_become_tracks_and_take_their_tracks_with_them() {
     let project = app.project();
     assert_eq!(project.audios()[0].items[0].position, 1.5);
     assert_eq!(project.videos().len(), 1);
-    let band = project.timeline();
-    let band = band
-        .tracks
-        .iter()
-        .find(|t| t.name == "concert Band")
-        .unwrap();
-    assert_eq!((band.kind, band.stream), (TrackKind::Audio, Some(1)));
+    let band = project.track("concert Band").unwrap();
+    let stream = project
+        .resource(band.items[0].resource)
+        .and_then(|r| r.stream());
+    assert_eq!((band.kind, stream), (TrackKind::Audio, Some(1)));
 
     // A cancelled import adds nothing.
     app.import_files([PathBuf::from("concert.mkv")]);
     app.finish_import(None);
-    assert_eq!(app.project().resources.len(), 2);
+    assert_eq!(media(&app).len(), 2);
 
-    app.remove_resource(ids[1]);
-    assert!(app.project().audios().is_empty());
-    assert_eq!(app.project().resources.len(), 1);
+    // Removing one takes its items; its track stays, empty.
+    app.remove_resources(&[ids[1]]);
+    assert!(app.project().audios()[0].items.is_empty());
+    assert_eq!(media(&app).len(), 1);
 }
 
 // --- Graph tracks ---
 
 use rastersong_engine::Source;
-use rastersong_gui::timeline::GraphDrop;
 
 /// A graph reading the main picture and sound and the audio mix on the side, the picture and
 /// sound wired to the outputs.
@@ -2087,13 +2191,13 @@ const SIDE_GRAPH: &str = r#"{ "version": 0, "nodes": [
 
 /// The starter project with a second graph (with an Audio Source); `edit` also gets the ids
 /// of the open graph and the second one.
-fn graph_app(edit: impl FnOnce(&mut Project, u32, u32)) -> App {
+fn graph_app(edit: impl FnOnce(&mut Project, ResourceId, ResourceId)) -> App {
     app_with_project(|project| {
         let second = project.add_graph(
             "Second graph",
             Some(GraphDesc::from_json(SIDE_GRAPH).unwrap()),
         );
-        let first = project.graph_id;
+        let first = Project::FIRST_GRAPH;
         edit(project, first, second);
     })
 }
@@ -2114,27 +2218,27 @@ fn graph_card(harness: &mut Harness<'_, App>, name: &str) -> Pos2 {
 
 /// The lane of graph track row `row` (0 is the top), where it was last drawn.
 fn graph_lane(harness: &Harness<'_, App>, row: usize) -> egui::Rect {
-    harness.state().timeline_layout().graph_lanes[row]
+    harness.state().timeline_layout().lanes[row]
 }
 
 #[test]
 fn dropping_a_graph_makes_a_graph_track_and_the_preview_stays_the_mix() {
     let mut harness = loaded_with(graph_app(|_, _, _| {}));
     let plain = harness.state().engine().frame(0).unwrap().rgb.clone();
-    let second = harness.state().project().graph_entries()[1].id;
+    let second = harness.state().project().graph_ids().nth(1).unwrap();
     let card = graph_card(&mut harness, "Second graph");
     // Anywhere off the graph tracks: a new one on top.
     let to = timeline_point(&harness, 0.0, 0);
     drag(&mut harness, card, to);
     harness.run_steps(2);
     let project = harness.state().project();
-    assert_eq!(project.graph_tracks.len(), 1);
-    let item = &project.graph_tracks[0].items[0];
-    assert_eq!(item.graph, second);
+    assert_eq!(project.graphs().len(), 1);
+    let item = &project.graphs()[0].items[0];
+    assert_eq!(item.resource, second);
     assert_eq!(item.position, 0.0);
     assert_eq!(
-        harness.state().selected_graph_item(),
-        Some(&(project.graph_tracks[0].name.clone(), 0))
+        harness.state().inspected_item(),
+        Some(&ItemRef::new(project.graphs()[0].name.clone(), 0))
     );
     // Its main ports read what is below, the mix: the picture is what it was, and the sound is
     // left to the mixer.
@@ -2143,13 +2247,13 @@ fn dropping_a_graph_makes_a_graph_track_and_the_preview_stays_the_mix() {
             && app.engine().audio_sink() == rastersong_engine::AudioSink::TrackMix
     });
     shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
-    assert!(harness.state().project().graph_tracks.is_empty());
+    assert!(harness.state().project().graphs().is_empty());
 }
 
 #[test]
 fn a_graph_dropped_on_a_graph_track_lands_on_it_where_its_ghost_was() {
     let mut harness = loaded_with(graph_app(|project, _, _| {
-        project.add_graph_track("Effects");
+        add_graph_track(project, "Effects");
     }));
     let card = graph_card(&mut harness, "Second graph");
     let mut to = graph_lane(&harness, 0).center();
@@ -2163,21 +2267,25 @@ fn a_graph_dropped_on_a_graph_track_lands_on_it_where_its_ghost_was() {
     );
     press(&mut harness, to, PointerButton::Primary, false);
     let project = harness.state().project();
-    assert_eq!(project.graph_tracks.len(), 1, "no new track");
-    let item = &project.graph_tracks[0].items[0];
+    assert_eq!(project.graphs().len(), 1, "no new track");
+    let item = &project.graphs()[0].items[0];
     assert!((item.position - 1.0).abs() < 0.05, "{}", item.position);
 }
 
 #[test]
 fn the_item_inspector_has_pre_roll_and_no_sources() {
     let mut harness = loaded_with(graph_app(|project, _, second| {
-        let track = project.add_graph_track("Effects");
-        project.place_graph(&track, second, 0.0, 2.0);
+        let track = add_graph_track(project, "Effects");
+        place_graph(project, &track, second, 0.0, 2.0);
     }));
     let bar = pos2(time_x(&harness, 0.5), graph_lane(&harness, 0).top() + 7.0);
     click(&mut harness, bar, PointerButton::Primary);
     harness.run_steps(2);
-    assert!(harness.query_by_label("GRAPH ITEM").is_some());
+    assert!(harness.query_by_label("ITEM").is_some());
+    assert!(
+        harness.query_by_label("Speed").is_none(),
+        "a graph item has no speed"
+    );
     // What the graph reads is on its nodes, not its items.
     let panel = harness.state().inspector_rect();
     assert!(
@@ -2190,49 +2298,49 @@ fn the_item_inspector_has_pre_roll_and_no_sources() {
         .get_by_role_and_label(egui::accesskit::Role::CheckBox, "Pre-roll")
         .click();
     harness.run_steps(2);
-    assert!(!harness.state().project().graph_tracks[0].items[0].pre_roll);
+    assert!(!harness.state().project().graphs()[0].items[0].pre_roll);
 }
 
 #[test]
 fn double_clicking_a_graph_item_opens_its_graph() {
     let mut harness = loaded_quick(graph_app(|project, _, second| {
-        let track = project.add_graph_track("Effects");
-        project.place_graph(&track, second, 0.0, 2.0);
+        let track = add_graph_track(project, "Effects");
+        place_graph(project, &track, second, 0.0, 2.0);
     }));
-    let second = harness.state().project().graph_tracks[0].items[0].graph;
-    assert_ne!(harness.state().project().graph_id, second);
+    let second = harness.state().project().graphs()[0].items[0].resource;
+    assert_ne!(harness.state().open_graph_id().unwrap(), second);
     let bar = pos2(time_x(&harness, 0.5), graph_lane(&harness, 0).top() + 7.0);
     double_click(&mut harness, bar);
-    assert_eq!(harness.state().project().graph_id, second);
+    assert_eq!(harness.state().open_graph_id().unwrap(), second);
 }
 
 #[test]
 fn with_the_single_click_setting_a_click_on_a_graph_item_opens_its_graph() {
     let mut harness = loaded_with(graph_app(|project, _, second| {
-        let track = project.add_graph_track("Effects");
-        project.place_graph(&track, second, 0.0, 2.0);
+        let track = add_graph_track(project, "Effects");
+        place_graph(project, &track, second, 0.0, 2.0);
     }));
-    let first = harness.state().project().graph_id;
-    let second = harness.state().project().graph_tracks[0].items[0].graph;
+    let first = harness.state().open_graph_id().unwrap();
+    let second = harness.state().project().graphs()[0].items[0].resource;
     let bar = pos2(time_x(&harness, 0.5), graph_lane(&harness, 0).top() + 7.0);
     // Off (the default), a click only selects the item.
     click(&mut harness, bar, PointerButton::Primary);
     harness.run_steps(30);
-    assert_eq!(harness.state().project().graph_id, first);
+    assert_eq!(harness.state().open_graph_id().unwrap(), first);
     let mut settings = harness.state().settings().clone();
     settings.open_graphs_on_click = true;
     harness.state_mut().set_settings(settings);
     harness.run_steps(30);
     click(&mut harness, bar, PointerButton::Primary);
     harness.run_steps(2);
-    assert_eq!(harness.state().project().graph_id, second);
+    assert_eq!(harness.state().open_graph_id().unwrap(), second);
 }
 
 #[test]
 fn opening_a_graph_with_a_double_click_keeps_the_cached_frames() {
     let mut harness = loaded_quick(graph_app(|project, _, second| {
-        let track = project.add_graph_track("Effects");
-        project.place_graph(&track, second, 0.0, 2.0);
+        let track = add_graph_track(project, "Effects");
+        place_graph(project, &track, second, 0.0, 2.0);
     }));
     step_until(&mut harness, "frames cached", |app| {
         app.engine()
@@ -2265,19 +2373,19 @@ fn opening_a_graph_with_a_double_click_keeps_the_cached_frames() {
 #[test]
 fn a_graph_item_moves_when_released_and_its_track_mutes_and_goes() {
     let mut harness = loaded_with(graph_app(|project, _, second| {
-        let track = project.add_graph_track("Effects");
-        project.place_graph(&track, second, 0.0, 1.0);
+        let track = add_graph_track(project, "Effects");
+        place_graph(project, &track, second, 0.0, 1.0);
     }));
     let from = pos2(time_x(&harness, 0.5), graph_lane(&harness, 0).top() + 7.0);
     let to = pos2(time_x(&harness, 1.0), from.y);
     drag_to(&mut harness, from, to);
     assert_eq!(
-        harness.state().project().graph_tracks[0].items[0].position,
+        harness.state().project().graphs()[0].items[0].position,
         0.0,
         "not moved while dragged"
     );
     press(&mut harness, to, PointerButton::Primary, false);
-    let position = harness.state().project().graph_tracks[0].items[0].position;
+    let position = harness.state().project().graphs()[0].items[0].position;
     assert!((position - 0.5).abs() < 0.05, "{position}");
 
     let header = harness.get_by_label("Graph track").rect().center();
@@ -2287,20 +2395,20 @@ fn a_graph_item_moves_when_released_and_its_track_mutes_and_goes() {
         .find(|c| (c.y - header.y).abs() < 4.0)
         .unwrap();
     click(&mut harness, mute, PointerButton::Primary);
-    assert!(harness.state().project().graph_tracks[0].muted);
+    assert!(harness.state().project().graphs()[0].muted);
     // Removing it is in the header's menu.
     right_click(&mut harness, header);
     harness.get_by_label("Remove track").click();
     harness.run_steps(2);
-    assert!(harness.state().project().graph_tracks.is_empty());
+    assert!(harness.state().project().graphs().is_empty());
 }
 
 #[test]
 fn a_graph_item_dragged_onto_another_graph_track_moves_there() {
     let mut harness = loaded_with(graph_app(|project, _, second| {
-        project.add_graph_track("Lower");
-        let upper = project.add_graph_track("Upper");
-        project.place_graph(&upper, second, 0.0, 1.0);
+        add_graph_track(project, "Lower");
+        let upper = add_graph_track(project, "Upper");
+        place_graph(project, &upper, second, 0.0, 1.0);
     }));
     let from = pos2(time_x(&harness, 0.5), graph_lane(&harness, 0).top() + 7.0);
     let to = pos2(time_x(&harness, 1.0), graph_lane(&harness, 1).top() + 7.0);
@@ -2328,24 +2436,27 @@ fn a_graph_item_dragged_onto_another_graph_track_moves_there() {
     assert!(background < title, "the lane below paints over the ghost");
     press(&mut harness, to, PointerButton::Primary, false);
     let project = harness.state().project();
-    assert!(
-        project.graph_tracks[0].items.is_empty(),
-        "left the upper track"
-    );
-    let item = &project.graph_tracks[1].items[0];
+    assert!(project.graphs()[0].items.is_empty(), "left the upper track");
+    let item = &project.graphs()[1].items[0];
     assert!((item.position - 0.5).abs() < 0.05, "{}", item.position);
     assert_eq!(
-        harness.state().selected_graph_item(),
-        Some(&("Lower".to_string(), 0))
+        harness.state().inspected_item(),
+        Some(&ItemRef::new("Lower", 0))
     );
     shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
-    assert_eq!(harness.state().project().graph_tracks[0].items.len(), 1);
+    assert_eq!(harness.state().project().graphs()[0].items.len(), 1);
 }
 
 #[test]
 fn without_graph_items_the_preview_plays_the_mix() {
     // An open graph that renders black: nothing feeds its output.
-    let black = |project: &mut Project| project.graph.connections.clear();
+    let black = |project: &mut Project| {
+        project
+            .graph_mut(Project::FIRST_GRAPH)
+            .unwrap()
+            .connections
+            .clear()
+    };
     let mut harness = loaded_with(app_with_project(black));
     let frame = harness.state().engine().frame(0).unwrap();
     assert!(
@@ -2354,15 +2465,345 @@ fn without_graph_items_the_preview_plays_the_mix() {
     );
 
     // Placed on a graph track, the graph applies.
-    let graph = harness.state().project().graph_id;
+    let graph = harness.state().open_graph_id().unwrap();
     harness
         .state_mut()
-        .drop_graph(graph, GraphDrop::NewTrack, 0.0);
+        .drop_resources_at(&[graph], 0, 0.0, true);
     step_until(&mut harness, "the graph rendered", |app| {
         app.engine()
             .frame(0)
             .is_some_and(|f| f.rgb.iter().all(|&b| b == 0))
     });
+}
+
+/// Right-clicks the Resources card of the graph named `name` and clicks `entry` in its menu.
+fn graph_card_menu(harness: &mut Harness<'_, App>, name: &str, entry: &str) {
+    let card = graph_card(harness, name);
+    click(harness, card, PointerButton::Secondary);
+    harness.run_steps(2);
+    harness.get_by_label(entry).click();
+    harness.run_steps(3);
+}
+
+#[test]
+fn add_to_timeline_places_a_graph() {
+    let mut harness = loaded_with(graph_app(|_, _, _| {}));
+    let second = harness.state().project().graph_ids().nth(1).unwrap();
+    graph_card_menu(&mut harness, "Second graph", "Add to Timeline");
+    let project = harness.state().project();
+    assert_eq!(project.graphs().len(), 1);
+    assert_eq!(project.graphs()[0].items[0].resource, second);
+}
+
+#[test]
+fn removing_a_used_graph_asks_first() {
+    let mut harness = loaded_with(graph_app(|_, _, _| {}));
+    let second = harness.state().project().graph_ids().nth(1).unwrap();
+    harness
+        .state_mut()
+        .drop_resources_at(&[second], 0, 0.0, true);
+    harness.run_steps(2);
+    graph_card_menu(&mut harness, "Second graph", "Remove");
+    // Its item is on a track: the dialog asks, and nothing is gone yet.
+    harness.get_by_label("Remove the resource Second graph?");
+    assert!(harness.state().project().resource(second).is_some());
+    harness
+        .get(By::new().role(Role::Button).label("Remove"))
+        .click();
+    harness.run_steps(3);
+    let project = harness.state().project();
+    assert!(project.resource(second).is_none());
+    assert!(project.graphs()[0].items.is_empty());
+}
+
+#[test]
+fn removing_the_open_graph_opens_another() {
+    let mut harness = loaded_with(graph_app(|_, _, _| {}));
+    let (first, second) = {
+        let mut ids = harness.state().project().graph_ids();
+        (ids.next().unwrap(), ids.next().unwrap())
+    };
+    assert_eq!(harness.state().open_graph_id(), Some(first));
+    let name = harness.state().open_graph_name().to_owned();
+    graph_card_menu(&mut harness, &name, "Remove");
+    assert!(harness.state().project().resource(first).is_none());
+    assert_eq!(harness.state().open_graph_id(), Some(second));
+
+    // The last one goes too: the canvas is empty and offers a new graph.
+    graph_card_menu(&mut harness, "Second graph", "Remove");
+    assert_eq!(harness.state().open_graph_id(), None);
+    harness.get_by_label_contains("No graph is open");
+    harness.get_by_label("+ New graph").click();
+    harness.run_steps(3);
+    let open = harness
+        .state()
+        .open_graph_id()
+        .expect("a new graph is open");
+    assert!(harness.state().project().graph(open).is_some());
+
+    // Undo brings the removed graphs back and opens the first there is.
+    for _ in 0..2 {
+        shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
+    }
+    assert!(harness.state().project().graph(second).is_some());
+    assert!(harness.state().open_graph_id().is_some());
+}
+
+#[test]
+fn dropping_two_graphs_puts_each_on_a_track_of_its_own() {
+    let mut app = graph_app(|_, _, _| {});
+    let ids: Vec<ResourceId> = app.project().graph_ids().collect();
+    let placed = app.drop_resources_at(&ids, 0, 0.0, true);
+    assert_eq!(placed.len(), 2);
+    let project = app.project();
+    // In the order dragged, top down.
+    let graphs = project.graphs();
+    assert_eq!(graphs.len(), 2);
+    assert_eq!(graphs[0].items[0].resource, ids[0]);
+    assert_eq!(graphs[1].items[0].resource, ids[1]);
+    assert_eq!(selected_graph_items(&app), placed);
+}
+
+/// A point on the header bar of the graph item at `seconds` on graph track row `row`.
+fn graph_bar_point(harness: &Harness<'_, App>, seconds: f64, row: usize) -> Pos2 {
+    pos2(
+        time_x(harness, seconds),
+        graph_lane(harness, row).top() + 7.0,
+    )
+}
+
+/// Selects the graph item at 0.5 s on the top graph track and Ctrl+clicks the audio item in.
+fn select_graph_and_audio(harness: &mut Harness<'_, App>) {
+    let graph = graph_bar_point(harness, 0.5, 0);
+    let audio = item_bar_point(harness, 0.5, 1);
+    click(harness, graph, PointerButton::Primary);
+    modifier_click(harness, Modifiers::COMMAND, audio);
+    harness.event(Event::ModifiersChanged(Modifiers::NONE));
+    harness.run_steps(1);
+    assert_eq!(harness.state().selected_items().len(), 2);
+    assert_eq!(selected_graph_items(harness.state()).len(), 1);
+}
+
+#[test]
+fn s_splits_every_selected_item_of_any_kind() {
+    let mut harness = loaded_with(two_graph_items());
+    select_graph_and_audio(&mut harness);
+    seek_on_ruler(&mut harness, 0.5);
+    harness.event(Event::PointerMoved(timeline_point(&harness, 1.5, 1)));
+    shortcut(&mut harness, Modifiers::NONE, egui::Key::S);
+    let project = harness.state().project();
+    assert_eq!(project.graphs()[0].items.len(), 3, "the graph item split");
+    assert_eq!(
+        project.audios()[0].items.len(),
+        2,
+        "and so did the audio item"
+    );
+    assert_eq!(
+        project.videos()[0].items.len(),
+        1,
+        "the video wasn't selected"
+    );
+}
+
+#[test]
+fn pasting_a_mixed_selection_selects_what_was_pasted() {
+    let mut harness = loaded_with(two_graph_items());
+    let mut clipboard = PlatformClipboard::default();
+    select_graph_and_audio(&mut harness);
+    clipboard.copy(&mut harness);
+    seek_on_ruler(&mut harness, 1.5);
+    harness.event(Event::PointerMoved(timeline_point(&harness, 1.5, 1)));
+    clipboard.paste(&mut harness);
+    let app = harness.state();
+    let selected = app.selected_items();
+    assert_eq!(selected.len(), 2, "{selected:?}");
+    assert_eq!(selected_graph_items(app).len(), 1);
+    let playhead = app.clock().frame() as f64 / 30.0;
+    for at in selected {
+        let position = app.project().item(at).unwrap().position;
+        assert!((position - playhead).abs() < 1e-9, "{at:?} at {position}");
+    }
+}
+
+#[test]
+fn loading_a_project_clears_the_item_selection() {
+    let mut harness = loaded();
+    let audio = item_bar_point(&harness, 0.5, 1);
+    click(&mut harness, audio, PointerButton::Primary);
+    assert_eq!(harness.state().selected_items().len(), 1);
+    harness.get_by_label("File").click();
+    harness.run_steps(2);
+    harness.get_by_label("New Project").click();
+    harness.run_steps(2);
+    assert!(harness.state().selected_items().is_empty());
+}
+
+#[test]
+fn renaming_a_track_keeps_its_selected_items() {
+    let mut harness = loaded();
+    let audio = item_bar_point(&harness, 0.5, 1);
+    click(&mut harness, audio, PointerButton::Primary);
+    // F2 renames the selected track: the item's.
+    harness.event(Event::PointerMoved(timeline_point(&harness, 1.5, 1)));
+    harness.run_steps(1);
+    harness.key_press(egui::Key::F2);
+    harness.run_steps(2);
+    type_then(&mut harness, "drums", egui::Key::Enter);
+    assert_eq!(harness.state().project().audios()[0].name, "drums");
+    assert_eq!(
+        harness.state().selected_items(),
+        &[ItemRef::new("drums", 0)]
+    );
+}
+
+#[test]
+fn removing_a_graph_drops_only_its_items_from_the_selection() {
+    let mut harness = loaded_with(graph_app(|project, first, second| {
+        let track = add_graph_track(project, "Effects");
+        place_graph(project, &track, first, 0.0, 1.0);
+        place_graph(project, &track, second, 1.0, 1.0);
+    }));
+    let second = harness.state().project().graph_ids().nth(1).unwrap();
+    let first = graph_bar_point(&harness, 0.5, 0);
+    let next = graph_bar_point(&harness, 1.5, 0);
+    click(&mut harness, first, PointerButton::Primary);
+    modifier_click(&mut harness, Modifiers::COMMAND, next);
+    harness.event(Event::ModifiersChanged(Modifiers::NONE));
+    assert_eq!(harness.state().selected_items().len(), 2);
+    harness
+        .state_mut()
+        .remove_resources(&[Project::FIRST_GRAPH]);
+    harness.run_steps(2);
+    let app = harness.state();
+    // The other graph's item is still selected, at its new place.
+    assert_eq!(app.selected_items(), &[ItemRef::new("Effects", 0)]);
+    assert_eq!(
+        app.project()
+            .item(&app.selected_items()[0])
+            .unwrap()
+            .resource,
+        second
+    );
+}
+
+#[test]
+fn a_box_selects_graph_and_media_items_together() {
+    let mut harness = loaded_with(two_graph_items());
+    // From the audio lane's content up across the video onto the graph track.
+    let from = timeline_point(&harness, 0.9, 1);
+    let to = graph_lane(&harness, 0).center();
+    let to = pos2(time_x(&harness, 0.2), to.y);
+    drag(&mut harness, from, to);
+    let app = harness.state();
+    assert_eq!(app.selected_items().len(), 3, "{:?}", app.selected_items());
+    assert_eq!(selected_graph_items(app), [ItemRef::new("Effects", 0)]);
+}
+
+#[test]
+fn graph_tracks_solo_and_take_new_tracks_from_their_menu() {
+    let mut harness = loaded_with(two_graph_items());
+    // The graph track's header has the solo button every track has, on top.
+    harness.get_all_by_label("S").next().unwrap().click();
+    harness.run_steps(2);
+    assert!(harness.state().project().graphs()[0].solo);
+
+    let header = harness.state().timeline_layout().headers[0];
+    right_click(
+        &mut harness,
+        pos2(header.right() - 30.0, header.bottom() - 6.0),
+    );
+    harness.get_by_label_contains("New track above").click();
+    harness.run_steps(2);
+    let entry = harness
+        .get_all_by_label("Second graph")
+        .last()
+        .unwrap()
+        .rect()
+        .center();
+    click(&mut harness, entry, PointerButton::Primary);
+    let project = harness.state().project();
+    let graphs = project.graphs();
+    assert_eq!(graphs.len(), 2);
+    assert_eq!(graphs[1].name, "Effects", "the new track is above");
+    assert_eq!(graphs[0].items.len(), 1);
+}
+
+#[test]
+fn a_media_item_drags_onto_another_track_of_its_section() {
+    let mut harness = loaded_with(app_with_project(|project| {
+        // A second audio track playing the same file later on.
+        let song = project.audios()[0].items[0].resource;
+        let lower = project.add_empty_track_at(TrackKind::Audio, "lower", None);
+        project.place_resource(&lower, song, 5.0, &Default::default());
+    }));
+    let from = item_bar_point(&harness, 0.5, 1);
+    let to = item_bar_point(&harness, 0.5, 2);
+    drag(&mut harness, from, to);
+    let project = harness.state().project();
+    assert!(project.audios()[0].items.is_empty(), "left the upper track");
+    let lower = &project.audios()[1];
+    assert_eq!(lower.items.len(), 2);
+    assert!(lower.items[0].position.abs() < 0.02);
+    assert_eq!(
+        harness.state().selected_items(),
+        &[ItemRef::new("lower", 0)],
+        "it stays selected where it landed"
+    );
+    // Onto a track of another kind it doesn't go.
+    let from = item_bar_point(&harness, 0.5, 2);
+    let to = item_bar_point(&harness, 0.5, 0);
+    drag(&mut harness, from, to);
+    assert_eq!(harness.state().project().audios()[1].items.len(), 2);
+}
+
+/// Every filled rectangle drawn last frame that contains `at`, by its fill.
+fn fills_at(harness: &Harness<'_, App>, at: Pos2) -> Vec<egui::Color32> {
+    fn walk(shape: &egui::Shape, at: Pos2, out: &mut Vec<egui::Color32>) {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, at, out)),
+            egui::Shape::Rect(rect) if rect.rect.contains(at) => out.push(rect.fill),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for clipped in &harness.output().shapes {
+        walk(&clipped.shape, at, &mut out);
+    }
+    out
+}
+
+#[test]
+fn graph_items_take_their_resources_colour() {
+    let mut harness = loaded_with(graph_app(|_, _, _| {}));
+    let second = harness.state().project().graph_ids().nth(1).unwrap();
+    harness
+        .state_mut()
+        .drop_resources_at(&[second], 0, 0.0, true);
+    harness.run_steps(3);
+    let card = graph_card(&mut harness, "Second graph");
+    right_click(&mut harness, card);
+    harness.get_by_label_contains("Color").hover();
+    harness.run_steps(3);
+    harness.get_by_label("Green").click();
+    harness.run_steps(2);
+    assert_eq!(
+        harness.state().project().resource(second).unwrap().color,
+        Some(LabelColor::Green)
+    );
+    // Away from the item, so it isn't drawn hovered.
+    harness.event(Event::PointerMoved(pos2(1.0, 1.0)));
+    harness.run_steps(2);
+    let theme = rastersong_gui::theme::Theme::of(&harness.ctx);
+    let green = theme.label_colors(LabelColor::Green).fill;
+    let body = pos2(
+        time_x(&harness, 0.5),
+        graph_lane(&harness, 0).bottom() - 6.0,
+    );
+    let fills = fills_at(&harness, body);
+    assert!(
+        fills.contains(&green),
+        "{green:?} not among {fills:?} at {body:?}"
+    );
 }
 
 // --- Linked drops ---
@@ -2379,7 +2820,7 @@ fn concert_app() -> App {
 fn dropping_a_video_places_its_sound_too_and_alt_places_only_it() {
     let mut harness = harness(concert_app());
     harness.run_steps(2);
-    let name = harness.state().project().resources[0].name.clone();
+    let name = media(harness.state())[0].name.clone();
     let card = |harness: &Harness<'_, App>| {
         harness
             .get_all_by_label(&name)
@@ -2716,7 +3157,10 @@ fn a_resources_menu_colors_it_and_its_items_take_the_color() {
     let mut harness = loaded();
     let resource = |harness: &Harness<'_, App>| {
         let project = harness.state().project();
-        project.track_resource(project.audios()[0]).unwrap().clone()
+        project
+            .resource(project.audios()[0].items[0].resource)
+            .unwrap()
+            .clone()
     };
     let name = resource(&harness).name;
     let card = card_point(&harness, &name);
@@ -2773,7 +3217,7 @@ fn shift_drags_an_edge_without_snapping() {
 fn dragging_a_media_card_onto_the_timeline_makes_a_track() {
     // A clip no track plays yet, so it makes a track of its own.
     let mut harness = loaded_with(app_with_project(|project| {
-        project.add_resource(ResourceKind::Video, "other", "other", None);
+        project.add_resource(TrackKind::Video, "other", "other", None);
     }));
     let name = "other".to_owned();
     let card = harness
@@ -2795,7 +3239,7 @@ fn stems_app() -> App {
     app_with_project(|project| {
         for n in 1..=3 {
             project.add_resource(
-                ResourceKind::Audio,
+                TrackKind::Audio,
                 &format!("stem{n}"),
                 format!("stem{n}.wav"),
                 None,
@@ -2905,14 +3349,14 @@ fn an_unselected_card_drags_alone() {
 #[test]
 fn a_graph_dropped_on_a_line_between_graph_tracks_or_below_the_last_gets_a_track_there() {
     let mut harness = loaded_with(graph_app(|project, _, _| {
-        project.add_graph_track("Lower");
-        project.add_graph_track("Upper");
+        add_graph_track(project, "Lower");
+        add_graph_track(project, "Upper");
     }));
     let names = |harness: &Harness<'_, App>| -> Vec<String> {
         harness
             .state()
             .project()
-            .graph_tracks
+            .graphs()
             .iter()
             .map(|t| t.name.clone())
             .collect()
@@ -2925,7 +3369,13 @@ fn a_graph_dropped_on_a_line_between_graph_tracks_or_below_the_last_gets_a_track
     to.x = time_x(&harness, 0.5);
     drag(&mut harness, card, to);
     harness.run_steps(2);
-    let tracks = harness.state().project().graph_tracks.clone();
+    let tracks = harness
+        .state()
+        .project()
+        .graphs()
+        .into_iter()
+        .cloned()
+        .collect::<Vec<_>>();
     assert_eq!(tracks.len(), 3);
     assert_eq!(tracks[2].items.len(), 1, "the graph is on the bottom track");
     assert!(tracks[0].items.is_empty() && tracks[1].items.is_empty());
@@ -2939,7 +3389,13 @@ fn a_graph_dropped_on_a_line_between_graph_tracks_or_below_the_last_gets_a_track
     to.x = time_x(&harness, 2.0);
     drag(&mut harness, card, to);
     harness.run_steps(2);
-    let tracks = harness.state().project().graph_tracks.clone();
+    let tracks = harness
+        .state()
+        .project()
+        .graphs()
+        .into_iter()
+        .cloned()
+        .collect::<Vec<_>>();
     assert_eq!(tracks.len(), 4);
     assert_eq!(tracks[1].items.len(), 1, "between Upper and Lower");
     assert_eq!(tracks[0].name, "Upper");
@@ -3283,7 +3739,11 @@ fn original_shows_the_video_mix_not_just_the_top_track() {
     let app = app_with_project(|project| {
         project.add_track(TrackKind::Video, "video 2", "other");
         project.tracks[0].items.clear();
-        for track in &mut project.graph_tracks {
+        for track in project
+            .tracks
+            .iter_mut()
+            .filter(|t| t.kind == TrackKind::Graph)
+        {
             track.muted = true;
         }
     });
@@ -3382,16 +3842,16 @@ fn the_status_bar_names_the_gestures_under_the_pointer() {
 #[test]
 fn the_status_bar_names_the_failing_node_as_the_error_bar_does() {
     let app = app_with_project(|project| {
-        project.graph = GraphDesc::from_json(
+        *project.graph_mut(Project::FIRST_GRAPH).unwrap() = GraphDesc::from_json(
             r#"{ "version": 0, "nodes": [ { "id": "v", "type": "video_input" },
                 { "id": "c", "type": "pack", "params": { "channels": 7 } },
                 { "id": "o", "type": "output" } ],
               "connections": [ { "from": "v", "to": "c" }, { "from": "c", "to": "o" } ] }"#,
         )
         .unwrap();
-        let graph = project.graph_id;
-        let track = project.add_graph_track("Graphs");
-        project.place_graph(&track, graph, 0.0, 2.0);
+        let graph = Project::FIRST_GRAPH;
+        let track = add_graph_track(project, "Graphs");
+        place_graph(project, &track, graph, 0.0, 2.0);
     });
     let mut harness = harness(app);
     step_until(&mut harness, "the failure", |app| {
@@ -3414,16 +3874,16 @@ fn the_status_bar_names_the_failing_node_as_the_error_bar_does() {
 #[test]
 fn clicking_the_error_bar_shows_the_node_at_fault() {
     let app = app_with_project(|project| {
-        project.graph = GraphDesc::from_json(
+        *project.graph_mut(Project::FIRST_GRAPH).unwrap() = GraphDesc::from_json(
             r#"{ "version": 0, "nodes": [ { "id": "v", "type": "video_input" },
                 { "id": "c", "type": "pack", "params": { "channels": 7 } },
                 { "id": "o", "type": "output" } ],
               "connections": [ { "from": "v", "to": "c" }, { "from": "c", "to": "o" } ] }"#,
         )
         .unwrap();
-        let graph = project.graph_id;
-        let track = project.add_graph_track("Graphs");
-        project.place_graph(&track, graph, 0.0, 2.0);
+        let graph = Project::FIRST_GRAPH;
+        let track = add_graph_track(project, "Graphs");
+        place_graph(project, &track, graph, 0.0, 2.0);
     });
     let mut harness = harness(app);
     step_until(&mut harness, "the failure", |app| {
@@ -3479,7 +3939,7 @@ fn the_track_menu_puts_a_resource_on_a_new_track_above_or_below() {
     right_click(&mut harness, spot);
     harness.get_by_label_contains("New track below").click();
     harness.run_steps(2);
-    let name = harness.state().project().resources[0].name.clone();
+    let name = media(harness.state())[0].name.clone();
     // The menu's entry is the last node with the resource's name (the card is the first).
     let entry = harness
         .get_all_by_label(&name)
@@ -3514,7 +3974,7 @@ fn the_track_menu_puts_a_resource_on_a_new_track_above_or_below() {
 #[test]
 fn dragging_a_resource_onto_the_line_between_tracks_makes_a_track_there() {
     let mut harness = harness(concert_app());
-    let name = harness.state().project().resources[0].name.clone();
+    let name = media(harness.state())[0].name.clone();
     let card = |harness: &Harness<'_, App>| {
         harness
             .get_all_by_label(&name)
@@ -3568,7 +4028,7 @@ fn drag_to(harness: &mut Harness<'_, App>, from: Pos2, to: Pos2) {
 fn a_dragged_card_shows_the_bubble_which_blooms_where_it_is_dropped() {
     // A clip no track plays yet, so it makes a track of its own.
     let mut harness = loaded_with(app_with_project(|project| {
-        project.add_resource(ResourceKind::Video, "other", "other", None);
+        project.add_resource(TrackKind::Video, "other", "other", None);
     }));
     let name = "other".to_owned();
     let card = harness
@@ -3598,7 +4058,7 @@ fn a_dragged_card_shows_the_bubble_which_blooms_where_it_is_dropped() {
 #[test]
 fn a_card_dropped_where_nothing_takes_it_sends_the_bubble_back() {
     let mut harness = loaded();
-    let name = harness.state().project().resources[0].name.clone();
+    let name = media(harness.state())[0].name.clone();
     let card = harness
         .get_all_by_label(&name)
         .next()
@@ -3637,7 +4097,7 @@ fn painted_text(harness: &Harness<'_, App>, text: &str) -> Vec<Pos2> {
 fn a_dragged_resource_shows_its_ghost_and_lands_where_it_was_drawn() {
     let mut harness = loaded();
     seek_on_ruler(&mut harness, 1.0);
-    let song = harness.state().project().audios()[0].resource.unwrap();
+    let song = harness.state().project().audios()[0].items[0].resource;
     let name = harness
         .state()
         .project()
@@ -3671,7 +4131,7 @@ fn a_dragged_resource_shows_its_ghost_and_lands_where_it_was_drawn() {
 #[test]
 fn a_resource_no_track_takes_shows_a_ghost_row_and_makes_a_track() {
     let mut harness = loaded_with(app_with_project(|project| {
-        project.add_resource(ResourceKind::Video, "other", "other", None);
+        project.add_resource(TrackKind::Video, "other", "other", None);
     }));
     let card = harness
         .get_all_by_label("other")
@@ -3699,7 +4159,7 @@ fn a_resource_no_track_takes_shows_a_ghost_row_and_makes_a_track() {
 #[test]
 fn a_dragged_video_shows_where_it_lands_among_the_video_tracks() {
     let mut harness = loaded();
-    let video = harness.state().project().videos()[0].resource.unwrap();
+    let video = harness.state().project().videos()[0].items[0].resource;
     let name = harness
         .state()
         .project()
@@ -3753,17 +4213,17 @@ fn laid_out_nodes_do_not_overlap() {
 fn app_with_placed(graph: &str) -> App {
     let graph = GraphDesc::from_json(graph).unwrap();
     app_with_project(move |project| {
-        project.graph = graph;
-        let id = project.graph_id;
-        let track = project.add_graph_track("Graphs");
-        project.place_graph(&track, id, 0.0, 4.0);
+        *project.graph_mut(Project::FIRST_GRAPH).unwrap() = graph;
+        let id = Project::FIRST_GRAPH;
+        let track = add_graph_track(project, "Graphs");
+        place_graph(project, &track, id, 0.0, 4.0);
     })
 }
 
 #[test]
 fn the_canvas_header_names_the_graph() {
     let harness = loaded();
-    let name = &harness.state().project().graph_name;
+    let name = &harness.state().open_graph_name();
     // Resources lists the graph too; the header's name sits just above the canvas.
     let canvas = harness.state().editor().canvas_rect();
     assert!(
@@ -3785,14 +4245,14 @@ fn clicking_the_graph_name_in_the_canvas_header_switches_graphs() {
         project.add_graph("Second graph", None);
     });
     let mut harness = loaded_with(app);
-    let first = harness.state().project().graph_name.clone();
+    let first = harness.state().open_graph_name().to_owned();
     harness
         .get(By::new().role(Role::ComboBox).label(&first))
         .click();
     harness.run_steps(2);
     harness.get_by_label("Second graph").click();
     harness.run_steps(3);
-    assert_eq!(harness.state().project().graph_name, "Second graph");
+    assert_eq!(harness.state().open_graph_name(), "Second graph");
     // The menu lists the first graph too, to go back.
     harness
         .get(By::new().role(Role::ComboBox).label("Second graph"))
@@ -3802,7 +4262,7 @@ fn clicking_the_graph_name_in_the_canvas_header_switches_graphs() {
         .get(By::new().role(Role::Button).label(&first))
         .click();
     harness.run_steps(3);
-    assert_eq!(harness.state().project().graph_name, first);
+    assert_eq!(harness.state().open_graph_name(), first);
 }
 
 #[test]
@@ -4100,8 +4560,9 @@ fn the_inspectors_bypass_button_bypasses_the_node() {
 #[test]
 fn clicking_a_track_shows_its_inspector_until_a_node_is_clicked() {
     let mut harness = loaded();
-    let bar = pos2(time_x(&harness, 0.5), lane(&harness, 1).top() + 7.0);
-    click(&mut harness, bar, PointerButton::Primary);
+    let name = harness.state().project().audios()[0].name.clone();
+    let at = header_name(&harness, &name);
+    click(&mut harness, at, PointerButton::Primary);
     harness.run_steps(2);
     assert!(harness.query_by_label("TRACK").is_some());
     assert!(harness.query_by_label("MIX").is_some());
@@ -4165,10 +4626,10 @@ const DELAYED: &str = r#"{ "version": 0,
 /// [`DELAYED`] placed on the timeline, so it renders.
 fn delayed_app() -> App {
     app_with_project(|project| {
-        project.graph = GraphDesc::from_json(DELAYED).unwrap();
-        let graph = project.graph_id;
-        let track = project.add_graph_track("Graphs");
-        project.place_graph(&track, graph, 0.0, 2.0);
+        *project.graph_mut(Project::FIRST_GRAPH).unwrap() = GraphDesc::from_json(DELAYED).unwrap();
+        let graph = Project::FIRST_GRAPH;
+        let track = add_graph_track(project, "Graphs");
+        place_graph(project, &track, graph, 0.0, 2.0);
     })
 }
 
@@ -4254,4 +4715,85 @@ fn graph_statistics_show_in_the_editors_corner_when_turned_on() {
     assert!(values.iter().any(|r| card.contains_rect(*r)));
     assert!(painted("Of a frame"));
     assert!(!text_rects(&harness, |t| t.ends_with(" ms")).is_empty());
+}
+
+#[test]
+fn clicking_an_item_of_any_kind_shows_the_item_inspector() {
+    let mut harness = loaded();
+    let bar = pos2(time_x(&harness, 0.5), lane(&harness, 1).top() + 7.0);
+    click(&mut harness, bar, PointerButton::Primary);
+    harness.run_steps(2);
+    // An audio item: its own inspector, with its speed and no pre-roll or mix.
+    assert!(harness.query_by_label("ITEM").is_some());
+    assert!(harness.query_by_label("MIX").is_none());
+    assert!(harness.query_by_label("Speed").is_some());
+    assert!(harness.query_by_label("Pre-roll").is_none());
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::CheckBox, "Mute")
+        .click();
+    harness.run_steps(2);
+    let project = harness.state().project();
+    assert!(project.audios()[0].items[0].muted);
+    assert!(!project.audios()[0].muted, "the item, not its track");
+}
+
+#[test]
+fn a_track_takes_items_of_two_files() {
+    // A second video, imported but on no track.
+    let mut harness = loaded_with(app_with_project(|project| {
+        project.add_resource(TrackKind::Video, "other", "other", None);
+    }));
+    let other = media(harness.state())
+        .iter()
+        .find(|r| r.path() == Some(Path::new("other")))
+        .unwrap()
+        .id;
+    let row = harness.state().project().section(TrackKind::Video).start;
+    harness
+        .state_mut()
+        .drop_resources(&[other], Some(row), 1.0, false);
+    // Its length is known before it plays: it trims the item it lands on.
+    harness = settled(harness);
+    let track = &harness.state().project().tracks[row];
+    let played: Vec<_> = track.items.iter().map(|i| i.resource).collect();
+    assert_eq!(played.len(), 2, "{:?}", track.items);
+    assert_eq!(played[1], other);
+    assert!(
+        (track.items[0].end.unwrap() - 1.0).abs() < 1e-6,
+        "{:?}",
+        track.items
+    );
+    // Both are drawn, and each selects with a click.
+    for item in [0, 1] {
+        let at = item_bar(&harness, row, item);
+        click(&mut harness, at, PointerButton::Primary);
+        harness.run_steps(2);
+        let selected = harness.state().selected_items().to_vec();
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].item, item);
+    }
+}
+
+#[test]
+fn the_track_inspector_shows_graph_tracks() {
+    let mut harness = loaded_with(graph_app(|project, _, second| {
+        let track = add_graph_track(project, "Effects");
+        place_graph(project, &track, second, 0.0, 2.0);
+    }));
+    let at = header_name(&harness, "Effects");
+    click(&mut harness, at, PointerButton::Primary);
+    harness.run_steps(2);
+    assert!(harness.query_by_label("TRACK").is_some());
+    let panel = harness.state().inspector_rect();
+    assert!(
+        harness
+            .query_all_by_label("Volume")
+            .all(|n| !panel.contains(n.rect().center())),
+        "no level for a graph track"
+    );
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::CheckBox, "Solo")
+        .click();
+    harness.run_steps(2);
+    assert!(harness.state().project().track("Effects").unwrap().solo);
 }

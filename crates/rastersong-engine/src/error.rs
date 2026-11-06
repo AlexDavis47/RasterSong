@@ -2,6 +2,7 @@ use rastersong_graph::GraphError;
 use rastersong_lang::tr_args;
 use rastersong_media::MediaError;
 
+use crate::project::ResourceId;
 use crate::timeline::Timebase;
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -19,18 +20,23 @@ pub enum EngineError {
     /// The render was stopped before it finished.
     #[error("{}", rastersong_lang::tr("error.render.cancelled"))]
     Cancelled,
-    /// A graph placed on a graph track can't be compiled or fails.
-    #[error("{}", fx_message(*.graph, .error))]
-    Fx { graph: u32, error: GraphError },
+    /// A graph placed on a graph track can't be compiled or fails. `name` is the graph
+    /// resource's.
+    #[error("{}", fx_message(.name, .error))]
+    Fx {
+        graph: ResourceId,
+        name: String,
+        error: GraphError,
+    },
     /// The project's size or frame rate can't be rendered.
     #[error("{}", timebase_message(.0))]
     Timebase(Timebase),
 }
 
-fn fx_message(graph: u32, error: &GraphError) -> String {
+fn fx_message(graph: &str, error: &GraphError) -> String {
     tr_args(
         "error.project.fx_graph",
-        &[("graph", &graph.to_string()), ("error", &error.to_string())],
+        &[("graph", graph), ("error", &error.to_string())],
     )
 }
 

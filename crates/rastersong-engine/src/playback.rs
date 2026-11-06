@@ -16,9 +16,8 @@ use crate::timeline::Item;
 /// One track in the mix.
 #[derive(Debug, Clone)]
 pub struct MixTrack {
-    pub clip: Arc<AudioClip>,
-    /// Where the clip plays on the timeline.
-    pub items: Vec<Item>,
+    /// Where its items play on the timeline, each with the decoded sound of its resource.
+    pub items: Vec<(Item, Arc<AudioClip>)>,
     /// Linear gain; 0 for muted.
     pub gain: f32,
 }
@@ -89,50 +88,55 @@ impl Mixer {
     /// Adds the tracks to `out`, frames of `N` channels at `rate` from `start` seconds.
     fn mix_tracks<const N: usize>(&self, start: f64, rate: f64, out: &mut [[f32; N]]) {
         for track in self.tracks.iter().filter(|t| t.gain > 0.0) {
-            let clip = &track.clip;
-            let channels = clip.channels as usize;
-            let frames = clip.frames();
-            if frames < 2 || channels == 0 {
-                continue;
+            for (item, clip) in &track.items {
+                add_item(item, clip, track.gain, start, rate, out);
             }
-            let duration = clip.duration_secs();
-            // A mono track plays in every channel; channels a track doesn't have are silent.
-            let source_channel = |c: usize| {
-                if channels == 1 {
-                    Some(0)
-                } else {
-                    (c < channels).then_some(c)
-                }
-            };
-            let at = |f: usize, c: usize| clip.samples[f * channels + c];
-            for (j, frame) in out.iter_mut().enumerate() {
-                let t = start + j as f64 / rate;
-                // Each item is mixed over the ones before it by its gain, which fades at its
-                // edges, as the renderer's track readers do (`Modulator::fill_items`).
-                let mut mixed = [0.0f32; N];
-                for item in &track.items {
-                    let g = item.gain_at(t, duration) as f32;
-                    if g <= 0.0 {
-                        continue;
-                    }
-                    let pos = item.source_time(t) * f64::from(clip.sample_rate);
-                    for (c, mixed) in mixed.iter_mut().enumerate() {
-                        let x = if let Some(c) = source_channel(c)
-                            && pos >= 0.0
-                            && pos < (frames - 1) as f64
-                        {
-                            let i = pos as usize;
-                            let a = at(i, c);
-                            a + (at(i + 1, c) - a) * (pos - i as f64) as f32
-                        } else {
-                            0.0
-                        };
-                        *mixed += (x - *mixed) * g;
-                    }
-                }
-                for (out, mixed) in frame.iter_mut().zip(mixed) {
-                    *out += mixed * track.gain;
-                }
+        }
+    }
+}
+
+/// Adds `item`, playing `clip`, to `out` (frames of `N` channels at `rate` from `start` seconds)
+/// at `gain` and its edge fades, as the renderer's track readers do (`Modulator::add_item`).
+/// Items on a track never overlap, so they are summed. A mono clip plays in every channel;
+/// channels a clip doesn't have are silent.
+fn add_item<const N: usize>(
+    item: &Item,
+    clip: &AudioClip,
+    gain: f32,
+    start: f64,
+    rate: f64,
+    out: &mut [[f32; N]],
+) {
+    let channels = clip.channels as usize;
+    let frames = clip.frames();
+    if frames < 2 || channels == 0 {
+        return;
+    }
+    let duration = clip.duration_secs();
+    let source_channel = |c: usize| {
+        if channels == 1 {
+            Some(0)
+        } else {
+            (c < channels).then_some(c)
+        }
+    };
+    let at = |f: usize, c: usize| clip.samples[f * channels + c];
+    for (j, frame) in out.iter_mut().enumerate() {
+        let t = start + j as f64 / rate;
+        let g = item.gain_at(t, duration) as f32;
+        if g <= 0.0 {
+            continue;
+        }
+        let pos = item.source_time(t) * f64::from(clip.sample_rate);
+        if pos < 0.0 || pos >= (frames - 1) as f64 {
+            continue;
+        }
+        let i = pos as usize;
+        let frac = (pos - i as f64) as f32;
+        for (c, out) in frame.iter_mut().enumerate() {
+            if let Some(c) = source_channel(c) {
+                let a = at(i, c);
+                *out += (a + (at(i + 1, c) - a) * frac) * g * gain;
             }
         }
     }
@@ -395,8 +399,7 @@ mod tests {
 
     fn mixer(clip: Arc<AudioClip>) -> Mixer {
         Mixer::new(vec![MixTrack {
-            clip,
-            items: vec![Item::whole(0.0)],
+            items: vec![(Item::whole(crate::ResourceId(0), 0.0), clip)],
             gain: 1.0,
         }])
     }
@@ -436,13 +439,11 @@ mod tests {
         });
         let mixer = Mixer::new(vec![
             MixTrack {
-                clip: clip.clone(),
-                items: vec![Item::whole(1.0)],
+                items: vec![(Item::whole(crate::ResourceId(0), 1.0), clip.clone())],
                 gain: 0.5,
             },
             MixTrack {
-                clip,
-                items: vec![Item::whole(0.0)],
+                items: vec![(Item::whole(crate::ResourceId(0), 0.0), clip)],
                 gain: 0.0,
             },
         ]);
@@ -456,6 +457,33 @@ mod tests {
             [0.5, -0.5, 0.5, -0.5],
             "left and right kept, gain applied"
         );
+    }
+
+    #[test]
+    fn each_item_plays_its_own_clip() {
+        let steady = |value: f32| {
+            Arc::new(AudioClip {
+                sample_rate: 4,
+                channels: 1,
+                samples: vec![value; 8].into(),
+            })
+        };
+        // One track: a second of one clip, then a second of another.
+        let first = Item {
+            end: Some(1.0),
+            ..Item::whole(crate::ResourceId(0), 0.0)
+        };
+        let mixer = Mixer::new(vec![MixTrack {
+            items: vec![
+                (first, steady(0.5)),
+                (Item::whole(crate::ResourceId(1), 1.0), steady(0.25)),
+            ],
+            gain: 1.0,
+        }]);
+        let mut out = vec![0.0; 8];
+        mixer.render_channels(0.0, 4.0, 1, &mut out);
+        // Each item's first sample is on its edge, where it fades in from silence.
+        assert_eq!(out, [0.0, 0.5, 0.5, 0.5, 0.0, 0.25, 0.25, 0.25]);
     }
 
     #[test]

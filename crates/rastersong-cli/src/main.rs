@@ -6,8 +6,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use rastersong_engine::export::{ExportJob, ExportSettings, export};
 use rastersong_engine::{
-    AudioCache, DEFAULT_AUDIO_TRACK, FfmpegBackend, FormatKind, GraphDesc, Project, Timeline,
-    TrackKind, TrackSpec, VIDEO_SOURCE,
+    AudioCache, AudioOptions, FfmpegBackend, FormatKind, GraphDesc, MediaBackend, Project,
 };
 use rastersong_lang::tr_args;
 use tracing_subscriber::filter::{EnvFilter, LevelFilter, Targets};
@@ -31,12 +30,13 @@ enum Command {
 
 #[derive(Debug, clap::Args)]
 struct RenderArgs {
-    /// Either `<project> <out>`, or `<video> <audio> <graph> <out>`: a video as the track
-    /// `video` and any file with an audio stream as the track `audio`, through a graph file
-    /// (JSON).
+    /// Either `<project> <out>`, or `<video> <audio> <graph> <out>`: a project of a video on the
+    /// track `Video` and any file with an audio stream on the track `Audio`, under a graph file
+    /// (JSON) for as long as either plays.
     ///
-    /// The output is a video file with the bus's sound (the graph's Audio Output for it, or else
-    /// the mix of the audio tracks routed to it), its format picked by the extension: `.mp4`
+    /// The output is a video file with the bus's sound (what the graphs' Audio Outputs for it
+    /// render, silence where a graph playing has none, or else the mix of the audio tracks
+    /// routed to it where no graph plays), its format picked by the extension: `.mp4`
     /// (H.264 and AAC, through an OS or hardware encoder), `.mov` (ProRes HQ and 24-bit PCM)
     /// or `.mkv` (lossless FFV1 and 16-bit PCM). Any other path is a directory to fill with a
     /// PNG sequence.
@@ -55,8 +55,8 @@ struct RenderArgs {
     /// Sample rate of the sound (Hz). Defaults to the project's, or 48000.
     #[arg(long)]
     audio_rate: Option<u32>,
-    /// The output bus whose sound is written: its Audio Output, or its track mix when the graph
-    /// has none. Defaults to the project's first bus, the master.
+    /// The output bus whose sound is written: its graphs' Audio Outputs, or its track mix where no
+    /// graph plays. Defaults to the project's first bus, the master.
     #[arg(long)]
     bus: Option<String>,
     /// Write a timeline of where the render spends its time to this file: each frame's decode,
@@ -161,48 +161,61 @@ fn project_job(path: &Path, args: &RenderArgs) -> Result<ExportJob> {
     Ok(job)
 }
 
-/// A video, an audio file and a graph, from `rastersong render <video> <audio> <graph> <out>`.
-fn files_job(video: &Path, audio: &Path, graph: &Path, args: &RenderArgs) -> Result<ExportJob> {
+/// A video, an audio file and a graph, from `rastersong render <video> <audio> <graph> <out>`: a
+/// project of the two files with the graph over all of them (see [`Project::from_files`]).
+fn files_job(
+    backend: &dyn MediaBackend,
+    cache: Option<&AudioCache>,
+    [video, audio, graph]: [&Path; 3],
+    args: &RenderArgs,
+) -> Result<ExportJob> {
     let json =
         std::fs::read_to_string(graph).with_context(|| format!("reading {}", graph.display()))?;
     let graph =
         GraphDesc::from_json(&json).with_context(|| format!("loading {}", graph.display()))?;
     let offset = args.audio_offset.unwrap_or(0.0);
-    let mut song = TrackSpec::new(DEFAULT_AUDIO_TRACK, TrackKind::Audio, audio);
-    // Starting earlier than the video starts the item partway into the audio.
-    song.items[0].position = offset.max(0.0);
-    song.items[0].start = (-offset).max(0.0);
-    let video = TrackSpec::new(VIDEO_SOURCE, TrackKind::Video, video);
-    Ok(ExportJob {
-        timeline: Timeline {
-            tracks: vec![video, song],
-            ..Timeline::default()
-        },
-        graph,
-        composition: None,
-        tempo: Default::default(),
-        audio_rate: args
-            .audio_rate
-            .unwrap_or(rastersong_engine::DEFAULT_AUDIO_RATE),
-    })
+    // The graph plays for as long as either file does: the video from the start, the audio from
+    // its offset (starting partway into it when the offset is negative).
+    let info = backend
+        .open_video_stream(video, None)
+        .with_context(|| format!("opening {}", video.display()))?
+        .info()
+        .clone();
+    let video_length = info.frame_count as f64 / info.frame_rate.as_f64();
+    let clip = match cache {
+        Some(cache) => cache.load(backend, audio, AudioOptions::default()),
+        None => backend.load_audio(audio, AudioOptions::default()),
+    }
+    .with_context(|| format!("decoding {}", audio.display()))?;
+    let audio_length = offset.max(0.0) + (clip.duration_secs() - (-offset).max(0.0)).max(0.0);
+    let length = video_length.max(audio_length);
+    let project = Project::from_files(video, audio, graph, offset, length);
+    let mut job = ExportJob::from_project(&project);
+    if let Some(rate) = args.audio_rate {
+        job.audio_rate = rate;
+    }
+    Ok(job)
 }
 
 fn render(args: RenderArgs) -> Result<()> {
+    let backend = FfmpegBackend::new()?;
+    let audio_cache = AudioCache::in_user_dir();
     let (job, out) = match args.paths.as_slice() {
         [project, out] => (project_job(project, &args)?, out),
-        [video, audio, graph, out] => (files_job(video, audio, graph, &args)?, out),
+        [video, audio, graph, out] => (
+            files_job(&backend, audio_cache.as_ref(), [video, audio, graph], &args)?,
+            out,
+        ),
         _ => bail!("expected `<project> <out>` or `<video> <audio> <graph> <out>`"),
     };
 
     let bus = match &args.bus {
-        None => job.timeline.master(),
+        None => job.composition.master(),
         Some(name) => job
             .bus(name)
             .with_context(|| format!("the project has no bus named `{name}`"))?,
     };
 
-    let backend = FfmpegBackend::new()?;
-    let audio_cache = AudioCache::in_user_dir();
     let started = std::time::Instant::now();
     let format = out
         .extension()
@@ -224,13 +237,13 @@ fn render(args: RenderArgs) -> Result<()> {
             &mut |_, _| true,
         )?,
         None => {
-            let (tracks, _) = job.load(&backend, audio_cache.as_ref())?;
+            let (audio, _) = job.load(&backend, audio_cache.as_ref())?;
             let settings = job.render_settings(bus, args.size, args.frames.map(|n| 0..n));
             let mut sink = output::PngSequence::new(out);
             rastersong_engine::render(
                 &backend,
-                &tracks,
-                &job.graph,
+                &job.composition,
+                &audio,
                 &settings,
                 &mut sink,
                 &mut |_, _| true,
@@ -261,7 +274,69 @@ fn render(args: RenderArgs) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_size;
+    use rastersong_engine::{AudioClip, FakeBackend, FakeVideo, Rational, TrackKind};
+
+    use super::*;
+
+    #[test]
+    fn the_cli_files_render_goes_through_a_project() {
+        let dir = std::env::temp_dir().join(format!("rastersong-cli-files-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let graph = dir.join("graph.json");
+        std::fs::write(&graph, r#"{ "version": 0, "nodes": [] }"#).unwrap();
+        // Two seconds of video and three of audio, starting one second in.
+        let backend = FakeBackend::new()
+            .with_video(
+                "clip",
+                FakeVideo {
+                    width: 4,
+                    height: 2,
+                    frame_count: 20,
+                    frame_rate: Rational::new(10, 1),
+                },
+            )
+            .with_audio(
+                "song",
+                AudioClip {
+                    sample_rate: 100,
+                    channels: 1,
+                    samples: vec![0.0; 300].into(),
+                },
+            );
+        let Command::Render(args) =
+            Cli::parse_from(["rastersong", "render", "--audio-offset", "1", "a", "b"]).command
+        else {
+            unreachable!()
+        };
+        let job = files_job(
+            &backend,
+            None,
+            [Path::new("clip"), Path::new("song"), &graph],
+            &args,
+        )
+        .unwrap();
+        let tracks: Vec<_> = job
+            .composition
+            .tracks
+            .iter()
+            .map(|t| (t.name.as_str(), t.kind, t.items[0].position))
+            .collect();
+        assert_eq!(
+            tracks,
+            [
+                ("Graph", TrackKind::Graph, 0.0),
+                (rastersong_engine::VIDEO_SOURCE, TrackKind::Video, 0.0),
+                (
+                    rastersong_engine::DEFAULT_AUDIO_TRACK,
+                    TrackKind::Audio,
+                    1.0
+                ),
+            ]
+        );
+        // The graph covers both files: to the end of the audio, at 4 s.
+        assert_eq!(job.composition.tracks[0].items[0].end, Some(4.0));
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn parses_sizes() {

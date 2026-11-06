@@ -7,12 +7,16 @@ use eframe::egui::{self, Event, PointerButton, vec2};
 use egui::accesskit::Role;
 use egui_kittest::Harness;
 use egui_kittest::kittest::{By, Queryable};
-use rastersong_engine::{GraphDesc, Project, ResourceId, StreamInfo, StreamKind, TrackKind};
+use rastersong_engine::{
+    GraphDesc, LabelColor, Project, ResourceId, StreamInfo, StreamKind, TrackKind,
+};
 use rastersong_gui::STARTER_GRAPH;
-use rastersong_gui::resources::{ResourceAction, resources_panel};
+use rastersong_gui::resources::{DraggedResources, PanelContext, ResourceAction, resources_panel};
 
 struct State {
     project: Project,
+    /// The graph the editor shows.
+    open_graph: ResourceId,
     missing: HashSet<ResourceId>,
     streams: HashMap<std::path::PathBuf, Vec<StreamInfo>>,
     actions: Vec<ResourceAction>,
@@ -42,9 +46,11 @@ fn harness_with(
     missing_first: bool,
     builder: egui_kittest::HarnessBuilder<State>,
 ) -> Harness<'static, State> {
-    let mut project = Project::new(GraphDesc::from_json(STARTER_GRAPH).unwrap());
+    // The media first, then the graphs, as the panel lists them.
+    let mut project = Project::empty();
     project.add_track(TrackKind::Video, "video", "clip");
     project.add_track(TrackKind::Audio, "audio", "song");
+    let open_graph = project.add_graph("Graph", Some(GraphDesc::from_json(STARTER_GRAPH).unwrap()));
     project.add_graph("Second graph", None);
     let mut missing = HashSet::new();
     if missing_first {
@@ -61,7 +67,7 @@ fn harness_with(
     };
     let mut streams = HashMap::new();
     streams.insert(
-        project.resources[0].path.clone(),
+        project.resources[0].path().unwrap().to_owned(),
         vec![stream(StreamKind::Video {
             width: 320,
             height: 180,
@@ -69,7 +75,7 @@ fn harness_with(
         })],
     );
     streams.insert(
-        project.resources[1].path.clone(),
+        project.resources[1].path().unwrap().to_owned(),
         vec![stream(StreamKind::Audio {
             sample_rate: 44_100,
             channels: 2,
@@ -77,6 +83,7 @@ fn harness_with(
     );
     let state = State {
         project,
+        open_graph,
         missing,
         streams,
         actions: Vec::new(),
@@ -89,13 +96,13 @@ fn harness_with(
                 rastersong_gui::theme::apply_style(ui.ctx());
                 return;
             }
-            let actions = resources_panel(
-                ui,
-                &state.project,
-                &state.missing,
-                &state.streams,
-                state.open_on_click,
-            );
+            let context = PanelContext {
+                missing: &state.missing,
+                streams: &state.streams,
+                open_graph: Some(state.open_graph),
+                open_on_click: state.open_on_click,
+            };
+            let actions = resources_panel(ui, &state.project, &context);
             state.actions.extend(actions);
         },
         state,
@@ -103,17 +110,28 @@ fn harness_with(
 }
 
 fn click_at(harness: &mut Harness<'_, State>, pos: egui::Pos2, button: PointerButton) {
+    click_with(harness, pos, button, egui::Modifiers::NONE);
+}
+
+fn click_with(
+    harness: &mut Harness<'_, State>,
+    pos: egui::Pos2,
+    button: PointerButton,
+    modifiers: egui::Modifiers,
+) {
     harness.event(Event::PointerMoved(pos));
     harness.run_steps(1);
+    harness.event(Event::ModifiersChanged(modifiers));
     for pressed in [true, false] {
         harness.event(Event::PointerButton {
             pos,
             button,
             pressed,
-            modifiers: Default::default(),
+            modifiers,
         });
         harness.run_steps(1);
     }
+    harness.event(Event::ModifiersChanged(egui::Modifiers::NONE));
     harness.run_steps(1);
 }
 
@@ -178,9 +196,14 @@ fn graphs_tab(harness: &mut Harness<'_, State>) {
 }
 
 /// The graph that isn't open: its id and name.
-fn graph_name(harness: &Harness<'_, State>) -> (u32, String) {
-    let entry = harness.state().project.graph_entries()[1].clone();
-    (entry.id, entry.name)
+fn graph_name(harness: &Harness<'_, State>) -> (ResourceId, String) {
+    let state = harness.state();
+    let other = state
+        .project
+        .graph_ids()
+        .find(|&id| id != state.open_graph)
+        .unwrap();
+    (other, state.project.resource(other).unwrap().name.clone())
 }
 
 fn has(harness: &Harness<'_, State>, action: &ResourceAction) -> bool {
@@ -312,7 +335,7 @@ fn double_clicking_a_media_card_adds_it_to_the_timeline() {
     // On the picture, away from the name.
     let picture = card(&harness, &name).center();
     double_click_at(&mut harness, picture);
-    assert!(has(&harness, &ResourceAction::AddToTimeline(id)));
+    assert!(has(&harness, &ResourceAction::AddToTimeline(vec![id])));
     assert!(rename_field(&harness).is_none());
 }
 
@@ -324,7 +347,7 @@ fn double_clicking_a_cards_name_renames_it_in_place() {
         let (name, rename) = if graphs {
             graphs_tab(&mut harness);
             let (id, name) = graph_name(&harness);
-            (name, ResourceAction::RenameGraph(id, "Renamed".into()))
+            (name, ResourceAction::Rename(id, "Renamed".into()))
         } else {
             let resource = &harness.state().project.resources[0];
             let id = resource.id;
@@ -342,7 +365,7 @@ fn double_clicking_a_cards_name_renames_it_in_place() {
         assert!(
             !harness.state().actions.iter().any(|a| matches!(
                 a,
-                ResourceAction::OpenGraph(_) | ResourceAction::AddToTimeline(_)
+                ResourceAction::Open(_) | ResourceAction::AddToTimeline(_)
             )),
             "{:?}",
             harness.state().actions
@@ -361,7 +384,7 @@ fn f2_renames_the_selected_card_and_escape_cancels() {
         let (name, rename) = if graphs {
             graphs_tab(&mut harness);
             let (id, name) = graph_name(&harness);
-            (name, ResourceAction::RenameGraph(id, "F2 name".into()))
+            (name, ResourceAction::Rename(id, "F2 name".into()))
         } else {
             let resource = &harness.state().project.resources[1];
             let id = resource.id;
@@ -410,7 +433,7 @@ fn a_media_cards_menu_renames_and_removes_it() {
     harness.run_steps(2);
     harness.get_by_label("Remove").click();
     harness.run_steps(2);
-    assert!(has(&harness, &ResourceAction::Remove(id)));
+    assert!(has(&harness, &ResourceAction::Remove(vec![id])));
 }
 
 #[test]
@@ -423,9 +446,9 @@ fn double_clicking_a_graph_card_opens_it() {
     // One click only selects it while the setting is off.
     click_at(&mut harness, picture, PointerButton::Primary);
     harness.run_steps(30);
-    assert!(!has(&harness, &ResourceAction::OpenGraph(id)));
+    assert!(!has(&harness, &ResourceAction::Open(id)));
     double_click_at(&mut harness, picture);
-    assert!(has(&harness, &ResourceAction::OpenGraph(id)));
+    assert!(has(&harness, &ResourceAction::Open(id)));
 }
 
 #[test]
@@ -437,23 +460,135 @@ fn with_the_setting_one_click_opens_a_graph() {
     let (id, name) = graph_name(&harness);
     let picture = card(&harness, &name).center();
     click_at(&mut harness, picture, PointerButton::Primary);
-    assert!(has(&harness, &ResourceAction::OpenGraph(id)));
+    assert!(has(&harness, &ResourceAction::Open(id)));
 }
 
 #[test]
-fn a_graph_cards_menu_duplicates_and_removes_it() {
+fn a_graph_cards_menu_opens_duplicates_places_and_removes_it() {
+    let mut harness = harness(false);
+    harness.run_steps(2);
+    graphs_tab(&mut harness);
+    let (id, name) = graph_name(&harness);
+    for entry in ["Open in editor", "Duplicate", "Add to Timeline", "Remove"] {
+        harness.get_by_label(&name).click_secondary();
+        harness.run_steps(2);
+        harness.get_by_label(entry).click();
+        harness.run_steps(2);
+    }
+    let actions = &harness.state().actions;
+    for action in [
+        ResourceAction::Open(id),
+        ResourceAction::Duplicate(id),
+        ResourceAction::AddToTimeline(vec![id]),
+        ResourceAction::Remove(vec![id]),
+    ] {
+        assert!(actions.contains(&action), "{action:?} in {actions:?}");
+    }
+}
+
+#[test]
+fn the_open_graph_can_be_removed_but_not_opened_again() {
+    let mut harness = harness(false);
+    harness.run_steps(2);
+    graphs_tab(&mut harness);
+    let open = harness.state().open_graph;
+    let name = harness.state().project.resource(open).unwrap().name.clone();
+    harness.get_by_label(&name).click_secondary();
+    harness.run_steps(2);
+    assert!(harness.query_by_label("Open in editor").is_none());
+    harness.get_by_label("Remove").click();
+    harness.run_steps(2);
+    assert!(has(&harness, &ResourceAction::Remove(vec![open])));
+}
+
+#[test]
+fn media_cards_have_no_duplicate_and_graph_cards_no_relocate() {
+    let mut harness = harness(false);
+    harness.run_steps(2);
+    let media = harness.state().project.resources[0].name.clone();
+    harness.get_by_label(&media).click_secondary();
+    harness.run_steps(2);
+    assert!(harness.query_by_label("Relocate...").is_some());
+    assert!(harness.query_by_label("Duplicate").is_none());
+    harness.key_press(egui::Key::Escape);
+    harness.run_steps(2);
+    graphs_tab(&mut harness);
+    let (_, graph) = graph_name(&harness);
+    harness.get_by_label(&graph).click_secondary();
+    harness.run_steps(2);
+    assert!(harness.query_by_label("Duplicate").is_some());
+    assert!(harness.query_by_label("Relocate...").is_none());
+}
+
+#[test]
+fn graph_cards_take_a_colour_from_the_menu() {
     let mut harness = harness(false);
     harness.run_steps(2);
     graphs_tab(&mut harness);
     let (id, name) = graph_name(&harness);
     harness.get_by_label(&name).click_secondary();
     harness.run_steps(2);
-    harness.get_by_label("Duplicate").click();
+    harness.get_by_label_contains("Color").hover();
     harness.run_steps(2);
-    harness.get_by_label(&name).click_secondary();
+    harness.get_by_label("Green").click();
+    harness.run_steps(2);
+    assert!(
+        has(
+            &harness,
+            &ResourceAction::SetColor(vec![id], Some(LabelColor::Green))
+        ),
+        "{:?}",
+        harness.state().actions
+    );
+}
+
+#[test]
+fn graph_cards_multi_select_and_drag() {
+    let mut harness = harness(false);
+    harness.run_steps(2);
+    graphs_tab(&mut harness);
+    let ids: Vec<ResourceId> = harness.state().project.graph_ids().collect();
+    let names: Vec<String> = ids
+        .iter()
+        .map(|&id| harness.state().project.resource(id).unwrap().name.clone())
+        .collect();
+    let first = card(&harness, &names[0]).center();
+    let second = card(&harness, &names[1]).center();
+    click_at(&mut harness, first, PointerButton::Primary);
+    harness.run_steps(30);
+    click_with(
+        &mut harness,
+        second,
+        PointerButton::Primary,
+        egui::Modifiers::COMMAND,
+    );
+    harness.run_steps(30);
+
+    // A menu entry acts on both.
+    harness.get_by_label(&names[1]).click_secondary();
     harness.run_steps(2);
     harness.get_by_label("Remove").click();
     harness.run_steps(2);
-    assert!(has(&harness, &ResourceAction::DuplicateGraph(id)));
-    assert!(has(&harness, &ResourceAction::RemoveGraph(id)));
+    assert!(
+        has(&harness, &ResourceAction::Remove(ids.clone())),
+        "{:?}",
+        harness.state().actions
+    );
+
+    // So does a drag, which carries both in the panel's order.
+    harness.event(Event::PointerMoved(second));
+    harness.run_steps(1);
+    harness.event(Event::PointerButton {
+        pos: second,
+        button: PointerButton::Primary,
+        pressed: true,
+        modifiers: Default::default(),
+    });
+    harness.run_steps(1);
+    for step in 1..=5 {
+        harness.event(Event::PointerMoved(second + vec2(0.0, 12.0 * step as f32)));
+        harness.run_steps(1);
+    }
+    let payload = egui::DragAndDrop::payload::<DraggedResources>(&harness.ctx);
+    assert_eq!(payload.map(|p| p.0.clone()), Some(ids));
 }

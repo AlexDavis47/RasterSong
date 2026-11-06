@@ -42,8 +42,9 @@ Deferred on purpose:
 - Variable frame rate: the compiler assumes a constant frame rate; blocks keep their real timestamps, so VFR video
   works but its sound is resampled as if the rate were constant.
 - Export from the app: the engine and the CLI's `.mkv` mux handle the rendered sound, but there is no GUI export
-  yet. *(Resolved since: without an Audio Output the CLI writes the bus's track mix; see
-  [Track mix and output buses](#track-mix-and-output-buses-october-2026).)*
+  yet. *(Resolved since: without graph items the CLI writes the bus's track mix, see
+  [Track mix and output buses](#track-mix-and-output-buses-october-2026); a graph without an Audio Output is
+  silent, see [One projection](#one-projection-the-one-graph-route-is-a-project-november-2026).)*
 
 ### Resampling is only applied when needed
 
@@ -165,9 +166,9 @@ graph tracks with a source per port.
   to diagnose. Implicit behaviour needs a clear reason (Video Output's stretch) and is documented where it happens.
 - **The project has its own timebase**, like a Premiere sequence. With several videos, images and raw files, no
   source can be the clock.
-- **One resource per track.** A graph is compiled for a fixed layout per source; one resource per track keeps a
-  track's layout fixed along the timeline and avoids mixing rates within a track. The resource can still be cut up
-  freely.
+- **One resource per track.** *(Replaced: a track takes any resource of its kind, see [A track takes any file](#a-track-takes-any-file-one-item-inspector-november-2026).)* A graph is compiled for a fixed
+  layout per source; one resource per track keeps a track's layout fixed along the timeline and avoids mixing rates
+  within a track. The resource can still be cut up freely.
 - **The parent fills a graph's ports, with no fallback to a track.** As a subgraph the parent graph wires them; on
   a layer the item binds them. One rule for both, graphs become reusable tools, and a fallback binding was rejected
   as a second, hidden way in.
@@ -279,8 +280,8 @@ Built as the timeline's fifth step.
 - **Rate drags keep the far edge and the in and out points**, within 0.05× to 20×. An edge can't be trimmed past
   the file's ends or shorter than 10 ms.
 - **The timeline has its own clipboard** for items, separate from the graph's text clipboard. Ctrl+C, Ctrl+X and
-  Ctrl+V go to whichever the pointer is over. Pasting puts items back on the tracks they came from (a track of
-  one resource can't take another's items), the earliest at the playhead.
+  Ctrl+V go to whichever the pointer is over. Pasting puts items back on the tracks they came from, the earliest
+  at the playhead, trimming what they land on.
 - **Snapping works from the pointer's whole movement**, not frame by frame, so an item can be pulled off a target.
   It snaps to the ruler's ticks (frames and seconds, or beats and bars), other items' edges and the playhead,
   within 8 pixels. Shift drags freely; the Snap toggle is an app setting, on by default.
@@ -291,7 +292,8 @@ Built as the timeline's fifth step.
 Built as the first step of stage 2 of [Timeline, resources and routing](roadmap.md#timeline-resources-and-routing).
 
 - **Tracks point at resources, not files.** A resource is one stream of a linked file (`id`, `name`, `kind`,
-  `path`, `stream`), and a track names its resource by id. The engine still receives a path and a stream per
+  `path`, `stream`), and a track names its resource by id. *(Now each item names its resource, and a track plays
+  items of any resource of its kind: [A track takes any file](#a-track-takes-any-file-one-item-inspector-november-2026).)* The engine still receives a path and a stream per
   track, so renderers and caches only gained the stream index.
 - **Streams are chosen by their index in the file.** The import dialog stores the index it listed; `None` (the
   file's best stream of the kind) is kept for File → Open Video and Add Audio Tracks, which don't ask. The audio
@@ -315,8 +317,9 @@ Built as the second step of stage 2.
 - **An empty track has no resource** (`resource` left out, no items) and fills with the first resource of its kind
   dropped on it, because a track holds one resource only. Empty tracks are not sent to the engine. "The video"
   (the track graphs and the project timebase follow) is the first video track that has a resource.
-- **A resource that can't be dropped on a track makes a new track** (another resource, the wrong kind, no track
-  under the pointer), so a drop never silently does nothing and never changes what a track holds.
+- **A resource that can't be dropped on a track makes a new track** (the wrong kind, no track under the pointer
+  that plays nothing else), so a drop never silently does nothing. *(Since [A track takes any file](#a-track-takes-any-file-one-item-inspector-november-2026), a track under the pointer takes
+  any resource of its kind.)*
 - **Missing files are left out of the timeline sent to the engine**, rather than failing the whole render the way an
   unopenable video does: their tracks read as gaps until found. Existence comes from the media backend, so the fake
   backend can say a file is there without a real path. Relocating moves every resource that reads the same file.
@@ -338,9 +341,10 @@ stage 2b ([Routing in the renderer](#routing-in-the-renderer-october-2026)); kep
 - **Items on a layer never overlap, and the model enforces it.** Placing or moving an item trims, cuts or removes
   what it lands on (`Project::place_graph`), and loading a file repairs overlaps the same way, so the renderer can
   rely on one item per layer per frame.
-- **Graph items are not track items.** They have no resource, no rate and no stretch, so they get their own small
-  type (`GraphItem`: position, length, `start` into the graph's own time, mute, pre-roll, bindings). Trimming the
-  left edge moves `start`, which is what keeps what follows unchanged.
+- **Graph items are not track items.** *(Reversed: [One track type, one item
+  type](#one-track-type-one-item-type-items-never-overlap-october-2026).)* They have no resource, no rate and no
+  stretch, so they get their own small type (`GraphItem`: position, length, `start` into the graph's own time,
+  mute, pre-roll, bindings). Trimming the left edge moves `start`, which is what keeps what follows unchanged.
 - **Bindings are keyed by input node id and rewrite the node's source at compile time** *(now by port name, see
   [Input ports](#input-ports-october-2026))*. Until the Input and Output
   port nodes exist, the Video Input and Audio Input nodes are the ports: an item binds each to *Layer below* (the
@@ -508,7 +512,8 @@ started on a guess (the track of the same name).
 - **Graph-track sources still point down.** A source naming a graph track that isn't below the item reads zeros, so
   graphs can't loop. Whether the track is below depends on where the item is, so the picker lists every graph track.
 - **Buses stay on Audio Outputs.** The base one writes the master; one more per other bus can be added.
-- **The one-graph render** (the CLI's `render <video> <audio> <graph>`) no longer feeds a port named after a track:
+- **The one-graph render** (the CLI's `render <video> <audio> <graph>`, a project since [One
+  projection](#one-projection-the-one-graph-route-is-a-project-november-2026)) no longer feeds a port named after a track:
   Video In and Audio In read the mix, which changes the golden frames slightly (the sound reaches the graph at the
   mix rate).
 
@@ -581,7 +586,10 @@ Resolve, and only graph inputs are new.
 - **Every track is also a stem.** A graph can read any track on its own, before its volume and mute, as well as
   the video mix and the audio mix. Mute, volume and solo shape only the mix, so a kick track that drives an effect
   can be muted and still drive it.
-- **Graph tracks hold graph items; the topmost active one is the output.** Items on one graph track never overlap.
+- **Graph tracks hold graph items; the topmost active one is the output.** *(Every track now holds items of any
+  resource of its kind, drawn, edited and inspected the same way: [A track takes any file](#a-track-takes-any-file-one-item-inspector-november-2026).)* Items on one graph track never overlap
+  (now on every track: [One track type, one item
+  type](#one-track-type-one-item-type-items-never-overlap-october-2026)).
   At each frame the master picture and sound are the Video Output and Audio Output of the topmost active graph
   item, or the plain mixes where no graph item is active. Graph sound is not summed, since every graph passes its
   sound through and summing would double it. A muted graph track is skipped.
@@ -752,13 +760,186 @@ colour of their own. A resource's colour is one of eight named labels rather tha
 bar and text that stay legible (the theme test checks their contrast) and the file stores a word, not a colour that
 only suits one theme.
 
+### Graphs are resources (October 2026)
+
+Media and graphs had grown two parallel copies of every layer: graphs were not resources but an open graph plus a
+list of stored ones that swapped places, graph tracks and graph items had their own types and their own one-item
+editing calls, and the panel and the timeline had a second path for each. Every feature since landed on one side
+only (colours, groups and multi-select on media; moving across tracks on graphs), and a few bugs hid in the gaps.
+They are being merged into one resource, one track, one item and one path, in stages ([Roadmap](roadmap.md#timeline)).
+The first stage:
+
+- **A graph is a resource.** `Resource` holds its `content`: a stream of a linked file (video or audio) or a graph.
+  Names, colours, rename, remove, duplicate and "used by" are the same calls for both, and one set of names covers
+  every resource. Kind-specific behaviour asks the kind (`reads_file` for missing files and Relocate, `duplicates`
+  for Duplicate; since the next stage, `TrackKind`'s) instead of taking a second path. This completes the stepping
+  stone noted in
+  [Empty tracks, Relocate and graph resources](#empty-tracks-relocate-and-graph-resources-october-2026).
+- **Which graph the editor shows is the app's state, not the project's.** The project no longer has an open graph:
+  the engine gets every graph in the composition and is told which one the editor inspects
+  (`Engine::set_inspected`), which renders the same frames and only changes where taps, levels and statistics come
+  from. It isn't saved; a project opens on its first graph. Saving it would make opening a graph an unsaved change.
+- **Removing a graph removes its items and leaves its graph tracks.** A graph track isn't tied to one graph, unlike a
+  media track to its resource (until tracks are merged too; now removing any resource leaves its tracks, see
+  below).
+- **Errors name graphs by name.** A failing graph is named by its resource's name rather than its id.
+
+### One track type, one item type; items never overlap (October 2026)
+
+The second stage of merging media and graphs ([Graphs are resources](#graphs-are-resources-october-2026)).
+
+- **One `ProjectTrack` and one `Item` for every section.** The project's `tracks` hold the Graphs, Video and Audio
+  sections in that order (`TrackKind` is also what a resource is; `ResourceKind` is gone). Every item names its
+  `resource`; a graph item is an item whose out point is always set, as a graph has no length of its own, and whose
+  rate is 1. `GraphTrack`, `GraphItem` and `graph_tracks` are gone. This reverses *Graph items are not track items*
+  ([Graph layers](#graph-layers-october-2026)): what made them different (no file length, no rate, pre-roll) is
+  now a capability of the kind (`has_duration`, `stretches`, `pre_rolls`), checked by the one code path.
+- **One editing API** (`project/editing.rs`), by `ItemRef`, for every kind: place, move (along and across tracks
+  within a section), trim, stretch, split, delete, copy, paste, group. The lengths it needs come as `ItemLengths`
+  (each file's length once read, and a new graph item's length) rather than a closure per track. Graph items
+  therefore group, split, copy and paste with media, and solo applies to graph tracks.
+- **Items never overlap, on every track.** Whatever an edit puts down trims what it lands on and cuts an item it
+  lands inside in two, as graph tracks already did; a trim stops at the neighbours. Overwrite-and-trim is what an
+  editor does and what the graph stack already relied on; overlapping media items stacked invisibly, could only be
+  told apart by order, and made "which item plays here" a rule of its own. Media overlap crossfades therefore have
+  nothing left to do and go with the renderer stage; edge fades stay.
+- **An item whose length isn't known neither trims nor is trimmed.** A file's length is known once a track plays
+  it and its file is read; before then (and for a missing file) an item without an out point has no end to cut
+  at, and treating it as endless would wipe everything after it. On load, overlaps are repaired where lengths are
+  known without the files (every graph item; a file's item with an out point).
+- **Video and audio drags apply on release**, as graph drags did. With overwrite, a live move would cut every item
+  the pointer passes over; the timeline draws the moving items where they would land and sends one move on release.
+- **Removing a resource removes its items, not its tracks**, for media as for graphs: a track isn't one resource's.
+- **For now a video or audio track plays one resource.** *(Lifted in [A track takes any file](#a-track-takes-any-file-one-item-inspector-november-2026).)* The renderer still reads one file
+  per track; a track that
+  holds items takes no other resource until it reads per item (the renderer stage, done in [Per-item
+  resources](#per-item-resources-one-stacking-rule-no-audio-crossfades-november-2026)), and the timeline draws per
+  item (the last stage). This replaces *One resource per track* above as a rule, keeping it only as a temporary
+  limit; the timeline's media rows and graph rows stay apart in the app until the timeline stage merges them.
+
+### One projection; the one-graph route is a project (November 2026)
+
+The third stage of merging media and graphs ([One track type, one item
+type](#one-track-type-one-item-type-items-never-overlap-october-2026)).
+
+- **One `Composition` is what every renderer gets.** It holds the timebase, the buses, every track top first
+  (`ComposedTrack`, one type for the three sections) and the resources their items play (`ComposedResource`).
+  `Timeline`, `TrackSpec`, `MediaTrack`, `ComposedGraphTrack` and `ComposedGraph` are gone, and so are the parallel
+  setters (`Engine::set_timeline`, `Engine::set_graph`) and the second constructor (`Renderer::with_composition`):
+  the engine had been handed the tracks twice, once for the files and once for the mix, and could disagree with
+  itself (the composition listed missing files the timeline left out). Missing files are now left out once, as
+  resources.
+- **The one-graph route is a project.** `rastersong render <video> <audio> <graph> <out>` builds a project
+  (`Project::from_files`) and exports it like any other, instead of the engine rendering a loose graph over the
+  whole timeline (`single_composition`). Its graph plays for as long as either file does. The tests build projects
+  the same way.
+- **A graph without an Audio Output is silent everywhere.** The one-graph route kept the old rule that such a graph
+  left the sound to the mix; it now follows the app's *No passthrough rule* ([Premiere-style
+  timeline](#premiere-style-timeline-october-2026)). A CLI render of a graph without an Audio Output therefore has silent sound,
+  which the release notes must say. Compile errors are likewise always an item's (`EngineError::Fx`).
+- **Graph-only projects render.** The service used to wait for a file; a project whose only items are graph items
+  now renders them, its length theirs.
+- **Audio levels keep the cache only while no graph plays.** With no graph item, audio levels and routing only shape
+  the track mix, which the app's mixer plays; with one, graphs hear the mix, so a level change is an edit.
+
+### Per-item resources; one stacking rule; no audio crossfades (November 2026)
+
+The fourth stage of merging media and graphs ([One
+projection](#one-projection-the-one-graph-route-is-a-project-november-2026)).
+
+- **The renderer reads each item from its own resource.** A track reader holds the files its items play, by
+  resource (each track opens each video once, as before per track), and finds the item playing at a frame by its
+  own file's length. An audio stem takes the most channels and the longest block among its files and fits the
+  others into it, as the mix fits tracks. The decoded audio is kept by resource, not by track
+  (`Engine::loaded_audio`), so two tracks of one file share it, and the preview mixer pairs each item with its
+  clip. The one-file-per-track limit now lives only in the editing API and the timeline, until the timeline draws
+  each item's own file.
+- **One stacking rule.** The video mix and the graph tracks were two pieces of code saying the same thing: a layer
+  covers what is below where it plays. `stack_over` with the kind's `Stack` (`Picture`, `PictureAndSound`, `Sum`) is
+  now the one place that says it. Audio still sums.
+- **A muted graph track passes what is below.** It used to be left out of the stack, so `graph:X` on a muted X read
+  zeros while the picture showed what was below X. It is now a layer that plays nothing, like a muted video track,
+  so both agree.
+- **`track:` and `graph:` find a track in the one list.** Each names a track by name whatever its kind; `graph:`
+  naming a video track reads its stem instead of zeros. Keeping the two prefixes avoids breaking saved graphs.
+- **No crossfades between audio items.** Items never overlap ([One track type, one item
+  type](#one-track-type-one-item-type-items-never-overlap-october-2026)), so mixing a later item over an earlier one
+  by its gain had nothing left to do. Items are summed at their edge-fade gains, in the renderer and in the preview
+  mixer. A hand-written file with overlapping audio items now sums them where they overlap.
+
+### One Resources panel path; the editor may show no graph (November 2026)
+
+The fifth stage of merging media and graphs ([Per-item
+resources](#per-item-resources-one-stacking-rule-no-audio-crossfades-november-2026)).
+
+- **One action set, payload, selection and card group.** `ResourceAction` names what is done (`Open`,
+  `AddToTimeline`, `SetColor`, `Duplicate`, `Remove`, …), not which kind it is done to, and the kind's capabilities
+  (`reads_file`, `duplicates`, having a graph) decide which menu entries a card shows. Every card drags one
+  `DraggedResources` list; the tabs are filters over one list, so a drag carries one kind and the timeline sends
+  graphs and media to their own drop targets until it has one drop path too.
+- **The open graph can be removed.** It used to be kept so the editor always had a graph. Now the editor opens the
+  graph after it (or before it), and with none left it shows an empty canvas with **+ New graph**: the open graph
+  is `Option<ResourceId>`. A new or loaded project with no graph still gets the passthrough, so a fresh project has
+  something to edit; undo opens the first graph there is, or the empty canvas.
+
 ### No Bypass graphs switch (October 2026)
 
 The canvas header's **Bypass graphs** button and the project's `bypass_graph` flag are gone. The preview's
 **Original** already shows the mix without graphs for comparison, and a saved flag that silently hid every graph
 was a trap once the button left. Muting graph tracks or items skips them.
 
+### One timeline path for every kind of track (November 2026)
+
+The sixth stage of merging media and graphs ([One Resources panel
+path](#one-resources-panel-path-the-editor-may-show-no-graph-november-2026)).
+
+- **Timeline rows are the project's tracks.** The timeline used to list graph tracks apart, with their own view
+  type, actions (`GraphAction`), drop target (`GraphDrop`), selection and clipboard, and counted its video and
+  audio rows from the first video track. Now row *n* is project track *n*: one `TrackView` list, one
+  `TrackAction` set (with `MoveItem { rows }` and `OpenItem`), one lane drawing every kind, one header loop. Graph
+  rows gain what media rows had (Ctrl+click, box select, grouping, the selection-wide menu, F2, solo, New track
+  above/below), and media items move across tracks as graph items did. Bugs that came from the split went with it:
+  S split only the graph items when any was selected, a mixed paste selected half of what it pasted, loading a
+  project or renaming a track dropped the media selection, and a drag snapped only to items of its own kind.
+- **One drop plan.** `Project::plan_drop` places a whole drag (several resources, each with its file's other
+  streams when linked) and the drop preview draws that same plan. The rule is the media rule for every kind: the
+  track under the pointer if it takes the resource, else the first of its section that does and that no other
+  resource of the drop took, else a new track at the bottom of the section. A graph dropped off the graph tracks
+  therefore goes on the first graph track instead of a new one on top. The space under a section's last track,
+  down to the next section, makes a new track at its bottom, as the line under the last track does.
+- **Removing a resource keeps the rest of the selection.** Selected items of other resources on the same track
+  stay selected at their new places, instead of the whole track's selection being dropped.
+
 ## Open
+
+### A track takes any file; one item inspector (November 2026)
+
+The last stage of merging media and graphs ([One timeline path](#one-timeline-path-for-every-kind-of-track-november-2026)).
+
+- **A track takes any resource of its kind.** The renderer reads per item since [Per-item
+  resources](#per-item-resources-one-stacking-rule-no-audio-crossfades-november-2026), and the timeline now draws per
+  item, so the one-file limit on video and audio tracks (`mixes_resources`) and `Project::track_resource` are gone.
+  A drop on a track, a move onto it and a paste all land whatever the track already plays.
+- **Every media file is read when it enters the project, placed or not.** Overwrite needs an item's length to trim
+  what it lands on, and a file's length was only known once a track played it. The video is indexed for its
+  thumbnails (the same service that drew them) and the engine decodes every audio resource. A container's header
+  duration was rejected: it can be off by a frame or more, which would leave overlaps or gaps at the far edge. The
+  cost is memory for audio no item plays yet. An unplaced file that can't be decoded is left out, not reported: only
+  a file an item plays fails the build.
+- **A drop off the tracks still lands only where nothing else plays.** With no track under the pointer, a resource
+  goes on the first track of its kind that is empty or plays only that resource, else a new one, so dropping on the
+  headers or Add to Timeline never cuts into another file's items. On a track it lands there, whatever it plays.
+- **What the timeline shows of a file belongs to the resource.** `ResourceView` (name, colour, length, missing,
+  details, waveform, thumbnails) is keyed by resource and `TrackView` keeps only what the track has (name, kind,
+  items, mix). Every item's bar shows the name of its resource, as graph items already did, rather than its track's.
+  A video header shows the details of the file playing at the playhead, else of its first item.
+- **One item inspector for every kind.** It shows the resource and track, Mute, and what the kind can do:
+  pre-roll where it `pre_rolls`, speed (read only; Alt+drag changes it) where it `stretches`. Pre-roll goes
+  through the one `TrackAction` set (`SetPreRoll`), so `ItemEdit` is gone. Clicking any item shows it; clicking a
+  track's header shows the track, whose inspector covers every kind too.
+- **Kind-specific help is built from capabilities.** The item bar and edge hints are one sentence for every item
+  plus one per capability (`opens`, `stretches`, `pre_rolls`), so a grouped graph item gets the grouped text that
+  only media items had.
 
 ### Open: "Audio to video" / "Video to audio" names
 

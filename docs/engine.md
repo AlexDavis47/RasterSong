@@ -26,24 +26,42 @@ sets it on the Project page of Settings. One block
 of every graph is one project frame, frame `n` covering `n / fps` to `(n + 1) / fps` seconds, and the project
 lasts to the end of its last item (`timeline.rs`).
 
-Tracks hold **items** of one media file: a position on the timeline, in and out points in the file and a rate,
-all in seconds so they survive a change of frame rate. Each track is read for the [composition](#composition) through a
-track reader in the renderer:
+Every track holds **items** (`Item`) of resources of its kind, a graph, a video stream or an audio stream: the
+resource it plays, a position on the timeline, in and out points in the resource and a rate, all in seconds so they
+survive a change of frame rate. What differs between kinds is a capability of the kind (`TrackKind`), which the
+one code path checks: whether its resources have a length of their own (`has_duration`), stretch to another rate
+(`stretches`), read a file (`reads_file`), whether its tracks have a level in the mix (`has_level`), and whether
+its items pre-roll (`pre_rolls`). Each video and audio track is read for the [composition](#composition) through
+a track reader in the renderer, which reads each item from its own resource:
 
-- **Video tracks** are conformed to the grid: project frame `n` shows the file's frame displayed at the item's
-  time for `n` (frames are held or skipped when the rates differ), scaled to the project size the way Video
-  Output stretches.
-- **Audio tracks** fill each frame's block with the audio of exactly that frame's time span, item by item
-  (`Modulator::fill_items`), resampled when an item's rate isn't 1. The samples are read from the audio cache's
-  memory map ([Media](media.md)), shared with the preview mixer and the waveform rather than copied.
-- **Gaps read zeros**, as do muted items and input ports nothing fills. Where items overlap, the later one in
-  the list plays (for audio, crossfading at its edges; see below).
+- **Video tracks** are conformed to the grid: project frame `n` shows the frame of the item playing at `n`,
+  from that item's file, displayed at the item's time for `n` (frames are held or skipped when the rates differ),
+  scaled to the project size the way Video Output stretches. Each track opens each video it plays once.
+- **Audio tracks** fill each frame's block with the audio of exactly that frame's time span, adding each item
+  that plays in it from its own file (`Modulator::add_item`), resampled when an item's rate isn't 1. A track's
+  sound (its stem) takes the most channels and the longest block among its files; an item of another layout is
+  fitted to it the way the mix fits a track (`mix_into`). The samples are read from the audio cache's memory map
+  ([Media](media.md)), shared with the preview mixer and the waveform rather than copied.
+- **Gaps read zeros**, as do muted items, items of a file that is missing and input ports nothing fills. Items on
+  a track never overlap once edited; where a file holds overlapping items whose length isn't known on load, the
+  later one in the list shows (audio items are summed).
 
-**Audio item edges fade** over a fixed 5 ms (`EDGE_FADE`, at most half the item), linearly, so cuts don't click.
-Each item is mixed over the items listed before it by its gain (`Item::gain_at`): inside the item it replaces
-them, and at its edges it crossfades with them, so a cut between overlapping items never dips to silence. The
-first sample of an item that starts at the beginning of its file fades in too. The preview mixer applies the same
-gains.
+**Editing** goes through one API for every kind (`project/editing.rs`), naming items by track and place
+(`ItemRef`) and taking the lengths it needs as `ItemLengths` (each file's length once read, and how long a new
+graph item lasts). Whatever an edit puts down trims what it lands on, cutting an item it lands inside in two
+(`place_resource`, `move_items`, `paste_items`); a trim stops at the items either side and at the resource's ends,
+and stretches only kinds that stretch (`trim_item`). An item whose length isn't known yet neither trims nor is
+trimmed. Items move by time and across tracks within their section; a move that would leave its section moves
+nothing. A track takes items of any resource of its kind. Grouped items move, trim, split and delete together, on
+every kind of track. Removing a resource removes its items; its tracks stay. The engine decodes every audio
+resource of the composition, placed or not, so its length is known before it lands on a track
+(`Engine::loaded_audio`); a file an item plays that can't be decoded fails the build, one no item plays is left
+out.
+
+**Audio item edges fade** over a fixed 5 ms (`EDGE_FADE`, at most half the item), linearly, so cuts don't click
+(`Item::gain_at`). Items never overlap, so a track's items are added up: at a cut the item before fades out and the
+item after fades in, with no crossfade between them. The first sample of an item that starts at the beginning of
+its file fades in too. The preview mixer applies the same gains, each item reading its own file (`MixTrack`).
 
 Video frames are placed by the file's nominal frame rate, so variable-frame-rate video is conformed as if its rate
 were constant.
@@ -199,21 +217,29 @@ renders a connection's sound ahead of a position, for the listen key. Both are r
 
 ## Composition
 
-A project hands the engine its **composition** (`Project::composition`, `Engine::set_composition`): the video and
-audio tracks, video first, each with its volume, bus and whether it is in the mix (not muted, not left out by a
-solo); the graph tracks, top first, with the items that play (muted tracks and items are left out, and bypassing
-graphs leaves out all of them); and the stored graphs. The open graph's description comes separately because it
-changes as it is edited; the app sends both at once with `Engine::set_graphs`. Graphs are normalised with
-`render_form`, so labels and positions are not edits; any other change cancels and re-renders. Which graph is open
-is not an edit either: the frames are compared as rendered from every graph by id, so opening another graph keeps
-the cache and only rebuilds the renderer for what the editor inspects. A kept frame records the graph that was open
-(`Frame::open`), and the app shows its levels, parameters, costs and meters only while that graph is still open. Offline, the CLI's `rastersong render <project>
-<out>` passes the composition in `RenderSettings::composition`.
+A project hands the engine its **composition** (`Project::composition`, `Engine::set_composition`), the one thing
+the renderer, the preview service, export and the CLI render: the timebase, the buses, every track top first (the
+graph tracks, then the video, then the audio; `ComposedTrack`: its name, kind, items, level, bus and whether it is
+in the mix, that is not muted and not left out by a solo), and the resources their items play (`ComposedResource`:
+id, name and content, a file's stream or a graph). The app leaves out resources whose files are missing
+(`Project::composition_with`), so their items read as gaps; bypassing graphs leaves out the graph tracks
+(`Composition::bypassed`). A project whose items play nothing (`Composition::is_empty`) is idle; one with only
+graph items renders them, its length the end of its last item (`Composition::end`, which counts graph items as long
+as they are placed for and files' items as long as their files). Graphs are normalised with `render_form`, so labels
+and positions are not edits; any other change cancels and re-renders, except audio levels and routing while no graph
+item plays (`Composition::renders_like`): they only shape the track mix, which the app's mixer plays. Which graph the
+editor shows is not part of the composition:
+`Engine::set_inspected` names the graph resource whose taps, levels and statistics the editor wants. Inspecting
+another graph renders the same frames, so it keeps the cache and only rebuilds the renderer for what is inspected.
+A kept frame records the graph inspected when it was rendered (`Frame::inspected`), and the app shows its levels,
+parameters, costs and meters only while that graph is still the open one. Offline, `offline::render` takes the
+composition and its decoded audio (`AudioResources`, by resource) beside the `RenderSettings`.
 
-**Graph items.** A `GraphItem` places a graph on a graph track: position, length, `start` (seconds into the graph's
-own time at the left edge), mute and pre-roll. What its graph reads is set on the graph's input nodes. Items on one track never overlap
-(`Project::place_graph` trims what an item lands on, and loading a file repairs overlaps). Each item is compiled
-with its own state, so a graph used twice is compiled twice. Items of graphs the project doesn't have are left out.
+**Graph items.** An item on a graph track places a graph: its position, its in and out points in the graph's own
+time (`start` at the left edge, `end`, always set, as a graph has no end of its own), mute and pre-roll. What its
+graph reads is set on the graph's input nodes. Items on one track never overlap (see [Editing](#timeline)). Each
+item is compiled with its own state, so a graph used twice is compiled twice. Items of graphs the project doesn't
+have are left out.
 **The beat grid is the project's.** Beat-locked nodes follow the same grid as the metronome and the ruler's ticks
 (the project's tempo and first beat), never one that starts with the item. A graph counts its frames from the item's
 `start`, so its compile options carry the first beat moved into that count; where an item is placed or trimmed
@@ -227,10 +253,13 @@ setting names (`below` by default); a Named Input reads a Named Output by its `t
 - `Below`: what is below the item's graph track, which is the next graph track's output, or the mix under the
   lowest.
 - `Mix` (`mix`): the video mix or the audio mix.
-- `Track(name)` (`track:<name>`): one video or audio track on its own (its stem), before its volume and whether it
-  is in the mix, so a muted track can still drive a graph.
+- `Track(name)` (`track:<name>`): whatever plays on that track: a video or audio track on its own (its stem),
+  before its volume and whether it is in the mix, so a muted track can still drive a graph.
 - `Graph(track)` (`graph:<track>`): the main output of a graph track below the item's, where nothing plays on it
-  what is below it.
+  (or the track is muted or left out by a solo) what is below it.
+
+  Both find the track by name in the one track list, whatever its kind: `track:` naming a graph track reads its
+  output, `graph:` naming a video or audio track its stem.
 - `Named { track, name }` (a Named Input): a **Named Output** of a graph track below the item's. A graph track's
   named outputs are the names its items' graphs offer, each in the layout of the first item that has it; where no
   item plays, or the playing one doesn't offer that name in that layout, it reads zeros. A graph track at or above
@@ -239,25 +268,30 @@ setting names (`below` by default); a Named Input reads a Named Output by its `t
 
 The graph is filled by name: `Video` and `Audio` for inputs reading what is below, and for the others a name
 built from their kind and settings (`source_key`, `named_key`), so nodes reading the same thing share one signal and a picture and a sound of
-one track never mix. With no composition (`None`), the engine renders the open graph over the whole timeline on one
-graph track (`single_composition`), its main inputs reading the mix, which the CLI's `render <video> <audio>
-<graph>` and the tests rely on.
+one track never mix. There is no other way in: the CLI's `render <video> <audio> <graph>` is a project too
+(`Project::from_files`: the two files on a video and an audio track, and the graph on a graph track for as long as
+either file plays).
 
 **No passthrough.** Every graph needs its Output (compiling one without fails). A graph with no Audio Output on the
-rendered bus is silent where it plays; nothing is wired through for it. Only the one-graph form keeps the old rule
-that a graph without an Audio Output leaves the sound to the mix.
+rendered bus is silent where it plays; nothing is wired through for it, in the app, the export and the CLI alike.
 
 **Mixing.** The renderer runs the nodes once per source frame in order: each track's stem, the mix, then the graph
 tracks from the bottom up.
 
 - A **track** reads its media: its picture conformed to the project's grid and size, or its sound in its file's
   own layout. Tracks nothing reads (out of the mix and no item's source) aren't read at all.
-- The **mix** shows the picture of the top video track in the mix that has one at that frame, and sums the audio
-  tracks in the mix that are routed to the rendered bus at their volumes into the mix layout: `round(48000 / fps)`
-  samples a frame across the bus's channels. Each block is fitted linearly to the mix layout, and a mono track goes
-  to every channel.
-- A **graph track** shows the output of the item playing at that frame, or what is below it where none plays. Its
-  sound is fitted to the mix layout. The top graph track's output is the master, or the mix with no graph tracks.
+- Every track goes over what is below it by **one stacking rule**, its kind's `Stack` (`TrackKind::stacks`,
+  applied by `stack_over`): where it plays something it covers what is below, and elsewhere what is below shows
+  through. A video track covers the picture (`Picture`), a graph track the picture and the sound (`PictureAndSound`),
+  and an audio track adds its sound at its level (`Sum`).
+- The **mix** stacks the video and audio tracks in the mix: the picture of the top video track that has one at
+  that frame, and the sum of the audio tracks routed to the rendered bus at their volumes, in the mix layout:
+  `round(48000 / fps)` samples a frame across the bus's channels. Each block is fitted linearly to the mix layout,
+  and a mono track goes to every channel.
+- Each **graph track** stacks on what is below it: the output of the item playing at that frame, or what is below
+  where none plays. Its sound is fitted to the mix layout. A muted graph track (or one left out by a solo) plays
+  nothing, so it passes what is below through, also to graphs reading it. The top graph track's output is the
+  master, or the mix with no graph tracks.
 
 **Latency.** Each item lines its inputs up at the latest of what is below and its other sources' latencies, holding
 the others back in small rings, and adds its own; a graph track's latency is its slowest item's, or what is below's
@@ -280,13 +314,14 @@ wired straight from a port reading the mix, at its own volume, directly or throu
 plays the mix (`AudioSink::TrackMix`), which keeps playback real-time. Otherwise the render's sound is the master's
 (`AudioSink::Rendered`), through the same sink as one graph's (resample, sanitize, clip).
 
-**Taps, levels and statistics.** `tap` looks in the graphs that ran in the last source step, those of the open graph
-first, the top graph track's first. `levels`, `costs`, `meters` and `param_levels` come from the first graph that
-ran playing the open graph, else the first that ran; `node_stats` and `compile_options` describe the open graph's
-first item, else the first. The tap renderer is built the same way as the render-ahead renderer.
+**Taps, levels and statistics.** `tap` looks in the graphs that ran in the last source step, those of the inspected
+graph first, the top graph track's first. `levels`, `costs`, `meters` and `param_levels` come from the first graph
+that ran playing the inspected graph, else the first that ran; `node_stats` and `compile_options` describe the
+inspected graph's first item, else the first. The tap renderer is built the same way as the render-ahead renderer.
 
-**Errors.** A graph that cannot compile fails the build (`EngineError::Fx`), and the failure names the graph's id
-and the node at fault.
+**Errors.** A graph that cannot compile fails the build (`EngineError::Fx`, always, since every graph is a
+resource): the message names the graph resource, and the failure carries its id (`Failure::graph`) and the node at
+fault.
 
 ## Export / Offline Rendering
 
@@ -298,9 +333,10 @@ a `progress` callback, which cancels the render (`EngineError::Cancelled`) by re
 
 `export::export` is the one export path, used by the CLI and the GUI:
 
-- `ExportJob::from_project` takes the timeline, the render form of the open graph, the composition, tempo and audio
-  rate. `ExportJob::load` decodes each audio track (through the audio cache) into the render's tracks and the
-  sources of the track mix.
+- `ExportJob::from_project` (or `from_project_with`, leaving out missing files as the preview does) takes the
+  composition with every graph in its render form, the tempo and the audio rate. `ExportJob::load` decodes the audio
+  each audio track plays (through the audio cache), once per resource, into the render's `AudioResources` and the
+  sources of the track mix. The CLI's two routes both build an `ExportJob` from a project.
 - `FileSink` writes the frames through `MediaWriter` (see [Media](media.md)) with the bus's sound: the graph's
   Audio Output as it renders, or else the track mix of the tracks routed to the bus.
 - A failed or cancelled export removes the file.

@@ -24,7 +24,7 @@ New graphs come with one reading what is below: below the lowest graph track tha
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `source` (Source) | `below` | text | no | What this node reads: what is below, the audio mix, a track's stem, or a graph track below this one |
+| `source` (Source) | `below` | text | no | What this node reads: what is below, the audio mix, a track's stem, or a graph track below this one (what is below it where nothing plays on it) |
 
 ### `named_input`
 
@@ -57,7 +57,7 @@ New graphs come with one reading what is below: below the lowest graph track tha
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `source` (Source) | `below` | text | no | What this node reads: what is below, the video mix, a track's stem, or a graph track below this one |
+| `source` (Source) | `below` | text | no | What this node reads: what is below, the video mix, a track's stem, or a graph track below this one (what is below it where nothing plays on it) |
 
 ## Generators
 

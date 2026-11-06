@@ -10,7 +10,7 @@ use eframe::egui::{
     Stroke, StrokeKind, Ui, Vec2, pos2, vec2,
 };
 use rastersong_engine::{
-    GraphEntry, LabelColor, Project, Resource, ResourceId, ResourceKind, StreamInfo, StreamKind,
+    LabelColor, Project, Resource, ResourceId, StreamInfo, StreamKind, TrackKind,
 };
 use rastersong_lang::{tr, tr_args};
 
@@ -18,33 +18,35 @@ use crate::name_edit::{is_renaming, rename_field, start_rename};
 use crate::theme::{self, CONTROL_RADIUS, DENSE_HEIGHT, SMALL_SIZE, Theme};
 use crate::widgets::{Icon, card_header, card_title, channels_label};
 
-/// What the user did in the Resources panel.
+/// What the user did in the Resources panel. The actions that take several resources act on the
+/// selection when the card they came from is in it.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResourceAction {
     /// Pick files to import.
     Import,
-    /// Add a track playing the resource, at the playhead.
-    AddToTimeline(ResourceId),
-    Rename(ResourceId, String),
-    /// Give the resource a label colour (`None` for its kind's own), which its items take too.
-    SetColor(ResourceId, Option<LabelColor>),
-    /// Remove the resource (and, once confirmed, its tracks).
-    Remove(ResourceId),
-    /// Pick the file again, for a resource whose file moved.
-    Relocate(ResourceId),
     /// Make a new graph (a passthrough).
     NewGraph,
     /// Open the graph with this id in the editor.
-    OpenGraph(u32),
-    RenameGraph(u32, String),
-    DuplicateGraph(u32),
-    RemoveGraph(u32),
+    Open(ResourceId),
+    /// Add a track playing each resource, at the playhead.
+    AddToTimeline(Vec<ResourceId>),
+    Rename(ResourceId, String),
+    /// Give the resources a label colour (`None` for their kind's own), which their items take
+    /// too.
+    SetColor(Vec<ResourceId>, Option<LabelColor>),
+    /// Add a copy of the resource, for kinds that [duplicate](TrackKind::duplicates).
+    Duplicate(ResourceId),
+    /// Remove the resources (and, once confirmed, their items).
+    Remove(Vec<ResourceId>),
+    /// Pick the file again, for a resource whose file moved.
+    Relocate(ResourceId),
 }
 
-/// What a media card hands over while it is dragged: drop it on the timeline to make a track. When
-/// the dragged card is one of several selected, they all come along, in the panel's order.
+/// What a card hands over while it is dragged: drop it on the timeline to place it. When the
+/// dragged card is one of several selected, they all come along, in the panel's order. A tab
+/// shows one kind of resource, so a drag carries either media or graphs.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DraggedResource(pub Vec<ResourceId>);
+pub struct DraggedResources(pub Vec<ResourceId>);
 
 /// A file whose streams wait on the import dialog, each with whether it is chosen.
 #[derive(Debug, Clone, PartialEq)]
@@ -64,10 +66,10 @@ impl PendingImport {
 }
 
 /// The kind of resource a stream becomes.
-pub fn resource_kind(stream: &StreamInfo) -> ResourceKind {
+pub fn resource_kind(stream: &StreamInfo) -> TrackKind {
     match stream.kind {
-        StreamKind::Video { .. } => ResourceKind::Video,
-        StreamKind::Audio { .. } => ResourceKind::Audio,
+        StreamKind::Video { .. } => TrackKind::Video,
+        StreamKind::Audio { .. } => TrackKind::Audio,
     }
 }
 
@@ -289,7 +291,7 @@ fn paint_thumb(painter: &Painter, rect: Rect, thumb: Thumb, missing: bool, theme
 /// at the end of the row and the `current` one checked. Returns the one clicked.
 fn label_color_menu(
     ui: &mut Ui,
-    kind: ResourceKind,
+    kind: TrackKind,
     current: Option<LabelColor>,
 ) -> Option<Option<LabelColor>> {
     let theme = Theme::of(ui.ctx());
@@ -300,7 +302,7 @@ fn label_color_menu(
             .selected(current == color)
             .min_size(vec2(140.0, 0.0));
         let response = ui.add(button);
-        let colors = theme.item_colors(kind.track_kind(), color);
+        let colors = theme.item_colors(kind, color);
         let dot = Rect::from_center_size(
             pos2(response.rect.right() - 12.0, response.rect.center().y),
             Vec2::splat(10.0),
@@ -498,7 +500,7 @@ fn card_grid(ui: &mut Ui, count: usize, mut add: impl FnMut(&mut Ui, usize, Vec2
     }
 }
 
-/// The panel's two tabs.
+/// The panel's two tabs, each a filter on the kind of resource.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum Tab {
     #[default]
@@ -506,15 +508,35 @@ enum Tab {
     Graphs,
 }
 
+impl Tab {
+    fn shows(self, kind: TrackKind) -> bool {
+        match self {
+            Self::Media => kind.reads_file(),
+            Self::Graphs => kind == TrackKind::Graph,
+        }
+    }
+}
+
+/// What the panel knows besides the project: which files are missing, what streams each file
+/// has, the graph open in the editor and the single-click setting.
+#[derive(Debug, Clone, Copy)]
+pub struct PanelContext<'a> {
+    /// The resources whose files are gone.
+    pub missing: &'a HashSet<ResourceId>,
+    /// Each linked file's streams as far as they are known, for the cards' detail lines.
+    pub streams: &'a HashMap<PathBuf, Vec<StreamInfo>>,
+    /// The graph the editor shows, if any.
+    pub open_graph: Option<ResourceId>,
+    /// One click on a graph opens it (a setting).
+    pub open_on_click: bool,
+}
+
 /// The panel: a title row with the filter and Import…, then the Media and Graphs tabs, each a
-/// grid of cards. `streams` holds each linked file's streams as far as they are known, for the
-/// cards' detail lines. With `open_on_click`, one click on a graph opens it (a setting).
+/// grid of cards.
 pub fn resources_panel(
     ui: &mut Ui,
     project: &Project,
-    missing: &HashSet<ResourceId>,
-    streams: &HashMap<PathBuf, Vec<StreamInfo>>,
-    open_on_click: bool,
+    context: &PanelContext<'_>,
 ) -> Vec<ResourceAction> {
     let mut actions = Vec::new();
     let filter_id = Id::new("resources-filter");
@@ -542,17 +564,14 @@ pub fn resources_panel(
     });
     ui.data_mut(|d| d.insert_temp(filter_id, filter.clone()));
     let needle = filter.trim().to_lowercase();
-    let matches = |name: &str| name.to_lowercase().contains(&needle);
-    let media: Vec<&Resource> = project
-        .resources
-        .iter()
-        .filter(|r| matches(&r.name))
-        .collect();
-    let graphs: Vec<GraphEntry> = project
-        .graph_entries()
-        .into_iter()
-        .filter(|g| matches(&g.name))
-        .collect();
+    let shown_in = |tab: Tab| -> Vec<&Resource> {
+        project
+            .resources
+            .iter()
+            .filter(|r| tab.shows(r.kind()) && r.name.to_lowercase().contains(&needle))
+            .collect()
+    };
+    let (media, graphs) = (shown_in(Tab::Media), shown_in(Tab::Graphs));
     let tab_id = Id::new("resources-tab");
     let mut tab: Tab = ui.data(|d| d.get_temp(tab_id)).unwrap_or_default();
     let panel = ui.available_rect_before_wrap();
@@ -606,13 +625,9 @@ pub fn resources_panel(
         .show(ui, |ui| {
             egui::Frame::new()
                 .inner_margin(Margin::symmetric(8, 10))
-                .show(ui, |ui| match tab {
-                    Tab::Media => {
-                        media_group(ui, project, &media, missing, streams, rename, &mut actions);
-                    }
-                    Tab::Graphs => {
-                        graph_group(ui, project, &graphs, open_on_click, rename, &mut actions);
-                    }
+                .show(ui, |ui| {
+                    let shown = if tab == Tab::Media { &media } else { &graphs };
+                    resource_group(ui, project, tab, shown, context, rename, &mut actions);
                 });
         });
     actions
@@ -630,9 +645,9 @@ fn faint_note(ui: &mut Ui, text: &str) {
 /// What a media card says under its name: the kind, then the stream's shape once it is known
 /// ("video · 320×180 · 30 fps", "audio · stereo · 48 kHz").
 pub fn media_detail(resource: &Resource, stream: Option<&StreamInfo>) -> String {
-    let mut parts = vec![match resource.kind {
-        ResourceKind::Video => tr("resources.detail.video").to_owned(),
-        ResourceKind::Audio => tr("resources.detail.audio").to_owned(),
+    let mut parts = vec![match resource.kind() {
+        TrackKind::Video => tr("resources.detail.video").to_owned(),
+        _ => tr("resources.detail.audio").to_owned(),
     }];
     match stream.map(|s| s.kind) {
         Some(StreamKind::Video {
@@ -664,126 +679,188 @@ pub fn media_detail(resource: &Resource, stream: Option<&StreamInfo>) -> String 
 /// The stream of its file that `resource` plays, among `streams` (the file's): the one it names,
 /// or the first of its kind.
 fn resource_stream<'a>(resource: &Resource, streams: &'a [StreamInfo]) -> Option<&'a StreamInfo> {
-    match resource.stream {
+    match resource.stream() {
         Some(index) => streams.iter().find(|s| s.index == index),
-        None => streams.iter().find(|s| resource_kind(s) == resource.kind),
+        None => streams.iter().find(|s| resource_kind(s) == resource.kind()),
     }
 }
 
-/// The media cards. Click selects a card, Ctrl or Shift+click adds it to the selection or takes
-/// it out; `rename` (F2) renames the card clicked last.
-fn media_group(
+/// The card `resource` is drawn with: its kind's picture and glyph, and a detail line, hover
+/// text and fix button from what its kind can do (a file can go missing, a graph can be open).
+/// `drag_count` is how many cards a drag of it carries.
+fn card_for<'a>(
+    project: &Project,
+    resource: &'a Resource,
+    context: &PanelContext<'_>,
+    selected: bool,
+    drag_count: usize,
+) -> Card<'a> {
+    let missing = context.missing.contains(&resource.id);
+    let open = context.open_graph == Some(resource.id);
+    let (glyph, thumb) = match resource.kind() {
+        TrackKind::Video => ("🎞", Thumb::Video),
+        TrackKind::Audio => ("🔊", Thumb::Audio),
+        TrackKind::Graph => ("🕸", Thumb::Graph),
+    };
+    let (detail, hover) = match resource.path() {
+        Some(path) => {
+            let users = project.resource_users(resource.id).len();
+            let mut hover = path.display().to_string();
+            if missing {
+                hover = tr_args("resources.missing", &[("path", &hover)]);
+            }
+            if users > 0 {
+                hover.push('\n');
+                hover.push_str(&tr_args(
+                    "resources.used_by",
+                    &[("count", &users.to_string())],
+                ));
+            }
+            hover.push('\n');
+            hover.push_str(tr("resources.drag.help"));
+            let detail = if missing {
+                tr("resources.detail.missing").to_owned()
+            } else {
+                let stream = context
+                    .streams
+                    .get(path)
+                    .and_then(|s| resource_stream(resource, s));
+                media_detail(resource, stream)
+            };
+            (detail, hover)
+        }
+        None => {
+            let hover = if open {
+                tr("resources.graph.open_now")
+            } else if context.open_on_click {
+                tr("resources.graph.help_click")
+            } else {
+                tr("resources.graph.help")
+            };
+            (graph_detail(project, resource.id, open), hover.to_owned())
+        }
+    };
+    Card {
+        id: Id::new(("resource", resource.id)),
+        thumb,
+        glyph,
+        name: &resource.name,
+        detail,
+        hover,
+        missing,
+        highlighted: open,
+        selected,
+        drag_count,
+        fix_button: missing.then(|| (tr("resources.relocate"), tr("resources.relocate.help"))),
+        color: resource.color,
+    }
+}
+
+/// The cards of one tab, every kind alike. A click selects a card, Ctrl or Shift+click adds it
+/// to the selection or takes it out; the selection is one list across the tabs, and a drag or a
+/// menu entry on a selected card acts on the selected cards shown. `rename` (F2) renames the card
+/// clicked last. A double-click opens a graph in the editor (one click with the setting) and adds
+/// any other resource to the timeline. The menu lists what the resource's kind can do.
+fn resource_group(
     ui: &mut Ui,
     project: &Project,
+    tab: Tab,
     shown: &[&Resource],
-    missing: &HashSet<ResourceId>,
-    streams: &HashMap<PathBuf, Vec<StreamInfo>>,
+    context: &PanelContext<'_>,
     rename: bool,
     actions: &mut Vec<ResourceAction>,
 ) {
-    if project.resources.is_empty() {
-        faint_note(ui, tr("resources.empty"));
+    let any = project.resources.iter().any(|r| tab.shows(r.kind()));
+    if !any {
+        faint_note(
+            ui,
+            match tab {
+                Tab::Media => tr("resources.empty"),
+                Tab::Graphs => tr("resources.empty.graphs"),
+            },
+        );
     } else if shown.is_empty() {
         faint_note(ui, tr("resources.no_match"));
     }
-    // The selected cards, which a drag of any of them takes along, the last clicked last.
     let selection_id = Id::new("resource-selection");
     let mut selection: Vec<ResourceId> = ui.data(|d| d.get_temp(selection_id)).unwrap_or_default();
     selection.retain(|&id| project.resource(id).is_some());
     let mut clicked = None;
     card_grid(ui, shown.len(), |ui, i, size| {
         let resource = shown[i];
-        let dragged: Vec<ResourceId> = if selection.contains(&resource.id) {
+        let id = resource.id;
+        // What a drag or a menu entry of this card acts on.
+        let targets: Vec<ResourceId> = if selection.contains(&id) {
             shown
                 .iter()
                 .map(|r| r.id)
                 .filter(|id| selection.contains(id))
                 .collect()
         } else {
-            vec![resource.id]
+            vec![id]
         };
-        let missing = missing.contains(&resource.id);
-        let users = project.resource_users(resource.id).len();
-        let (glyph, thumb) = match resource.kind {
-            ResourceKind::Video => ("🎞", Thumb::Video),
-            ResourceKind::Audio => ("🔊", Thumb::Audio),
-        };
-        let file = resource
-            .path
-            .file_name()
-            .map_or_else(String::new, |f| f.to_string_lossy().into_owned());
-        let mut hover = resource.path.display().to_string();
-        if missing {
-            hover = tr_args("resources.missing", &[("path", &hover)]);
-        }
-        if users > 0 {
-            hover.push('\n');
-            hover.push_str(&tr_args(
-                "resources.used_by",
-                &[("count", &users.to_string())],
-            ));
-        }
-        hover.push('\n');
-        hover.push_str(tr("resources.drag.help"));
-        let detail = if missing {
-            tr("resources.detail.missing").to_owned()
-        } else {
-            let stream = streams
-                .get(&resource.path)
-                .and_then(|s| resource_stream(resource, s));
-            media_detail(resource, stream)
-        };
-        let card = Card {
-            id: Id::new(("resource", resource.id)),
-            thumb,
-            glyph,
-            name: &resource.name,
-            detail,
-            hover,
-            missing,
-            highlighted: false,
-            selected: selection.contains(&resource.id),
-            drag_count: dragged.len(),
-            fix_button: missing.then(|| (tr("resources.relocate"), tr("resources.relocate.help"))),
-            color: resource.color,
-        };
-        if rename && selection.last() == Some(&resource.id) {
+        let card = card_for(
+            project,
+            resource,
+            context,
+            selection.contains(&id),
+            targets.len(),
+        );
+        if rename && selection.last() == Some(&id) {
             start_rename(ui.ctx(), card_name_id(card.id));
         }
-        let out = resource_card(ui, &card, size, DraggedResource(dragged), |ui| {
-            ui.label(RichText::new(file).weak());
+        let opens = resource.graph().is_some();
+        let open = context.open_graph == Some(id);
+        let payload = DraggedResources(targets.clone());
+        let out = resource_card(ui, &card, size, payload, |ui| {
+            if let Some(file) = resource.path().and_then(Path::file_name) {
+                ui.label(RichText::new(file.to_string_lossy()).weak());
+            }
+            if opens && !open && ui.button(tr("resources.open")).clicked() {
+                actions.push(ResourceAction::Open(id));
+                ui.close();
+            }
             if ui.button(tr("resources.add_to_timeline")).clicked() {
-                actions.push(ResourceAction::AddToTimeline(resource.id));
+                actions.push(ResourceAction::AddToTimeline(targets.clone()));
                 ui.close();
             }
             ui.menu_button(tr("resources.color"), |ui| {
-                if let Some(color) = label_color_menu(ui, resource.kind, resource.color) {
-                    actions.push(ResourceAction::SetColor(resource.id, color));
+                if let Some(color) = label_color_menu(ui, resource.kind(), resource.color) {
+                    actions.push(ResourceAction::SetColor(targets.clone(), color));
                     ui.close();
                 }
             })
             .response
             .on_hover_text(tr("resources.color.help"));
-            if ui.button(tr("resources.relocate")).clicked() {
-                actions.push(ResourceAction::Relocate(resource.id));
+            if resource.kind().duplicates() && ui.button(tr("resources.duplicate")).clicked() {
+                actions.push(ResourceAction::Duplicate(id));
+                ui.close();
+            }
+            if resource.kind().reads_file() && ui.button(tr("resources.relocate")).clicked() {
+                actions.push(ResourceAction::Relocate(id));
                 ui.close();
             }
             if ui.button(tr("resources.remove")).clicked() {
-                actions.push(ResourceAction::Remove(resource.id));
+                actions.push(ResourceAction::Remove(targets.clone()));
                 ui.close();
             }
         });
         if let Some(name) = out.renamed {
-            actions.push(ResourceAction::Rename(resource.id, name));
+            actions.push(ResourceAction::Rename(id, name));
         }
         if out.fixed {
-            actions.push(ResourceAction::Relocate(resource.id));
+            actions.push(ResourceAction::Relocate(id));
         }
-        if out.double_clicked {
-            actions.push(ResourceAction::AddToTimeline(resource.id));
+        if opens {
+            let opened = out.double_clicked || (context.open_on_click && out.clicked);
+            if opened && !open {
+                actions.push(ResourceAction::Open(id));
+            }
+        } else if out.double_clicked {
+            actions.push(ResourceAction::AddToTimeline(vec![id]));
         }
         if out.clicked {
-            clicked = Some(resource.id);
+            clicked = Some(id);
         }
     });
     if let Some(id) = clicked {
@@ -800,114 +877,27 @@ fn media_group(
     }
     ui.data_mut(|d| d.insert_temp(selection_id, selection));
     if !shown.is_empty() {
-        faint_note(ui, tr("resources.hint.media"));
+        let hint = match tab {
+            Tab::Media => tr("resources.hint.media"),
+            Tab::Graphs if context.open_on_click => tr("resources.hint.graphs_click"),
+            Tab::Graphs => tr("resources.hint.graphs"),
+        };
+        faint_note(ui, hint);
     }
 }
 
-/// What a graph hands over while it is dragged. The timeline takes it: dropped on a graph
-/// layer it places the graph there, anywhere else it makes a new layer for it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DraggedGraph(pub u32);
-
-/// What a graph card says under its name: whether it is open, and how many items place it.
-pub fn graph_detail(project: &Project, entry: &GraphEntry) -> String {
-    let items = project
-        .graph_tracks
-        .iter()
-        .flat_map(|t| &t.items)
-        .filter(|item| item.graph == entry.id)
-        .count();
+/// What a graph card says under its name: whether it is `open`, and how many items place it.
+pub fn graph_detail(project: &Project, graph: ResourceId, open: bool) -> String {
+    let items = project.resource_item_count(graph);
     let placed = match items {
         0 => tr("resources.graph.unplaced").to_owned(),
         1 => tr("resources.graph.one_item").to_owned(),
         n => tr_args("resources.graph.items", &[("count", &n.to_string())]),
     };
-    if entry.open {
+    if open {
         format!("{} · {placed}", tr("resources.graph.open_tag"))
     } else {
         placed
-    }
-}
-
-/// The graph cards, the open one marked. Double-click opens a graph in the editor, or one click
-/// with `open_on_click`; a click selects it, and `rename` (F2) renames the selected one.
-fn graph_group(
-    ui: &mut Ui,
-    project: &Project,
-    shown: &[GraphEntry],
-    open_on_click: bool,
-    rename: bool,
-    actions: &mut Vec<ResourceAction>,
-) {
-    if shown.is_empty() {
-        faint_note(ui, tr("resources.no_match"));
-    }
-    let selection_id = Id::new("graph-selection");
-    let mut selection: Option<u32> = ui.data(|d| d.get_temp(selection_id)).flatten();
-    let help = if open_on_click {
-        tr("resources.graph.help_click")
-    } else {
-        tr("resources.graph.help")
-    };
-    card_grid(ui, shown.len(), |ui, i, size| {
-        let entry = &shown[i];
-        let card = Card {
-            id: Id::new(("graph", entry.id)),
-            thumb: Thumb::Graph,
-            glyph: "🕸",
-            name: &entry.name,
-            detail: graph_detail(project, entry),
-            hover: if entry.open {
-                tr("resources.graph.open_now")
-            } else {
-                help
-            }
-            .to_owned(),
-            missing: false,
-            highlighted: entry.open,
-            selected: selection == Some(entry.id),
-            drag_count: 1,
-            fix_button: None,
-            color: None,
-        };
-        if rename && selection == Some(entry.id) {
-            start_rename(ui.ctx(), card_name_id(card.id));
-        }
-        let out = resource_card(ui, &card, size, DraggedGraph(entry.id), |ui| {
-            if !entry.open && ui.button(tr("resources.graph.open")).clicked() {
-                actions.push(ResourceAction::OpenGraph(entry.id));
-                ui.close();
-            }
-            if ui.button(tr("resources.graph.duplicate")).clicked() {
-                actions.push(ResourceAction::DuplicateGraph(entry.id));
-                ui.close();
-            }
-            if !entry.open && ui.button(tr("resources.remove")).clicked() {
-                actions.push(ResourceAction::RemoveGraph(entry.id));
-                ui.close();
-            }
-        });
-        if let Some(name) = out.renamed {
-            actions.push(ResourceAction::RenameGraph(entry.id, name));
-        }
-        if out.clicked {
-            selection = Some(entry.id);
-        }
-        let open = out.double_clicked || (open_on_click && out.clicked);
-        if open && !entry.open {
-            actions.push(ResourceAction::OpenGraph(entry.id));
-        }
-    });
-    ui.data_mut(|d| d.insert_temp(selection_id, selection));
-    if !shown.is_empty() {
-        faint_note(
-            ui,
-            if open_on_click {
-                tr("resources.hint.graphs_click")
-            } else {
-                tr("resources.hint.graphs")
-            },
-        );
     }
 }
 
@@ -955,13 +945,19 @@ pub fn import_dialog(ctx: &egui::Context, pending: &mut PendingImport) -> Option
     choice
 }
 
-/// The "remove resource?" dialog, for a resource tracks still play. `Some(true)` removes it
-/// with its tracks.
-pub fn remove_dialog(ctx: &egui::Context, name: &str, tracks: &[String]) -> Option<bool> {
+/// The "remove resources?" dialog, for resources of any kind (`names`) whose items are on
+/// `tracks`. `Some(true)` removes them with their items.
+pub fn remove_dialog(ctx: &egui::Context, names: &[String], tracks: &[String]) -> Option<bool> {
     let mut choice = None;
     egui::Modal::new(Id::new("remove-resource")).show(ctx, |ui| {
         ui.set_width(340.0);
-        ui.heading(tr_args("dialog.remove_resource.title", &[("name", name)]));
+        ui.heading(match names {
+            [name] => tr_args("dialog.remove_resource.title", &[("name", name)]),
+            _ => tr_args(
+                "dialog.remove_resources.title",
+                &[("count", &names.len().to_string())],
+            ),
+        });
         ui.add_space(4.0);
         ui.label(tr_args(
             "dialog.remove_resource.tracks",

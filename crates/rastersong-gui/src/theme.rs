@@ -484,12 +484,13 @@ impl Theme {
         &self.item_labels[label as usize]
     }
 
-    /// How an item on a track of `kind` is drawn: in its resource's label colour when it has one.
+    /// How a resource of `kind` and its items are drawn: in its label colour when it has one.
     pub fn item_colors(&self, kind: TrackKind, label: Option<LabelColor>) -> &ItemColors {
         match (label, kind) {
             (Some(label), _) => self.label_colors(label),
             (None, TrackKind::Video) => &self.video_item,
             (None, TrackKind::Audio) => &self.audio_item,
+            (None, TrackKind::Graph) => &self.graph_item,
         }
     }
 

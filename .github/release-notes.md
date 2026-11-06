@@ -14,6 +14,11 @@ Alternatively, run `xattr -dr com.apple.quarantine /Applications/RasterSong.app`
 **Linux (x86_64):** make the AppImage executable (`chmod +x RasterSong-*.AppImage`) and run it. If it
 reports that FUSE is missing, run it with `--appimage-extract-and-run`.
 
+## Changes to note
+
+- `rastersong render <video> <audio> <graph> <out>` now renders a graph without an Audio Output silently, as the
+  app always has. Wire Audio In to an Audio Output in the graph to keep the song's sound.
+
 ## Licenses
 
 RasterSong is source-available; see `LICENSE.txt` in the package.

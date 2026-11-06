@@ -3,19 +3,17 @@
 
 use std::ops::Range;
 
-use rastersong_graph::{GraphDesc, Registry, Tempo};
+use rastersong_graph::{Registry, Tempo};
 use rastersong_media::MediaBackend;
 
-use crate::timeline::{Bus, Timebase};
+use crate::timeline::Bus;
 use crate::{
-    AudioBlock, AudioSink, Composition, DEFAULT_AUDIO_RATE, EngineError, MAX_WARMUP_FRAMES_LIMIT,
-    OutputSize, RenderInfo, RenderTrack, Renderer,
+    AudioBlock, AudioResources, AudioSink, Composition, DEFAULT_AUDIO_RATE, EngineError,
+    MAX_WARMUP_FRAMES_LIMIT, OutputSize, RenderInfo, Renderer,
 };
 
 #[derive(Debug, Clone, Default)]
 pub struct RenderSettings {
-    /// The project's size and frame rate. `None` takes them from the first video track.
-    pub timebase: Option<Timebase>,
     /// Processing and output size. `None` uses the project's size.
     pub size: Option<(u32, u32)>,
     /// The frames to write, `start..end`, cut to the project's length; `None` is every frame.
@@ -28,10 +26,6 @@ pub struct RenderSettings {
     pub audio_rate: Option<u32>,
     /// The output bus whose sound is rendered.
     pub bus: Bus,
-    /// The project's composition ([`crate::Project::composition`]), with `graph` the open
-    /// graph's description. `None` renders `graph` over the whole timeline, its ports named
-    /// after tracks reading them.
-    pub composition: Option<Composition>,
 }
 
 /// One rendered frame, as packed RGB8. `index` is its frame in the project, so a range starts
@@ -54,15 +48,15 @@ pub trait FrameSink {
     fn frame(&mut self, frame: RenderedFrame) -> Result<(), EngineError>;
 }
 
-/// Renders `tracks` through `graph` (or `settings.composition`) into `sink`: every frame, or
-/// `settings.range`, exactly. `progress` hears the frames rendered and the total after each
+/// Renders `composition` ([`crate::Project::composition`]) into `sink`, its audio resources
+/// decoded in `audio`: every frame, or `settings.range`, exactly. `progress` hears the frames rendered and the total after each
 /// frame (warmup before the range included), and cancels the render with
 /// [`EngineError::Cancelled`] by returning `false`. The returned info's `frames` is the number
 /// of frames written.
 pub fn render(
     backend: &dyn MediaBackend,
-    tracks: &[RenderTrack],
-    graph: &GraphDesc,
+    composition: &Composition,
+    audio: &AudioResources,
     settings: &RenderSettings,
     sink: &mut dyn FrameSink,
     progress: &mut dyn FnMut(usize, usize) -> bool,
@@ -70,29 +64,16 @@ pub fn render(
     let size = settings
         .size
         .map_or(OutputSize::Native, |(w, h)| OutputSize::Exact(w, h));
-    let mut renderer = match &settings.composition {
-        Some(composition) => Renderer::with_composition(
-            backend,
-            settings.timebase,
-            tracks,
-            composition,
-            graph,
-            settings.tempo,
-            &settings.bus,
-            Registry::shared(),
-            size,
-        ),
-        None => Renderer::new(
-            backend,
-            settings.timebase,
-            tracks,
-            graph,
-            settings.tempo,
-            &settings.bus,
-            Registry::shared(),
-            size,
-        ),
-    }?;
+    let mut renderer = Renderer::new(
+        backend,
+        composition,
+        audio,
+        None,
+        settings.tempo,
+        &settings.bus,
+        Registry::shared(),
+        size,
+    )?;
     renderer.set_audio_rate(settings.audio_rate.unwrap_or(DEFAULT_AUDIO_RATE));
     // Warm up as far as the graph remembers, however far that is.
     renderer.set_max_warmup_frames(MAX_WARMUP_FRAMES_LIMIT);
@@ -127,13 +108,11 @@ pub fn render(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use rastersong_media::{AudioClip, FakeBackend, FakeVideo, Rational};
-
-    use crate::sources::Modulator;
+    use rastersong_graph::GraphDesc;
+    use rastersong_media::{FakeBackend, FakeVideo, Rational};
 
     use super::*;
+    use crate::Project;
 
     fn backend() -> FakeBackend {
         FakeBackend::new().with_video(
@@ -147,12 +126,11 @@ mod tests {
         )
     }
 
-    fn silence() -> AudioClip {
-        AudioClip {
-            sample_rate: 100,
-            channels: 1,
-            samples: vec![0.0; 100].into(),
-        }
+    /// The fake video under a passthrough graph for its whole second; the audio file isn't
+    /// there, so it reads silence.
+    fn composition() -> Composition {
+        let graph = GraphDesc::from_json(PASSTHROUGH).unwrap();
+        Project::from_files("clip", "song", graph, 0.0, 1.0).composition()
     }
 
     /// Records the first byte of every frame.
@@ -184,18 +162,15 @@ mod tests {
         "connections": [ { "from": "v", "to": "o" } ] }"#;
 
     fn run(settings: &RenderSettings, sink: &mut Recorder) -> Result<RenderInfo, EngineError> {
-        let graph = GraphDesc::from_json(PASSTHROUGH).unwrap();
-        let tracks = [
-            RenderTrack::video(crate::VIDEO_SOURCE, "clip"),
-            RenderTrack::audio(
-                crate::DEFAULT_AUDIO_TRACK,
-                Arc::new(Modulator::new(&silence())),
-                0.0,
-            ),
-        ];
-        render(&backend(), &tracks, &graph, settings, sink, &mut |_, _| {
-            true
-        })
+        let audio = AudioResources::new();
+        render(
+            &backend(),
+            &composition(),
+            &audio,
+            settings,
+            sink,
+            &mut |_, _| true,
+        )
     }
 
     #[test]
@@ -249,14 +224,13 @@ mod tests {
 
     #[test]
     fn progress_hears_every_frame_and_can_cancel() {
-        let graph = GraphDesc::from_json(PASSTHROUGH).unwrap();
-        let tracks = [RenderTrack::video(crate::VIDEO_SOURCE, "clip")];
+        let (composition, audio) = (composition(), AudioResources::new());
         let mut heard = Vec::new();
         let mut sink = Recorder::default();
         render(
             &backend(),
-            &tracks,
-            &graph,
+            &composition,
+            &audio,
             &RenderSettings::default(),
             &mut sink,
             &mut |done, total| {
@@ -270,8 +244,8 @@ mod tests {
         let mut sink = Recorder::default();
         let result = render(
             &backend(),
-            &tracks,
-            &graph,
+            &composition,
+            &audio,
             &RenderSettings::default(),
             &mut sink,
             &mut |done, _| done < 3,

@@ -1,42 +1,49 @@
 //! Export: a project rendered from the start into a file, with progress, cancel and the latest
 //! frame for a preview. The CLI and the GUI's export dialog both go through here.
 
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use rastersong_graph::{GraphDesc, Registry, Tempo, render_form};
+use rastersong_graph::{Registry, Tempo, render_form};
 use rastersong_media::{AudioCache, ExportFormat, MediaBackend, MediaWriter};
 
 use crate::playback::{MixTrack, Mixer};
 use crate::sources::Modulator;
-use crate::timeline::{Bus, Timeline, TrackKind};
+use crate::timeline::{Bus, TrackKind};
 use crate::{
-    AudioSink, Composition, EngineError, FrameSink, Project, RenderInfo, RenderSettings,
-    RenderTrack, RenderedFrame, TrackMedia,
+    AudioResources, AudioSink, Composition, EngineError, FrameSink, Project, RenderInfo,
+    RenderSettings, RenderedFrame, Resource, ResourceContent, ResourceId,
 };
 
 /// What to render: a project, as the render needs it.
 #[derive(Debug, Clone)]
 pub struct ExportJob {
-    pub timeline: Timeline,
-    /// The graph rendered over the whole timeline, or, with `composition`, the description of
-    /// the open graph among the project's graphs. A project without graph items renders its mix.
-    pub graph: GraphDesc,
-    /// The project's composition; `None` renders `graph` over the whole timeline.
-    pub composition: Option<Composition>,
+    /// The project's composition, its graphs in their render form. A project without graph
+    /// items renders its mix.
+    pub composition: Composition,
     pub tempo: Tempo,
     pub audio_rate: u32,
 }
 
 impl ExportJob {
     pub fn from_project(project: &Project) -> Self {
+        Self::from_project_with(project, |_| true)
+    }
+
+    /// [`Self::from_project`] without the resources `readable` refuses (a file that is
+    /// missing), which read as gaps.
+    pub fn from_project_with(project: &Project, readable: impl Fn(&Resource) -> bool) -> Self {
+        let mut composition = project.composition_with(readable);
+        for resource in &mut composition.resources {
+            if let ResourceContent::Graph { graph } = &mut resource.content {
+                *graph = render_form(graph, Registry::shared());
+            }
+        }
         Self {
-            timeline: project.timeline(),
-            // The open graph is applied only where a graph item uses it; without one the mix
-            // is rendered.
-            graph: render_form(&project.graph, Registry::shared()),
-            composition: Some(project.composition()),
+            composition,
             tempo: project.tempo,
             audio_rate: project.audio_rate,
         }
@@ -44,13 +51,7 @@ impl ExportJob {
 
     /// The buses the project can export: its own, or the stereo main bus when it lists none.
     pub fn buses(&self) -> Vec<Bus> {
-        if self.timeline.buses.is_empty() {
-            vec![Bus::main()]
-        } else {
-            let mut buses = self.timeline.buses.clone();
-            Bus::mark_master(&mut buses);
-            buses
-        }
+        self.composition.render_buses()
     }
 
     /// The bus named `name`.
@@ -58,50 +59,50 @@ impl ExportJob {
         self.buses().into_iter().find(|b| b.name == name)
     }
 
-    /// Decodes every audio track. Returns the tracks to render and the audio tracks the sound
-    /// can be mixed from.
+    /// Decodes the audio every item on an audio track plays, each file once. Returns it by
+    /// resource, and the audio tracks the sound can be mixed from.
     pub fn load(
         &self,
         backend: &dyn MediaBackend,
         cache: Option<&AudioCache>,
-    ) -> Result<(Vec<RenderTrack>, Vec<SourceTrack>), EngineError> {
-        let mut tracks = Vec::new();
+    ) -> Result<(AudioResources, Vec<SourceTrack>), EngineError> {
+        let mut audio = AudioResources::new();
+        let mut clips: HashMap<ResourceId, Arc<rastersong_media::AudioClip>> = HashMap::new();
         let mut sources = Vec::new();
-        for spec in &self.timeline.tracks {
-            let media = match spec.kind {
-                TrackKind::Video => TrackMedia::Video {
-                    path: spec.path.clone(),
-                    stream: spec.stream,
-                },
-                TrackKind::Audio => {
-                    let clip = match cache {
-                        Some(cache) => cache.load(backend, &spec.path, spec.audio_options()),
-                        None => backend.load_audio(&spec.path, spec.audio_options()),
-                    }
-                    .map_err(|error| EngineError::AudioTrack {
-                        name: spec.name.clone(),
-                        error,
-                    })?;
-                    let modulator = Arc::new(Modulator::new(&clip));
-                    sources.push(SourceTrack {
-                        bus: spec.bus.clone(),
-                        track: MixTrack {
-                            clip: Arc::new(clip),
-                            items: spec.items.clone(),
-                            gain: spec.gain,
-                        },
-                    });
-                    TrackMedia::Audio(modulator)
+        for track in self.composition.tracks_of(TrackKind::Audio) {
+            for resource in self.composition.played_by(track) {
+                let (Some(file), Entry::Vacant(slot)) = (resource.file(), clips.entry(resource.id))
+                else {
+                    continue;
+                };
+                let clip = match cache {
+                    Some(cache) => cache.load(backend, &file.path, file.audio_options()),
+                    None => backend.load_audio(&file.path, file.audio_options()),
                 }
-            };
-            tracks.push(RenderTrack {
-                name: spec.name.clone(),
-                media,
-                items: spec.items.clone(),
-                in_mix: spec.gain > 0.0,
+                .map_err(|error| EngineError::AudioTrack {
+                    name: track.name.clone(),
+                    error,
+                })?;
+                audio.insert(resource.id, Arc::new(Modulator::new(&clip)));
+                slot.insert(Arc::new(clip));
+            }
+            let items: Vec<_> = track
+                .items
+                .iter()
+                .filter_map(|i| Some((i.clone(), clips.get(&i.resource)?.clone())))
+                .collect();
+            if items.is_empty() {
+                continue;
+            }
+            sources.push(SourceTrack {
+                bus: track.bus.clone(),
+                track: MixTrack {
+                    items,
+                    gain: track.mix_gain(),
+                },
             });
         }
-        Ok((tracks, sources))
+        Ok((audio, sources))
     }
 
     /// The render settings for `bus` at `size` (the project's for `None`), writing `range` (every
@@ -113,18 +114,16 @@ impl ExportJob {
         range: Option<Range<usize>>,
     ) -> RenderSettings {
         RenderSettings {
-            timebase: self.timeline.timebase,
             size,
             range,
             tempo: self.tempo,
             audio_rate: Some(self.audio_rate),
             bus,
-            composition: self.composition.clone(),
         }
     }
 }
 
-/// How to export a job into a file.
+// How to export a job into a file.
 #[derive(Debug, Clone)]
 pub struct ExportSettings {
     pub format: ExportFormat,
@@ -227,7 +226,7 @@ pub fn export(
 ) -> Result<RenderInfo, EngineError> {
     let _span = tracing::trace_span!("export").entered();
     let result = (|| {
-        let (tracks, sources) = {
+        let (audio, sources) = {
             let _span = tracing::trace_span!("load").entered();
             job.load(backend, cache)?
         };
@@ -242,8 +241,8 @@ pub fn export(
         );
         let info = crate::render(
             backend,
-            &tracks,
-            &job.graph,
+            &job.composition,
+            &audio,
             &render_settings,
             &mut Previewed {
                 sink: &mut sink,
@@ -404,16 +403,14 @@ mod tests {
             SourceTrack {
                 bus: "Main".into(),
                 track: MixTrack {
-                    clip: clip(0.5),
-                    items: vec![Item::whole(0.0)],
+                    items: vec![(Item::whole(crate::ResourceId(0), 0.0), clip(0.5))],
                     gain: 1.0,
                 },
             },
             SourceTrack {
                 bus: "Stems".into(),
                 track: MixTrack {
-                    clip: clip(0.25),
-                    items: vec![Item::whole(1.0)],
+                    items: vec![(Item::whole(crate::ResourceId(0), 1.0), clip(0.25))],
                     gain: 0.5,
                 },
             },
@@ -494,7 +491,7 @@ mod tests {
     #[test]
     fn a_project_without_buses_exports_the_main_bus() {
         let job = ExportJob::from_project(&Project::new(
-            GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap(),
+            rastersong_graph::GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap(),
         ));
         assert_eq!(job.buses(), vec![Bus::main()]);
         assert_eq!(job.bus("Main"), Some(Bus::main()));

@@ -12,13 +12,14 @@ use eframe::egui::{
     self, Color32, CornerRadius, FontId, Margin, RichText, Sense, Stroke, Ui, UiBuilder, Vec2,
     WidgetInfo, WidgetType, vec2,
 };
-use rastersong_engine::LoadedTrack;
+use rastersong_engine::LoadedAudio;
 use rastersong_engine::playback::{MixTrack, Mixer};
 use rastersong_engine::{
-    AudioSink, BackendInfo, CompileOptions, Engine, EngineConfig, EngineStatus, Frame, Graph,
-    GraphDesc, GraphItem, Item, ItemRef, MediaBackend, NodeStats, PROJECT_EXTENSION, PlaybackClock,
-    PreviewScale, Project, ProjectTrack, Registry, RenderInfo, ResourceId, ResourceKind,
-    Thumbnails, Timeline, TimelineMode, TrackKind, VideoInfo, VideoKey, resource_name_for,
+    AudioSink, BackendInfo, CompileOptions, Composition, DEFAULT_GRAPH_NAME, Engine, EngineConfig,
+    EngineStatus, Frame, Graph, GraphDesc, Item, ItemLengths, ItemRef, MediaBackend, NodeStats,
+    PROJECT_EXTENSION, PlaybackClock, PreviewScale, Project, ProjectTrack, Registry, RenderInfo,
+    Resource, ResourceId, Thumbnails, TimelineMode, TrackKind, VideoInfo, VideoKey,
+    resource_name_for,
 };
 use rastersong_lang::{tr, tr_args};
 
@@ -34,13 +35,13 @@ const AUDIO_RATES: [u32; 4] = [44_100, 48_000, 88_200, 96_000];
 
 /// One track as playback mixes it: its name, items and gain.
 /// A track as playback mixes it: name, items, level, and whether it is routed to the master bus.
-type MixEntry = (String, Vec<Item>, f32, bool);
+type MixEntry = (Vec<Item>, f32, bool);
 use crate::editor::{CanvasContext, GraphEditor, InspectorContext, StatsContext, without_layout};
 use crate::history::History;
-use crate::item_inspector::{ItemEdit, graph_item_inspector};
+use crate::item_inspector::item_inspector;
 use crate::preview::{Feed, PreviewView, clamp_split, split_rects, split_sides};
 use crate::resources::{
-    DraggedGraph, DraggedResource, PendingImport, ResourceAction, import_dialog, remove_dialog,
+    DraggedResources, PanelContext, PendingImport, ResourceAction, import_dialog, remove_dialog,
     resource_kind, resource_name, resources_panel,
 };
 use crate::settings::Settings;
@@ -48,9 +49,9 @@ use crate::theme::{
     CONTROL_HEIGHT, DENSE_HEIGHT, SMALL_SIZE, TIMECODE_SIZE, Theme, ThemeChoice, apply_style,
 };
 use crate::timeline::{
-    DropGhost, GhostItem, GhostRow, GraphAction, GraphDrop, GraphItemView, GraphTrackView,
-    LANE_HEIGHT, LANE_HEIGHT_RANGE, Thumbnail, TimelineLayout, TimelineModel, TimelineView,
-    TrackAction, TrackThumbnails, TrackView, bar_beat, bar_beat_tick, beats_at, timecode, timeline,
+    DropGhost, FileThumbnails, GhostItem, GhostRow, LANE_HEIGHT, LANE_HEIGHT_RANGE, ResourceView,
+    Thumbnail, TimelineLayout, TimelineModel, TimelineView, TrackAction, TrackView, bar_beat,
+    bar_beat_tick, beats_at, timecode, timeline,
 };
 use crate::track_inspector::track_inspector;
 use crate::widgets::{
@@ -60,11 +61,6 @@ use crate::widgets::{
 
 /// The graph a new project starts with: the basic workflow from docs/concepts.md.
 pub const STARTER_GRAPH: &str = include_str!("../../../examples/graphs/am_bands.json");
-
-/// What the source engine renders: the video, untouched.
-const SOURCE_GRAPH: &str = r#"{ "version": 0,
-    "nodes": [ { "id": "video", "type": "video_input" }, { "id": "out", "type": "output" } ],
-    "connections": [ { "from": "video", "to": "out" } ] }"#;
 
 /// The shortest a graph dropped on the timeline lasts, in seconds, when the project is shorter.
 const MIN_GRAPH_ITEM_SECONDS: f64 = 5.0;
@@ -110,8 +106,8 @@ pub struct App {
     engine: Engine,
     /// For quick checks on media files (e.g. whether a video has sound).
     backend: Arc<dyn MediaBackend>,
-    /// Thumbnails of each video stream the timeline's video tracks play: tracks of one
-    /// resource share an entry.
+    /// Thumbnails of each video resource's stream, placed or not: their services also give the
+    /// files' lengths. Resources of one stream share an entry.
     thumbnails: HashMap<VideoKey, VideoThumbnails>,
     /// The first video track's stream, which a changed timeline view starts over for.
     thumbnail_video: Option<VideoKey>,
@@ -138,15 +134,17 @@ pub struct App {
     /// The user chose to close without saving.
     allow_close: bool,
     editor: GraphEditor,
-    /// The graph (without layout) the engine is rendering.
+    /// The graph resource the editor shows. The project always has it: a project without a
+    /// graph gets one when it is opened.
+    open_graph: Option<ResourceId>,
+    /// The open graph (without layout) as last handed to the engine.
     sent_graph: GraphDesc,
     /// The graph and compile options last inspected, and what inspecting them found: every
     /// node's layouts, tags and warnings, including nodes that don't feed the output.
     inspected_for: Option<(GraphDesc, CompileOptions)>,
     inspected: Vec<NodeStats>,
-    /// Mix last given to the audio output: (track, offset, gain) per track.
-    /// What the playback mix was last built from: the render's audio, and the tracks' names,
-    /// offsets and gains.
+    /// What the playback mix was last built from: the render's audio, and each audio track's
+    /// items, gain and whether it is on the master bus.
     sent_mix: Option<(AudioSink, Vec<MixEntry>)>,
     /// The connection being listened to with the Listen tool, and from when.
     listening: Option<Listening>,
@@ -160,23 +158,19 @@ pub struct App {
     applied_theme: Option<ThemeChoice>,
     /// The selected track, by name.
     selected_track: Option<String>,
-    /// Whether the inspector shows the selected track: set when a track's header or item is
-    /// clicked, cleared when a graph item or a node is.
+    /// Whether the inspector shows the selected track: set when a track's header is clicked,
+    /// cleared when an item or a node is.
     inspect_track: bool,
-    /// The selected timeline items.
+    /// The selected timeline items, of every kind. A graph item's inspector replaces the node
+    /// inspector while it is the only one selected.
     selected_items: Vec<ItemRef>,
-    /// The selected graph item: its graph track's name and its place on it. Its inspector
-    /// replaces the node inspector while it is selected.
-    selected_graph_items: Vec<(String, usize)>,
-    /// The row of the video and audio tracks the pointer was over when the timeline was last
-    /// drawn, which the drop preview plans with.
+    /// The track the pointer was over when the timeline was last drawn, which the drop preview
+    /// plans with.
     hovered_row: Option<usize>,
     /// The line between tracks a resource is being dragged onto.
     hovered_slot: Option<usize>,
     /// Timeline items copied, with the names of their tracks.
     item_clipboard: Vec<(String, Item)>,
-    /// The copied graph item and the graph track it came from.
-    graph_item_clipboard: Vec<(String, GraphItem)>,
     /// When (egui time) the preview started waiting on a frame to render, if it is.
     waiting_since: Option<f64>,
     preview: Option<(egui::TextureHandle, Arc<Frame>)>,
@@ -184,7 +178,7 @@ pub struct App {
     /// preview shows it, so it costs nothing otherwise.
     source_engine: Engine,
     /// The video the source engine was given.
-    source_video_sent: Option<Timeline>,
+    source_video_sent: Option<Composition>,
     /// Resources whose files aren't there, checked about once a second.
     missing: HashSet<ResourceId>,
     /// The streams of each linked file found so far, for the Resources panel's detail lines.
@@ -217,7 +211,7 @@ pub struct App {
     /// Files with several streams, waiting on the import dialog in turn.
     pending_imports: VecDeque<PendingImport>,
     /// The resource waiting on the "remove resource?" warning, because tracks play it.
-    resource_removal: Option<ResourceId>,
+    resource_removal: Option<Vec<ResourceId>>,
     initialized: bool,
     title: String,
 }
@@ -239,11 +233,13 @@ impl App {
     ) -> Self {
         let engine = Engine::new(backend.clone(), EngineConfig::default());
         let source_engine = Engine::new(backend.clone(), EngineConfig::default());
-        let editor = graph_editor(&project);
+        let open_graph = first_graph(&mut project);
+        let editor = graph_editor(&project, Some(open_graph));
         // The editor fills in positions, full port names and a missing output; that isn't an
         // unsaved change.
-        project.graph = editor.to_desc();
+        *project.graph_mut(open_graph).expect("the first graph") = editor.to_desc();
         let mut app = Self {
+            open_graph: Some(open_graph),
             engine,
             backend,
             thumbnails: HashMap::new(),
@@ -261,7 +257,7 @@ impl App {
             history: History::new(project.clone()),
             confirm: None,
             allow_close: false,
-            sent_graph: GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap(),
+            sent_graph: empty_graph(),
             inspected_for: None,
             inspected: Vec::new(),
             sent_mix: None,
@@ -271,11 +267,9 @@ impl App {
             selected_track: None,
             inspect_track: false,
             selected_items: Vec::new(),
-            selected_graph_items: Vec::new(),
             hovered_row: None,
             hovered_slot: None,
             item_clipboard: Vec::new(),
-            graph_item_clipboard: Vec::new(),
             project,
             project_path: None,
             editor,
@@ -310,8 +304,6 @@ impl App {
             title: String::new(),
         };
         app.send_project();
-        app.source_engine
-            .set_graph(GraphDesc::from_json(SOURCE_GRAPH).expect("the source graph is valid"));
         app
     }
 
@@ -391,11 +383,14 @@ impl App {
             .then(|| (self.split_position, split_sides(self.preview_feed)))
     }
 
-    /// Each video track's file length in seconds, once it is known.
+    /// Each video resource's length in seconds, once it is known, but those whose files are
+    /// missing.
     pub fn video_durations(&self) -> Vec<Option<f64>> {
         self.project
-            .tracks_of(TrackKind::Video)
-            .map(|t| self.track_duration(t))
+            .resources
+            .iter()
+            .filter(|r| r.kind() == TrackKind::Video && !self.missing.contains(&r.id))
+            .map(|r| self.resource_duration(r.id))
             .collect()
     }
 
@@ -432,26 +427,28 @@ impl App {
     fn send_project(&mut self) {
         self.engine.set_preview_scale(self.settings.preview_scale());
         self.refresh_missing(true);
-        self.engine.set_timeline(self.timeline_of(&self.project));
-        self.sent_graph = without_layout(&self.project.graph);
         self.engine
-            .set_graphs(self.sent_graph.clone(), Some(self.project.composition()));
+            .set_composition(self.composition_of(&self.project));
+        self.sent_graph = self.open_desc().map_or_else(empty_graph, without_layout);
+        self.engine.set_inspected(self.open_graph);
         self.engine.set_tempo(self.project.tempo);
         self.engine.set_bypass_all(self.project.plays_track_mix());
         self.sent_mix = None;
     }
 
     fn load_project(&mut self, mut project: Project, path: Option<PathBuf>) {
-        self.editor = graph_editor(&project);
+        let first = first_graph(&mut project);
+        self.open_graph = Some(first);
+        self.editor = graph_editor(&project, self.open_graph);
         if !self.editor.warnings.is_empty() {
             self.error = Some(self.editor.warnings.join("\n"));
         }
         // The editor fills in positions and full port names; that isn't an unsaved change.
-        project.graph = self.editor.to_desc();
+        *project.graph_mut(first).expect("the first graph") = self.editor.to_desc();
         self.saved = project.clone();
         self.history = History::new(project.clone());
         self.selected_track = None;
-        self.selected_graph_items.clear();
+        self.selected_items.clear();
         self.project = project;
         self.project_path = path;
         self.clock = PlaybackClock::new(30.0, 0);
@@ -478,24 +475,29 @@ impl App {
         {
             self.project.remove_track(i);
         }
-        let name = resource_name_for(&path, ResourceKind::Video);
+        let name = resource_name_for(&path, TrackKind::Video);
         let id = self
             .project
-            .add_resource(ResourceKind::Video, &name, &path, None);
-        let known = self.project.tracks_of(TrackKind::Audio).any(|t| {
-            self.project
-                .track_resource(t)
-                .is_some_and(|r| r.path == path && r.stream.is_none())
-        });
+            .add_resource(TrackKind::Video, &name, &path, None);
+        let known = self
+            .project
+            .tracks_of(TrackKind::Audio)
+            .flat_map(|t| &t.items)
+            .filter_map(|i| self.project.resource(i.resource))
+            .any(|r| r.path() == Some(path.as_path()) && r.stream().is_none());
         let with_sound = has_audio && !known;
         if with_sound {
-            let name = resource_name_for(&path, ResourceKind::Audio);
+            let name = resource_name_for(&path, TrackKind::Audio);
             self.project
-                .add_resource(ResourceKind::Audio, &name, &path, None);
+                .add_resource(TrackKind::Audio, &name, &path, None);
         }
-        let placed = self.project.place_linked(id, None, 0.0, with_sound);
+        let lengths = self.item_lengths();
+        let placed = self
+            .project
+            .place_linked(id, None, 0.0, with_sound, &lengths);
         self.selected_track = placed.first().map(|at| at.track.clone());
-        self.engine.set_timeline(self.timeline_of(&self.project));
+        self.engine
+            .set_composition(self.composition_of(&self.project));
         self.clock.seek(0);
     }
 
@@ -503,10 +505,10 @@ impl App {
     /// the file.
     pub fn add_audio_tracks(&mut self, paths: impl IntoIterator<Item = PathBuf>) {
         for path in paths {
-            let name = resource_name_for(&path, ResourceKind::Audio);
+            let name = resource_name_for(&path, TrackKind::Audio);
             let id = self
                 .project
-                .add_resource(ResourceKind::Audio, &name, &path, None);
+                .add_resource(TrackKind::Audio, &name, &path, None);
             self.add_resource_track(id, 0.0);
         }
     }
@@ -566,14 +568,21 @@ impl App {
     /// Adds a track playing resource `id` from `position` seconds, named after it. Returns the
     /// track's name.
     pub fn add_resource_track(&mut self, id: ResourceId, position: f64) -> Option<String> {
-        let name = self.project.add_track_for(id, position)?;
+        let lengths = self.item_lengths();
+        let name = self.project.add_track_for(id, position, &lengths)?;
         self.selected_track = Some(name.clone());
         Some(name)
     }
 
     /// Adds an empty graph track on top of the Graphs section. Returns its name.
     pub fn add_graph_track(&mut self) -> String {
-        self.project.add_graph_track(tr("project.track.graphs"))
+        self.project
+            .add_empty_track_at(TrackKind::Graph, tr("project.track.graphs"), Some(0))
+    }
+
+    /// The track in timeline row `row`: the timeline lists every track, as the project does.
+    fn track_name(&self, row: usize) -> Option<String> {
+        self.project.tracks.get(row).map(|t| t.name.clone())
     }
 
     /// Drops resource `id` with the track in timeline row `row` under the pointer, at `position`
@@ -588,39 +597,12 @@ impl App {
         position: f64,
         linked: bool,
     ) -> Vec<ItemRef> {
-        let hovered = row
-            .and_then(|r| self.project.tracks.get(r))
-            .map(|t| t.name.clone());
-        let placed = self
-            .project
-            .place_linked(id, hovered.as_deref(), position, linked);
-        if let Some(first) = placed.first() {
-            self.selected_track = Some(first.track.clone());
-        }
-        placed
-    }
-
-    /// The resources of a drag that each start a drop: with `linked` a resource covered by the
-    /// file of an earlier one (its sound, dragged with its picture) isn't asked for twice.
-    fn drop_leaders(&self, ids: &[ResourceId], linked: bool) -> Vec<ResourceId> {
-        let mut covered: Vec<ResourceId> = Vec::new();
-        let mut leaders = Vec::new();
-        for &id in ids {
-            if covered.contains(&id) {
-                continue;
-            }
-            leaders.push(id);
-            if linked {
-                covered.extend(self.project.siblings(id));
-            } else {
-                covered.push(id);
-            }
-        }
-        leaders
+        self.drop_resources(&[id], row, position, linked)
     }
 
     /// Drops several resources dragged together (stems, say), see [`Self::drop_resource`]: the
-    /// first onto the track under the pointer, each of them on a track of its own.
+    /// first onto the track under the pointer, each on a track no other resource of the drop
+    /// takes. Selects the items placed.
     pub fn drop_resources(
         &mut self,
         ids: &[ResourceId],
@@ -628,15 +610,17 @@ impl App {
         position: f64,
         linked: bool,
     ) -> Vec<ItemRef> {
-        let mut placed = Vec::new();
-        for (n, id) in self.drop_leaders(ids, linked).into_iter().enumerate() {
-            placed.extend(self.drop_resource(id, row.filter(|_| n == 0), position, linked));
-        }
+        let hovered = row.and_then(|r| self.track_name(r));
+        let lengths = self.item_lengths();
+        let placed = self
+            .project
+            .place_drop(ids, hovered.as_deref(), position, linked, &lengths);
+        self.select_placed(&placed);
         placed
     }
 
-    /// Drops several resources dragged together on new tracks before the track now at index
-    /// `slot` (see [`Project::place_many_at`]).
+    /// Drops several resources dragged together on new tracks before the track now in timeline
+    /// row `slot` (see [`Project::place_many_at`]). Selects the items placed.
     pub fn drop_resources_at(
         &mut self,
         ids: &[ResourceId],
@@ -644,14 +628,15 @@ impl App {
         position: f64,
         linked: bool,
     ) -> Vec<ItemRef> {
-        let placed = self.project.place_many_at(ids, slot, position, linked);
-        if let Some(first) = placed.first() {
-            self.selected_track = Some(first.track.clone());
-        }
+        let lengths = self.item_lengths();
+        let placed = self
+            .project
+            .place_many_at(ids, slot, position, linked, &lengths);
+        self.select_placed(&placed);
         placed
     }
 
-    /// Drops resource `id` on new tracks before the track now at index `slot` (see
+    /// Drops resource `id` on new tracks before the track now in timeline row `slot` (see
     /// [`Project::place_linked_at`]). Returns the items placed, `id`'s first.
     pub fn drop_resource_at(
         &mut self,
@@ -660,33 +645,80 @@ impl App {
         position: f64,
         linked: bool,
     ) -> Vec<ItemRef> {
-        let placed = self.project.place_linked_at(id, slot, position, linked);
-        if let Some(first) = placed.first() {
-            self.selected_track = Some(first.track.clone());
-        }
-        placed
+        self.drop_resources_at(&[id], slot, position, linked)
+    }
+
+    /// After a drop: the items placed are the selection, and the first one's track the
+    /// selected track.
+    fn select_placed(&mut self, placed: &[ItemRef]) {
+        let Some(first) = placed.first() else { return };
+        self.selected_track = Some(first.track.clone());
+        self.selected_items = placed.to_vec();
+        // One item placed shows in the item inspector; a file's picture and sound, the track of
+        // the first.
+        self.inspect_track = placed.len() > 1;
     }
 
     /// Adds a passthrough graph and opens it. Returns its id.
-    pub fn new_graph(&mut self) -> u32 {
-        self.project.set_open_graph(self.editor.to_desc());
-        let id = self.project.add_graph("Graph", None);
+    pub fn new_graph(&mut self) -> ResourceId {
+        self.store_editor();
+        let id = self.project.add_graph(DEFAULT_GRAPH_NAME, None);
         self.open_graph(id);
         id
     }
 
-    /// Opens a graph from the Resources panel in the editor. It is the graph rendered, too:
-    /// there is one at a time until graph layers can place several.
-    pub fn open_graph(&mut self, id: u32) {
-        self.project.set_open_graph(self.editor.to_desc());
-        if !self.project.open_graph(id) {
+    /// Shows graph resource `id` in the editor. Opening a graph changes nothing in the render:
+    /// graph items say where each graph plays.
+    pub fn open_graph(&mut self, id: ResourceId) {
+        self.store_editor();
+        if Some(id) == self.open_graph || self.project.graph(id).is_none() {
             return;
         }
-        self.editor = graph_editor(&self.project);
+        self.show_graph(id);
+    }
+
+    /// The graph resource the editor shows: none once the last graph is removed.
+    pub fn open_graph_id(&self) -> Option<ResourceId> {
+        self.open_graph
+    }
+
+    /// Points the editor at graph resource `id`, which the project has.
+    fn show_graph(&mut self, id: ResourceId) {
+        self.open_graph = Some(id);
+        self.editor = graph_editor(&self.project, Some(id));
         if !self.editor.warnings.is_empty() {
             self.error = Some(self.editor.warnings.join("\n"));
         }
-        self.project.graph = self.editor.to_desc();
+        // The editor fills in positions and full port names; that isn't an edit.
+        if let Some(graph) = self.project.graph_mut(id) {
+            *graph = self.editor.to_desc();
+        }
+    }
+
+    /// Writes the editor's graph back into its resource.
+    fn store_editor(&mut self) {
+        if let Some(graph) = self.open_graph.and_then(|id| self.project.graph_mut(id)) {
+            *graph = self.editor.to_desc();
+        }
+    }
+
+    /// Shows the empty canvas: no graph is open.
+    fn close_graph(&mut self) {
+        self.store_editor();
+        self.open_graph = None;
+        self.editor = graph_editor(&self.project, None);
+    }
+
+    /// The open graph as the project holds it, if one is open.
+    pub fn open_desc(&self) -> Option<&GraphDesc> {
+        self.project.graph(self.open_graph?)
+    }
+
+    /// The open graph's name, or nothing when none is open.
+    pub fn open_graph_name(&self) -> &str {
+        self.open_graph
+            .and_then(|id| self.project.resource(id))
+            .map_or("", |r| r.name.as_str())
     }
 
     /// Points the resource's file (and the other streams of it) at `path`.
@@ -696,9 +728,9 @@ impl App {
         }
     }
 
-    /// What the engine plays: the tracks whose files are there.
-    fn timeline_of(&self, project: &Project) -> Timeline {
-        project.timeline_with(|r| !self.missing.contains(&r.id))
+    /// What the engine plays: the project without the resources whose files are missing.
+    fn composition_of(&self, project: &Project) -> Composition {
+        project.composition_with(|r| !self.missing.contains(&r.id))
     }
 
     /// Looks for resources whose files are gone, at most once a second unless `now`.
@@ -711,18 +743,23 @@ impl App {
             return;
         }
         self.missing_checked = Some(Instant::now());
-        self.missing = self
-            .project
-            .resources
-            .iter()
-            .filter(|r| !self.backend.exists(&r.path))
-            .map(|r| r.id)
+        let files = || {
+            self.project
+                .resources
+                .iter()
+                .filter_map(|r| Some((r.id, r.path()?)))
+        };
+        self.missing = files()
+            .filter(|(_, path)| !self.backend.exists(path))
+            .map(|(id, _)| id)
             .collect();
-        for resource in &self.project.resources {
-            if !self.missing.contains(&resource.id) && !self.streams.contains_key(&resource.path) {
-                let streams = self.backend.streams(&resource.path).unwrap_or_default();
-                self.streams.insert(resource.path.clone(), streams);
-            }
+        let unread: Vec<PathBuf> = files()
+            .filter(|(id, path)| !self.missing.contains(id) && !self.streams.contains_key(*path))
+            .map(|(_, path)| path.to_owned())
+            .collect();
+        for path in unread {
+            let streams = self.backend.streams(&path).unwrap_or_default();
+            self.streams.insert(path, streams);
         }
     }
 
@@ -731,37 +768,94 @@ impl App {
         &self.missing
     }
 
-    /// Removes a resource and the tracks that play it.
-    pub fn remove_resource(&mut self, id: ResourceId) {
-        let removed = self.project.remove_resource(id);
-        self.selected_items.retain(|r| !removed.contains(&r.track));
+    /// Removes resources of any kind and their items. The tracks they were on stay. When the
+    /// open graph goes, the editor opens the graph after it in the panel (or before it), or
+    /// shows the empty canvas when no graph is left.
+    pub fn remove_resources(&mut self, ids: &[ResourceId]) {
+        self.store_editor();
+        let reopen = self
+            .open_graph
+            .filter(|open| ids.contains(open))
+            .map(|open| {
+                let graphs: Vec<ResourceId> = self.project.graph_ids().collect();
+                let at = graphs.iter().position(|&g| g == open).unwrap_or(0);
+                let kept = |g: &&ResourceId| !ids.contains(g);
+                let after = graphs[at..].iter().find(kept);
+                after
+                    .or_else(|| graphs[..at].iter().rev().find(kept))
+                    .copied()
+            });
+        // The removed resources' items leave the selection; the others after them on a track
+        // move up as many places as were removed before them.
+        let project = &self.project;
+        let gone = |track: &str, k: usize| {
+            project
+                .item(&ItemRef::new(track, k))
+                .is_some_and(|i| ids.contains(&i.resource))
+        };
+        self.selected_items = self
+            .selected_items
+            .iter()
+            .filter(|at| !gone(&at.track, at.item))
+            .map(|at| {
+                let before = (0..at.item).filter(|&k| gone(&at.track, k)).count();
+                ItemRef::new(at.track.clone(), at.item - before)
+            })
+            .collect();
+        for &id in ids {
+            self.project.remove_resource(id);
+        }
         self.tidy_track_selection();
+        match reopen {
+            Some(Some(next)) => self.show_graph(next),
+            Some(None) => self.close_graph(),
+            None => {}
+        }
     }
 
     fn resource_action(&mut self, action: ResourceAction) {
         match action {
             ResourceAction::Import => self.pick_media(),
-            ResourceAction::AddToTimeline(id) => {
-                let at = self.clock.frame() as f64 / self.clock_rate();
-                self.add_resource_track(id, at);
-            }
             ResourceAction::NewGraph => {
                 self.new_graph();
             }
-            ResourceAction::OpenGraph(id) => self.open_graph(id),
-            ResourceAction::RenameGraph(id, name) => {
-                self.project.rename_graph(id, &name);
+            ResourceAction::Open(id) => self.open_graph(id),
+            ResourceAction::AddToTimeline(ids) => {
+                let at = self.clock.frame() as f64 / self.clock_rate();
+                for id in ids {
+                    self.add_resource_track(id, at);
+                }
             }
-            ResourceAction::DuplicateGraph(id) => {
+            ResourceAction::Rename(id, name) => {
+                self.project.rename_resource(id, &name);
+            }
+            ResourceAction::SetColor(ids, color) => {
+                for id in ids {
+                    self.project.set_resource_color(id, color);
+                }
+            }
+            ResourceAction::Duplicate(id) => {
                 // The open graph is copied as it is in the editor now.
-                self.project.set_open_graph(self.editor.to_desc());
-                self.project.duplicate_graph(id);
+                self.store_editor();
+                self.project.duplicate_resource(id);
             }
-            ResourceAction::RemoveGraph(id) => {
-                self.project.remove_graph(id);
+            ResourceAction::Remove(ids) => {
+                if ids
+                    .iter()
+                    .all(|&id| self.project.resource_users(id).is_empty())
+                {
+                    self.remove_resources(&ids);
+                } else {
+                    self.resource_removal = Some(ids);
+                }
             }
             ResourceAction::Relocate(id) => {
-                let Some(old) = self.project.resource(id).map(|r| r.path.clone()) else {
+                let Some(old) = self
+                    .project
+                    .resource(id)
+                    .and_then(|r| r.path())
+                    .map(Path::to_owned)
+                else {
                     return;
                 };
                 let mut dialog = rfd::FileDialog::new();
@@ -773,19 +867,6 @@ impl App {
                 }
                 if let Some(path) = dialog.pick_file() {
                     self.relocate_resource(id, path);
-                }
-            }
-            ResourceAction::Rename(id, name) => {
-                self.project.rename_resource(id, &name);
-            }
-            ResourceAction::SetColor(id, color) => {
-                self.project.set_resource_color(id, color);
-            }
-            ResourceAction::Remove(id) => {
-                if self.project.resource_users(id).is_empty() {
-                    self.remove_resource(id);
-                } else {
-                    self.resource_removal = Some(id);
                 }
             }
         }
@@ -811,17 +892,29 @@ impl App {
                 None => {}
             }
         }
-        if let Some(id) = self.resource_removal {
-            let Some(resource) = self.project.resource(id) else {
+        if let Some(ids) = &mut self.resource_removal {
+            ids.retain(|&id| self.project.resource(id).is_some());
+            let ids = ids.clone();
+            if ids.is_empty() {
                 self.resource_removal = None;
                 return;
-            };
-            let name = resource.name.clone();
-            let users = self.project.resource_users(id);
-            match remove_dialog(ui.ctx(), &name, &users) {
+            }
+            let names: Vec<String> = ids
+                .iter()
+                .filter_map(|&id| Some(self.project.resource(id)?.name.clone()))
+                .collect();
+            let mut users: Vec<String> = Vec::new();
+            for &id in &ids {
+                for track in self.project.resource_users(id) {
+                    if !users.contains(&track) {
+                        users.push(track);
+                    }
+                }
+            }
+            match remove_dialog(ui.ctx(), &names, &users) {
                 Some(true) => {
                     self.resource_removal = None;
-                    self.remove_resource(id);
+                    self.remove_resources(&ids);
                 }
                 Some(false) => self.resource_removal = None,
                 None => {}
@@ -946,12 +1039,22 @@ impl App {
 
     /// Puts the project back to an earlier (or later) state from the history.
     fn restore(&mut self, project: Project) {
-        self.engine.set_timeline(self.timeline_of(&project));
-        self.sent_graph = without_layout(&project.graph);
-        self.engine
-            .set_graphs(self.sent_graph.clone(), Some(project.composition()));
-        self.editor.restore(&project.graph);
         self.project = project;
+        // A graph made since is gone: the editor shows the first graph there is instead, or
+        // the empty canvas when there is none.
+        let first = self.project.graph_ids().next();
+        if let Some(graph) = self.open_graph.and_then(|id| self.project.graph(id)) {
+            self.editor.restore(graph);
+        } else if let Some(first) = first {
+            self.show_graph(first);
+        } else {
+            self.open_graph = None;
+            self.editor = graph_editor(&self.project, None);
+        }
+        self.engine
+            .set_composition(self.composition_of(&self.project));
+        self.sent_graph = self.open_desc().map_or_else(empty_graph, without_layout);
+        self.engine.set_inspected(self.open_graph);
         self.tidy_track_selection();
     }
 
@@ -1085,13 +1188,13 @@ impl App {
                 };
                 card_panel(ui, resources, gaps, |ui| {
                     card(ui, |ui| {
-                        let actions = resources_panel(
-                            ui,
-                            &self.project,
-                            &self.missing,
-                            &self.streams,
-                            self.settings.open_graphs_on_click,
-                        );
+                        let context = PanelContext {
+                            missing: &self.missing,
+                            streams: &self.streams,
+                            open_graph: self.open_graph,
+                            open_on_click: self.settings.open_graphs_on_click,
+                        };
+                        let actions = resources_panel(ui, &self.project, &context);
                         for action in actions {
                             self.resource_action(action);
                         }
@@ -1124,7 +1227,6 @@ impl App {
         card_panel(ui, preview, Margin { left: gap, ..upper }, |ui| {
             card(ui, |ui| self.preview_column(ui));
         });
-        let mut item_edits = Vec::new();
         let mut track_actions = Vec::new();
         let inspector = egui::Panel::right("inspector")
             .default_size(340.0)
@@ -1144,17 +1246,17 @@ impl App {
                         .selected_track
                         .as_deref()
                         .filter(|_| self.inspect_track)
-                        .and_then(|name| self.project.tracks().position(|t| t.name == name));
+                        .and_then(|name| self.project.track_index(name));
                     if let Some(row) = track {
                         let buses: Vec<String> =
                             self.project.buses.iter().map(|b| b.name.clone()).collect();
                         track_actions = track_inspector(ui, &self.project, &buses, row);
                         return;
                     }
-                    if let [(track, item)] = &self.selected_graph_items[..]
-                        && self.project.graph_item(track, *item).is_some()
+                    if let Some(at) = self.inspected_item()
+                        && let Some(row) = self.project.track_index(&at.track)
                     {
-                        item_edits = graph_item_inspector(ui, &self.project, track, *item);
+                        track_actions = item_inspector(ui, &self.project, row, at.item);
                         return;
                     }
                     // Bus outputs write to the buses but the master, which is the Audio Output's.
@@ -1191,9 +1293,6 @@ impl App {
         .rect;
         for action in track_actions {
             self.track_action(ui.ctx(), action);
-        }
-        for edit in item_edits {
-            self.graph_item_edit(edit);
         }
         egui::CentralPanel::default()
             .frame(card_space(ui, upper))
@@ -1242,7 +1341,7 @@ impl App {
     fn inspected_frame(&self) -> Option<Arc<Frame>> {
         self.engine
             .frame(self.clock.frame())
-            .filter(|f| f.open.is_none_or(|open| open == self.project.graph_id))
+            .filter(|f| f.inspected.is_none_or(|g| Some(g) == self.open_graph))
     }
 
     /// Why the project can't render, if it can't. The editor shows the open graph, so a node of
@@ -1251,13 +1350,18 @@ impl App {
         let EngineStatus::Failed(mut failure) = self.engine.status() else {
             return None;
         };
-        if failure.graph.is_some_and(|g| g != self.project.graph_id) {
+        if failure.graph.is_some_and(|g| Some(g) != self.open_graph) {
             failure.node = None;
         }
         Some(failure)
     }
 
     fn graph(&mut self, ui: &mut Ui) {
+        if self.open_graph.is_none() {
+            self.canvas_rect = egui::Rect::NOTHING;
+            self.empty_canvas(ui);
+            return;
+        }
         self.editor.keep_connections = self.settings.keep_connections;
         self.editor.max_warmup_frames = self.project.max_warmup_frames;
         let frame = self.inspected_frame();
@@ -1307,11 +1411,32 @@ impl App {
         });
         if clicked_here {
             self.selected_items.clear();
-            self.selected_graph_items.clear();
             self.inspect_track = false;
         }
         self.canvas_rect = canvas.rect;
         self.update_listening(ui);
+    }
+
+    /// What the editor shows when no graph is open: why, and a button that makes one.
+    fn empty_canvas(&mut self, ui: &mut Ui) {
+        let theme = Theme::of(ui.ctx());
+        let rect = ui.available_rect_before_wrap();
+        ui.allocate_rect(rect, egui::Sense::hover());
+        let body = egui::Rect::from_center_size(rect.center(), vec2(rect.width().min(320.0), 80.0));
+        let mut new = false;
+        ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
+            ui.vertical_centered(|ui| {
+                ui.label(egui::RichText::new(tr("editor.empty")).color(theme.surfaces.text_faint));
+                ui.add_space(8.0);
+                new = ui
+                    .button(tr("editor.empty.new"))
+                    .on_hover_text(tr("editor.empty.new.help"))
+                    .clicked();
+            });
+        });
+        if new {
+            self.new_graph();
+        }
     }
 
     /// Holding Alt over a connection turns the wheel into a way to change the view, as does
@@ -1421,7 +1546,7 @@ impl App {
         ui: &mut Ui,
         failure: Option<&rastersong_engine::Failure>,
         theme: &Theme,
-    ) -> Option<u32> {
+    ) -> Option<ResourceId> {
         ui.label(egui::RichText::new(tr("editor.header.kind")).color(theme.surfaces.text_faint));
         // The chevron between the kind and the name.
         let (r, _) = ui.allocate_exact_size(vec2(8.0, 10.0), egui::Sense::hover());
@@ -1435,7 +1560,7 @@ impl App {
         ));
         let picked = self.graph_switcher(ui, theme);
         let errors = usize::from(
-            failure.is_some_and(|f| f.graph.is_none_or(|g| g == self.project.graph_id)),
+            failure.is_some_and(|f| f.graph.is_none_or(|g| Some(g) == self.open_graph)),
         );
         let count =
             problem_count(errors, self.editor.warning_count(), theme).map(|(text, color)| {
@@ -1455,17 +1580,15 @@ impl App {
 
     /// The open graph's name with a ▾, which opens a menu of the project's graphs. Returns the
     /// one clicked, unless it is the open one.
-    fn graph_switcher(&self, ui: &mut Ui, theme: &Theme) -> Option<u32> {
-        let name = &self.project.graph_name;
+    fn graph_switcher(&self, ui: &mut Ui, theme: &Theme) -> Option<ResourceId> {
+        let name = self.open_graph_name();
         let font = crate::theme::semibold(crate::theme::TITLE_SIZE);
         let galley = ui
             .painter()
-            .layout_no_wrap(name.clone(), font, theme.surfaces.text);
+            .layout_no_wrap(name.to_owned(), font, theme.surfaces.text);
         let size = vec2(galley.size().x + 26.0, HEADER_BUTTON_HEIGHT);
         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-        response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, name.as_str())
-        });
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, name));
         let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&response));
         if response.hovered() || open {
             ui.painter().rect_filled(
@@ -1490,13 +1613,12 @@ impl App {
         let mut picked = None;
         egui::Popup::menu(&response).show(|ui| {
             ui.set_min_width(rect.width().max(160.0));
-            for entry in self.project.graph_entries() {
-                if ui
-                    .add(egui::Button::new(&entry.name).selected(entry.open))
-                    .clicked()
-                {
-                    if !entry.open {
-                        picked = Some(entry.id);
+            for id in self.project.graph_ids() {
+                let open = Some(id) == self.open_graph;
+                let name = self.project.resource(id).map_or("", |r| r.name.as_str());
+                if ui.add(egui::Button::new(name).selected(open)).clicked() {
+                    if !open {
+                        picked = Some(id);
                     }
                     ui.close();
                 }
@@ -1517,18 +1639,14 @@ impl App {
         let video = self
             .wants_source()
             .then(|| {
-                let mut timeline = self.timeline_of(&self.project);
-                timeline.tracks.retain(|t| t.kind == TrackKind::Video);
-                timeline
+                let mut composition = self.composition_of(&self.project).bypassed();
+                composition.tracks.retain(|t| t.kind == TrackKind::Video);
+                composition
             })
-            .filter(|timeline| !timeline.tracks.is_empty());
+            .filter(|composition| !composition.is_empty());
         if self.source_video_sent != video {
-            let mut composition = self.project.composition().without_graphs();
-            composition.tracks.retain(|t| t.kind == TrackKind::Video);
-            composition.graphs.clear();
-            self.source_engine.set_composition(Some(composition));
             self.source_engine
-                .set_timeline(video.clone().unwrap_or_default());
+                .set_composition(video.clone().unwrap_or_default());
             self.source_video_sent = video;
             if self.source_video_sent.is_none() {
                 self.source_preview = None;
@@ -1572,15 +1690,13 @@ impl App {
 
     /// Sends edits to the engine and the audio output.
     fn sync(&mut self) {
-        let graph = self.editor.to_desc();
-        self.sent_graph = without_layout(&graph);
-        // An input port renamed in the editor keeps its items' sources.
-        self.project.set_open_graph(graph);
+        self.store_editor();
+        self.sent_graph = self.open_desc().map_or_else(empty_graph, without_layout);
         self.refresh_missing(false);
-        self.engine.set_timeline(self.timeline_of(&self.project));
-        // Together, so opening another graph is seen to render the same frames.
         self.engine
-            .set_graphs(self.sent_graph.clone(), Some(self.project.composition()));
+            .set_composition(self.composition_of(&self.project));
+        // Opening another graph renders the same frames; only what is inspected changes.
+        self.engine.set_inspected(self.open_graph);
         self.engine.set_tempo(self.project.tempo);
         self.engine.set_bypass_all(self.project.plays_track_mix());
         self.engine.set_audio_rate(self.project.audio_rate);
@@ -1592,17 +1708,25 @@ impl App {
         // or when the graph starts or stops rendering its own sound. The preview plays the master
         // bus: its track mix is the tracks routed to it.
         let master = self.project.master_bus().to_owned();
-        let mix: Vec<MixEntry> = self
-            .timeline_of(&self.project)
-            .tracks
-            .into_iter()
-            .filter(|t| t.kind == TrackKind::Audio)
-            .map(|t| (t.name, t.items, t.gain, t.bus == master))
+        let composition = self.composition_of(&self.project);
+        // The items playing a file that is there.
+        let mix: Vec<MixEntry> = composition
+            .tracks_of(TrackKind::Audio)
+            .map(|t| {
+                let items = t
+                    .items
+                    .iter()
+                    .filter(|i| composition.resource(i.resource).is_some())
+                    .cloned()
+                    .collect();
+                (items, t.mix_gain(), t.bus == master)
+            })
             .collect();
-        let loaded = self.engine.loaded_tracks();
+        let loaded = self.engine.loaded_audio();
         let decoded = mix
             .iter()
-            .all(|(name, ..)| loaded.iter().any(|l| &l.name == name));
+            .flat_map(|(items, ..)| items)
+            .all(|i| loaded.iter().any(|l| l.resource == i.resource));
         let sink = self.engine.audio_sink();
         let wanted = (sink, mix);
         if decoded && self.sent_mix.as_ref() != Some(&wanted) {
@@ -1618,16 +1742,18 @@ impl App {
     }
 
     /// The tracks playback mixes: the master bus's track mix.
-    fn mix_tracks(mix: &[MixEntry], loaded: &[LoadedTrack]) -> Vec<MixTrack> {
+    fn mix_tracks(mix: &[MixEntry], loaded: &[LoadedAudio]) -> Vec<MixTrack> {
         mix.iter()
-            .filter(|(_, _, _, on_master)| *on_master)
-            .filter_map(|(name, items, gain, _)| {
-                let clip = loaded.iter().find(|l| &l.name == name)?.clip.clone();
-                Some(MixTrack {
-                    clip,
-                    items: items.clone(),
-                    gain: *gain,
-                })
+            .filter(|(_, _, on_master)| *on_master)
+            .map(|(items, gain, _)| MixTrack {
+                items: items
+                    .iter()
+                    .filter_map(|i| {
+                        let clip = loaded.iter().find(|l| l.resource == i.resource)?;
+                        Some((i.clone(), clip.clip.clone()))
+                    })
+                    .collect(),
+                gain: *gain,
             })
             .collect()
     }
@@ -1877,12 +2003,7 @@ impl App {
             Some(tr("hint.preview"))
         } else if in_timeline(&layout.ruler) {
             Some(tr("hint.ruler"))
-        } else if layout
-            .lanes
-            .iter()
-            .chain(&layout.graph_lanes)
-            .any(in_timeline)
-        {
+        } else if layout.lanes.iter().any(in_timeline) {
             Some(tr("hint.lanes"))
         } else {
             None
@@ -1938,7 +2059,8 @@ impl App {
                     ui.close();
                     self.import_graph();
                 }
-                if ui.button(tr("menu.file.export_graph")).clicked() {
+                let export = egui::Button::new(tr("menu.file.export_graph"));
+                if ui.add_enabled(self.open_graph.is_some(), export).clicked() {
                     ui.close();
                     self.export_graph();
                 }
@@ -1992,7 +2114,8 @@ impl App {
             ui.ctx().copy_text(text);
         }
         let clipboard = self.editor.clipboard().map(str::to_owned);
-        if item(ui, clipboard.is_some(), tr("menu.edit.paste"), "Ctrl+V")
+        let can_paste = clipboard.is_some() && self.open_graph.is_some();
+        if item(ui, can_paste, tr("menu.edit.paste"), "Ctrl+V")
             && let Some(text) = clipboard
         {
             let at = self.editor.view_center();
@@ -2069,6 +2192,9 @@ impl App {
             .and_then(|json| GraphDesc::from_json(&json).map_err(|e| e.to_string()));
         match graph {
             Ok(graph) => {
+                if self.open_graph.is_none() {
+                    self.new_graph();
+                }
                 self.editor.load(&graph);
                 if !self.editor.warnings.is_empty() {
                     self.error = Some(self.editor.warnings.join("\n"));
@@ -2086,7 +2212,10 @@ impl App {
         else {
             return;
         };
-        if let Err(e) = std::fs::write(&path, self.project.graph.to_json()) {
+        let Some(graph) = self.open_desc() else {
+            return;
+        };
+        if let Err(e) = std::fs::write(&path, graph.to_json()) {
             self.error = Some(format!("{}: {e}", path.display()));
         }
     }
@@ -2691,10 +2820,10 @@ impl App {
                 (info.frames, info.frame_rate.as_f64())
             });
         self.tidy_item_selection();
-        let loaded = self.engine.loaded_tracks();
+        let loaded = self.engine.loaded_audio();
         self.update_thumbnails(ui.ctx());
         let tracks: Vec<TrackView> = (0..self.project.tracks.len())
-            .map(|i| self.track_view(i, &loaded))
+            .map(|i| self.track_view(i))
             .collect();
         let selected_row = self
             .selected_track
@@ -2706,7 +2835,6 @@ impl App {
             frame_rate,
             playhead: self.clock.frame(),
             cached: &cached,
-            graph_tracks: self.graph_track_views(),
             tracks,
             selected_track: selected_row,
             loop_region: self.project.loop_region,
@@ -2719,7 +2847,13 @@ impl App {
                 .project
                 .resources
                 .iter()
-                .map(|r| (r.id, r.name.clone(), r.kind.track_kind()))
+                .map(|r| (r.id, r.name.clone(), r.kind()))
+                .collect(),
+            resource_views: self
+                .project
+                .resources
+                .iter()
+                .map(|r| (r.id, self.resource_view(r, &loaded)))
                 .collect(),
             drop_ghost: self.drop_ghost(ui),
         };
@@ -2742,19 +2876,17 @@ impl App {
                 }
             }
         }
-        if let Some(graph) = dropped_graph(ui, area)
-            && let Some(target) = response.graph_drop
-        {
-            self.drop_graph(graph, target, at);
-        }
-        for track in self.project.tracks_of(TrackKind::Video) {
+        for resource in &self.project.resources {
             let frames: Vec<usize> = response
                 .wanted_thumbnails
                 .iter()
-                .filter(|(name, _)| *name == track.name)
+                .filter(|(id, _)| *id == resource.id)
                 .map(|&(_, frame)| frame)
                 .collect();
-            if let Some(thumbs) = self.video_key(track).and_then(|k| self.thumbnails.get(&k)) {
+            if frames.is_empty() {
+                continue;
+            }
+            if let Some(thumbs) = video_key(resource).and_then(|k| self.thumbnails.get(&k)) {
                 thumbs.service.request(&frames);
             }
         }
@@ -2771,16 +2903,12 @@ impl App {
         for action in response.actions {
             self.track_action(ui.ctx(), action);
         }
-        for action in response.graph_actions {
-            self.graph_action(action);
-        }
     }
 
     /// Track `i` as the timeline shows it.
-    fn track_view(&self, i: usize, loaded: &[LoadedTrack]) -> TrackView {
+    fn track_view(&self, i: usize) -> TrackView {
         let t = &self.project.tracks[i];
-        let base = TrackView {
-            empty: t.resource.is_none(),
+        TrackView {
             items: t.items.clone(),
             muted: t.muted,
             solo: t.solo,
@@ -2788,8 +2916,6 @@ impl App {
             volume: t.volume,
             height: t.height.unwrap_or(LANE_HEIGHT),
             bus: t.bus.clone(),
-            missing: t.resource.is_some_and(|r| self.missing.contains(&r)),
-            color: self.project.track_resource(t).and_then(|r| r.color),
             selected_items: self
                 .selected_items
                 .iter()
@@ -2797,20 +2923,26 @@ impl App {
                 .map(|r| r.item)
                 .collect(),
             ..TrackView::new(t.name.clone(), t.kind)
-        };
-        if t.resource.is_none() {
-            return TrackView {
-                duration: Some(0.0),
-                ..base
-            };
         }
-        match t.kind {
+    }
+
+    /// Resource `r` as the timeline shows its items: the same for every kind, with a video's
+    /// size, rate and thumbnails, or an audio file's peaks, once they are read.
+    fn resource_view(&self, r: &Resource, loaded: &[LoadedAudio]) -> ResourceView {
+        let base = ResourceView {
+            missing: self.missing.contains(&r.id),
+            ..ResourceView::new(r.name.clone(), r.color)
+        };
+        match r.kind() {
+            TrackKind::Graph => ResourceView {
+                duration: Some(f64::INFINITY),
+                ..base
+            },
             TrackKind::Video => {
-                let key = self.video_key(t);
-                let own = key.as_ref().and_then(|k| self.thumbnails.get(k));
+                let own = video_key(r).and_then(|k| self.thumbnails.get(&k));
                 let info = own.and_then(|o| o.service.info());
                 let info = info.as_ref();
-                TrackView {
+                ResourceView {
                     duration: info.map(|v| v.frame_count as f64 / v.frame_rate.as_f64()),
                     details: info.map(|v| {
                         format!(
@@ -2821,7 +2953,7 @@ impl App {
                         )
                         .replace(".000 fps", " fps")
                     }),
-                    thumbnails: own.zip(info).map(|(o, v)| TrackThumbnails {
+                    thumbnails: own.zip(info).map(|(o, v)| FileThumbnails {
                         frames: Arc::new(
                             o.textures
                                 .iter()
@@ -2834,8 +2966,8 @@ impl App {
                 }
             }
             TrackKind::Audio => {
-                let loaded = loaded.iter().find(|l| l.name == t.name);
-                TrackView {
+                let loaded = loaded.iter().find(|l| l.resource == r.id);
+                ResourceView {
                     duration: loaded.map(|l| l.clip.duration_secs()),
                     waveform: loaded.map(|l| l.waveform.clone()),
                     ..base
@@ -2844,101 +2976,65 @@ impl App {
         }
     }
 
-    /// The graph tracks as the timeline shows them.
-    fn graph_track_views(&self) -> Vec<GraphTrackView> {
-        let names: HashMap<u32, String> = self
-            .project
-            .graph_entries()
-            .into_iter()
-            .map(|g| (g.id, g.name))
-            .collect();
-        self.project
-            .graph_tracks
-            .iter()
-            .map(|t| GraphTrackView {
-                name: t.name.clone(),
-                muted: t.muted,
-                height: t.height.unwrap_or(LANE_HEIGHT),
-                items: t
-                    .items
-                    .iter()
-                    .map(|i| GraphItemView {
-                        name: names.get(&i.graph).cloned().unwrap_or_default(),
-                        position: i.position,
-                        length: i.length,
-                        muted: i.muted,
-                    })
-                    .collect(),
-                selected_items: self
-                    .selected_graph_items
-                    .iter()
-                    .filter(|(track, _)| *track == t.name)
-                    .map(|&(_, item)| item)
-                    .collect(),
-            })
-            .collect()
-    }
-
     /// What the Resources panel is dragging over the timeline, for the drop preview: where each
-    /// resource of a dragged file would land (only the one dragged while Alt is held), or the
-    /// graph dragged.
+    /// resource of a dragged file would land (only the one dragged while Alt is held), planned
+    /// as the drop itself is.
     fn drop_ghost(&self, ui: &Ui) -> Option<DropGhost> {
-        let ctx = ui.ctx();
-        if let Some(dragged) = egui::DragAndDrop::payload::<DraggedResource>(ctx) {
-            let linked = !ui.input(|i| i.modifiers.alt);
-            let hovered = self
-                .hovered_row
-                .and_then(|r| self.project.tracks.get(r))
-                .map(|t| t.name.clone());
-            // On a line between tracks, every resource gets a new track.
-            let mut plan = Vec::new();
-            for (n, id) in self
-                .drop_leaders(&dragged.0, linked)
-                .into_iter()
-                .enumerate()
-            {
-                let hovered = hovered.as_deref().filter(|_| n == 0);
-                plan.extend(self.project.plan_linked(id, hovered, linked));
-            }
-            if self.hovered_slot.is_some() {
-                plan.iter_mut().for_each(|(_, target)| *target = None);
-            }
-            let items = plan
-                .into_iter()
-                .filter_map(|(id, target)| {
-                    let resource = self.project.resource(id)?;
-                    let row = match target {
-                        Some(name) => GhostRow::Track(self.project.track_index(&name)?),
-                        None => GhostRow::New(resource.kind.track_kind()),
-                    };
-                    Some(GhostItem {
-                        name: resource.name.clone(),
-                        length: self.resource_duration(id),
-                        row,
-                    })
-                })
-                .collect();
-            return Some(DropGhost::Media(items));
-        }
-        let graph = egui::DragAndDrop::payload::<DraggedGraph>(ctx)?.0;
-        let name = self
+        let dragged = egui::DragAndDrop::payload::<DraggedResources>(ui.ctx())?;
+        let linked = !ui.input(|i| i.modifiers.alt);
+        let hovered = self.hovered_row.and_then(|r| self.track_name(r));
+        let mut plan: Vec<(ResourceId, Option<String>)> = self
             .project
-            .graph_entries()
+            .plan_drop(&dragged.0, hovered.as_deref(), linked)
             .into_iter()
-            .find(|g| g.id == graph)?
-            .name;
-        Some(DropGhost::Graph {
-            name,
-            length: self.graph_item_length(),
-        })
+            .flatten()
+            .collect();
+        // On a line between tracks, every resource gets a new track.
+        if self.hovered_slot.is_some() {
+            plan.iter_mut().for_each(|(_, target)| *target = None);
+        }
+        let items = plan
+            .into_iter()
+            .filter_map(|(id, target)| {
+                let resource = self.project.resource(id)?;
+                let row = match target {
+                    Some(name) => GhostRow::Track(self.project.track_index(&name)?),
+                    None => GhostRow::New(resource.kind()),
+                };
+                let length = if resource.kind() == TrackKind::Graph {
+                    Some(self.graph_item_length())
+                } else {
+                    self.resource_duration(id)
+                };
+                Some(GhostItem {
+                    name: resource.name.clone(),
+                    length,
+                    row,
+                })
+            })
+            .collect();
+        Some(DropGhost(items))
     }
 
-    /// A resource's length in seconds: known once a track plays it.
+    /// The length of media resource `id` in seconds, once its file is read: a video's from its
+    /// thumbnail service, an audio file's from the engine, which decode every one, placed or not.
     fn resource_duration(&self, id: ResourceId) -> Option<f64> {
-        self.project
-            .tracks()
-            .find(|t| t.resource == Some(id))
-            .and_then(|t| self.track_duration(t))
+        let resource = self.project.resource(id)?;
+        match resource.kind() {
+            TrackKind::Graph => None,
+            TrackKind::Video => self
+                .thumbnails
+                .get(&video_key(resource)?)?
+                .service
+                .info()
+                .map(|v| v.frame_count as f64 / v.frame_rate.as_f64()),
+            TrackKind::Audio => self
+                .engine
+                .loaded_audio()
+                .iter()
+                .find(|l| l.resource == id)
+                .map(|l| l.clip.duration_secs()),
+        }
     }
 
     /// How long a graph dropped on the timeline lasts: the whole project, and never shorter
@@ -2951,150 +3047,11 @@ impl App {
         project.max(MIN_GRAPH_ITEM_SECONDS)
     }
 
-    /// Places graph `graph` from `at` seconds on the graph track a drop on `target` names (a
-    /// new one on top for [`GraphDrop::NewTrack`]), and selects it. Returns the graph track's
-    /// name and the item's place on it.
-    pub fn drop_graph(
-        &mut self,
-        graph: u32,
-        target: GraphDrop,
-        at: f64,
-    ) -> Option<(String, usize)> {
-        let track = match target {
-            GraphDrop::Track(row) => self.project.graph_tracks.get(row)?.name.clone(),
-            GraphDrop::NewTrack => self.add_graph_track(),
-            GraphDrop::NewTrackAt(slot) => self
-                .project
-                .add_graph_track_at(tr("project.track.graphs"), slot),
-        };
-        let length = self.graph_item_length();
-        let item = self.project.place_graph(&track, graph, at, length)?;
-        self.select_graph_item(track.clone(), item);
-        Some((track, item))
-    }
-
-    /// The selected graph item: its graph track's name and its place on it.
-    pub fn selected_graph_item(&self) -> Option<&(String, usize)> {
-        match &self.selected_graph_items[..] {
-            [only] => Some(only),
+    /// The selected item when it is the only one, of any kind: its inspector shows.
+    pub fn inspected_item(&self) -> Option<&ItemRef> {
+        match &self.selected_items[..] {
+            [only] if self.project.item(only).is_some() => Some(only),
             _ => None,
-        }
-    }
-
-    /// Every selected graph item: its graph track's name and its place on it.
-    pub fn selected_graph_items(&self) -> &[(String, usize)] {
-        &self.selected_graph_items
-    }
-
-    fn select_graph_item(&mut self, track: String, item: usize) {
-        self.selected_items.clear();
-        self.inspect_track = false;
-        self.selected_graph_items = vec![(track, item)];
-    }
-
-    fn graph_action(&mut self, action: GraphAction) {
-        let name =
-            |app: &Self, row: usize| app.project.graph_tracks.get(row).map(|t| t.name.clone());
-        match action {
-            GraphAction::SelectItem { track, item } => {
-                if let Some(track) = name(self, track) {
-                    self.select_graph_item(track, item);
-                }
-            }
-            GraphAction::MoveItem {
-                track,
-                item,
-                to,
-                delta,
-            } => {
-                let (Some(track), Some(to)) = (name(self, track), name(self, to)) else {
-                    return;
-                };
-                if let Some(moved) = self.project.move_graph_item_to(&track, item, &to, delta) {
-                    self.select_graph_item(to, moved);
-                }
-            }
-            GraphAction::TrimItem {
-                track,
-                item,
-                edge,
-                to,
-            } => {
-                if let Some(track) = name(self, track) {
-                    self.project.trim_graph_item(&track, item, edge, to);
-                }
-            }
-            GraphAction::SetHeight(row, height) => {
-                if let Some(track) = self.project.graph_tracks.get_mut(row) {
-                    track.height = (height != LANE_HEIGHT).then_some(height);
-                }
-            }
-            GraphAction::ToggleItemMute { track, item } => {
-                if let Some(it) =
-                    name(self, track).and_then(|t| self.project.graph_item_mut(&t, item))
-                {
-                    it.muted = !it.muted;
-                }
-            }
-            GraphAction::SplitItem { track, item, at } => {
-                if let Some(track) = name(self, track) {
-                    self.project.split_graph_item(&track, item, at);
-                }
-            }
-            GraphAction::DeleteItem { track, item } => {
-                if let Some(track) = name(self, track)
-                    && self.project.delete_graph_item(&track, item)
-                {
-                    self.selected_graph_items.clear();
-                }
-            }
-            GraphAction::OpenItem { track, item } => {
-                let graph = name(self, track)
-                    .and_then(|t| self.project.graph_item(&t, item))
-                    .map(|i| i.graph);
-                if let Some(graph) = graph {
-                    self.open_graph(graph);
-                }
-            }
-            GraphAction::ToggleMute(row) => {
-                if let Some(track) = self.project.graph_tracks.get_mut(row) {
-                    track.muted = !track.muted;
-                }
-            }
-            GraphAction::Rename(row, new) => {
-                if let Some(old) = name(self, row)
-                    && self.project.rename_track(&old, &new)
-                {
-                    for (track, _) in &mut self.selected_graph_items {
-                        if *track == old {
-                            *track = new.trim().to_owned();
-                        }
-                    }
-                }
-            }
-            GraphAction::Remove(row) => {
-                if let Some(removed) = self.project.remove_graph_track(row) {
-                    self.selected_graph_items
-                        .retain(|(t, _)| *t != removed.name);
-                }
-            }
-            GraphAction::Move { from, slot } => {
-                self.project.move_graph_track(from, slot);
-            }
-        }
-    }
-
-    /// Applies a change from the graph item inspector to the selected graph item.
-    fn graph_item_edit(&mut self, edit: ItemEdit) {
-        let Some((track, item)) = self.selected_graph_item().cloned() else {
-            return;
-        };
-        match edit {
-            ItemEdit::PreRoll(on) => {
-                if let Some(it) = self.project.graph_item_mut(&track, item) {
-                    it.pre_roll = on;
-                }
-            }
         }
     }
 
@@ -3251,27 +3208,32 @@ impl App {
         }
     }
 
-    /// The stream of a file a video track plays, which thumbnails are made of.
-    fn video_key(&self, track: &ProjectTrack) -> Option<VideoKey> {
-        let resource = self.project.track_resource(track)?;
-        Some((resource.path.clone(), resource.stream))
+    /// The stream the video, its first track's first item, plays, which the project's picture
+    /// size follows.
+    fn first_video_key(&self) -> Option<VideoKey> {
+        let item = self.project.video()?.items.first()?;
+        video_key(self.project.resource(item.resource)?)
     }
 
     /// The first video track's file, which the project's picture size follows.
     fn first_video_info(&self) -> Option<VideoInfo> {
-        let key = self.video_key(self.project.video()?)?;
-        self.thumbnails.get(&key)?.service.info()
+        self.thumbnails
+            .get(&self.first_video_key()?)?
+            .service
+            .info()
     }
 
-    /// Keeps a thumbnail service on each video stream the timeline plays, and a texture for each
-    /// thumbnail it has decoded.
+    /// Keeps a thumbnail service on the stream of each video resource whose file is there,
+    /// placed or not, and a texture for each thumbnail it has decoded.
     fn update_thumbnails(&mut self, ctx: &egui::Context) {
         let keys: Vec<VideoKey> = self
             .project
-            .tracks_of(TrackKind::Video)
-            .filter_map(|t| self.video_key(t))
+            .resources
+            .iter()
+            .filter(|r| !self.missing.contains(&r.id))
+            .filter_map(video_key)
             .collect();
-        let first = keys.first().cloned();
+        let first = self.first_video_key();
         if self.thumbnail_video != first {
             self.thumbnail_video = first;
             self.timeline_view = TimelineView::default();
@@ -3316,58 +3278,35 @@ impl App {
         self.project.rename_track(old, new)
     }
 
+    /// The track in timeline row `row`.
     fn track_at(&mut self, row: usize) -> Option<&mut ProjectTrack> {
         self.project.tracks.get_mut(row)
     }
 
-    /// The length of a track's file in seconds, once it is known.
-    fn track_duration(&self, track: &ProjectTrack) -> Option<f64> {
-        if track.resource.is_none() {
-            return Some(0.0);
-        }
-        if track.kind == TrackKind::Video {
-            return self
-                .video_key(track)
-                .and_then(|k| self.thumbnails.get(&k))
-                .and_then(|t| t.service.info())
-                .map(|v| v.frame_count as f64 / v.frame_rate.as_f64());
-        }
-        self.engine
-            .loaded_tracks()
-            .iter()
-            .find(|l| l.name == track.name)
-            .map(|l| l.clip.duration_secs())
-    }
-
-    /// Each track's resource length, as the item edits take it.
-    fn item_lengths(&self) -> impl Fn(&ProjectTrack) -> Option<f64> + use<> {
-        let lengths: Vec<(String, Option<f64>)> = self
+    /// The lengths the item edits take: each media resource's, once it is known, and a new
+    /// graph item's.
+    fn item_lengths(&self) -> ItemLengths {
+        let durations = self
             .project
-            .tracks()
-            .map(|t| (t.name.clone(), self.track_duration(t)))
+            .resources
+            .iter()
+            .filter(|r| r.kind().reads_file())
+            .filter_map(|r| Some((r.id, self.resource_duration(r.id)?)))
             .collect();
-        move |t: &ProjectTrack| {
-            lengths
-                .iter()
-                .find(|(n, _)| *n == t.name)
-                .and_then(|(_, d)| *d)
+        ItemLengths {
+            durations,
+            new_graph_length: self.graph_item_length(),
         }
     }
 
     /// Drops selected items that no longer exist (after an undo, or a track removed or renamed).
     fn tidy_item_selection(&mut self) {
         let project = &self.project;
-        self.selected_items.retain(|r| {
-            project
-                .track(&r.track)
-                .is_some_and(|t| r.item < t.items.len())
-        });
-        self.selected_graph_items
-            .retain(|(track, item)| project.graph_item(track, *item).is_some());
+        self.selected_items.retain(|r| project.item(r).is_some());
     }
 
     fn track_action(&mut self, ctx: &egui::Context, action: TrackAction) {
-        let name = |app: &mut Self, row: usize| app.track_at(row).map(|t| t.name.clone());
+        let name = |app: &Self, row: usize| app.track_name(row);
         match action {
             TrackAction::Select(row) => {
                 self.selected_track = name(self, row);
@@ -3375,9 +3314,9 @@ impl App {
             }
             TrackAction::SelectItem { row, item, toggle } => {
                 let Some(track) = name(self, row) else { return };
+                // An item shows its own inspector.
+                self.inspect_track = false;
                 self.selected_track = Some(track.clone());
-                self.inspect_track = true;
-                self.selected_graph_items.clear();
                 let at = ItemRef::new(track, item);
                 if !toggle {
                     self.selected_items = vec![at];
@@ -3389,7 +3328,6 @@ impl App {
             }
             TrackAction::ClearItems => {
                 self.selected_items.clear();
-                self.selected_graph_items.clear();
             }
             TrackAction::SelectAll => {
                 self.selected_items = self
@@ -3397,18 +3335,11 @@ impl App {
                     .tracks()
                     .flat_map(|t| (0..t.items.len()).map(|k| ItemRef::new(t.name.clone(), k)))
                     .collect();
-                self.selected_graph_items = self
-                    .project
-                    .graph_tracks
-                    .iter()
-                    .flat_map(|t| (0..t.items.len()).map(|k| (t.name.clone(), k)))
-                    .collect();
             }
             TrackAction::SelectItems { items, additive } => {
                 if !additive {
                     self.selected_items.clear();
                 }
-                self.selected_graph_items.clear();
                 for (row, item) in items {
                     let Some(track) = name(self, row) else {
                         continue;
@@ -3419,13 +3350,38 @@ impl App {
                     }
                 }
             }
-            TrackAction::MoveItem { row, item, delta } => {
+            TrackAction::MoveItem {
+                row,
+                item,
+                delta,
+                rows,
+            } => {
                 let Some(track) = name(self, row) else { return };
                 let at = ItemRef::new(track, item);
+                let lengths = self.item_lengths();
                 if self.selected_items.contains(&at) {
-                    self.project.move_items(&self.selected_items, delta);
+                    self.selected_items =
+                        self.project
+                            .move_items(&self.selected_items, delta, rows, &lengths);
                 } else {
-                    self.project.move_items(&[at], delta);
+                    let moved = self.project.move_items(&[at], delta, rows, &lengths);
+                    self.tidy_item_selection();
+                    if let [moved] = &moved[..]
+                        && self.selected_items.is_empty()
+                    {
+                        self.selected_items = vec![moved.clone()];
+                    }
+                }
+                if let Some(first) = self.selected_items.first() {
+                    self.selected_track = Some(first.track.clone());
+                }
+            }
+            TrackAction::OpenItem { row, item } => {
+                let graph = name(self, row)
+                    .and_then(|t| self.project.item(&ItemRef::new(t, item)))
+                    .map(|i| i.resource);
+                if let Some(graph) = graph {
+                    self.open_graph(graph);
                 }
             }
             TrackAction::TrimItem {
@@ -3438,60 +3394,36 @@ impl App {
                 let Some(track) = name(self, row) else { return };
                 let lengths = self.item_lengths();
                 self.project
-                    .trim_item(&ItemRef::new(track, item), edge, to, stretch, lengths);
+                    .trim_item(&ItemRef::new(track, item), edge, to, stretch, &lengths);
             }
             TrackAction::SplitItems { at } => {
                 let lengths = self.item_lengths();
-                if !self.selected_graph_items.is_empty() {
-                    for (track, item) in self.selected_graph_items.clone() {
-                        self.project.split_graph_item(&track, item, at);
-                    }
-                    self.selected_graph_items.clear();
-                } else if self.selected_items.is_empty() {
-                    // With nothing selected, every item under the playhead, graph items too.
+                if self.selected_items.is_empty() {
+                    // With nothing selected, every item under the playhead.
                     let under: Vec<ItemRef> = self
                         .project
                         .tracks()
                         .flat_map(|t| {
-                            let length = lengths(t).unwrap_or(f64::INFINITY);
+                            let lengths = &lengths;
                             t.items
                                 .iter()
                                 .enumerate()
                                 .filter(move |(_, i)| {
-                                    i.position < at && at < i.timeline_end(length)
+                                    let end = lengths.end_of(i).unwrap_or(f64::INFINITY);
+                                    i.position < at && at < end
                                 })
                                 .map(|(k, _)| ItemRef::new(t.name.clone(), k))
                         })
                         .collect();
-                    self.project.split_items(&under, at, lengths);
-                    let graphs: Vec<(String, usize)> = self
-                        .project
-                        .graph_tracks
-                        .iter()
-                        .flat_map(|t| {
-                            t.items
-                                .iter()
-                                .position(|i| i.position < at && at < i.end())
-                                .map(|k| (t.name.clone(), k))
-                        })
-                        .collect();
-                    for (track, item) in graphs {
-                        self.project.split_graph_item(&track, item, at);
-                    }
+                    self.project.split_items(&under, at, &lengths);
                 } else {
                     self.selected_items =
-                        self.project.split_items(&self.selected_items, at, lengths);
+                        self.project.split_items(&self.selected_items, at, &lengths);
                 }
             }
             TrackAction::DeleteItems => {
-                // Highest index first, so deleting one doesn't shift the next.
-                let mut graphs = std::mem::take(&mut self.selected_graph_items);
-                graphs.sort_by_key(|g| std::cmp::Reverse(g.1));
-                for (track, item) in graphs {
-                    self.project.delete_graph_item(&track, item);
-                }
-                self.project.delete_items(&self.selected_items);
-                self.selected_items.clear();
+                let selected = std::mem::take(&mut self.selected_items);
+                self.project.delete_items(&selected);
             }
             TrackAction::GroupItems => {
                 self.project.group_items(&self.selected_items);
@@ -3500,69 +3432,44 @@ impl App {
                 self.project.ungroup_items(&self.selected_items);
             }
             TrackAction::CopyItems | TrackAction::CutItems => {
-                let cut = action == TrackAction::CutItems;
-                if self.selected_items.is_empty() && self.selected_graph_items.is_empty() {
+                if self.selected_items.is_empty() {
                     return;
                 }
                 self.item_clipboard = self.project.copy_items(&self.selected_items);
-                self.graph_item_clipboard = self
-                    .selected_graph_items
-                    .iter()
-                    .filter_map(|(track, item)| {
-                        let copied = self.project.graph_item(track, *item)?.clone();
-                        Some((track.clone(), copied))
-                    })
-                    .collect();
                 // The platform only sends Ctrl+V on when the system clipboard holds text, so the
                 // copy puts a marker there; a paste pastes the items only while it is still there.
                 ctx.copy_text(ITEM_CLIPBOARD_MARKER.to_owned());
-                if cut {
-                    self.project.delete_items(&self.selected_items);
-                    self.selected_items.clear();
-                    let mut graphs = std::mem::take(&mut self.selected_graph_items);
-                    graphs.sort_by_key(|g| std::cmp::Reverse(g.1));
-                    for (track, item) in graphs {
-                        self.project.delete_graph_item(&track, item);
-                    }
+                if action == TrackAction::CutItems {
+                    let selected = std::mem::take(&mut self.selected_items);
+                    self.project.delete_items(&selected);
                 }
             }
             TrackAction::PasteItems { at, text } => {
                 let ours = text.is_none_or(|t| t == ITEM_CLIPBOARD_MARKER);
-                if !ours {
+                if !ours || self.item_clipboard.is_empty() {
                     return;
                 }
-                if !self.item_clipboard.is_empty() {
-                    self.selected_items = self.project.paste_items(&self.item_clipboard, at);
-                }
-                // Graph items go back on their own track (the top one when it is gone), keeping
-                // their spacing from the earliest copied.
-                let first = self
-                    .graph_item_clipboard
-                    .iter()
-                    .map(|(_, i)| i.position)
-                    .fold(f64::INFINITY, f64::min);
-                let mut pasted = Vec::new();
-                for (track, item) in self.graph_item_clipboard.clone() {
-                    let track = if self.project.graph_track(&track).is_some() {
-                        Some(track)
-                    } else {
-                        self.project.graph_tracks.first().map(|t| t.name.clone())
-                    };
-                    if let Some(track) = track
-                        && let Some(k) =
-                            self.project
-                                .paste_graph_item(&track, &item, at + item.position - first)
-                    {
-                        pasted.push((track, k));
-                    }
-                }
+                let lengths = self.item_lengths();
+                let pasted = self.project.paste_items(&self.item_clipboard, at, &lengths);
                 if !pasted.is_empty() {
-                    self.selected_graph_items = pasted;
+                    self.selected_items = pasted;
                 }
             }
             TrackAction::ToggleItemMute { row, item } => {
                 if let Some(item) = self.track_at(row).and_then(|t| t.items.get_mut(item)) {
                     item.muted = !item.muted;
+                }
+            }
+            TrackAction::SetPreRoll { row, item, on } => {
+                let pre_rolls = self
+                    .project
+                    .tracks
+                    .get(row)
+                    .is_some_and(|t| t.kind.pre_rolls());
+                if let Some(item) = self.track_at(row).and_then(|t| t.items.get_mut(item))
+                    && pre_rolls
+                {
+                    item.pre_roll = on;
                 }
             }
             TrackAction::ToggleMute(row) => {
@@ -3594,15 +3501,9 @@ impl App {
                 for track in &mut self.project.tracks {
                     track.height = scaled(track.height);
                 }
-                for track in &mut self.project.graph_tracks {
-                    track.height = scaled(track.height);
-                }
             }
             TrackAction::ResetHeights => {
                 for track in &mut self.project.tracks {
-                    track.height = None;
-                }
-                for track in &mut self.project.graph_tracks {
                     track.height = None;
                 }
             }
@@ -3615,15 +3516,23 @@ impl App {
                 self.project.move_track(from, slot);
             }
             TrackAction::Rename(row, new) => {
-                if let Some(old) = self.track_at(row).map(|t| t.name.clone())
+                if let Some(old) = self.track_name(row)
                     && self.project.rename_track(&old, &new)
-                    && self.selected_track.as_deref() == Some(old.as_str())
                 {
-                    self.selected_track = Some(new.trim().to_owned());
+                    let new = new.trim().to_owned();
+                    for at in &mut self.selected_items {
+                        if at.track == old {
+                            at.track = new.clone();
+                        }
+                    }
+                    if self.selected_track.as_deref() == Some(old.as_str()) {
+                        self.selected_track = Some(new);
+                    }
                 }
             }
             TrackAction::Remove(row) => {
-                if self.project.remove_track(row).is_some() {
+                if let Some(removed) = self.project.remove_track(row) {
+                    self.selected_items.retain(|at| at.track != removed.name);
                     self.tidy_track_selection();
                 }
             }
@@ -3757,12 +3666,7 @@ const BUSY_DELAY_SECS: f64 = 0.25;
 /// A spinner in the middle of the preview, with a line of text under it when there is one.
 /// The resource dragged from the Resources panel and released over `area` this frame, taken.
 fn dropped_resources(ui: &Ui, area: egui::Rect) -> Option<Vec<ResourceId>> {
-    dropped_payload::<DraggedResource>(ui, area).map(|p| p.0.clone())
-}
-
-/// The graph dragged from the Resources panel and released over `area` this frame, taken.
-fn dropped_graph(ui: &Ui, area: egui::Rect) -> Option<u32> {
-    dropped_payload::<DraggedGraph>(ui, area).map(|p| p.0)
+    dropped_payload::<DraggedResources>(ui, area).map(|p| p.0.clone())
 }
 
 /// The drag-and-drop payload of type `T` released over `area` this frame, taken.
@@ -3836,7 +3740,7 @@ fn source_choices(project: &Project, kind: TrackKind) -> Vec<(String, String)> {
             tr_args("source.track", &[("track", &t.name)]),
         ));
     }
-    for t in &project.graph_tracks {
+    for t in project.tracks_of(TrackKind::Graph) {
         choices.push((
             Source::Graph(t.name.clone()).setting(),
             tr_args("source.graph", &[("track", &t.name)]),
@@ -3850,9 +3754,9 @@ fn source_choices(project: &Project, kind: TrackKind) -> Vec<(String, String)> {
 /// every Named Output of the graphs placed on each graph track, each name once per track.
 fn named_outputs(project: &Project) -> Vec<(String, String)> {
     let mut choices: Vec<(String, String)> = Vec::new();
-    for t in &project.graph_tracks {
+    for t in project.tracks_of(TrackKind::Graph) {
         for item in &t.items {
-            let Some(desc) = project.graph_desc(item.graph) else {
+            let Some(desc) = project.graph(item.resource) else {
                 continue;
             };
             for node in desc
@@ -3878,11 +3782,30 @@ fn named_outputs(project: &Project) -> Vec<(String, String)> {
     choices
 }
 
-/// An editor for the project's open graph, with its base nodes in place.
-fn graph_editor(project: &Project) -> GraphEditor {
-    let mut editor = GraphEditor::new(&project.graph);
+/// An editor for graph resource `id` of `project`, with its base nodes in place, or an empty
+/// one for the empty canvas.
+fn graph_editor(project: &Project, id: Option<ResourceId>) -> GraphEditor {
+    let Some(graph) = id.and_then(|id| project.graph(id)) else {
+        return GraphEditor::new(&empty_graph());
+    };
+    let mut editor = GraphEditor::new(graph);
     editor.ensure_ports();
     editor
+}
+
+/// A graph with no nodes.
+fn empty_graph() -> GraphDesc {
+    GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).expect("a valid empty graph")
+}
+
+/// The graph a project opens on: its first graph, or a new passthrough when it has none, so the
+/// editor always has a graph to show.
+fn first_graph(project: &mut Project) -> ResourceId {
+    let first = project.graph_ids().next();
+    match first {
+        Some(id) => id,
+        None => project.add_graph(DEFAULT_GRAPH_NAME, None),
+    }
 }
 
 /// Puts `frame` in `slot`'s texture, making the texture the first time. Does nothing if the frame
@@ -3911,4 +3834,13 @@ fn update_texture(
             *slot = Some((texture, frame));
         }
     }
+}
+
+/// The stream of a video resource, which its thumbnails are made of; `None` for other kinds.
+fn video_key(resource: &Resource) -> Option<VideoKey> {
+    if resource.kind() != TrackKind::Video {
+        return None;
+    }
+    let file = resource.file()?;
+    Some((file.path.clone(), file.stream))
 }

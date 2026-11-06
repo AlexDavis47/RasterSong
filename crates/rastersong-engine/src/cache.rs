@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use rastersong_graph::{NodeCost, NodeMeters, OutputLevel, ParamLevel};
 
+use crate::project::ResourceId;
 use crate::{AudioBlock, PreviewScale};
 
 /// Identifies what a frame was rendered with. Any graph edit bumps `version`.
@@ -31,10 +32,9 @@ pub struct Frame {
     pub meters: Arc<[NodeMeters]>,
     /// The frame's rendered sound, when the graph has an audio output.
     pub audio: Option<Arc<AudioBlock>>,
-    /// The open graph when the frame was rendered, if it rendered a composition. Opening
-    /// another graph keeps the frame, but its levels, params, costs and meters describe the
-    /// graph that was open.
-    pub open: Option<u32>,
+    /// The graph editors inspected when the frame was rendered. Inspecting another graph keeps
+    /// the frame, but its levels, params, costs and meters describe the graph inspected then.
+    pub inspected: Option<ResourceId>,
 }
 
 impl Frame {
@@ -194,7 +194,7 @@ mod tests {
             costs: Arc::new([]),
             meters: Arc::new([]),
             audio: None,
-            open: None,
+            inspected: None,
         }
     }
 
