@@ -655,7 +655,7 @@ fn graph_track_screenshots() {
     let mut harness = gpu_harness(app);
     wait_for_frames(&mut harness, 10);
     save(&mut harness, "dark-28-graph-tracks");
-    let bar = harness.state().timeline_layout().graph_lanes[0];
+    let bar = harness.state().timeline_layout().lanes[0];
     let x = harness.state().timeline_view().x(bar.left(), 1.0);
     let at = egui::pos2(x, bar.top() + 7.0);
     harness.event(egui::Event::PointerMoved(at));

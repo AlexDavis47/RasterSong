@@ -370,8 +370,10 @@ Reusable widgets, built once in `rastersong-gui` (a `widgets/` module) and used 
   - [x] One path in the Resources panel: one action set, drag payload, selection, card group and remove dialog
     for every kind; graphs get colour, multi-select, multi-drag and Add to Timeline, and the open graph can be
     removed ([Resources](app.md#resources)).
-  - [ ] One selection, clipboard, action set and drop path on the timeline; then one lane, header, menu and
-    inspector for every kind of track.
+  - [x] One selection, clipboard, action set and drop path on the timeline: graph rows are timeline rows, items
+    of every kind select, snap, copy and move together, and media items move across tracks too
+    ([Decisions](decisions.md#one-timeline-path-for-every-kind-of-track-november-2026), [Timeline](app.md#timeline)).
+  - [ ] One lane, header, menu and inspector for every kind of track, and tracks that play several files.
 - [x] **feature** Graph inputs and outputs live on the graph: fixed Video In, Audio In, Output and master Audio
   Output in every graph, Video Source and Audio Source nodes that pick what they read, and Named Outputs for graphs
   above; the per-item source mapping is gone ([Node graph](app.md#node-graph),

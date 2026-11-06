@@ -23,7 +23,7 @@ pub fn track_inspector(
     row: usize,
 ) -> Vec<TrackAction> {
     let mut actions = Vec::new();
-    let Some(track) = project.tracks().filter(|t| t.kind.reads_file()).nth(row) else {
+    let Some(track) = project.tracks.get(row) else {
         return actions;
     };
     let theme = Theme::of(ui.ctx());

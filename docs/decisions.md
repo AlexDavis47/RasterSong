@@ -885,6 +885,28 @@ The canvas header's **Bypass graphs** button and the project's `bypass_graph` fl
 **Original** already shows the mix without graphs for comparison, and a saved flag that silently hid every graph
 was a trap once the button left. Muting graph tracks or items skips them.
 
+### One timeline path for every kind of track (November 2026)
+
+The sixth stage of merging media and graphs ([One Resources panel
+path](#one-resources-panel-path-the-editor-may-show-no-graph-november-2026)).
+
+- **Timeline rows are the project's tracks.** The timeline used to list graph tracks apart, with their own view
+  type, actions (`GraphAction`), drop target (`GraphDrop`), selection and clipboard, and counted its video and
+  audio rows from the first video track. Now row *n* is project track *n*: one `TrackView` list, one
+  `TrackAction` set (with `MoveItem { rows }` and `OpenItem`), one lane drawing every kind, one header loop. Graph
+  rows gain what media rows had (Ctrl+click, box select, grouping, the selection-wide menu, F2, solo, New track
+  above/below), and media items move across tracks as graph items did. Bugs that came from the split went with it:
+  S split only the graph items when any was selected, a mixed paste selected half of what it pasted, loading a
+  project or renaming a track dropped the media selection, and a drag snapped only to items of its own kind.
+- **One drop plan.** `Project::plan_drop` places a whole drag (several resources, each with its file's other
+  streams when linked) and the drop preview draws that same plan. The rule is the media rule for every kind: the
+  track under the pointer if it takes the resource, else the first of its section that does and that no other
+  resource of the drop took, else a new track at the bottom of the section. A graph dropped off the graph tracks
+  therefore goes on the first graph track instead of a new one on top. The space under a section's last track,
+  down to the next section, makes a new track at its bottom, as the line under the last track does.
+- **Removing a resource keeps the rest of the selection.** Selected items of other resources on the same track
+  stay selected at their new places, instead of the whole track's selection being dropped.
+
 ## Open
 
 ### Open: "Audio to video" / "Video to audio" names

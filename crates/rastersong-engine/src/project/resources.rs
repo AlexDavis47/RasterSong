@@ -335,43 +335,95 @@ impl Project {
             .collect()
     }
 
-    /// Where [`Self::place_linked`] puts each resource: the track it lands on, or `None` for a
-    /// new track at the bottom of its section. Each resource goes on track `hovered` when that
-    /// is in its section and can take it (the first resource of that kind only), else on the
-    /// first track of its section that can and that no other resource here takes.
-    pub fn plan_linked(
-        &self,
-        id: ResourceId,
-        hovered: Option<&str>,
-        linked: bool,
-    ) -> Vec<(ResourceId, Option<String>)> {
-        let resources = if linked {
-            self.siblings(id)
-        } else {
-            self.resource(id).map(|r| r.id).into_iter().collect()
-        };
-        let mut taken: Vec<String> = Vec::new();
-        let mut plan = Vec::new();
-        for res in resources {
-            let fits =
-                |name: &str| !taken.iter().any(|t| t == name) && self.can_place_resource(name, res);
-            let target = hovered.filter(|&h| fits(h)).map(str::to_owned).or_else(|| {
-                self.tracks
-                    .iter()
-                    .find(|t| fits(&t.name))
-                    .map(|t| t.name.clone())
-            });
-            if let Some(name) = &target {
-                taken.push(name.clone());
+    /// The resources of a drop of `ids` that each start a group: with `linked` a resource from
+    /// the file of an earlier one (its sound, dragged with its picture) comes with that one
+    /// instead. Each comes with the resources it places: every resource of its file when
+    /// `linked`, else itself.
+    fn drop_groups(&self, ids: &[ResourceId], linked: bool) -> Vec<Vec<ResourceId>> {
+        let mut covered: Vec<ResourceId> = Vec::new();
+        let mut groups = Vec::new();
+        for &id in ids {
+            if covered.contains(&id) || self.resource(id).is_none() {
+                continue;
             }
-            plan.push((res, target));
+            let group = if linked { self.siblings(id) } else { vec![id] };
+            covered.extend(&group);
+            groups.push(group);
         }
-        plan
+        groups
     }
 
-    /// Places resource `id` from `position` seconds as [`Self::plan_linked`] says, with every
-    /// other resource of its file when `linked` (so dropping a video places its sound too), and
-    /// groups what it placed. Returns the items placed, `id`'s first.
+    /// Where [`Self::place_drop`] puts each resource of a drop of `ids` (several dragged
+    /// together, stems say), one list per file: the track it lands on, or `None` for a new
+    /// track at the bottom of its section. Each resource goes on track `hovered` when that is in
+    /// its section and can take it (the first resource of that kind only), else on the first
+    /// track of its section that can and that no other resource of the drop takes.
+    pub fn plan_drop(
+        &self,
+        ids: &[ResourceId],
+        hovered: Option<&str>,
+        linked: bool,
+    ) -> Vec<Vec<(ResourceId, Option<String>)>> {
+        let mut taken: Vec<String> = Vec::new();
+        let mut hovered = hovered;
+        self.drop_groups(ids, linked)
+            .into_iter()
+            .map(|group| {
+                let mut plan = Vec::new();
+                for res in group {
+                    let fits = |name: &str| {
+                        !taken.iter().any(|t| t == name) && self.can_place_resource(name, res)
+                    };
+                    let target = hovered.filter(|&h| fits(h)).map(str::to_owned).or_else(|| {
+                        self.tracks
+                            .iter()
+                            .find(|t| fits(&t.name))
+                            .map(|t| t.name.clone())
+                    });
+                    if let Some(name) = &target {
+                        taken.push(name.clone());
+                        if Some(name.as_str()) == hovered {
+                            hovered = None;
+                        }
+                    }
+                    plan.push((res, target));
+                }
+                plan
+            })
+            .collect()
+    }
+
+    /// Places a drop of `ids` from `position` seconds as [`Self::plan_drop`] says, grouping
+    /// each file's items. Returns the items placed, the first resource's first.
+    pub fn place_drop(
+        &mut self,
+        ids: &[ResourceId],
+        hovered: Option<&str>,
+        position: f64,
+        linked: bool,
+        lengths: &ItemLengths,
+    ) -> Vec<ItemRef> {
+        let mut all = Vec::new();
+        for group in self.plan_drop(ids, hovered, linked) {
+            let mut placed = Vec::new();
+            for (res, target) in group {
+                let landed = target.and_then(|name| {
+                    let item = self.place_resource(&name, res, position, lengths)?;
+                    Some(ItemRef::new(name, item))
+                });
+                let landed = landed.or_else(|| {
+                    let name = self.add_track_for(res, position, lengths)?;
+                    Some(ItemRef::new(name, 0))
+                });
+                placed.extend(landed);
+            }
+            self.group_items(&placed);
+            all.extend(placed);
+        }
+        all
+    }
+
+    /// [`Self::place_drop`] of resource `id` alone.
     pub fn place_linked(
         &mut self,
         id: ResourceId,
@@ -380,20 +432,7 @@ impl Project {
         linked: bool,
         lengths: &ItemLengths,
     ) -> Vec<ItemRef> {
-        let mut placed = Vec::new();
-        for (res, target) in self.plan_linked(id, hovered, linked) {
-            let landed = target.and_then(|name| {
-                let item = self.place_resource(&name, res, position, lengths)?;
-                Some(ItemRef::new(name, item))
-            });
-            let landed = landed.or_else(|| {
-                let name = self.add_track_for(res, position, lengths)?;
-                Some(ItemRef::new(name, 0))
-            });
-            placed.extend(landed);
-        }
-        self.group_items(&placed);
-        placed
+        self.place_drop(&[id], hovered, position, linked, lengths)
     }
 
     /// Places resource `id` from `position` seconds on new tracks inserted before the track now
@@ -423,20 +462,10 @@ impl Project {
         lengths: &ItemLengths,
     ) -> Vec<ItemRef> {
         let mut slot = slot;
-        let mut done: Vec<ResourceId> = Vec::new();
         let mut all = Vec::new();
-        for &id in ids {
-            let resources = if linked {
-                self.siblings(id)
-            } else {
-                self.resource(id).map(|r| r.id).into_iter().collect()
-            };
+        for group in self.drop_groups(ids, linked) {
             let mut placed = Vec::new();
-            for res in resources {
-                if done.contains(&res) {
-                    continue;
-                }
-                done.push(res);
+            for res in group {
                 let Some(name) = self.add_track_for_at(res, position, Some(slot), lengths) else {
                     continue;
                 };

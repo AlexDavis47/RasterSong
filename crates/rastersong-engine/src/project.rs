@@ -1154,6 +1154,36 @@ mod inspect_rate_tests {
     }
 
     #[test]
+    fn graphs_dropped_together_each_take_a_track_of_their_own() {
+        let mut project =
+            Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
+        let first = Project::FIRST_GRAPH;
+        let second = project.add_graph("Second", None);
+        project.add_empty_track_at(TrackKind::Graph, "Effects", None);
+        let lengths = ItemLengths {
+            new_graph_length: 2.0,
+            ..ItemLengths::default()
+        };
+        // A graph track takes any graph, but one drop never stacks two on the same track.
+        let plan = project.plan_drop(&[first, second], Some("Effects"), true);
+        assert_eq!(
+            plan,
+            [
+                vec![(first, Some("Effects".to_owned()))],
+                vec![(second, None)]
+            ]
+        );
+        let placed = project.place_drop(&[first, second], Some("Effects"), 1.0, true, &lengths);
+        assert_eq!(placed.len(), 2);
+        assert_eq!(placed[0], ItemRef::new("Effects", 0));
+        assert_ne!(placed[1].track, "Effects");
+        let graphs: Vec<_> = project.tracks_of(TrackKind::Graph).collect();
+        assert_eq!(graphs.len(), 2);
+        assert!(graphs.iter().all(|t| t.items.len() == 1));
+        assert_eq!(project.item(&placed[1]).unwrap().resource, second);
+    }
+
+    #[test]
     fn dropping_on_a_line_between_tracks_makes_new_tracks_there() {
         let mut project =
             Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
