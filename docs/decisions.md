@@ -910,6 +910,19 @@ path](#one-resources-panel-path-the-editor-may-show-no-graph-november-2026)).
 - **Removing a resource keeps the rest of the selection.** Selected items of other resources on the same track
   stay selected at their new places, instead of the whole track's selection being dropped.
 
+### No internal details in the UI; listening replaces the playback (November 2026)
+
+The interface shows what the user reads or acts on, not the engine's bookkeeping. Node ids, signal tags and a
+wire's "from.out → to.in" ends are left out: the canvas already shows where a wire comes from and goes, its colour
+says what it carries, and the name field already names the node, so the inspector's line under it is the
+description alone. The inspector's Output section went for the same reason: hovering a pin or wire shows what an
+output carries, at the playhead. Tags still colour wires and drive notes and warnings.
+
+Listening to a connection (Shift) plays it in place of the playback: hearing the original under it made the signal
+hard to judge. How much of the playback stays is **Playback while listening**, an Application setting, 0% by
+default (rule 21: some want the context). The Metronome no longer depends on Tempo mode: the Time / Tempo switch
+changes how the ruler reads, not what plays.
+
 ## Open
 
 ### A track takes any file; one item inspector (November 2026)

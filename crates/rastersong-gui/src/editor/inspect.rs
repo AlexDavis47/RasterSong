@@ -60,16 +60,6 @@ impl InspectMode {
         }
     }
 
-    /// What this view shows, in a line.
-    pub fn about(self) -> &'static str {
-        match self {
-            Self::Picture => tr("inspect.about.picture"),
-            Self::Scope => tr("inspect.about.scope"),
-            Self::Spectrum => tr("inspect.about.spectrum"),
-            Self::Readings => tr("inspect.about.readings"),
-        }
-    }
-
     /// The mode `steps` along the list (wrapping), for scrolling.
     pub fn stepped(self, steps: i32) -> Self {
         let len = Self::ALL.len() as i32;

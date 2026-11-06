@@ -1788,9 +1788,8 @@ impl App {
             self.clock.speed(),
             self.clock.is_playing(),
             self.settings.volume,
-            // The tempo bar only shows in tempo mode, so the metronome only sounds there.
-            (self.settings.metronome && self.project.timeline_mode == TimelineMode::Tempo)
-                .then_some(self.project.tempo),
+            self.settings.listen_mix,
+            self.settings.metronome.then_some(self.project.tempo),
         );
         if self.clock.is_playing() {
             ui.ctx().request_repaint();
@@ -3078,8 +3077,8 @@ impl App {
     }
 
     /// The Time / Tempo switch with the tempo attached to it in one group: bpm, beats per bar and
-    /// first beat, which beat and bar units follow in either mode, and the metronome (heard in
-    /// tempo mode) with a light for each beat of the bar.
+    /// first beat, which beat and bar units follow in either mode, and the metronome with a light
+    /// for each beat of the bar. The switch only changes the ruler; the metronome works in both.
     fn tempo_group(&mut self, ui: &mut Ui) {
         let theme = Theme::of(ui.ctx());
         let tempo_mode = self.project.timeline_mode == TimelineMode::Tempo;
@@ -3107,27 +3106,26 @@ impl App {
                     };
                 }
                 settings_window::tempo_fields(ui, &mut self.project.tempo);
-                ui.add_enabled_ui(tempo_mode, |ui| {
-                    ui.scope(|ui| {
-                        // Amber while on, like the beat it clicks along with.
-                        let selection = &mut ui.visuals_mut().selection;
-                        selection.bg_fill = theme.beat.gamma_multiply(0.16);
-                        selection.stroke = Stroke::new(1.0, theme.beat);
-                        ui.toggle_value(&mut self.settings.metronome, tr("tempo.metronome"))
-                            .on_hover_text(tr("tempo.metronome.help"))
-                            .on_disabled_hover_text(tr("tempo.metronome.time_mode"));
-                    });
-                    let lit = (self.settings.metronome && tempo_mode)
-                        .then(|| self.beat_in_bar())
-                        .flatten();
-                    beat_lights(
-                        ui,
-                        self.project.tempo.sanitized().beats_per_bar,
-                        lit,
-                        6.0,
-                        3.0,
-                    );
+                ui.scope(|ui| {
+                    // Amber while on, like the beat it clicks along with.
+                    let selection = &mut ui.visuals_mut().selection;
+                    selection.bg_fill = theme.beat.gamma_multiply(0.16);
+                    selection.stroke = Stroke::new(1.0, theme.beat);
+                    ui.toggle_value(&mut self.settings.metronome, tr("tempo.metronome"))
+                        .on_hover_text(tr("tempo.metronome.help"));
                 });
+                let lit = self
+                    .settings
+                    .metronome
+                    .then(|| self.beat_in_bar())
+                    .flatten();
+                beat_lights(
+                    ui,
+                    self.project.tempo.sanitized().beats_per_bar,
+                    lit,
+                    6.0,
+                    3.0,
+                );
             });
     }
 

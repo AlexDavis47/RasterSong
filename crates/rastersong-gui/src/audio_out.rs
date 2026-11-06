@@ -18,12 +18,15 @@ struct Transport {
     speed: f64,
     playing: bool,
     volume: f32,
+    /// How loud the playback stays while a connection is listened to, `0..=1`.
+    listen_mix: f32,
     /// The tempo to click along with, or `None` for no metronome.
     metronome: Option<Tempo>,
     at: Instant,
 }
 
-/// A connection being listened to: its sound, mixed over the playback while it plays.
+/// A connection being listened to: its sound, played in place of the playback (or over it, at
+/// the transport's listen mix) while it plays.
 #[derive(Clone)]
 struct ListenPlay {
     mixer: Arc<Mixer>,
@@ -33,8 +36,6 @@ struct ListenPlay {
 
 /// How long the listened sound takes to fade in and out, in seconds.
 const LISTEN_FADE_SECS: f64 = 0.03;
-/// How much of the playback is turned down while listening, `0..=1`.
-const LISTEN_DUCK: f32 = 0.9;
 
 #[derive(Default)]
 struct Shared {
@@ -85,14 +86,15 @@ impl AudioOut {
         }
     }
 
-    /// Reports the playback position (video seconds), speed and volume, and the tempo of the
-    /// metronome if it is on. Call every UI frame.
+    /// Reports the playback position (video seconds), speed and volume, how loud the playback
+    /// stays while listening, and the tempo of the metronome if it is on. Call every UI frame.
     pub fn update(
         &self,
         position: f64,
         speed: f64,
         playing: bool,
         volume: f32,
+        listen_mix: f32,
         metronome: Option<Tempo>,
     ) {
         if let Ok(mut transport) = self.shared.transport.lock() {
@@ -101,13 +103,15 @@ impl AudioOut {
                 speed,
                 playing,
                 volume,
+                listen_mix: listen_mix.clamp(0.0, 1.0),
                 metronome,
                 at: Instant::now(),
             });
         }
     }
 
-    /// Mixes `mixer` over the playback, turning the playback down, until [`Self::stop_listening`].
+    /// Plays `mixer` in place of the playback, which stays at the transport's listen mix, until
+    /// [`Self::stop_listening`].
     /// It follows the playback's position, so it is silent while playback is stopped: what is
     /// heard always matches the picture. Fades in.
     pub fn listen(&self, mixer: Mixer) {
@@ -266,7 +270,8 @@ impl Source {
         } else {
             (listened.gain - fade).max(0.0)
         };
-        let duck = 1.0 - LISTEN_DUCK * listened.gain;
+        let listen_mix = self.transport.map_or(0.0, |t| t.listen_mix);
+        let duck = 1.0 - (1.0 - listen_mix) * listened.gain;
         match self.transport {
             Some(t) if t.playing && t.speed > 0.0 => {
                 // Where the clock is now, extrapolated from the UI's last report.
@@ -325,9 +330,9 @@ mod tests {
     use rastersong_engine::AudioBlock;
     use rastersong_engine::playback::RenderedSource;
 
-    /// A steady 0.5 at 48 kHz in every frame of video at 30 fps.
+    /// A steady level at 48 kHz in every frame of video at 30 fps.
     #[derive(Debug)]
-    struct Steady;
+    struct Steady(f32);
 
     impl RenderedSource for Steady {
         fn blocks(&self, frames: std::ops::Range<usize>) -> Vec<Option<Arc<AudioBlock>>> {
@@ -337,7 +342,7 @@ mod tests {
                         start: f as u64 * 1600,
                         sample_rate: 48_000,
                         channels: 1,
-                        samples: vec![0.5; 1600],
+                        samples: vec![self.0; 1600],
                     }))
                 })
                 .collect()
@@ -364,11 +369,12 @@ mod tests {
             speed: 1.0,
             playing,
             volume: 1.0,
+            listen_mix: 0.0,
             metronome: None,
             at: Instant::now(),
         };
         source.listen(Some(ListenPlay {
-            mixer: Arc::new(Mixer::rendered(Arc::new(Steady), 1.0)),
+            mixer: Arc::new(Mixer::rendered(Arc::new(Steady(0.5)), 1.0)),
             id: 1,
         }));
         // Paused: nothing is heard, whether or not a transport has been reported.
@@ -384,5 +390,32 @@ mod tests {
         let after = pull(&mut source, 0.3);
         assert!(after.abs() < 0.01, "{after}");
         assert!(source.listened.mixer.is_none(), "released once silent");
+    }
+
+    #[test]
+    fn listening_plays_the_connection_alone_unless_the_listen_mix_keeps_the_playback() {
+        let heard = |listen_mix| {
+            let mut source = Source::new(48_000.0);
+            source.mixer = Arc::new(Mixer::rendered(Arc::new(Steady(0.5)), 1.0));
+            source.transport = Some(Transport {
+                position: 0.5,
+                speed: 1.0,
+                playing: true,
+                volume: 1.0,
+                listen_mix,
+                metronome: None,
+                at: Instant::now(),
+            });
+            // A silent connection: what is heard is what is left of the playback.
+            source.listen(Some(ListenPlay {
+                mixer: Arc::new(Mixer::rendered(Arc::new(Steady(0.0)), 1.0)),
+                id: 1,
+            }));
+            pull(&mut source, 0.3)
+        };
+        let alone = heard(0.0);
+        assert!(alone.abs() < 0.01, "the playback is silent: {alone}");
+        let half = heard(0.5);
+        assert!((half - 0.25).abs() < 0.05, "half the playback: {half}");
     }
 }

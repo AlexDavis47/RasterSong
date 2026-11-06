@@ -3069,7 +3069,7 @@ fn the_toolbar_switches_modes_without_moving_the_timeline() {
 }
 
 #[test]
-fn the_toolbar_holds_snapping_and_the_metronome_plays_only_in_tempo_mode() {
+fn the_toolbar_holds_snapping_and_the_metronome_works_in_either_mode() {
     let mut harness = loaded();
     assert!(harness.state().settings().snap);
     harness.get_by_label("Snap").click();
@@ -3079,14 +3079,24 @@ fn the_toolbar_holds_snapping_and_the_metronome_plays_only_in_tempo_mode() {
     let snap = harness.get_by_label("Snap").rect();
     assert!(snap.left() > harness.get_by_label("Metronome").rect().right());
 
+    // The Time / Tempo switch only changes the ruler: the metronome turns on in time mode, and
+    // its beat lights count along there too.
+    assert_eq!(harness.state().project().timeline_mode, TimelineMode::Time);
     harness.get_by_label("Metronome").click();
     harness.run_steps(2);
-    assert!(!harness.state().settings().metronome, "off in time mode");
+    assert!(harness.state().settings().metronome, "on in time mode");
+    harness.get_by_label("Beat 1 of 4");
     harness.get_by_label("Tempo").click();
     harness.run_steps(2);
+    assert!(
+        harness.state().settings().metronome,
+        "still on in tempo mode"
+    );
+    harness.get_by_label("Time").click();
+    harness.run_steps(2);
     harness.get_by_label("Metronome").click();
     harness.run_steps(2);
-    assert!(harness.state().settings().metronome);
+    assert!(!harness.state().settings().metronome);
 }
 
 #[test]
@@ -3440,6 +3450,26 @@ fn the_probe_waits_like_a_tooltip_for_the_pointer_to_rest() {
     step_until(&mut harness, "the probe open", |app| {
         app.editor().probe_rect().is_some()
     });
+}
+
+#[test]
+fn the_probe_shows_what_a_wire_carries_without_its_ends_or_tag() {
+    let mut harness = loaded();
+    hover_wire(&mut harness);
+    step_until(&mut harness, "the probe open", |app| {
+        app.editor().probe_rect().is_some()
+    });
+    harness.get_by_label_contains("samples)");
+    // The canvas already shows where the wire goes, and the tag and a caption under the view
+    // say nothing the view doesn't.
+    assert!(harness.query_by_label_contains("→").is_none());
+    assert!(harness.query_by_label_contains("->").is_none());
+    for caption in ["The waveform", "An FFT", "stretched over", "Numbers only"] {
+        assert!(
+            harness.query_by_label_contains(caption).is_none(),
+            "{caption}"
+        );
+    }
 }
 
 #[test]
@@ -4541,6 +4571,20 @@ fn a_graph_too_wide_for_the_canvas_starts_from_its_inputs() {
     assert!(out.right() > canvas.right(), "{out:?} in {canvas:?}");
     assert!(video.left() > canvas.left() && video.left() < canvas.left() + 50.0);
     assert!(editor.view().zoom >= 0.85);
+}
+
+#[test]
+fn the_node_inspector_says_what_the_node_does_without_its_id_or_outputs() {
+    let mut harness = loaded();
+    select(&mut harness, "bands");
+    harness.run_steps(2);
+    // The name field holds the type's name; the line under it is the description alone, without
+    // the type again or the node's id.
+    harness.get_by_label("Low, mid and high frequency bands that add back up to the input");
+    assert!(harness.query_by_label_contains("· bands").is_none());
+    // What each output carries is in the probe, on hovering a pin or wire.
+    assert!(harness.query_by_label("OUTPUTS").is_none());
+    assert!(harness.query_by_label("OUTPUT").is_none());
 }
 
 #[test]
