@@ -671,7 +671,7 @@ fn graph_track_screenshots() {
     }
     harness.run_steps(4);
     save(&mut harness, "dark-29-graph-item-inspector");
-    assert!(harness.state().selected_graph_item().is_some());
+    assert!(harness.state().inspected_item().is_some());
 }
 
 /// Tracks of several items, a muted item, grouped items and a taller track.

@@ -118,14 +118,20 @@ no further than 85%: a graph wider than that starts from its inputs on the left,
 
 ## Inspector
 
-The inspector follows the selection: the track whose header or item was clicked last, else a selected graph item,
-else the active node. Clicking a node or a graph item takes it back from a track. Every kind uses one layout: a
-header with the kind (NODE, GRAPH ITEM, TRACK) and a tag in its colour (the node's category, the track's kind),
+The inspector follows the selection: the track whose header was clicked last, else the selected item when it is
+the only one (of any kind), else the active node. Clicking a node or an item takes it back from a track. Every
+kind uses one layout: a header with the kind (NODE, ITEM, TRACK) and a tag in its colour (the node's category, the
+item's or track's kind),
 the actions that apply (a node's **Bypass**, Alt+click on the canvas does the same), the name in large type, and
 a line about it; then sections under capital labels.
 
-A **track** shows its name (renamed as in its header), what it plays and how many items, and a **Mix** section:
-an audio track's Volume (a slider and box like a parameter's), Mute, Solo, and an audio track's Bus.
+A **track** of any kind shows its name (renamed as in its header), the resources its items play and how many
+items, and a **Mix** section: Mute, Solo, and where the kind has a level (audio) its Volume (a slider and box like a
+parameter's) and Bus.
+
+An **item** of any kind shows the resource it plays and its track, and a **Playing** section: **Mute**, then what
+its kind can do: **Pre-roll** for a graph item, the **Speed** it plays its file at for a video or audio item
+(changed by Alt+dragging an edge). What a graph reads is set on its own source nodes, not on its items.
 
 A **node** shows its name (shown on the node instead of its type; it changes on Enter or clicking away, and the type's own name unnames it), "Kind · id — description", its notes and
 warnings, what each output carries (port, colour, tag, size) with its meters, its shared settings (Resampling, Grouping, Channels, and
@@ -237,8 +243,8 @@ the timeline.
 Each header starts with a bar in its kind's colour (graph purple, video grey, audio teal) and the track's name.
 Clicking the name selects the track; double-clicking it, or **F2** over the timeline for the selected track, turns
 it into a text field to rename it in place (Enter or clicking away commits, Esc cancels; renaming a track updates
-the sources that read it). Under the name, a video header shows the
-file's size and frame rate; an audio header its **volume** as a slim bar (drag or click along it, double-click for
+the sources that read it). Under the name, a video header shows the size and frame rate of the file playing at
+the playhead (else of its first item); an audio header its **volume** as a slim bar (drag or click along it, double-click for
 100%) and, when the project has several buses, its bus. Every header, graph tracks' too, has **M** (mute) and
 **S** (solo, yellow while on); removing a track is in the header's right-click menu. Each
 track's lane has its own outline (the selected track's is the accent color), so neighbouring tracks are easy to
@@ -246,9 +252,10 @@ tell apart. The project lasts to the end of its last item and runs at its [timeb
 no way to make an empty track: a track appears when a resource is placed (File → Add Audio Tracks… places several
 audio files at once, each named after its file).
 Every kind of resource drops the same way, graphs too. Dropping a resource on a track of its kind puts it there
-from the drop point, trimming what it lands on: a graph track takes any graph, a video or audio track another item
-of the resource it plays (for now a video or audio track plays one resource). Dropped anywhere else, the resource
-goes on the first track of its section that takes it, else on a new track at the bottom of its section. Dropped
+from the drop point, trimming what it lands on: a track takes any resource of its kind, so one track can play
+items of several files (or graphs). Dropped anywhere else, the resource goes on the first track of its section
+that plays nothing else (an empty one, or one playing only that resource), else on a new track at the bottom of its
+section. Dropped
 **on the line between two tracks**, above the first or below the last track of a section, or in the space under a
 section's last track, the resource gets a new track there, whatever it is dropped on: a thick **ghost line** shows
 the place. A track's right-click menu has **New track above** and
@@ -261,17 +268,19 @@ to place only the one dragged. A video with sound dropped on the timeline theref
 While a card is dragged a **drag bubble** (a pill with the card's icon and name) follows the pointer; it pops in,
 blooms where it is dropped, and shrinks back to the card when nothing takes it. Over the lanes a **ghost** shows
 where the drop will land: an outlined item on the track that takes it, or a ghost row where the new track will
-go, at the snapped time (snapping like an item drag, Shift for none). The drop uses that time. A resource no
-track plays yet has no known length, so its ghost marks only where it starts. Dragged track headers show the
-bubble too.
+go, at the snapped time (snapping like an item drag, Shift for none). The drop uses that time. Every media
+resource's file is read as soon as it is in the project, placed or not (a video indexed for its thumbnails, an
+audio file decoded), so a drop knows its length and trims exactly; until a file is read its ghost marks only where
+it starts. Dragged track headers show the bubble too.
 Opening a video (File → Open Video…) replaces every video track and adds the
 video's sound as an audio track too. Both go through [resources](#resources) for the file's best streams; the
-Resources panel adds more video tracks, and any stream of a file. Every video track decodes its own thumbnails (two
-tracks of one resource share a decoder), so any number of video tracks, including several of the same resource, show
-their length and thumbnails. The unprocessed feed (a graph's source side by side with the result) still shows only the
+Resources panel adds more video tracks, and any stream of a file. Thumbnails are decoded per video resource
+(resources of one stream share a decoder), so any number of items of any number of files, on any tracks, show their
+length and thumbnails. The unprocessed feed (a graph's source side by side with the result) still shows only the
 first video track.
 
-Every item has a **header bar** along its top with the track's name (cut short before the mute button) and a mute button (a muted item reads as a gap,
+Every item, of every kind, has a **header bar** along its top with the name of the resource it plays, in that
+resource's label colour (cut short before the mute button) and a mute button (a muted item reads as a gap,
 for graphs too). Drag the bar to move the item; the area below it shows the item's content, thumbnails of the
 source video (decoded by a separate small decoder so they never slow rendering and survive graph edits) or the
 audio's waveform, and behaves like empty lane space. Items can't start before the timeline does, and items on a
@@ -347,9 +356,9 @@ like an adjustment layer in a video editor. How they render is described in
   selection, and have **pre-roll** (on by default): the graph warms up as if it had run before the item, so
   trimming the left edge changes nothing after it. Double-click an item to open its graph in the editor, or click it once with **Open graphs with a
   single click** on in Settings.
-- **The graph item inspector** shows the item's graph and track and its **Pre-roll**. What a graph reads is set
-  on its own source nodes ([Node graph](#node-graph)), so every item of a graph reads the same things. Sources
-  only point down, so graphs can't loop.
+- **The item inspector** ([Inspector](#inspector)) shows a graph item's graph and track and its **Pre-roll**.
+  What a graph reads is set on its own source nodes ([Node graph](#node-graph)), so every item of a graph reads
+  the same things. Sources only point down, so graphs can't loop.
 - A new graph starts as a visible template (`In: Video` into Video Output, `In: Audio` into Audio Output), so a
   fresh graph item changes nothing. The starter graph of a new project (`am_bands`) also wires `In: Audio` to an
   Audio Output, so its sound plays. A graph placed over graphs below it chains them unless a source is changed.

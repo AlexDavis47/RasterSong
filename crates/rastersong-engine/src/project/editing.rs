@@ -197,32 +197,6 @@ impl Project {
         }
     }
 
-    /// Whether putting items of `incoming` on track `track` (by index), once `leaving` have left
-    /// it, would give a video or audio track items of two resources. Until the renderer reads a
-    /// file per item, a video or audio track plays one resource.
-    pub(super) fn mixes_resources(
-        &self,
-        track: usize,
-        incoming: &[ResourceId],
-        leaving: &[ItemRef],
-    ) -> bool {
-        let Some(t) = self.tracks.get(track) else {
-            return false;
-        };
-        if !t.kind.reads_file() {
-            return false;
-        }
-        let staying = t
-            .items
-            .iter()
-            .enumerate()
-            .filter(|(k, _)| !leaving.contains(&ItemRef::new(t.name.clone(), *k)))
-            .map(|(_, i)| i.resource);
-        let mut all = staying.chain(incoming.iter().copied());
-        all.next()
-            .is_some_and(|first| all.any(|other| other != first))
-    }
-
     /// Puts resource `id` on track `track` from `position` seconds, trimming what it lands on: a
     /// file's whole length, or a graph for [`ItemLengths::new_graph_length`]. Returns the new
     /// item's place, or `None` when the track can't take it (see
@@ -287,17 +261,6 @@ impl Project {
             match from.checked_add_signed(rows) {
                 Some(target) if section.contains(&target) => to.push(target),
                 _ => return unmoved,
-            }
-        }
-        for &target in &to {
-            let incoming: Vec<ResourceId> = moving
-                .iter()
-                .zip(&to)
-                .filter(|(_, t)| **t == target)
-                .filter_map(|(at, _)| self.item(at).map(|i| i.resource))
-                .collect();
-            if self.mixes_resources(target, &incoming, &moving) {
-                return unmoved;
             }
         }
         // Take every moving item out, back to front so the earlier places stay right, then put
@@ -489,7 +452,7 @@ impl Project {
             let fits = self
                 .resource(item.resource)
                 .is_some_and(|r| r.kind() == kind);
-            if !fits || self.mixes_resources(track, &[item.resource], &[]) {
+            if !fits {
                 continue;
             }
             let group = item.group.map(|g| {
@@ -824,9 +787,27 @@ mod tests {
         assert!(p.place_resource("v", GRAPH, 0.0, &lengths()).is_none());
         assert!(p.place_resource("g", song, 0.0, &lengths()).is_none());
         assert!(p.place_resource("b", song, 0.0, &lengths()).is_some());
-        // Until the renderer reads a file per item, a video or audio track plays one resource.
+    }
+
+    #[test]
+    fn a_track_takes_items_of_two_files() {
+        let mut p = project(&[("a", 0.0)]);
         let other = resource_of(&p, "b");
-        assert!(p.place_resource("b", other, 3.0, &lengths()).is_none());
+        // Another file lands on a track that plays one, trimming what it covers.
+        assert_eq!(p.place_resource("a", other, 1.0, &lengths()), Some(1));
+        assert_eq!(spans(&p, "a"), [(0.0, 1.0), (1.0, 3.0)]);
+        // Moved and pasted items of another file land too.
+        let song = resource_of(&p, "a");
+        let moved = p.move_items(&[at("a", 0)], 6.0, 0, &lengths());
+        assert_eq!(moved, [at("a", 1)]);
+        let copied = p.copy_items(&[at("a", 1)]);
+        p.paste_items(&copied, 10.0, &lengths());
+        let played: Vec<ResourceId> = p.tracks[p.track_index("a").unwrap()]
+            .items
+            .iter()
+            .map(|i| i.resource)
+            .collect();
+        assert_eq!(played, [other, song, song]);
     }
 
     #[test]
@@ -892,11 +873,6 @@ mod tests {
         let grouped = p.clone();
         p.move_items(&[at("a", 0)], 1.0, 1, &lengths());
         assert_eq!(p, grouped);
-        // Onto an audio track playing another file, for now.
-        let mut p = project(&[("a", 0.0), ("b", 3.0)]);
-        let before = p.clone();
-        p.move_items(&[at("a", 0)], 0.0, 1, &lengths());
-        assert_eq!(p, before);
     }
 
     #[test]

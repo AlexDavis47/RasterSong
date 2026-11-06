@@ -95,6 +95,11 @@ impl TrackKind {
         self == Self::Graph
     }
 
+    /// Whether its items open their resource in the editor: a graph's, in the node graph.
+    pub fn opens(self) -> bool {
+        self == Self::Graph
+    }
+
     /// Whether a resource of this kind can be duplicated: a graph, which the project holds, can;
     /// a stream of a file is the same stream however many times it is listed.
     pub fn duplicates(self) -> bool {

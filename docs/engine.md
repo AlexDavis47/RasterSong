@@ -51,10 +51,12 @@ a track reader in the renderer, which reads each item from its own resource:
 graph item lasts). Whatever an edit puts down trims what it lands on, cutting an item it lands inside in two
 (`place_resource`, `move_items`, `paste_items`); a trim stops at the items either side and at the resource's ends,
 and stretches only kinds that stretch (`trim_item`). An item whose length isn't known yet neither trims nor is
-trimmed. Items move by time and across tracks within their section; a move that would leave its section, or put a
-second file on a video or audio track, moves nothing. Grouped items move, trim, split and delete together, on every
-kind of track. Removing a resource removes its items; its tracks stay. Keeping a video or audio track to one file
-is a limit of the editing API and the timeline for now, not of the renderer.
+trimmed. Items move by time and across tracks within their section; a move that would leave its section moves
+nothing. A track takes items of any resource of its kind. Grouped items move, trim, split and delete together, on
+every kind of track. Removing a resource removes its items; its tracks stay. The engine decodes every audio
+resource of the composition, placed or not, so its length is known before it lands on a track
+(`Engine::loaded_audio`); a file an item plays that can't be decoded fails the build, one no item plays is left
+out.
 
 **Audio item edges fade** over a fixed 5 ms (`EDGE_FADE`, at most half the item), linearly, so cuts don't click
 (`Item::gain_at`). Items never overlap, so a track's items are added up: at a cut the item before fades out and the

@@ -14,7 +14,7 @@ use rastersong_media::{AudioCache, AudioClip, MediaBackend};
 
 use crate::audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE, SinkResampler};
 use crate::cache::{CacheKey, Frame, FrameCache};
-use crate::composition::{ComposedTrack, Composition};
+use crate::composition::{ComposedResource, Composition};
 use crate::listen::{self, ListenTarget, Listened};
 use crate::playback::RenderedSource;
 use crate::project::{
@@ -1220,49 +1220,57 @@ impl Worker {
         self.notify();
     }
 
-    /// Decodes the audio every item on an audio track plays (reusing earlier decodes of the same
-    /// file). Returns it by resource, for rendering and for playback.
+    /// Decodes every audio resource (reusing earlier decodes of the same file), placed or not,
+    /// so its length is known before it lands on a track. Returns it by resource, for rendering
+    /// and for playback. A file an item plays that can't be decoded fails the render, named by
+    /// the first track that plays it; one no item plays is left out.
     fn load_audio(
         &mut self,
         composition: &Composition,
     ) -> Result<(AudioResources, Vec<LoadedAudio>), Failure> {
-        // Each resource once, with the first track that plays it to name it in errors.
-        let mut tracks: Vec<(&ComposedTrack, ResourceId, MediaFile)> = Vec::new();
-        for track in composition.tracks_of(TrackKind::Audio) {
-            for resource in composition.played_by(track) {
-                if let Some(file) = resource.file()
-                    && !tracks.iter().any(|(_, id, _)| *id == resource.id)
-                {
-                    tracks.push((track, resource.id, file.clone()));
-                }
-            }
-        }
+        let player = |id: ResourceId| {
+            composition
+                .tracks_of(TrackKind::Audio)
+                .find(|t| t.items.iter().any(|i| i.resource == id))
+        };
+        let files: Vec<(&ComposedResource, &MediaFile)> = composition
+            .resources
+            .iter()
+            .filter(|r| r.kind() == TrackKind::Audio)
+            .filter_map(|r| Some((r, r.file()?)))
+            .collect();
         let mut decoded = lock(&self.shared.audio);
-        // Forget files no track plays any more.
+        // Forget files that are no longer resources.
         decoded.retain(|(path, stream), _| {
-            tracks
+            files
                 .iter()
-                .any(|(_, _, f)| &f.path == path && f.stream == *stream)
+                .any(|(_, f)| &f.path == path && f.stream == *stream)
         });
         let mut audio = AudioResources::new();
-        let mut loaded = Vec::with_capacity(tracks.len());
-        for (track, id, file) in tracks {
-            let entry = self.decode(&mut decoded, &track.name, &file)?;
+        let mut loaded = Vec::with_capacity(files.len());
+        for (resource, file) in files {
+            let track = player(resource.id);
+            let entry = match self.decode(&mut decoded, track.map(|t| t.name.as_str()), file) {
+                Ok(entry) => entry,
+                Err(_) if track.is_none() => continue,
+                Err(failure) => return Err(failure),
+            };
             loaded.push(LoadedAudio {
-                resource: id,
+                resource: resource.id,
                 clip: entry.clip,
                 waveform: entry.waveform,
             });
-            audio.insert(id, entry.modulator);
+            audio.insert(resource.id, entry.modulator);
         }
         Ok((audio, loaded))
     }
 
-    /// The audio of `file`, played by track `track`, decoded once per file.
+    /// The audio of `file`, played by track `track` (if any track plays it), decoded once per
+    /// file.
     fn decode(
         &self,
         audio: &mut DecodedFiles,
-        track: &str,
+        track: Option<&str>,
         file: &MediaFile,
     ) -> Result<DecodedAudio, Failure> {
         let key = (file.path.clone(), file.stream);
@@ -1279,7 +1287,10 @@ impl Worker {
         .map_err(|e| {
             Failure::new(tr_args(
                 "error.audio_track",
-                &[("name", track), ("error", &e.to_string())],
+                &[
+                    ("name", track.unwrap_or_default()),
+                    ("error", &e.to_string()),
+                ],
             ))
         })?;
         let entry = DecodedAudio {

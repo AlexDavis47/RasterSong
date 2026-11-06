@@ -1,5 +1,6 @@
-//! The inspector for a selected video or audio track, in the inspector's one layout: the kind
-//! with the track's kind, its name and what it plays, then how it goes into the mix.
+//! The inspector for a selected track of any kind, in the inspector's one layout: the kind with
+//! the track's kind, its name and what it plays, then how it goes into the mix (its level and
+//! bus where the kind [has a level](TrackKind::has_level)).
 
 use eframe::egui::{self, RichText, Ui};
 use rastersong_engine::{Project, TrackKind};
@@ -14,8 +15,8 @@ use crate::widgets::{
     setting_row, setting_toggle,
 };
 
-/// Shows the inspector of the video or audio track in row `row` (of the timeline's video and
-/// audio rows) and returns what the user changed, as the timeline's track header would.
+/// Shows the inspector of the track in row `row` of the timeline and returns what the user
+/// changed, as the timeline's track header would.
 pub fn track_inspector(
     ui: &mut Ui,
     project: &Project,
@@ -44,7 +45,17 @@ pub fn track_inspector(
         if let Some(name) = edit.committed {
             actions.push(TrackAction::Rename(row, name));
         }
-        let resource = project.track_resource(track).map(|r| r.name.as_str());
+        // Each resource its items play, once, in the order they first play.
+        let mut names: Vec<&str> = Vec::new();
+        for item in &track.items {
+            if let Some(r) = project.resource(item.resource)
+                && !names.contains(&r.name.as_str())
+            {
+                names.push(&r.name);
+            }
+        }
+        let names = names.join(", ");
+        let resource = (!names.is_empty()).then_some(names.as_str());
         let line = match resource {
             Some(resource) if track.items.len() == 1 => {
                 tr_args("inspector.track.about_one", &[("resource", resource)])
@@ -62,7 +73,7 @@ pub fn track_inspector(
     });
     inspector_body(ui, |ui| {
         section(ui, tr("inspector.track.mix"), |ui| {
-            if track.kind == TrackKind::Audio {
+            if track.kind.has_level() {
                 let mut percent = f64::from(track.volume) * 100.0;
                 let range = NumberRange {
                     default: 100.0,
@@ -111,7 +122,7 @@ pub fn track_inspector(
             ) {
                 actions.push(TrackAction::ToggleSolo(row));
             }
-            if track.kind == TrackKind::Audio {
+            if track.kind.has_level() {
                 let mut bus = track.bus.clone();
                 setting_row(
                     ui,

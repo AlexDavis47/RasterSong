@@ -68,7 +68,7 @@ the tempo and the loop region:
   item always has one, as a graph has no end of its own), `rate` (seconds of file per second of timeline, 1 by
   default; always 1 for a graph), `muted`, its `group` (items with the same number move, trim, split and delete
   together; a group of one is dropped on load) and, for a graph, `pre_roll` (true by default: the graph warms up
-  as if it had run before the item). For now a video or audio track's items all play one resource. Items on a
+  as if it had run before the item). A track's items can play different resources of its kind. Items on a
   track never overlap: a file with overlaps is put in order and repaired on load, where their lengths are known
   without reading the files (a graph item's always are, a file's item without an `end` isn't).
 

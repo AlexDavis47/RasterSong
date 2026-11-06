@@ -137,11 +137,7 @@ pub struct TrackView {
     pub name: String,
     /// Its section.
     pub kind: TrackKind,
-    /// The track plays nothing yet: it takes the first resource of its kind dropped on it.
-    pub empty: bool,
-    /// Length of the track's file in seconds, once known. Unbounded for a graph track: a graph
-    /// item always has an end of its own.
-    pub duration: Option<f64>,
+    /// Each item names the resource it plays, which [`TimelineModel::resource_views`] shows.
     pub items: Vec<Item>,
     pub muted: bool,
     pub solo: bool,
@@ -151,19 +147,10 @@ pub struct TrackView {
     pub volume: f32,
     /// Height of the track's lane and header.
     pub height: f32,
-    pub waveform: Option<Arc<Waveform>>,
     /// The output bus an audio track is summed into in the mix.
     pub bus: String,
-    /// A line under the name, e.g. "1920×1080 · 29.97 fps".
-    pub details: Option<String>,
-    /// The track's file is missing: it shows an error where its items would be.
-    pub missing: bool,
-    /// The thumbnails of this track's file, once it is open.
-    pub thumbnails: Option<TrackThumbnails>,
     /// The selected items, by index into [`Self::items`].
     pub selected_items: Vec<usize>,
-    /// The label colour of the resource it plays, which its items are drawn in.
-    pub color: Option<LabelColor>,
 }
 
 impl TrackView {
@@ -172,41 +159,56 @@ impl TrackView {
         Self {
             name: name.into(),
             kind,
-            empty: false,
-            duration: None,
             items: Vec::new(),
             muted: false,
             solo: false,
             silenced: false,
             volume: 1.0,
             height: LANE_HEIGHT,
-            waveform: None,
             bus: String::new(),
-            details: None,
-            missing: false,
-            thumbnails: None,
             selected_items: Vec::new(),
-            color: None,
         }
-    }
-
-    /// How long item `item` lasts on the timeline; `None` until the file's length is known.
-    fn item_span(&self, item: &Item) -> Option<(f64, f64)> {
-        self.duration.map(|d| (item.position, item.timeline_end(d)))
     }
 }
 
-/// What the timeline shows of a resource an item plays.
-#[derive(Debug, Clone, PartialEq)]
+/// What the timeline shows of a resource items play: the same for every kind, with what only
+/// some kinds have left empty.
+#[derive(Debug, Clone)]
 pub struct ResourceView {
     pub name: String,
     /// Its label colour, which its items are drawn in.
     pub color: Option<LabelColor>,
+    /// Its length in seconds, once known. Unbounded for a graph: a graph item always has an end
+    /// of its own.
+    pub duration: Option<f64>,
+    /// Its file is missing: its items aren't drawn and their lane says so.
+    pub missing: bool,
+    /// A line for the header of a track playing it, e.g. "1920×1080 · 29.97 fps".
+    pub details: Option<String>,
+    /// An audio file's peaks.
+    pub waveform: Option<Arc<Waveform>>,
+    /// A video file's thumbnails decoded so far.
+    pub thumbnails: Option<FileThumbnails>,
 }
 
-/// The thumbnails decoded so far of one video track's file.
+impl ResourceView {
+    /// A resource with nothing known of it yet but its name and colour.
+    pub fn new(name: impl Into<String>, color: Option<LabelColor>) -> Self {
+        Self {
+            name: name.into(),
+            color,
+            duration: None,
+            missing: false,
+            details: None,
+            waveform: None,
+            thumbnails: None,
+        }
+    }
+}
+
+/// The thumbnails decoded so far of one video file.
 #[derive(Debug, Clone)]
-pub struct TrackThumbnails {
+pub struct FileThumbnails {
     /// By frame of the file.
     pub frames: Arc<BTreeMap<usize, Thumbnail>>,
     /// The frame rate of the file.
@@ -244,10 +246,38 @@ pub struct TimelineModel<'a> {
     pub open_graphs_on_click: bool,
     /// The resources the track menu can place on a new track: id, name and the kind of track.
     pub resources: Vec<(ResourceId, String, TrackKind)>,
-    /// The resources graph items play, which they are named and coloured after.
+    /// The resources items play, which they are named, coloured, measured and drawn after.
     pub resource_views: HashMap<ResourceId, ResourceView>,
     /// Resources being dragged from the Resources panel, for the drop preview.
     pub drop_ghost: Option<DropGhost>,
+}
+
+impl TimelineModel<'_> {
+    /// The resource item `item` plays, if it is known and its file isn't missing.
+    fn resource_of(&self, item: &Item) -> Option<&ResourceView> {
+        self.resource_views
+            .get(&item.resource)
+            .filter(|r| !r.missing)
+    }
+
+    /// Where item `item` lies on the timeline; `None` until its resource's length is known.
+    fn item_span(&self, item: &Item) -> Option<(f64, f64)> {
+        let duration = self.resource_of(item)?.duration?;
+        Some((item.position, item.timeline_end(duration)))
+    }
+
+    /// The line under the name in the header of track `row`: the details of what plays at the
+    /// playhead there, else of its first item.
+    fn track_details(&self, row: usize) -> Option<&str> {
+        let track = self.tracks.get(row)?;
+        let now = self.playhead as f64 / self.frame_rate;
+        let playing = track.items.iter().find(|i| {
+            self.item_span(i)
+                .is_some_and(|(start, end)| start <= now && now < end)
+        });
+        let item = playing.or(track.items.first())?;
+        self.resource_of(item)?.details.as_deref()
+    }
 }
 
 /// What is being dragged over the timeline from the Resources panel: each resource (a video and
@@ -310,8 +340,8 @@ pub enum TrackAction {
         delta: f64,
         rows: isize,
     },
-    /// A graph item was double-clicked (or clicked, with the single-click setting): open its
-    /// graph in the editor.
+    /// An item of a kind that [opens](TrackKind::opens) was double-clicked (or clicked, with
+    /// the single-click setting): open its resource in the editor.
     OpenItem {
         row: usize,
         item: usize,
@@ -319,6 +349,13 @@ pub enum TrackAction {
     ToggleItemMute {
         row: usize,
         item: usize,
+    },
+    /// The item inspector turned pre-roll on or off, for a kind that
+    /// [pre-rolls](TrackKind::pre_rolls).
+    SetPreRoll {
+        row: usize,
+        item: usize,
+        on: bool,
     },
     /// An edge of item `item` was dragged to time `to` (seconds): trimmed, or with `stretch`
     /// (Alt) its rate changed.
@@ -372,8 +409,9 @@ pub enum TrackAction {
 pub struct TimelineResponse {
     pub seek: Option<usize>,
     pub actions: Vec<TrackAction>,
-    /// Frames whose thumbnails would fill the visible video items, with the track they are of.
-    pub wanted_thumbnails: Vec<(String, usize)>,
+    /// Frames whose thumbnails would fill the visible video items, with the resource they are
+    /// of.
+    pub wanted_thumbnails: Vec<(ResourceId, usize)>,
     /// A new loop region (`Some(None)` to remove it).
     pub loop_region: Option<Option<LoopRegion>>,
     /// Screen x where the lanes start, for turning a pointer position into time.
@@ -930,7 +968,7 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
     let extent = model
         .tracks
         .iter()
-        .flat_map(|t| t.items.iter().filter_map(|i| t.item_span(i)))
+        .flat_map(|t| t.items.iter().filter_map(|i| model.item_span(i)))
         .fold((0.0f64, duration), |(lo, hi), (start, end)| {
             (lo.min(start), hi.max(end))
         });
@@ -1291,13 +1329,13 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
         });
         grip.context_menu(|ui| track_menu(ui, model, row, &areas, &mut response));
         let (color, kind) = match track.kind {
-            TrackKind::Graph => (theme.graph_block, tr("timeline.graph_track.kind")),
+            TrackKind::Graph => (theme.graph_block, tr("timeline.track.kind.graph")),
             TrackKind::Video => (theme.ports.video, tr("timeline.track.kind.video")),
             TrackKind::Audio => (theme.ports.audio, tr("timeline.track.kind.audio")),
         };
         kind_bar(ui, rect, header_clip, color, kind, ("track-kind", row));
         header(ui, rect, header_clip, |ui| {
-            track_header(ui, track, &model.buses, row, &mut response);
+            track_header(ui, model, row, &mut response);
         });
         if let Some(height) = height_handle(
             ui,
@@ -1510,7 +1548,7 @@ fn items_in(
             continue;
         }
         for (k, item) in track.items.iter().enumerate() {
-            let Some((start, end)) = track.item_span(item) else {
+            let Some((start, end)) = model.item_span(item) else {
                 continue;
             };
             let block = Rect::from_min_max(
@@ -1809,10 +1847,16 @@ impl Lane<'_> {
             Stroke::new(width, outline),
             egui::StrokeKind::Inside,
         );
-        let track = self.track;
-        let note = if track.missing {
+        // What its items' resources can't show yet: a missing file first.
+        let views = || {
+            self.track
+                .items
+                .iter()
+                .filter_map(|i| model.resource_views.get(&i.resource))
+        };
+        let note = if views().any(|r| r.missing) {
             Some((tr("timeline.track.missing"), ui.visuals().error_fg_color))
-        } else if !track.empty && track.duration.is_none() {
+        } else if views().any(|r| r.duration.is_none()) {
             Some((tr("timeline.track.loading"), ui.visuals().weak_text_color()))
         } else {
             None
@@ -1839,23 +1883,18 @@ impl Lane<'_> {
         response: &mut TimelineResponse,
     ) {
         let (track, row) = (self.track, self.row);
-        if track.empty || track.missing {
-            return;
-        }
-        let Some(duration) = track.duration else {
-            return;
-        };
         let lane = self.rect();
         // Items being dragged are drawn where they would land; the move applies on release.
         let moving = ui.ctx().data(|d| d.get_temp::<ItemMove>(ItemMove::id()));
         let shown = |r: Rect| r.intersect(self.clip).is_positive();
         for (k, item) in track.items.iter().enumerate() {
+            // An item is drawn once its resource's length is known.
+            let Some((start, end)) = model.item_span(item) else {
+                continue;
+            };
             let block = Rect::from_min_max(
-                pos2(view.x(lane.left(), item.position), lane.top() + 1.0),
-                pos2(
-                    view.x(lane.left(), item.timeline_end(duration)),
-                    lane.bottom() - 1.0,
-                ),
+                pos2(view.x(lane.left(), start), lane.top() + 1.0),
+                pos2(view.x(lane.left(), end), lane.bottom() - 1.0),
             );
             let landing = moving
                 .as_ref()
@@ -1894,19 +1933,6 @@ impl Lane<'_> {
         ui.id().with(("item-bar", row, k))
     }
 
-    /// The name and label colour item `item` is drawn with: a graph item's graph's, or the
-    /// track's and its file's.
-    fn label(&self, model: &TimelineModel, item: &Item) -> (String, Option<LabelColor>) {
-        match self.track.kind {
-            TrackKind::Graph => model
-                .resource_views
-                .get(&item.resource)
-                .map(|r| (r.name.clone(), r.color))
-                .unwrap_or_default(),
-            TrackKind::Video | TrackKind::Audio => (self.track.name.clone(), self.track.color),
-        }
-    }
-
     /// The lane under the pointer that a dragged item would move to: one of this section's, or
     /// `None` while the pointer is between them or off them.
     fn row_under_pointer(&self, ui: &Ui) -> Option<usize> {
@@ -1941,7 +1967,7 @@ impl Lane<'_> {
         let hovered = grab.hovered() || grab.dragged();
         let selected = track.selected_items.contains(&k);
         let (ctrl, alt) = ui.input(|i| (i.modifiers.command, i.modifiers.alt));
-        let span = track.item_span(item);
+        let span = model.item_span(item);
         let drag_id = ui.id().with(("item-drag", row, k));
         let stretches = track.kind.stretches();
         // The edges trim. They are made after the bar, so they win where they overlap it, and
@@ -1955,11 +1981,7 @@ impl Lane<'_> {
             span,
             (("item-edge", row, k), drag_id),
             &|| snap_targets(model, Some(&ItemMove::of((row, k), false))),
-            if track.kind.pre_rolls() {
-                tr("timeline.graph_item.edge")
-            } else {
-                tr("timeline.item.edge")
-            },
+            &edge_help(track.kind),
             |edge, to| {
                 response.actions.push(TrackAction::TrimItem {
                     row,
@@ -1983,7 +2005,9 @@ impl Lane<'_> {
             (&moved, block.translate(offset), bar.translate(offset))
         };
         let visible = block.intersect(self.clip);
-        let (name, color) = self.label(model, item);
+        // Every item is named and coloured after the resource it plays.
+        let resource = model.resource_of(item);
+        let (name, color) = resource.map_or_else(Default::default, |r| (r.name.clone(), r.color));
         let colors = theme.item_colors(track.kind, color);
         let dim = item.muted || track.silenced;
         // A graph item without a colour of its own is outlined in the graph colour.
@@ -1992,24 +2016,24 @@ impl Lane<'_> {
         item_body(painter, block, colors, edge, hovered, dim);
         let content = Rect::from_min_max(pos2(block.left(), bar.bottom()), block.max);
         let room = content.height() + ITEM_BAR >= ITEM_CONTENT_MIN_HEIGHT;
-        match track.kind {
+        match (track.kind, resource) {
+            (_, None) => {}
             _ if !room => {}
-            TrackKind::Video if track.thumbnails.is_some() => {
-                let duration = track.duration.unwrap_or_default();
+            (TrackKind::Video, Some(resource)) => {
                 thumbnails(
                     painter,
-                    track,
+                    resource,
                     view,
                     lane.left(),
-                    (item, duration),
+                    item,
                     content,
                     self.clip,
                     response,
                 );
             }
-            TrackKind::Graph | TrackKind::Video => {}
-            TrackKind::Audio => {
-                if let Some(waveform) = &track.waveform {
+            (TrackKind::Graph, _) => {}
+            (TrackKind::Audio, Some(resource)) => {
+                if let Some(waveform) = &resource.waveform {
                     let color = theme
                         .ports
                         .audio
@@ -2069,7 +2093,7 @@ impl Lane<'_> {
                 toggle: false,
             });
         }
-        if track.kind == TrackKind::Graph {
+        if track.kind.opens() {
             let open = if model.open_graphs_on_click {
                 grab.clicked() && !ctrl
             } else {
@@ -2130,13 +2154,53 @@ impl Lane<'_> {
         if hovered {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }
-        grab.on_hover_text(match track.kind {
-            TrackKind::Graph if model.open_graphs_on_click => tr("timeline.graph_item.drag_click"),
-            TrackKind::Graph => tr("timeline.graph_item.drag"),
-            _ if item.group.is_none() => tr("timeline.item.drag"),
-            _ => tr("timeline.item.drag_grouped"),
+        grab.on_hover_text(item_help(
+            track.kind,
+            item.group.is_some(),
+            model.open_graphs_on_click,
+        ));
+    }
+}
+
+/// The help on an item's bar, from what its kind can do: every item selects and moves, and
+/// one of a kind that [opens](TrackKind::opens) also opens, on a double-click or, with the
+/// single-click setting, on a click.
+fn item_help(kind: TrackKind, grouped: bool, open_on_click: bool) -> String {
+    let mut help = if grouped {
+        tr("timeline.item.drag_grouped")
+    } else {
+        tr("timeline.item.drag")
+    }
+    .to_owned();
+    if kind.opens() {
+        help.push(' ');
+        help.push_str(if open_on_click {
+            tr("timeline.item.open_click")
+        } else {
+            tr("timeline.item.open")
         });
     }
+    help.push(' ');
+    help.push_str(tr("timeline.item.more"));
+    help
+}
+
+/// The help on an item's edges, from what its kind can do: every item trims, one that
+/// [stretches](TrackKind::stretches) also changes speed, and one that
+/// [pre-rolls](TrackKind::pre_rolls) keeps what follows a trimmed left edge.
+fn edge_help(kind: TrackKind) -> String {
+    let mut help = tr("timeline.item.edge").to_owned();
+    if kind.stretches() {
+        help.push(' ');
+        help.push_str(tr("timeline.item.edge.stretch"));
+    }
+    if kind.pre_rolls() {
+        help.push(' ');
+        help.push_str(tr("timeline.item.edge.pre_roll"));
+    }
+    help.push(' ');
+    help.push_str(tr("timeline.item.edge.snap"));
+    help
 }
 
 /// The handles along an item's two edges, which trim it: `trim` gets the edge and the time it
@@ -2433,7 +2497,7 @@ fn snap_targets(model: &TimelineModel, moving: Option<&ItemMove>) -> Vec<f64> {
     let mut targets = vec![0.0, model.playhead as f64 / model.frame_rate];
     for (r, track) in model.tracks.iter().enumerate() {
         for (j, item) in track.items.iter().enumerate() {
-            let Some((start, end)) = track.item_span(item) else {
+            let Some((start, end)) = model.item_span(item) else {
                 continue;
             };
             if !moving.is_some_and(|m| m.moves(model, (r, j))) {
@@ -2640,21 +2704,21 @@ fn draw_waveform(
     }
 }
 
-/// A video item's thumbnails in `content`: one per slot, each the nearest thumbnail decoded so
-/// far of the source frame there. The frames that would fill the slots are added to the
-/// response's wanted thumbnails.
+/// A video item's thumbnails in `content`, from its resource's: one per slot, each the nearest
+/// thumbnail decoded so far of the source frame there. The frames that would fill the slots are
+/// added to the response's wanted thumbnails.
 #[allow(clippy::too_many_arguments)]
 fn thumbnails(
     painter: &egui::Painter,
-    track: &TrackView,
+    resource: &ResourceView,
     view: &TimelineView,
     lanes_left: f32,
-    (item, duration): (&Item, f64),
+    item: &Item,
     content: Rect,
     clip: Rect,
     response: &mut TimelineResponse,
 ) {
-    let Some(own) = &track.thumbnails else {
+    let (Some(own), Some(duration)) = (&resource.thumbnails, resource.duration) else {
         return;
     };
     let fps = own.rate;
@@ -2711,14 +2775,14 @@ fn thumbnails(
     let asked = response
         .wanted_thumbnails
         .iter()
-        .filter(|(name, _)| *name == track.name)
+        .filter(|(id, _)| *id == item.resource)
         .count();
     let room = MAX_THUMBNAIL_REQUEST.saturating_sub(asked);
     response.wanted_thumbnails.extend(
         frames
             .into_iter()
             .take(room)
-            .map(|frame| (track.name.clone(), frame)),
+            .map(|frame| (item.resource, frame)),
     );
 }
 
@@ -2759,16 +2823,13 @@ fn track_icon(kind: TrackKind) -> &'static str {
 /// The glyph graph tracks are marked with.
 const GRAPH_ICON: &str = "▤";
 
-/// The widgets of a track's header: its name with the M and S buttons beside it, and under the
-/// name the video's size and frame rate, or an audio track's volume and, when the project has
-/// several buses (or the track's is gone), its bus. Removing the track is in the header's menu.
-fn track_header(
-    ui: &mut Ui,
-    track: &TrackView,
-    buses: &[String],
-    row: usize,
-    response: &mut TimelineResponse,
-) {
+/// The widgets of the header of track `row`: its name with the M and S buttons beside it, and
+/// under the name, for every kind, what its resources have to say (a video's size and frame
+/// rate) or, where the kind [has a level](TrackKind::has_level), its volume and, when the
+/// project has several buses (or the track's is gone), its bus. Removing the track is in the
+/// header's menu.
+fn track_header(ui: &mut Ui, model: &TimelineModel, row: usize, response: &mut TimelineResponse) {
+    let track = &model.tracks[row];
     // Labels don't select text here, so a drag that starts on one reaches the header below and
     // reorders the track.
     ui.style_mut().interaction.selectable_labels = false;
@@ -2791,15 +2852,14 @@ fn track_header(
         if !info {
             return;
         }
-        ui.horizontal(|ui| match track.kind {
-            _ if track.empty => detail(ui, tr("timeline.track.empty")),
-            TrackKind::Graph => {}
-            TrackKind::Video => {
-                if let Some(details) = &track.details {
-                    detail(ui, details);
-                }
+        ui.horizontal(|ui| {
+            if track.items.is_empty() {
+                detail(ui, tr("timeline.track.empty"));
+            } else if track.kind.has_level() {
+                audio_controls(ui, track, &model.buses, row, response);
+            } else if let Some(details) = model.track_details(row) {
+                detail(ui, details);
             }
-            TrackKind::Audio => audio_controls(ui, track, buses, row, response),
         });
     });
     ui.add_space(6.0 - ui.spacing().item_spacing.x);
@@ -3087,14 +3147,16 @@ mod tests {
     #[test]
     fn a_drag_snaps_to_the_items_of_every_kind() {
         let graph = TrackView {
-            duration: Some(f64::INFINITY),
             items: vec![Item::graph(ResourceId(7), 0.0, 0.73)],
             ..TrackView::new("g", TrackKind::Graph)
         };
         let audio = TrackView {
-            duration: Some(2.0),
             items: vec![Item::whole(ResourceId(8), 1.0)],
             ..TrackView::new("a", TrackKind::Audio)
+        };
+        let lasting = |seconds: f64| ResourceView {
+            duration: Some(seconds),
+            ..ResourceView::new("r", None)
         };
         let model = TimelineModel {
             frame_count: 300,
@@ -3110,7 +3172,10 @@ mod tests {
             snap: true,
             open_graphs_on_click: false,
             resources: Vec::new(),
-            resource_views: HashMap::new(),
+            resource_views: HashMap::from([
+                (ResourceId(7), lasting(f64::INFINITY)),
+                (ResourceId(8), lasting(2.0)),
+            ]),
             drop_ghost: None,
         };
         // Moving the audio item: the graph item's edges are targets, its own aren't.

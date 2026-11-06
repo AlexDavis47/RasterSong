@@ -677,3 +677,20 @@ mod listening {
         );
     }
 }
+
+#[test]
+fn audio_resources_no_track_plays_are_loaded_too() {
+    let engine = Engine::new(Arc::new(backend()), EngineConfig::default());
+    let mut project = Project::new(GraphDesc::from_json(FINITE).unwrap());
+    project.add_track(TrackKind::Video, "Video", VIDEO);
+    let song = project.add_resource(TrackKind::Audio, "song", AUDIO, None);
+    // A file that can't be read but isn't played doesn't stop the render.
+    project.add_resource(TrackKind::Audio, "gone", "gone.wav", None);
+    engine.set_composition(project.composition());
+    wait_until("the song", || !engine.loaded_audio().is_empty());
+    let loaded = engine.loaded_audio();
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].resource, song);
+    assert!((loaded[0].clip.duration_secs() - 2.0).abs() < 1e-9);
+    wait_until("ready", || engine.status() == EngineStatus::Ready);
+}

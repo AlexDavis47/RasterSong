@@ -166,8 +166,7 @@ graph tracks with a source per port.
   to diagnose. Implicit behaviour needs a clear reason (Video Output's stretch) and is documented where it happens.
 - **The project has its own timebase**, like a Premiere sequence. With several videos, images and raw files, no
   source can be the clock.
-- **One resource per track.** *(Being replaced: a track takes any resource of its kind, see [One track type, one
-  item type](#one-track-type-one-item-type-items-never-overlap-october-2026).)* A graph is compiled for a fixed
+- **One resource per track.** *(Replaced: a track takes any resource of its kind, see [A track takes any file](#a-track-takes-any-file-one-item-inspector-november-2026).)* A graph is compiled for a fixed
   layout per source; one resource per track keeps a track's layout fixed along the timeline and avoids mixing rates
   within a track. The resource can still be cut up freely.
 - **The parent fills a graph's ports, with no fallback to a track.** As a subgraph the parent graph wires them; on
@@ -281,8 +280,8 @@ Built as the timeline's fifth step.
 - **Rate drags keep the far edge and the in and out points**, within 0.05× to 20×. An edge can't be trimmed past
   the file's ends or shorter than 10 ms.
 - **The timeline has its own clipboard** for items, separate from the graph's text clipboard. Ctrl+C, Ctrl+X and
-  Ctrl+V go to whichever the pointer is over. Pasting puts items back on the tracks they came from (a track of
-  one resource can't take another's items, for now), the earliest at the playhead, trimming what they land on.
+  Ctrl+V go to whichever the pointer is over. Pasting puts items back on the tracks they came from, the earliest
+  at the playhead, trimming what they land on.
 - **Snapping works from the pointer's whole movement**, not frame by frame, so an item can be pulled off a target.
   It snaps to the ruler's ticks (frames and seconds, or beats and bars), other items' edges and the playhead,
   within 8 pixels. Shift drags freely; the Snap toggle is an app setting, on by default.
@@ -293,7 +292,8 @@ Built as the timeline's fifth step.
 Built as the first step of stage 2 of [Timeline, resources and routing](roadmap.md#timeline-resources-and-routing).
 
 - **Tracks point at resources, not files.** A resource is one stream of a linked file (`id`, `name`, `kind`,
-  `path`, `stream`), and a track names its resource by id. The engine still receives a path and a stream per
+  `path`, `stream`), and a track names its resource by id. *(Now each item names its resource, and a track plays
+  items of any resource of its kind: [A track takes any file](#a-track-takes-any-file-one-item-inspector-november-2026).)* The engine still receives a path and a stream per
   track, so renderers and caches only gained the stream index.
 - **Streams are chosen by their index in the file.** The import dialog stores the index it listed; `None` (the
   file's best stream of the kind) is kept for File → Open Video and Add Audio Tracks, which don't ask. The audio
@@ -317,8 +317,9 @@ Built as the second step of stage 2.
 - **An empty track has no resource** (`resource` left out, no items) and fills with the first resource of its kind
   dropped on it, because a track holds one resource only. Empty tracks are not sent to the engine. "The video"
   (the track graphs and the project timebase follow) is the first video track that has a resource.
-- **A resource that can't be dropped on a track makes a new track** (another resource, the wrong kind, no track
-  under the pointer), so a drop never silently does nothing and never changes what a track holds.
+- **A resource that can't be dropped on a track makes a new track** (the wrong kind, no track under the pointer
+  that plays nothing else), so a drop never silently does nothing. *(Since [A track takes any file](#a-track-takes-any-file-one-item-inspector-november-2026), a track under the pointer takes
+  any resource of its kind.)*
 - **Missing files are left out of the timeline sent to the engine**, rather than failing the whole render the way an
   unopenable video does: their tracks read as gaps until found. Existence comes from the media backend, so the fake
   backend can say a file is there without a real path. Relocating moves every resource that reads the same file.
@@ -585,7 +586,8 @@ Resolve, and only graph inputs are new.
 - **Every track is also a stem.** A graph can read any track on its own, before its volume and mute, as well as
   the video mix and the audio mix. Mute, volume and solo shape only the mix, so a kick track that drives an effect
   can be muted and still drive it.
-- **Graph tracks hold graph items; the topmost active one is the output.** Items on one graph track never overlap
+- **Graph tracks hold graph items; the topmost active one is the output.** *(Every track now holds items of any
+  resource of its kind, drawn, edited and inspected the same way: [A track takes any file](#a-track-takes-any-file-one-item-inspector-november-2026).)* Items on one graph track never overlap
   (now on every track: [One track type, one item
   type](#one-track-type-one-item-type-items-never-overlap-october-2026)).
   At each frame the master picture and sound are the Video Output and Audio Output of the topmost active graph
@@ -808,7 +810,8 @@ The second stage of merging media and graphs ([Graphs are resources](#graphs-are
 - **Video and audio drags apply on release**, as graph drags did. With overwrite, a live move would cut every item
   the pointer passes over; the timeline draws the moving items where they would land and sends one move on release.
 - **Removing a resource removes its items, not its tracks**, for media as for graphs: a track isn't one resource's.
-- **For now a video or audio track plays one resource.** The renderer still reads one file per track; a track that
+- **For now a video or audio track plays one resource.** *(Lifted in [A track takes any file](#a-track-takes-any-file-one-item-inspector-november-2026).)* The renderer still reads one file
+  per track; a track that
   holds items takes no other resource until it reads per item (the renderer stage, done in [Per-item
   resources](#per-item-resources-one-stacking-rule-no-audio-crossfades-november-2026)), and the timeline draws per
   item (the last stage). This replaces *One resource per track* above as a rule, keeping it only as a temporary
@@ -908,6 +911,35 @@ path](#one-resources-panel-path-the-editor-may-show-no-graph-november-2026)).
   stay selected at their new places, instead of the whole track's selection being dropped.
 
 ## Open
+
+### A track takes any file; one item inspector (November 2026)
+
+The last stage of merging media and graphs ([One timeline path](#one-timeline-path-for-every-kind-of-track-november-2026)).
+
+- **A track takes any resource of its kind.** The renderer reads per item since [Per-item
+  resources](#per-item-resources-one-stacking-rule-no-audio-crossfades-november-2026), and the timeline now draws per
+  item, so the one-file limit on video and audio tracks (`mixes_resources`) and `Project::track_resource` are gone.
+  A drop on a track, a move onto it and a paste all land whatever the track already plays.
+- **Every media file is read when it enters the project, placed or not.** Overwrite needs an item's length to trim
+  what it lands on, and a file's length was only known once a track played it. The video is indexed for its
+  thumbnails (the same service that drew them) and the engine decodes every audio resource. A container's header
+  duration was rejected: it can be off by a frame or more, which would leave overlaps or gaps at the far edge. The
+  cost is memory for audio no item plays yet. An unplaced file that can't be decoded is left out, not reported: only
+  a file an item plays fails the build.
+- **A drop off the tracks still lands only where nothing else plays.** With no track under the pointer, a resource
+  goes on the first track of its kind that is empty or plays only that resource, else a new one, so dropping on the
+  headers or Add to Timeline never cuts into another file's items. On a track it lands there, whatever it plays.
+- **What the timeline shows of a file belongs to the resource.** `ResourceView` (name, colour, length, missing,
+  details, waveform, thumbnails) is keyed by resource and `TrackView` keeps only what the track has (name, kind,
+  items, mix). Every item's bar shows the name of its resource, as graph items already did, rather than its track's.
+  A video header shows the details of the file playing at the playhead, else of its first item.
+- **One item inspector for every kind.** It shows the resource and track, Mute, and what the kind can do:
+  pre-roll where it `pre_rolls`, speed (read only; Alt+drag changes it) where it `stretches`. Pre-roll goes
+  through the one `TrackAction` set (`SetPreRoll`), so `ItemEdit` is gone. Clicking any item shows it; clicking a
+  track's header shows the track, whose inspector covers every kind too.
+- **Kind-specific help is built from capabilities.** The item bar and edge hints are one sentence for every item
+  plus one per capability (`opens`, `stretches`, `pre_rolls`), so a grouped graph item gets the grouped text that
+  only media items had.
 
 ### Open: "Audio to video" / "Video to audio" names
 

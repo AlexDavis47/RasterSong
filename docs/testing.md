@@ -33,5 +33,6 @@ Work in the [roadmap](roadmap.md) carries its own test obligations, so they aren
 - Taps (inspection and listening) never change the rendered output or the cache (they are read-only probes).
 - Composition: with no graph item the output equals the plain mix; the topmost active graph item is the master; a
   port's source (Below, a track's stem, a graph track below, Nothing) fills it; a graph with no Audio Output is
-  silent where it plays; a muted track still drives a graph that reads its stem.
+  silent where it plays; a muted track still drives a graph that reads its stem; a track whose items play
+  different files reads each item from its own file.
 - Timeline interactions: grouped items move together.

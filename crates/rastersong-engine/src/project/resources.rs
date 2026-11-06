@@ -142,17 +142,6 @@ impl Project {
         self.resources.iter_mut().find(|r| r.id == id)
     }
 
-    /// The resource `track`'s first item plays: what a video or audio track plays, while each
-    /// plays one resource.
-    pub fn track_resource(&self, track: &ProjectTrack) -> Option<&Resource> {
-        self.resource(track.items.first()?.resource)
-    }
-
-    /// The file `track` plays.
-    pub fn track_path(&self, track: &ProjectTrack) -> Option<&Path> {
-        self.track_resource(track).and_then(Resource::path)
-    }
-
     /// Adds a resource for `stream` of the file at `path` (its best stream of `kind` for
     /// `None`), named `name` (made unique among resources), and returns its id. A resource of
     /// the same stream already in the project is returned instead of adding another.
@@ -309,13 +298,12 @@ impl Project {
     }
 
     /// Whether [`Self::place_resource`] would put resource `id` on track `track`: a track of its
-    /// kind. A video or audio track takes another resource only while it is empty, until the
-    /// renderer reads a file per item.
+    /// kind, whatever else it plays.
     pub fn can_place_resource(&self, track: &str, id: ResourceId) -> bool {
         let (Some(resource), Some(index)) = (self.resource(id), self.track_index(track)) else {
             return false;
         };
-        self.tracks[index].kind == resource.kind() && !self.mixes_resources(index, &[id], &[])
+        self.tracks[index].kind == resource.kind()
     }
 
     /// Resource `id` and the other resources from the same file (its other streams), `id`
@@ -357,7 +345,8 @@ impl Project {
     /// together, stems say), one list per file: the track it lands on, or `None` for a new
     /// track at the bottom of its section. Each resource goes on track `hovered` when that is in
     /// its section and can take it (the first resource of that kind only), else on the first
-    /// track of its section that can and that no other resource of the drop takes.
+    /// track of its section that plays nothing else (empty, or only that resource) and that no
+    /// other resource of the drop takes.
     pub fn plan_drop(
         &self,
         ids: &[ResourceId],
@@ -374,10 +363,11 @@ impl Project {
                     let fits = |name: &str| {
                         !taken.iter().any(|t| t == name) && self.can_place_resource(name, res)
                     };
+                    let free = |t: &ProjectTrack| t.items.iter().all(|i| i.resource == res);
                     let target = hovered.filter(|&h| fits(h)).map(str::to_owned).or_else(|| {
                         self.tracks
                             .iter()
-                            .find(|t| fits(&t.name))
+                            .find(|t| fits(&t.name) && free(t))
                             .map(|t| t.name.clone())
                     });
                     if let Some(name) = &target {

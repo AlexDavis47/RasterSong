@@ -433,9 +433,9 @@ impl Project {
             .find(|t| !t.items.is_empty())
     }
 
-    /// The video's file.
+    /// The video's file: the one its first item plays.
     pub fn video_path(&self) -> Option<&Path> {
-        self.video().and_then(|t| self.track_path(t))
+        self.resource(self.video()?.items.first()?.resource)?.path()
     }
 
     /// What the video is called: its track's name.
@@ -1111,7 +1111,7 @@ mod inspect_rate_tests {
                 .place_resource(&second, song, 0.0, &ItemLengths::default())
                 .is_some()
         );
-        // The same resource adds an item; another resource is refused.
+        // The same resource adds an item, and so does another of the track's kind.
         assert!(
             project
                 .place_resource(&name, clip, 5.0, &ItemLengths::default())
@@ -1120,9 +1120,10 @@ mod inspect_rate_tests {
         assert_eq!(project.tracks[0].items.len(), 2);
         assert!(
             project
-                .place_resource(&name, other, 0.0, &ItemLengths::default())
-                .is_none()
+                .place_resource(&name, other, 9.0, &ItemLengths::default())
+                .is_some()
         );
+        assert_eq!(project.tracks[0].items.len(), 3);
         assert!(!project.composition().is_empty());
     }
 

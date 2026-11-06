@@ -352,7 +352,7 @@ Reusable widgets, built once in `rastersong-gui` (a `widgets/` module) and used 
   [Decisions](decisions.md#resource-colours-are-labels-not-free-colours-october-2026)).
 - [x] **feature** Label colours for graph resources too: the Resources menu sets them, and the card and every
   graph item of the graph on the timeline are drawn in them ([Resources](app.md#resources)).
-- [ ] **chore** One resource, one track, one item (October 2026). Media and graphs grew two parallel copies of
+- [x] **chore** One resource, one track, one item (October 2026). Media and graphs grew two parallel copies of
   everything (storage, tracks, items, editing, the renderer's input, the panel and the timeline), so each feature
   landed on one side only ([Decisions](decisions.md#graphs-are-resources-october-2026)). Staged:
   - [x] Graphs are resources: one `Resource` with a media or graph `content`, one name set, colour, duplicate,
@@ -373,6 +373,12 @@ Reusable widgets, built once in `rastersong-gui` (a `widgets/` module) and used 
   - [x] One selection, clipboard, action set and drop path on the timeline: graph rows are timeline rows, items
     of every kind select, snap, copy and move together, and media items move across tracks too
     ([Decisions](decisions.md#one-timeline-path-for-every-kind-of-track-november-2026), [Timeline](app.md#timeline)).
+  - [x] A track takes items of any file of its kind, every media file is read when it is imported, items are drawn
+    from their resource's view, and one item inspector and one track inspector cover every kind
+    ([Decisions](decisions.md#a-track-takes-any-file-one-item-inspector-november-2026),
+    [Inspector](app.md#inspector)).
+- [ ] **feature** Change an item's speed from the item inspector, not only by Alt+dragging an edge (it has to trim
+  or stop at the next item the way a stretch does).
   - [ ] One lane, header, menu and inspector for every kind of track, and tracks that play several files.
 - [x] **feature** Graph inputs and outputs live on the graph: fixed Video In, Audio In, Output and master Audio
   Output in every graph, Video Source and Audio Source nodes that pick what they read, and Named Outputs for graphs
@@ -471,8 +477,8 @@ timebase (done in stage 1).
 - **Sections.** The timeline has a **Graphs** section on top, then **Video**, then **Audio**, divided by a thick
   line; an **Automation** section joins with automation curves (stage 5). Each section has its own tracks and its
   own **+ Track** row, and tracks are reordered by dragging their header within their section.
-- A media track holds items from **one resource** only, which can be cut up and rearranged freely. This keeps each
-  source's layout fixed along the timeline, which graph compilation needs.
+- A track holds items of **any resource of its kind**, cut up and rearranged freely. A stem's layout is the widest
+  of its items' files ([Decisions](decisions.md#a-track-takes-any-file-one-item-inspector-november-2026)).
 - **Dropping media places its whole source.** Dragging a resource onto the timeline places every resource from the
   same file at the same time: the video on a video track, each audio stream on an audio track, grouped. The track
   under the pointer takes its kind if it can; the others go on the first track of their section that can take
