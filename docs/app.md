@@ -159,11 +159,15 @@ The **Resources** panel, left of the timeline, holds everything the project uses
 contain it (case doesn't matter), and **Import…**; **+ New** sits at the right of the tab row while Graphs is open.
 Each tab lays its resources out as **cards** in a grid that wraps: as many columns as fit at about 104 px, widened
 to fill the panel, each card 4:3 (wider than high, so names have room). Every card is drawn by one shared component
-(`resource_card`), so media and graphs look, drag and open menus the same way: a picture of its kind, the name, and
+(`resource_card`, filled by `card_for` from the resource), and one card group lays out both tabs, so media and
+graphs look, select, drag and open menus the same way: a picture of its kind, the name, and
 a line under it: the stream's shape for media (*video · 320×180 · 30 fps*, *audio · stereo · 48 kHz*, read once
 from the file), whether it's open and how many graph items place it for a graph (*open · 1 item*, *not placed*). A
-hint under the cards names the drag and double-click gestures. Click a card to select it (Ctrl or Shift+click adds
-media cards to the selection). **Renaming** is in place: double-click a card's name, press **F2** over the panel
+hint under the cards names the drag and double-click gestures. Click a card to select it; Ctrl or Shift+click adds
+a card to the selection or takes it out, for every kind. Dragging a selected card carries every selected card of
+the open tab, in the panel's order, and its menu's Add to Timeline, Color and Remove act on all of them. The right-click
+menu lists what the resource's kind can do: Open in editor (a graph that isn't open), Add to Timeline, Color,
+Duplicate (graphs), Relocate… (media) and Remove. **Renaming** is in place: double-click a card's name, press **F2** over the panel
 (it renames the selected card of the open tab) or pick **Rename** in its right-click menu, and the name becomes a
 text field with the whole name selected; Enter or clicking away commits, Esc cancels. Each media resource is one stream of a
 linked file (embedding comes later on the [roadmap](roadmap.md#timeline-resources-and-routing)): a video stream
@@ -178,10 +182,11 @@ made unique with `_2`, `_3`, …. Nothing reaches the timeline until it is place
 timeline** to add a track playing it from where it is dropped, or double-click it (or right-click → Add to
 Timeline) to add one at the playhead; a double-click on the name renames instead. The track is named after the
 resource. Renaming a resource leaves its tracks' names alone, since graph sources read tracks by name.
-Right-click → **Color** labels a media resource with one of eight colours, Red to Pink, each with its swatch, to
+Right-click → **Color** labels a resource (media or graph) with one of eight colours, Red to Pink, each with its swatch, to
 tell resources apart: the card shows it as a band along the top of its picture, and every item of the resource on
-the timeline is drawn in it. **Default** goes back to the track kind's own colour. It changes nothing in the render.
-Right-click → Remove removes it; removing a resource that tracks play asks first and removes those tracks with it. A resource
+the timeline, graph items included, is drawn in it. **Default** goes back to the track kind's own colour. It changes nothing in the render.
+Right-click → Remove removes it (or the selected cards); removing resources whose items are on tracks asks first
+(**Remove the resource *name*?**, or **Remove 3 resources?**) and removes those items, leaving the tracks. A resource
 whose file is missing is drawn in red and says *missing*, with its path in the tooltip and a **Relocate…** button over its picture, which takes the click from the card under it (also in the
 right-click menu, for any resource): pick where the file is now, and the other streams of the same file follow.
 Until it is found, the tracks that play it read as gaps and say so in their lanes. The panel checks about once a
@@ -195,9 +200,11 @@ on in Settings, one click opens it. Opening a graph changes nothing in the rende
 its card raised. A graph
 applies only where it is placed as a **graph item** on a [graph track](#graph-tracks): with none placed, the preview
 and the CLI play the plain mixes, and the open graph is only a description to edit. Right-click also renames,
-duplicates or removes a graph (the open graph can't be removed; removing one removes its graph items and leaves
-their graph tracks, as removing media removes its items and leaves their tracks). Undoing back to before a graph
-was made shows the first graph again. Drag a graph
+duplicates, colours, places (Add to Timeline puts it on a new graph track at the playhead) or removes a graph;
+removing one removes its graph items and leaves their graph tracks, as removing media does. Removing the open graph
+opens the graph after it in the panel (or the one before); removing the last graph leaves the canvas empty, saying
+*No graph is open* with a **+ New graph** button, and File → Import Graph… then makes a new graph to load into.
+Undoing back to before a graph was made shows the first graph again. Drag a graph
 card into the Graphs section of the timeline to place it. **File → Import Graph…** and **Export Graph…** read and
 write a graph as its own file.
 
@@ -327,7 +334,8 @@ like an adjustment layer in a video editor. How they render is described in
 
 - **Drag a graph card** from the Resources panel's Graphs tab into the Graphs section: onto a graph track it goes
   on that track from the drop point, on the line between two graph tracks (or below the last) it gets a new graph
-  track there, anywhere else a new track on top. An empty section says *Drag a graph here to make a graph track*.
+  track there, anywhere else a new track on top. Several graph cards dragged together land the first that way and
+  each next one on a new graph track below the one before. An empty section says *Drag a graph here to make a graph track*.
 - **The topmost graph item playing is the master.** At each frame the picture and sound you see and hear are the
   Video Output and Audio Output of the item on the highest graph track that has one there, or the plain mixes where
   none does. A muted graph track or item is skipped, so what is below it shows through (also to a graph reading

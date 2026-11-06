@@ -864,6 +864,21 @@ projection](#one-projection-the-one-graph-route-is-a-project-november-2026)).
   by its gain had nothing left to do. Items are summed at their edge-fade gains, in the renderer and in the preview
   mixer. A hand-written file with overlapping audio items now sums them where they overlap.
 
+### One Resources panel path; the editor may show no graph (November 2026)
+
+The fifth stage of merging media and graphs ([Per-item
+resources](#per-item-resources-one-stacking-rule-no-audio-crossfades-november-2026)).
+
+- **One action set, payload, selection and card group.** `ResourceAction` names what is done (`Open`,
+  `AddToTimeline`, `SetColor`, `Duplicate`, `Remove`, …), not which kind it is done to, and the kind's capabilities
+  (`reads_file`, `duplicates`, having a graph) decide which menu entries a card shows. Every card drags one
+  `DraggedResources` list; the tabs are filters over one list, so a drag carries one kind and the timeline sends
+  graphs and media to their own drop targets until it has one drop path too.
+- **The open graph can be removed.** It used to be kept so the editor always had a graph. Now the editor opens the
+  graph after it (or before it), and with none left it shows an empty canvas with **+ New graph**: the open graph
+  is `Option<ResourceId>`. A new or loaded project with no graph still gets the passthrough, so a fresh project has
+  something to edit; undo opens the first graph there is, or the empty canvas.
+
 ### No Bypass graphs switch (October 2026)
 
 The canvas header's **Bypass graphs** button and the project's `bypass_graph` flag are gone. The preview's

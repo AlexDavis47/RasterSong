@@ -350,9 +350,8 @@ Reusable widgets, built once in `rastersong-gui` (a `widgets/` module) and used 
 - [x] **feature** Resource label colours: **Color** in a media resource's menu picks one of eight labels, which
   its card and all its items on the timeline are drawn in ([Resources](app.md#resources),
   [Decisions](decisions.md#resource-colours-are-labels-not-free-colours-october-2026)).
-- [ ] **feature** Label colours for graph resources too, which their graph items take. The project stores them
-  since graphs became resources; the Resources menu and the graph lane draw them once the panel and the timeline
-  share one path (below).
+- [x] **feature** Label colours for graph resources too: the Resources menu sets them, and the card and every
+  graph item of the graph on the timeline are drawn in them ([Resources](app.md#resources)).
 - [ ] **chore** One resource, one track, one item (October 2026). Media and graphs grew two parallel copies of
   everything (storage, tracks, items, editing, the renderer's input, the panel and the timeline), so each feature
   landed on one side only ([Decisions](decisions.md#graphs-are-resources-october-2026)). Staged:
@@ -368,7 +367,9 @@ Reusable widgets, built once in `rastersong-gui` (a `widgets/` module) and used 
   - [x] Per-item resources in the renderer and one stacking rule for video and graph tracks
     ([Decisions](decisions.md#per-item-resources-one-stacking-rule-no-audio-crossfades-november-2026),
     [Composition](engine.md#composition)).
-  - [ ] One path in the Resources panel (colour, multi-select, multi-drag and Add to timeline for graphs).
+  - [x] One path in the Resources panel: one action set, drag payload, selection, card group and remove dialog
+    for every kind; graphs get colour, multi-select, multi-drag and Add to Timeline, and the open graph can be
+    removed ([Resources](app.md#resources)).
   - [ ] One selection, clipboard, action set and drop path on the timeline; then one lane, header, menu and
     inspector for every kind of track.
 - [x] **feature** Graph inputs and outputs live on the graph: fixed Video In, Audio In, Output and master Audio

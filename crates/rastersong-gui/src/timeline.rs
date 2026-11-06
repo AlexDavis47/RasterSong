@@ -39,7 +39,6 @@ use rastersong_engine::{
 use rastersong_lang::{tr, tr_args};
 
 use crate::name_edit::{rename_field, start_rename};
-use crate::resources::DraggedGraph;
 use crate::theme::{ItemColors, SMALL_SIZE, Theme};
 
 /// Width of the track header column.
@@ -202,6 +201,8 @@ pub struct GraphItemView {
     pub position: f64,
     pub length: f64,
     pub muted: bool,
+    /// The graph's label colour, which the item is drawn in.
+    pub color: Option<LabelColor>,
 }
 
 /// One graph track as the timeline shows it.
@@ -1146,7 +1147,7 @@ pub fn timeline(ui: &mut Ui, model: &TimelineModel, view: &mut TimelineView) -> 
     response.row_under_pointer = pointer
         .filter(|p| body_lanes.contains(*p) && response.drop_slot.is_none())
         .and_then(|p| areas.row_at(view.scroll_y, p.y));
-    let graph_dragged = egui::DragAndDrop::has_payload_of_type::<DraggedGraph>(ui.ctx());
+    let graph_dragged = matches!(model.drop_ghost, Some(DropGhost::Graph { .. }));
     if graph_dragged && let Some(p) = pointer.filter(|p| areas.body.contains(*p)) {
         response.graph_drop = Some(match areas.graph_slot_at(view.scroll_y, p.y) {
             Some(slot) => GraphDrop::NewTrackAt(slot),
@@ -3320,8 +3321,12 @@ impl GraphLane<'_> {
             None => block,
         };
         let bar = bar_of(shown);
-        let colors = &theme.graph_item;
-        let edge = (!selected).then_some(theme.graph_block);
+        // The graph's label colour, as media items take their resource's.
+        let colors = theme.item_colors(TrackKind::Graph, item.color);
+        let edge = (!selected).then_some(match item.color {
+            Some(_) => colors.bar,
+            None => theme.graph_block,
+        });
         item_body(
             painter,
             shown,

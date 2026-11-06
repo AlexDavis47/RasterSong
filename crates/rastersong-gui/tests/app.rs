@@ -403,16 +403,16 @@ fn undo_and_redo_step_through_edits() {
 #[test]
 fn undoing_a_new_graph_shows_the_first_graph_again() {
     let mut harness = loaded();
-    let first = harness.state().open_graph_id();
+    let first = harness.state().open_graph_id().unwrap();
     let nodes = harness.state().editor().node_count();
     harness.state_mut().new_graph();
     harness.run_steps(3);
-    assert_ne!(harness.state().open_graph_id(), first);
+    assert_ne!(harness.state().open_graph_id().unwrap(), first);
 
     shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
     // The new graph is gone, so the editor shows the first one, as it was.
     assert_eq!(harness.state().project().graph_ids().count(), 1);
-    assert_eq!(harness.state().open_graph_id(), first);
+    assert_eq!(harness.state().open_graph_id().unwrap(), first);
     assert_eq!(harness.state().editor().node_count(), nodes);
 }
 
@@ -867,7 +867,7 @@ impl PlatformClipboard {
 fn copied_items_paste_at_the_playhead() {
     let mut harness = loaded();
     let mut clipboard = PlatformClipboard::default();
-    let nodes = harness.state().open_desc().nodes.len();
+    let nodes = harness.state().open_desc().unwrap().nodes.len();
     let bar = item_bar_point(&harness, 0.5, 1);
     click(&mut harness, bar, PointerButton::Primary);
     clipboard.copy(&mut harness);
@@ -882,7 +882,7 @@ fn copied_items_paste_at_the_playhead() {
     };
     assert_eq!(positions(&harness), [0.0, 1.0]);
     // Over the timeline the clipboard is the timeline's, not the graph's.
-    assert_eq!(harness.state().open_desc().nodes.len(), nodes);
+    assert_eq!(harness.state().open_desc().unwrap().nodes.len(), nodes);
 
     // Cut removes the selected (pasted) item and pastes it back.
     clipboard.cut(&mut harness);
@@ -1185,11 +1185,11 @@ fn a_missing_file_leaves_its_tracks_as_gaps_until_relocated() {
 #[test]
 fn a_new_graph_opens_as_a_passthrough_and_the_old_one_is_kept() {
     let mut harness = loaded();
-    let before = harness.state().open_desc().clone();
+    let before = harness.state().open_desc().unwrap().clone();
     let id = harness.state_mut().new_graph();
     harness.run_steps(3);
     let app = harness.state();
-    assert_eq!(app.open_graph_id(), id);
+    assert_eq!(app.open_graph_id().unwrap(), id);
     let old = Project::FIRST_GRAPH;
     assert_eq!(app.project().graph_ids().count(), 2);
     assert_eq!(
@@ -1204,13 +1204,13 @@ fn a_new_graph_opens_as_a_passthrough_and_the_old_one_is_kept() {
     );
     harness.state_mut().open_graph(old);
     harness.run_steps(3);
-    assert_eq!(harness.state().open_graph_id(), old);
+    assert_eq!(harness.state().open_graph_id().unwrap(), old);
 }
 
 #[test]
 fn adding_tracks_names_them_after_their_files_and_leaves_the_graph_alone() {
     let mut harness = loaded();
-    let graph = harness.state().open_desc().clone();
+    let graph = harness.state().open_desc().unwrap().clone();
     harness
         .state_mut()
         .add_audio_tracks([PathBuf::from("song"), PathBuf::from("song")]);
@@ -1224,7 +1224,7 @@ fn adding_tracks_names_them_after_their_files_and_leaves_the_graph_alone() {
         .collect();
     assert_eq!(names, ["audio", "song", "song_2"]);
     // A graph's inputs are ports, filled where the graph is used, so tracks add no nodes.
-    assert_eq!(harness.state().open_desc(), &graph);
+    assert_eq!(harness.state().open_desc().unwrap(), &graph);
 }
 
 #[test]
@@ -1247,7 +1247,7 @@ fn dragging_a_wire_onto_a_parameter_pin_modulates_it() {
         .expect("the time pin is shown");
     drag(&mut harness, from, to);
     harness.run_steps(2);
-    let graph = &harness.state().open_desc();
+    let graph = &harness.state().open_desc().unwrap();
     assert!(
         graph
             .connections
@@ -1574,11 +1574,11 @@ fn ctrl_dragging_along_the_ruler_makes_a_loop_region() {
 #[test]
 fn tracks_are_renamed_without_touching_the_graph() {
     let mut harness = loaded();
-    let graph = harness.state().open_desc().clone();
+    let graph = harness.state().open_desc().unwrap().clone();
     assert!(harness.state_mut().rename_track("audio", "drums"));
     harness.run_steps(2);
     assert_eq!(harness.state().project().audios()[0].name, "drums");
-    assert_eq!(harness.state().open_desc(), &graph);
+    assert_eq!(harness.state().open_desc().unwrap(), &graph);
 
     // A name another track has, or an empty one, is refused.
     harness
@@ -2141,7 +2141,7 @@ fn resources_become_tracks_and_take_their_items_with_them() {
     assert_eq!(media(&app).len(), 2);
 
     // Removing one takes its items; its track stays, empty.
-    app.remove_resource(ids[1]);
+    app.remove_resources(&[ids[1]]);
     assert!(app.project().audios()[0].items.is_empty());
     assert_eq!(media(&app).len(), 1);
 }
@@ -2276,10 +2276,10 @@ fn double_clicking_a_graph_item_opens_its_graph() {
         place_graph(project, &track, second, 0.0, 2.0);
     }));
     let second = harness.state().project().graphs()[0].items[0].resource;
-    assert_ne!(harness.state().open_graph_id(), second);
+    assert_ne!(harness.state().open_graph_id().unwrap(), second);
     let bar = pos2(time_x(&harness, 0.5), graph_lane(&harness, 0).top() + 7.0);
     double_click(&mut harness, bar);
-    assert_eq!(harness.state().open_graph_id(), second);
+    assert_eq!(harness.state().open_graph_id().unwrap(), second);
 }
 
 #[test]
@@ -2288,20 +2288,20 @@ fn with_the_single_click_setting_a_click_on_a_graph_item_opens_its_graph() {
         let track = add_graph_track(project, "Effects");
         place_graph(project, &track, second, 0.0, 2.0);
     }));
-    let first = harness.state().open_graph_id();
+    let first = harness.state().open_graph_id().unwrap();
     let second = harness.state().project().graphs()[0].items[0].resource;
     let bar = pos2(time_x(&harness, 0.5), graph_lane(&harness, 0).top() + 7.0);
     // Off (the default), a click only selects the item.
     click(&mut harness, bar, PointerButton::Primary);
     harness.run_steps(30);
-    assert_eq!(harness.state().open_graph_id(), first);
+    assert_eq!(harness.state().open_graph_id().unwrap(), first);
     let mut settings = harness.state().settings().clone();
     settings.open_graphs_on_click = true;
     harness.state_mut().set_settings(settings);
     harness.run_steps(30);
     click(&mut harness, bar, PointerButton::Primary);
     harness.run_steps(2);
-    assert_eq!(harness.state().open_graph_id(), second);
+    assert_eq!(harness.state().open_graph_id().unwrap(), second);
 }
 
 #[test]
@@ -2433,15 +2433,153 @@ fn without_graph_items_the_preview_plays_the_mix() {
     );
 
     // Placed on a graph track, the graph applies.
-    let graph = harness.state().open_graph_id();
+    let graph = harness.state().open_graph_id().unwrap();
     harness
         .state_mut()
-        .drop_graph(graph, GraphDrop::NewTrack, 0.0);
+        .drop_graphs(&[graph], GraphDrop::NewTrack, 0.0);
     step_until(&mut harness, "the graph rendered", |app| {
         app.engine()
             .frame(0)
             .is_some_and(|f| f.rgb.iter().all(|&b| b == 0))
     });
+}
+
+/// Right-clicks the Resources card of the graph named `name` and clicks `entry` in its menu.
+fn graph_card_menu(harness: &mut Harness<'_, App>, name: &str, entry: &str) {
+    let card = graph_card(harness, name);
+    click(harness, card, PointerButton::Secondary);
+    harness.run_steps(2);
+    harness.get_by_label(entry).click();
+    harness.run_steps(3);
+}
+
+#[test]
+fn add_to_timeline_places_a_graph() {
+    let mut harness = loaded_with(graph_app(|_, _, _| {}));
+    let second = harness.state().project().graph_ids().nth(1).unwrap();
+    graph_card_menu(&mut harness, "Second graph", "Add to Timeline");
+    let project = harness.state().project();
+    assert_eq!(project.graphs().len(), 1);
+    assert_eq!(project.graphs()[0].items[0].resource, second);
+}
+
+#[test]
+fn removing_a_used_graph_asks_first() {
+    let mut harness = loaded_with(graph_app(|_, _, _| {}));
+    let second = harness.state().project().graph_ids().nth(1).unwrap();
+    harness
+        .state_mut()
+        .drop_graphs(&[second], GraphDrop::NewTrack, 0.0);
+    harness.run_steps(2);
+    graph_card_menu(&mut harness, "Second graph", "Remove");
+    // Its item is on a track: the dialog asks, and nothing is gone yet.
+    harness.get_by_label("Remove the resource Second graph?");
+    assert!(harness.state().project().resource(second).is_some());
+    harness
+        .get(By::new().role(Role::Button).label("Remove"))
+        .click();
+    harness.run_steps(3);
+    let project = harness.state().project();
+    assert!(project.resource(second).is_none());
+    assert!(project.graphs()[0].items.is_empty());
+}
+
+#[test]
+fn removing_the_open_graph_opens_another() {
+    let mut harness = loaded_with(graph_app(|_, _, _| {}));
+    let (first, second) = {
+        let mut ids = harness.state().project().graph_ids();
+        (ids.next().unwrap(), ids.next().unwrap())
+    };
+    assert_eq!(harness.state().open_graph_id(), Some(first));
+    let name = harness.state().open_graph_name().to_owned();
+    graph_card_menu(&mut harness, &name, "Remove");
+    assert!(harness.state().project().resource(first).is_none());
+    assert_eq!(harness.state().open_graph_id(), Some(second));
+
+    // The last one goes too: the canvas is empty and offers a new graph.
+    graph_card_menu(&mut harness, "Second graph", "Remove");
+    assert_eq!(harness.state().open_graph_id(), None);
+    harness.get_by_label_contains("No graph is open");
+    harness.get_by_label("+ New graph").click();
+    harness.run_steps(3);
+    let open = harness
+        .state()
+        .open_graph_id()
+        .expect("a new graph is open");
+    assert!(harness.state().project().graph(open).is_some());
+
+    // Undo brings the removed graphs back and opens the first there is.
+    for _ in 0..2 {
+        shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
+    }
+    assert!(harness.state().project().graph(second).is_some());
+    assert!(harness.state().open_graph_id().is_some());
+}
+
+#[test]
+fn dropping_two_graphs_puts_each_on_a_track_of_its_own() {
+    let mut app = graph_app(|_, _, _| {});
+    let ids: Vec<ResourceId> = app.project().graph_ids().collect();
+    let placed = app.drop_graphs(&ids, GraphDrop::NewTrack, 0.0);
+    assert_eq!(placed.len(), 2);
+    let project = app.project();
+    // In the order dragged, top down.
+    let graphs = project.graphs();
+    assert_eq!(graphs.len(), 2);
+    assert_eq!(graphs[0].items[0].resource, ids[0]);
+    assert_eq!(graphs[1].items[0].resource, ids[1]);
+    assert_eq!(app.selected_graph_items(), &placed[..]);
+}
+
+/// Every filled rectangle drawn last frame that contains `at`, by its fill.
+fn fills_at(harness: &Harness<'_, App>, at: Pos2) -> Vec<egui::Color32> {
+    fn walk(shape: &egui::Shape, at: Pos2, out: &mut Vec<egui::Color32>) {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, at, out)),
+            egui::Shape::Rect(rect) if rect.rect.contains(at) => out.push(rect.fill),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for clipped in &harness.output().shapes {
+        walk(&clipped.shape, at, &mut out);
+    }
+    out
+}
+
+#[test]
+fn graph_items_take_their_resources_colour() {
+    let mut harness = loaded_with(graph_app(|_, _, _| {}));
+    let second = harness.state().project().graph_ids().nth(1).unwrap();
+    harness
+        .state_mut()
+        .drop_graphs(&[second], GraphDrop::NewTrack, 0.0);
+    harness.run_steps(3);
+    let card = graph_card(&mut harness, "Second graph");
+    right_click(&mut harness, card);
+    harness.get_by_label_contains("Color").hover();
+    harness.run_steps(3);
+    harness.get_by_label("Green").click();
+    harness.run_steps(2);
+    assert_eq!(
+        harness.state().project().resource(second).unwrap().color,
+        Some(LabelColor::Green)
+    );
+    // Away from the item, so it isn't drawn hovered.
+    harness.event(Event::PointerMoved(pos2(1.0, 1.0)));
+    harness.run_steps(2);
+    let theme = rastersong_gui::theme::Theme::of(&harness.ctx);
+    let green = theme.label_colors(LabelColor::Green).fill;
+    let body = pos2(
+        time_x(&harness, 0.5),
+        graph_lane(&harness, 0).bottom() - 6.0,
+    );
+    let fills = fills_at(&harness, body);
+    assert!(
+        fills.contains(&green),
+        "{green:?} not among {fills:?} at {body:?}"
+    );
 }
 
 // --- Linked drops ---
