@@ -161,7 +161,7 @@ pub struct Composition {
     /// The output buses, master first. Empty means just [`Bus::main`].
     pub buses: Vec<Bus>,
     /// Every track, top first: the graph tracks, then the video tracks, then the audio tracks.
-    /// Over the mix, the topmost graph track with an item playing wins.
+    /// Each goes over what is below it as its kind [stacks](TrackKind::stacks).
     pub tracks: Vec<ComposedTrack>,
     /// Every resource an item may play. An item of a resource not listed (a file that is
     /// missing) reads as a gap.
@@ -197,10 +197,27 @@ impl Composition {
         self.resources.iter().find(|r| r.id == id)
     }
 
-    /// The resource a video or audio track plays: its first item's, while each such track plays
-    /// one resource.
-    pub fn track_resource(&self, track: &ComposedTrack) -> Option<&ComposedResource> {
-        self.resource(track.items.first()?.resource)
+    /// The resources `track`'s items play that the composition has, each once, in the order
+    /// their first items come.
+    pub fn played_by(&self, track: &ComposedTrack) -> Vec<&ComposedResource> {
+        let mut played: Vec<&ComposedResource> = Vec::new();
+        for resource in track.items.iter().filter_map(|i| self.resource(i.resource)) {
+            if !played.iter().any(|r| r.id == resource.id) {
+                played.push(resource);
+            }
+        }
+        played
+    }
+
+    /// The resources the items on tracks of `kind` play, each once.
+    pub fn played_on(&self, kind: TrackKind) -> Vec<&ComposedResource> {
+        let mut played: Vec<&ComposedResource> = Vec::new();
+        for resource in self.tracks_of(kind).flat_map(|t| self.played_by(t)) {
+            if !played.iter().any(|r| r.id == resource.id) {
+                played.push(resource);
+            }
+        }
+        played
     }
 
     /// The tracks of `kind`, top first.

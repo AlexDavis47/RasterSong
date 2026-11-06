@@ -31,19 +31,20 @@ resource it plays, a position on the timeline, in and out points in the resource
 survive a change of frame rate. What differs between kinds is a capability of the kind (`TrackKind`), which the
 one code path checks: whether its resources have a length of their own (`has_duration`), stretch to another rate
 (`stretches`), read a file (`reads_file`), whether its tracks have a level in the mix (`has_level`), and whether
-its items pre-roll (`pre_rolls`). For now a video or audio track plays one resource, until the renderer reads a
-file per item. Each video and audio track is read for the [composition](#composition) through a track reader in
-the renderer:
+its items pre-roll (`pre_rolls`). Each video and audio track is read for the [composition](#composition) through
+a track reader in the renderer, which reads each item from its own resource:
 
-- **Video tracks** are conformed to the grid: project frame `n` shows the file's frame displayed at the item's
-  time for `n` (frames are held or skipped when the rates differ), scaled to the project size the way Video
-  Output stretches.
-- **Audio tracks** fill each frame's block with the audio of exactly that frame's time span, item by item
-  (`Modulator::fill_items`), resampled when an item's rate isn't 1. The samples are read from the audio cache's
-  memory map ([Media](media.md)), shared with the preview mixer and the waveform rather than copied.
-- **Gaps read zeros**, as do muted items and input ports nothing fills. Items on a track never overlap once
-  edited; where a file holds overlapping items whose length isn't known on load, the later one in the list plays
-  (for audio, crossfading at its edges; see below).
+- **Video tracks** are conformed to the grid: project frame `n` shows the frame of the item playing at `n`,
+  from that item's file, displayed at the item's time for `n` (frames are held or skipped when the rates differ),
+  scaled to the project size the way Video Output stretches. Each track opens each video it plays once.
+- **Audio tracks** fill each frame's block with the audio of exactly that frame's time span, adding each item
+  that plays in it from its own file (`Modulator::add_item`), resampled when an item's rate isn't 1. A track's
+  sound (its stem) takes the most channels and the longest block among its files; an item of another layout is
+  fitted to it the way the mix fits a track (`mix_into`). The samples are read from the audio cache's memory map
+  ([Media](media.md)), shared with the preview mixer and the waveform rather than copied.
+- **Gaps read zeros**, as do muted items, items of a file that is missing and input ports nothing fills. Items on
+  a track never overlap once edited; where a file holds overlapping items whose length isn't known on load, the
+  later one in the list shows (audio items are summed).
 
 **Editing** goes through one API for every kind (`project/editing.rs`), naming items by track and place
 (`ItemRef`) and taking the lengths it needs as `ItemLengths` (each file's length once read, and how long a new
@@ -52,13 +53,13 @@ graph item lasts). Whatever an edit puts down trims what it lands on, cutting an
 and stretches only kinds that stretch (`trim_item`). An item whose length isn't known yet neither trims nor is
 trimmed. Items move by time and across tracks within their section; a move that would leave its section, or put a
 second file on a video or audio track, moves nothing. Grouped items move, trim, split and delete together, on every
-kind of track. Removing a resource removes its items; its tracks stay.
+kind of track. Removing a resource removes its items; its tracks stay. Keeping a video or audio track to one file
+is a limit of the editing API and the timeline for now, not of the renderer.
 
-**Audio item edges fade** over a fixed 5 ms (`EDGE_FADE`, at most half the item), linearly, so cuts don't click.
-Each item is mixed over the items listed before it by its gain (`Item::gain_at`): inside the item it replaces
-them, and at its edges it crossfades with them, so a cut between overlapping items never dips to silence. The
-first sample of an item that starts at the beginning of its file fades in too. The preview mixer applies the same
-gains.
+**Audio item edges fade** over a fixed 5 ms (`EDGE_FADE`, at most half the item), linearly, so cuts don't click
+(`Item::gain_at`). Items never overlap, so a track's items are added up: at a cut the item before fades out and the
+item after fades in, with no crossfade between them. The first sample of an item that starts at the beginning of
+its file fades in too. The preview mixer applies the same gains, each item reading its own file (`MixTrack`).
 
 Video frames are placed by the file's nominal frame rate, so variable-frame-rate video is conformed as if its rate
 were constant.
@@ -250,10 +251,13 @@ setting names (`below` by default); a Named Input reads a Named Output by its `t
 - `Below`: what is below the item's graph track, which is the next graph track's output, or the mix under the
   lowest.
 - `Mix` (`mix`): the video mix or the audio mix.
-- `Track(name)` (`track:<name>`): one video or audio track on its own (its stem), before its volume and whether it
-  is in the mix, so a muted track can still drive a graph.
+- `Track(name)` (`track:<name>`): whatever plays on that track: a video or audio track on its own (its stem),
+  before its volume and whether it is in the mix, so a muted track can still drive a graph.
 - `Graph(track)` (`graph:<track>`): the main output of a graph track below the item's, where nothing plays on it
-  what is below it.
+  (or the track is muted or left out by a solo) what is below it.
+
+  Both find the track by name in the one track list, whatever its kind: `track:` naming a graph track reads its
+  output, `graph:` naming a video or audio track its stem.
 - `Named { track, name }` (a Named Input): a **Named Output** of a graph track below the item's. A graph track's
   named outputs are the names its items' graphs offer, each in the layout of the first item that has it; where no
   item plays, or the playing one doesn't offer that name in that layout, it reads zeros. A graph track at or above
@@ -274,12 +278,18 @@ tracks from the bottom up.
 
 - A **track** reads its media: its picture conformed to the project's grid and size, or its sound in its file's
   own layout. Tracks nothing reads (out of the mix and no item's source) aren't read at all.
-- The **mix** shows the picture of the top video track in the mix that has one at that frame, and sums the audio
-  tracks in the mix that are routed to the rendered bus at their volumes into the mix layout: `round(48000 / fps)`
-  samples a frame across the bus's channels. Each block is fitted linearly to the mix layout, and a mono track goes
-  to every channel.
-- A **graph track** shows the output of the item playing at that frame, or what is below it where none plays. Its
-  sound is fitted to the mix layout. The top graph track's output is the master, or the mix with no graph tracks.
+- Every track goes over what is below it by **one stacking rule**, its kind's `Stack` (`TrackKind::stacks`,
+  applied by `stack_over`): where it plays something it covers what is below, and elsewhere what is below shows
+  through. A video track covers the picture (`Picture`), a graph track the picture and the sound (`PictureAndSound`),
+  and an audio track adds its sound at its level (`Sum`).
+- The **mix** stacks the video and audio tracks in the mix: the picture of the top video track that has one at
+  that frame, and the sum of the audio tracks routed to the rendered bus at their volumes, in the mix layout:
+  `round(48000 / fps)` samples a frame across the bus's channels. Each block is fitted linearly to the mix layout,
+  and a mono track goes to every channel.
+- Each **graph track** stacks on what is below it: the output of the item playing at that frame, or what is below
+  where none plays. Its sound is fitted to the mix layout. A muted graph track (or one left out by a solo) plays
+  nothing, so it passes what is below through, also to graphs reading it. The top graph track's output is the
+  master, or the mix with no graph tracks.
 
 **Latency.** Each item lines its inputs up at the latest of what is below and its other sources' latencies, holding
 the others back in small rings, and adds its own; a graph track's latency is its slowest item's, or what is below's

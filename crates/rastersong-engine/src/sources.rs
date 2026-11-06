@@ -85,16 +85,21 @@ impl Modulator {
             .unwrap_or(0.0)
     }
 
-    /// Fills `out` (interleaved, `channels` per frame) with the timeline between `start` and
-    /// `end` seconds, where `items` place this audio. Each item fades in and out at its edges
-    /// ([`Item::gain_at`]) and is mixed over the items listed before it by that gain, so a later
-    /// item replaces an earlier one where they overlap, crossfading at its edges; gaps are
-    /// silence.
-    pub fn fill_items(&self, items: &[Item], start: f64, end: f64, out: &mut [f32]) {
-        out.fill(0.0);
+    /// Adds `item`, which places this audio on the timeline, to `out` (interleaved, `channels`
+    /// per frame) covering the timeline between `start` and `end` seconds. The item fades in and
+    /// out at its edges ([`Item::gain_at`]); outside it nothing is added. Items on a track never
+    /// overlap, so a track's items are summed. `scratch` is reused between calls.
+    pub fn add_item(
+        &self,
+        item: &Item,
+        start: f64,
+        end: f64,
+        out: &mut [f32],
+        scratch: &mut Vec<f32>,
+    ) {
         let channels = self.channels;
         let n = out.len() / channels;
-        if n == 0 || end <= start {
+        if n == 0 || end <= start || item.muted {
             return;
         }
         let step = (end - start) / n as f64;
@@ -107,40 +112,37 @@ impl Modulator {
                 .ceil()
                 .clamp(lo as f64, hi as f64) as usize
         };
-        let mut faded = Vec::new();
-        for item in items.iter().filter(|i| !i.muted) {
-            let item_end = item.timeline_end(duration);
-            let (from, to) = (sample_at(item.position), sample_at(item_end));
-            if from >= to {
+        let item_end = item.timeline_end(duration);
+        let (from, to) = (sample_at(item.position), sample_at(item_end));
+        if from >= to {
+            return;
+        }
+        // Samples with their centre inside a fade are scaled by their gain; the rest at 1.
+        let fade = item.fade(duration);
+        let full_from = centre_from(item.position + fade, from, to);
+        let full_to = centre_from(item_end - fade, full_from, to);
+        let time = |k: usize| start + k as f64 * step;
+        for (a, b) in [(from, full_from), (full_from, full_to), (full_to, to)] {
+            if a >= b {
                 continue;
             }
-            // Samples with their centre inside a fade are mixed by their gain; the rest of the
-            // item replaces what is below it.
-            let fade = item.fade(duration);
-            let full_from = centre_from(item.position + fade, from, to);
-            let full_to = centre_from(item_end - fade, full_from, to);
-            let time = |k: usize| start + k as f64 * step;
-            for (a, b) in [(from, full_from), (full_from, full_to), (full_to, to)] {
-                if a >= b {
-                    continue;
-                }
-                let (s0, s1) = (item.source_time(time(a)), item.source_time(time(b)));
-                if (a, b) == (full_from, full_to) {
-                    self.fill_block(s0, s1, &mut out[a * channels..b * channels]);
-                    continue;
-                }
-                faded.resize((b - a) * channels, 0.0);
-                self.fill_block(s0, s1, &mut faded);
-                let below = &mut out[a * channels..b * channels];
-                for (k, (frame, new)) in below
-                    .chunks_exact_mut(channels)
-                    .zip(faded.chunks_exact(channels))
-                    .enumerate()
-                {
-                    let g = item.gain_at(time(a + k) + step / 2.0, duration) as f32;
-                    for (out, &x) in frame.iter_mut().zip(new) {
-                        *out += (x - *out) * g;
-                    }
+            let (s0, s1) = (item.source_time(time(a)), item.source_time(time(b)));
+            scratch.clear();
+            scratch.resize((b - a) * channels, 0.0);
+            self.fill_block(s0, s1, scratch);
+            let faded = (a, b) != (full_from, full_to);
+            for (k, (frame, new)) in out[a * channels..b * channels]
+                .chunks_exact_mut(channels)
+                .zip(scratch.chunks_exact(channels))
+                .enumerate()
+            {
+                let g = if faded {
+                    item.gain_at(time(a + k) + step / 2.0, duration) as f32
+                } else {
+                    1.0
+                };
+                for (out, &x) in frame.iter_mut().zip(new) {
+                    *out += x * g;
                 }
             }
         }
@@ -259,6 +261,15 @@ mod tests {
         assert_eq!(half, [1.5, -0.5, 3.5, -2.5]);
     }
 
+    /// `items` of `m` added into a zeroed `block` from `start` to `end` seconds.
+    fn fill(m: &Modulator, items: &[Item], start: f64, end: f64, block: &mut [f32]) {
+        block.fill(0.0);
+        let mut scratch = Vec::new();
+        for item in items {
+            m.add_item(item, start, end, block, &mut scratch);
+        }
+    }
+
     #[test]
     fn items_place_audio_on_the_timeline() {
         // A 10 Hz ramp, 2 fps: one block is 5 samples, 0.5 s.
@@ -269,30 +280,30 @@ mod tests {
             start: 0.3,
             ..Item::whole(crate::ResourceId(0), 0.2)
         };
-        m.fill_items(std::slice::from_ref(&item), 0.0, 0.5, &mut block);
+        fill(&m, std::slice::from_ref(&item), 0.0, 0.5, &mut block);
         assert_eq!(block, [0.0, 0.0, 3.0, 4.0, 5.0]);
         // Out point at 0.5 s of the file: the item ends after two samples, then silence.
         let item = Item {
             end: Some(0.5),
             ..item
         };
-        m.fill_items(&[item], 0.0, 0.5, &mut block);
+        fill(&m, &[item], 0.0, 0.5, &mut block);
         assert_eq!(block, [0.0, 0.0, 3.0, 4.0, 0.0]);
         // At double speed it is resampled: each output sample reads the middle of its span.
         let item = Item {
             rate: 2.0,
             ..Item::whole(crate::ResourceId(0), 0.0)
         };
-        m.fill_items(&[item], 0.5, 1.0, &mut block);
+        fill(&m, &[item], 0.5, 1.0, &mut block);
         assert_eq!(block, [10.5, 12.5, 14.5, 16.5, 18.5]);
         // Muted, or no items: silence.
         let muted = Item {
             muted: true,
             ..Item::whole(crate::ResourceId(0), 0.0)
         };
-        m.fill_items(&[muted], 0.0, 0.5, &mut block);
+        fill(&m, &[muted], 0.0, 0.5, &mut block);
         assert_eq!(block, [0.0; 5]);
-        m.fill_items(&[], 0.0, 0.5, &mut block);
+        fill(&m, &[], 0.0, 0.5, &mut block);
         assert_eq!(block, [0.0; 5]);
     }
 
@@ -304,7 +315,8 @@ mod tests {
         let fade = (EDGE_FADE * f64::from(rate)) as usize;
         let low = modulator(vec![0.25; 1000], rate);
         let mut block = vec![9.0; 100];
-        low.fill_items(
+        fill(
+            &low,
             &[Item::whole(crate::ResourceId(0), 0.02)],
             0.0,
             0.1,
@@ -322,7 +334,8 @@ mod tests {
         }
         assert_eq!(block[20 + fade..], [0.25; 100 - 20 - 5]);
         // At the end of the file it fades out the same way.
-        low.fill_items(
+        fill(
+            &low,
             &[Item::whole(crate::ResourceId(0), 0.0)],
             0.95,
             1.05,
@@ -334,23 +347,29 @@ mod tests {
     }
 
     #[test]
-    fn a_later_item_is_mixed_over_an_earlier_one_by_its_fade() {
-        // One file, a ramp, placed twice: the second item, from 50 ms, plays the file from its
-        // start again. Inside its fade the two crossfade; after it, only the second plays.
+    fn adjoining_items_each_fade_at_the_cut() {
+        // One file, a ramp, placed twice end to end: the first item plays 0..50 ms, the second
+        // the file from its start again from 50 ms. At the cut the first fades out and the
+        // second fades in; nothing crossfades, as items never overlap.
         let ramp = modulator((0..1000).map(|i| i as f32).collect(), 1000);
         let items = [
-            Item::whole(crate::ResourceId(0), 0.0),
+            Item {
+                end: Some(0.05),
+                ..Item::whole(crate::ResourceId(0), 0.0)
+            },
             Item::whole(crate::ResourceId(0), 0.05),
         ];
         let mut block = vec![0.0; 100];
-        ramp.fill_items(&items, 0.0, 0.1, &mut block);
+        fill(&ramp, &items, 0.0, 0.1, &mut block);
         assert_eq!(
-            block[10..50],
-            (10..50).map(|i| i as f32).collect::<Vec<_>>()[..]
+            block[5..45],
+            (5..45).map(|i| i as f32).collect::<Vec<_>>()[..]
         );
-        // Sample 50 is 10% of the way through the fade: 90% of the first item's 50, 10% of the
-        // second's 0.
-        assert!((block[50] - 45.0).abs() < 1e-4, "{}", block[50]);
+        // Sample 49 is the first item's last, 10% of its fade out from its edge.
+        assert!((block[49] - 49.0 * 0.1).abs() < 1e-4, "{}", block[49]);
+        // Sample 50 is the second item's first, 10% into its fade in: 0 of the ramp.
+        assert_eq!(block[50], 0.0);
+        assert!((block[51] - 0.3).abs() < 1e-4, "{}", block[51]);
         assert_eq!(
             block[55..],
             (5..50).map(|i| i as f32).collect::<Vec<_>>()[..]

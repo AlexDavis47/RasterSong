@@ -62,12 +62,12 @@ pub use renderer::{
     AudioResources, DEFAULT_AUDIO_TRACK, OutputSize, RenderInfo, Renderer, VIDEO_SOURCE,
 };
 pub use service::{
-    CacheUse, Engine, EngineConfig, EngineStatus, Failure, LoadedTrack, PreviewScale, RenderDelays,
+    CacheUse, Engine, EngineConfig, EngineStatus, Failure, LoadedAudio, PreviewScale, RenderDelays,
     RenderProgress,
 };
 pub use tap::{PICTURE_SIDE, Picture, Tap, TapOutcome, TapRequest, picture_size};
 pub use thumbnails::{THUMBNAIL_HEIGHT, Thumbnails, VideoKey};
-pub use timeline::{Bus, Item, LabelColor, MAX_BUS_CHANNELS, Source, Timebase, TrackKind};
+pub use timeline::{Bus, Item, LabelColor, MAX_BUS_CHANNELS, Source, Stack, Timebase, TrackKind};
 pub use waveform::Waveform;
 
 /// Initializes the engine and its media backend, and reports what was loaded.

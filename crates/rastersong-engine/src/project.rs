@@ -778,7 +778,8 @@ mod tests {
         let first_video = composition.tracks_of(TrackKind::Video).next().unwrap();
         assert_eq!(
             composition
-                .track_resource(first_video)
+                .played_by(first_video)
+                .first()
                 .and_then(|r| r.file())
                 .map(|f| f.path.clone()),
             Some(PathBuf::from("clip.mp4"))
@@ -1243,7 +1244,7 @@ mod inspect_rate_tests {
         let paths: Vec<_> = composition
             .tracks
             .iter()
-            .map(|t| composition.track_resource(t).and_then(|r| r.file()))
+            .map(|t| composition.played_by(t).first().and_then(|r| r.file()))
             .collect();
         assert_eq!(paths.len(), 2);
         assert_eq!(paths[0], paths[1]);

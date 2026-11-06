@@ -267,7 +267,7 @@ fn renders_without_audio_and_reports_cached_ranges() {
     engine.set_graph(GraphDesc::from_json(FINITE).unwrap());
     wait_until("all frames", || engine.buffered_from(0) == FRAMES);
     assert_eq!(engine.cached_ranges(), vec![0..FRAMES]);
-    assert!(engine.loaded_tracks().is_empty());
+    assert!(engine.loaded_audio().is_empty());
 }
 
 #[test]
@@ -287,7 +287,7 @@ fn audio_offset_changes_the_render_and_back() {
     let mut engine = engine();
     load(&mut engine, FINITE);
     wait_until("frames", || engine.buffered_from(0) == FRAMES);
-    assert!((engine.loaded_tracks()[0].clip.duration_secs() - 2.0).abs() < 1e-9);
+    assert!((engine.loaded_audio()[0].clip.duration_secs() - 2.0).abs() < 1e-9);
     let original = engine.frame(30).unwrap();
 
     engine.set_tracks(&[("Audio", 0.5)]);
@@ -341,7 +341,8 @@ fn audio_inputs_read_their_own_track_and_missing_tracks_are_silent() {
         silent.rgb,
         "the drums track now modulates"
     );
-    assert_eq!(engine.loaded_tracks().len(), 2);
+    // Both tracks play the same file, decoded once.
+    assert_eq!(engine.loaded_audio().len(), 1);
 }
 
 #[test]

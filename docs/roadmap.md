@@ -365,7 +365,9 @@ Reusable widgets, built once in `rastersong-gui` (a `widgets/` module) and used 
   - [x] One projection to the renderer, the one-graph CLI route a project; graph-only projects render
     ([Decisions](decisions.md#one-projection-the-one-graph-route-is-a-project-november-2026),
     [Composition](engine.md#composition)).
-  - [ ] Per-item resources in the renderer and one stacking rule for video and graph tracks.
+  - [x] Per-item resources in the renderer and one stacking rule for video and graph tracks
+    ([Decisions](decisions.md#per-item-resources-one-stacking-rule-no-audio-crossfades-november-2026),
+    [Composition](engine.md#composition)).
   - [ ] One path in the Resources panel (colour, multi-select, multi-drag and Add to timeline for graphs).
   - [ ] One selection, clipboard, action set and drop path on the timeline; then one lane, header, menu and
     inspector for every kind of track.

@@ -330,8 +330,8 @@ like an adjustment layer in a video editor. How they render is described in
   track there, anywhere else a new track on top. An empty section says *Drag a graph here to make a graph track*.
 - **The topmost graph item playing is the master.** At each frame the picture and sound you see and hear are the
   Video Output and Audio Output of the item on the highest graph track that has one there, or the plain mixes where
-  none does. A muted graph track or item is skipped, so what is below it shows through, and while a graph track is
-  soloed only soloed graph tracks play. The preview's **Original** shows the mix without any graph, to compare.
+  none does. A muted graph track or item is skipped, so what is below it shows through (also to a graph reading
+  that track), and while a graph track is soloed only soloed graph tracks play. The preview's **Original** shows the mix without any graph, to compare.
 - **Items** have the same bar, trim, split, mute, copy, paste and group commands as other items, and **pre-roll**
   (on by default): the graph warms up as if it had run before the item, so trimming the left edge changes nothing
   after it. Dragging a graph item moves it along its track, or up or down onto another graph track, applied when

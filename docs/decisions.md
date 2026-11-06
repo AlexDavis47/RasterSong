@@ -809,7 +809,8 @@ The second stage of merging media and graphs ([Graphs are resources](#graphs-are
   the pointer passes over; the timeline draws the moving items where they would land and sends one move on release.
 - **Removing a resource removes its items, not its tracks**, for media as for graphs: a track isn't one resource's.
 - **For now a video or audio track plays one resource.** The renderer still reads one file per track; a track that
-  holds items takes no other resource until it reads per item (the renderer stage), and the timeline draws per
+  holds items takes no other resource until it reads per item (the renderer stage, done in [Per-item
+  resources](#per-item-resources-one-stacking-rule-no-audio-crossfades-november-2026)), and the timeline draws per
   item (the last stage). This replaces *One resource per track* above as a rule, keeping it only as a temporary
   limit; the timeline's media rows and graph rows stay apart in the app until the timeline stage merges them.
 
@@ -837,6 +838,31 @@ type](#one-track-type-one-item-type-items-never-overlap-october-2026)).
   now renders them, its length theirs.
 - **Audio levels keep the cache only while no graph plays.** With no graph item, audio levels and routing only shape
   the track mix, which the app's mixer plays; with one, graphs hear the mix, so a level change is an edit.
+
+### Per-item resources; one stacking rule; no audio crossfades (November 2026)
+
+The fourth stage of merging media and graphs ([One
+projection](#one-projection-the-one-graph-route-is-a-project-november-2026)).
+
+- **The renderer reads each item from its own resource.** A track reader holds the files its items play, by
+  resource (each track opens each video once, as before per track), and finds the item playing at a frame by its
+  own file's length. An audio stem takes the most channels and the longest block among its files and fits the
+  others into it, as the mix fits tracks. The decoded audio is kept by resource, not by track
+  (`Engine::loaded_audio`), so two tracks of one file share it, and the preview mixer pairs each item with its
+  clip. The one-file-per-track limit now lives only in the editing API and the timeline, until the timeline draws
+  each item's own file.
+- **One stacking rule.** The video mix and the graph tracks were two pieces of code saying the same thing: a layer
+  covers what is below where it plays. `stack_over` with the kind's `Stack` (`Picture`, `PictureAndSound`, `Sum`) is
+  now the one place that says it. Audio still sums.
+- **A muted graph track passes what is below.** It used to be left out of the stack, so `graph:X` on a muted X read
+  zeros while the picture showed what was below X. It is now a layer that plays nothing, like a muted video track,
+  so both agree.
+- **`track:` and `graph:` find a track in the one list.** Each names a track by name whatever its kind; `graph:`
+  naming a video track reads its stem instead of zeros. Keeping the two prefixes avoids breaking saved graphs.
+- **No crossfades between audio items.** Items never overlap ([One track type, one item
+  type](#one-track-type-one-item-type-items-never-overlap-october-2026)), so mixing a later item over an earlier one
+  by its gain had nothing left to do. Items are summed at their edge-fade gains, in the renderer and in the preview
+  mixer. A hand-written file with overlapping audio items now sums them where they overlap.
 
 ### No Bypass graphs switch (October 2026)
 

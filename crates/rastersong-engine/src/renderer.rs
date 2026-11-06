@@ -9,7 +9,7 @@ use rastersong_media::{MediaBackend, MediaError, Rational, VideoSource};
 
 use crate::EngineError;
 use crate::audio::{AudioBlock, AudioSink, DEFAULT_AUDIO_RATE, SinkResampler};
-use crate::compose::{Compose, ComposePlan, MediaInfo, MediaReader, Stream, mix_layout};
+use crate::compose::{Compose, ComposePlan, MediaInfo, MediaReader, Stream, mix_into, mix_layout};
 use crate::composition::Composition;
 use crate::project::{DEFAULT_MAX_WARMUP_FRAMES, MAX_WARMUP_FRAMES_LIMIT, ResourceId};
 use crate::sources::{Modulator, fill_video, to_rgb8};
@@ -73,10 +73,9 @@ pub struct Step {
     pub restarted: bool,
 }
 
-/// A video track being read: the video conformed to the project's grid and size.
-struct VideoReader {
+/// A video resource a track reads: the video conformed to the project's grid and size.
+struct VideoFile {
     video: Box<dyn VideoSource>,
-    items: Vec<Item>,
     /// The video's length in seconds, and its frame rate.
     duration: f64,
     fps: f64,
@@ -84,7 +83,7 @@ struct VideoReader {
     have_frame: bool,
 }
 
-impl VideoReader {
+impl VideoFile {
     /// The video's frame shown at resource time `seconds`.
     fn frame_at(&self, seconds: f64) -> usize {
         let last = self.video.info().frame_count.saturating_sub(1);
@@ -92,16 +91,39 @@ impl VideoReader {
     }
 }
 
-/// An audio track being read.
-struct AudioReader {
+/// An audio resource a track reads, and the layout of one block of it.
+struct Sound {
     modulator: Arc<Modulator>,
-    items: Vec<Item>,
     layout: Layout,
 }
 
+/// A video or audio track being read: each item from its own resource. An item of a resource
+/// that isn't here (a file that is missing) reads as a gap.
 enum Reader {
-    Video(VideoReader),
-    Audio(AudioReader),
+    Video {
+        items: Vec<Item>,
+        /// The track's open videos, by resource: each track decodes its own.
+        files: HashMap<ResourceId, VideoFile>,
+    },
+    Audio {
+        items: Vec<Item>,
+        sounds: HashMap<ResourceId, Sound>,
+        /// The stem's layout: the most channels and the longest block among its sounds.
+        layout: Layout,
+        /// Room to read an item in its own layout before fitting it to the stem's.
+        own: Vec<f32>,
+        scratch: Vec<f32>,
+    },
+}
+
+impl Reader {
+    /// The layout of the track's sound, for an audio track.
+    fn audio_layout(&self) -> Option<Layout> {
+        match self {
+            Self::Audio { layout, .. } => Some(*layout),
+            Self::Video { .. } => None,
+        }
+    }
 }
 
 /// The project's tracks as signals, read for the composition.
@@ -120,17 +142,23 @@ impl MediaReader for Tracks {
         }
         let (start, end) = (s as f64 / self.fps, (s + 1) as f64 / self.fps);
         match &mut self.readers[track] {
-            Reader::Video(reader) => {
+            Reader::Video { items, files } => {
                 out.audio.clear();
                 // A hair past the frame's start, so an item starting on it is found despite
                 // rounding.
-                let Some((_, at)) = item_at(&reader.items, start + 1e-9, reader.duration) else {
+                let playing = item_at(items, start + 1e-9, |i| {
+                    files.get(&i.resource).map(|f| f.duration)
+                });
+                let Some((item, at)) = playing else {
                     out.video.clear();
                     return Ok(());
                 };
-                let index = reader.frame_at(at);
+                let file = files
+                    .get_mut(&item.resource)
+                    .expect("an item plays only when its file is open");
+                let index = file.frame_at(at);
                 let _span = tracing::trace_span!("video_source", track, index).entered();
-                match reader.video.frame(index) {
+                match file.video.frame(index) {
                     Ok(frame) => {
                         let _span = tracing::trace_span!("to_signal").entered();
                         let mut signal = Signal {
@@ -140,10 +168,10 @@ impl MediaReader for Tracks {
                         signal.data.resize(self.video_layout.len(), 0.0);
                         fill_video(&frame, &mut signal);
                         out.video = signal.data;
-                        reader.have_frame = true;
+                        file.have_frame = true;
                     }
                     // A damaged frame repeats the previous one rather than failing the render.
-                    Err(MediaError::FrameUnavailable(i)) if reader.have_frame => {
+                    Err(MediaError::FrameUnavailable(i)) if file.have_frame => {
                         tracing::warn!(
                             frame = i,
                             "frame could not be decoded; repeating the previous frame"
@@ -153,13 +181,37 @@ impl MediaReader for Tracks {
                 }
                 out.picture = !out.video.is_empty();
             }
-            Reader::Audio(reader) => {
+            Reader::Audio {
+                items,
+                sounds,
+                layout,
+                own,
+                scratch,
+            } => {
                 let _span = tracing::trace_span!("audio_source", track).entered();
                 out.video.clear();
-                out.audio.resize(reader.layout.len(), 0.0);
-                reader
-                    .modulator
-                    .fill_items(&reader.items, start, end, &mut out.audio);
+                out.audio.clear();
+                out.audio.resize(layout.len(), 0.0);
+                for item in items.iter() {
+                    let Some(sound) = sounds.get(&item.resource) else {
+                        continue;
+                    };
+                    let duration = sound.modulator.duration_secs();
+                    if item.position >= end || item.timeline_end(duration) <= start {
+                        continue;
+                    }
+                    if sound.layout == *layout {
+                        sound
+                            .modulator
+                            .add_item(item, start, end, &mut out.audio, scratch);
+                    } else {
+                        // Read in the file's own layout, then fitted to the stem's.
+                        own.clear();
+                        own.resize(sound.layout.len(), 0.0);
+                        sound.modulator.add_item(item, start, end, own, scratch);
+                        mix_into(own, sound.layout, &mut out.audio, *layout, 1.0);
+                    }
+                }
             }
         }
         Ok(())
@@ -227,45 +279,67 @@ impl Renderer {
         registry: &Registry,
         size: OutputSize,
     ) -> Result<Self, EngineError> {
-        // A reader for each video and audio track that plays something it has, and each
-        // resource's length.
+        // A reader for each video and audio track that plays something it has, each item from
+        // its own resource, and each resource's length.
         let mut readers = Vec::new();
         let mut media = Vec::new();
         let mut durations: HashMap<ResourceId, f64> = HashMap::new();
         let mut first_video = None;
         for track in composition.tracks.iter().filter(|t| t.kind.reads_file()) {
-            let resource = composition.track_resource(track);
-            let reader = match (track.kind, resource.and_then(|r| r.file().map(|f| (r, f)))) {
-                (TrackKind::Video, Some((resource, file))) => {
-                    let video = backend.open_video_stream(&file.path, file.stream)?;
-                    let info = video.info();
-                    let fps = info.frame_rate.as_f64();
-                    let duration = info.frame_count as f64 / fps;
-                    first_video.get_or_insert(Timebase {
-                        width: info.width,
-                        height: info.height,
-                        frame_rate: info.frame_rate,
-                    });
-                    durations.insert(resource.id, duration);
-                    Some(Reader::Video(VideoReader {
-                        duration,
-                        fps,
-                        video,
+            let played = composition.played_by(track);
+            let reader = match track.kind {
+                TrackKind::Video => {
+                    let mut files = HashMap::new();
+                    for resource in played {
+                        let Some(file) = resource.file() else {
+                            continue;
+                        };
+                        let video = backend.open_video_stream(&file.path, file.stream)?;
+                        let info = video.info();
+                        let fps = info.frame_rate.as_f64();
+                        let duration = info.frame_count as f64 / fps;
+                        first_video.get_or_insert(Timebase {
+                            width: info.width,
+                            height: info.height,
+                            frame_rate: info.frame_rate,
+                        });
+                        durations.insert(resource.id, duration);
+                        let file = VideoFile {
+                            video,
+                            duration,
+                            fps,
+                            have_frame: false,
+                        };
+                        files.insert(resource.id, file);
+                    }
+                    (!files.is_empty()).then(|| Reader::Video {
                         items: track.items.clone(),
-                        have_frame: false,
-                    }))
-                }
-                (TrackKind::Audio, Some((resource, _))) => {
-                    audio.get(&resource.id).map(|modulator| {
-                        durations.insert(resource.id, modulator.duration_secs());
-                        Reader::Audio(AudioReader {
-                            modulator: modulator.clone(),
-                            items: track.items.clone(),
-                            layout: Layout::EMPTY,
-                        })
+                        files,
                     })
                 }
-                _ => None,
+                TrackKind::Audio => {
+                    let mut sounds = HashMap::new();
+                    for resource in played {
+                        let Some(modulator) = audio.get(&resource.id) else {
+                            continue;
+                        };
+                        durations.insert(resource.id, modulator.duration_secs());
+                        let sound = Sound {
+                            modulator: modulator.clone(),
+                            // Laid out once the frame rate is known.
+                            layout: Layout::EMPTY,
+                        };
+                        sounds.insert(resource.id, sound);
+                    }
+                    (!sounds.is_empty()).then(|| Reader::Audio {
+                        items: track.items.clone(),
+                        sounds,
+                        layout: Layout::EMPTY,
+                        own: Vec::new(),
+                        scratch: Vec::new(),
+                    })
+                }
+                TrackKind::Graph => None,
             };
             media.push(reader.map(|reader| {
                 readers.push((track.name.clone(), reader));
@@ -283,13 +357,23 @@ impl Renderer {
         let (width, height) = size.resolve(timebase.width, timebase.height);
         for (_, reader) in &mut readers {
             match reader {
-                Reader::Video(v) => {
-                    let info = v.video.info();
-                    let native = (info.width, info.height) == (width, height);
-                    v.video
-                        .set_output_size((!native).then_some((width, height)));
+                Reader::Video { files, .. } => {
+                    for file in files.values_mut() {
+                        let info = file.video.info();
+                        let native = (info.width, info.height) == (width, height);
+                        file.video
+                            .set_output_size((!native).then_some((width, height)));
+                    }
                 }
-                Reader::Audio(a) => a.layout = a.modulator.layout(fps),
+                Reader::Audio { sounds, layout, .. } => {
+                    let (mut block, mut channels) = (0, 0);
+                    for sound in sounds.values_mut() {
+                        sound.layout = sound.modulator.layout(fps);
+                        block = block.max(sound.layout.width);
+                        channels = channels.max(sound.layout.samples_per_pixel);
+                    }
+                    *layout = Layout::audio_channels(block, channels);
+                }
             }
         }
         // Graph items count; items of a file that isn't read don't.
@@ -306,10 +390,7 @@ impl Renderer {
         sources.insert(DEFAULT_VIDEO.to_owned(), video_layout);
         sources.insert(DEFAULT_AUDIO.to_owned(), mix_layout(bus.channels, fps));
         for (name, reader) in &readers {
-            let layout = match reader {
-                Reader::Video(_) => video_layout,
-                Reader::Audio(a) => a.layout,
-            };
+            let layout = reader.audio_layout().unwrap_or(video_layout);
             sources.entry(name.clone()).or_insert(layout);
         }
         let options = CompileOptions {
@@ -332,10 +413,7 @@ impl Renderer {
                 let i = reader?;
                 Some(MediaInfo {
                     reader: i,
-                    audio: match &readers[i].1 {
-                        Reader::Audio(a) => Some(a.layout),
-                        Reader::Video(_) => None,
-                    },
+                    audio: readers[i].1.audio_layout(),
                 })
             })
             .collect();

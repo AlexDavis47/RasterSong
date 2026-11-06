@@ -113,6 +113,10 @@ const CLIP: ResourceId = ResourceId(100);
 const OTHER: ResourceId = ResourceId(101);
 /// The song the backend plays as [`common::AUDIO`].
 const SONG: ResourceId = ResourceId(102);
+/// A clip a third of a second long.
+const SHORT: ResourceId = ResourceId(103);
+/// A quiet stereo sound at 48 kHz: 0.1 on the left, -0.1 on the right.
+const QUIET: ResourceId = ResourceId(104);
 
 /// A video or audio resource reading `path`.
 fn file(id: ResourceId, kind: TrackKind, path: &str) -> ComposedResource {
@@ -136,6 +140,8 @@ fn composition(tracks: &[ComposedTrack], graphs: &[(u32, String)]) -> Compositio
         file(CLIP, TrackKind::Video, common::VIDEO),
         file(OTHER, TrackKind::Video, "other"),
         file(SONG, TrackKind::Audio, common::AUDIO),
+        file(SHORT, TrackKind::Video, "short"),
+        file(QUIET, TrackKind::Audio, "quiet"),
     ];
     let graphs = graphs.iter().map(|(id, json)| ComposedResource {
         id: ResourceId(*id),
@@ -181,12 +187,21 @@ fn graph_of(comp: &mut Composition, id: u32) -> &mut GraphDesc {
     }
 }
 
-/// The song, decoded.
+fn quiet() -> rastersong_engine::AudioClip {
+    rastersong_engine::AudioClip {
+        sample_rate: 48_000,
+        channels: 2,
+        samples: [0.1, -0.1].repeat(48_000 * 2).into(),
+    }
+}
+
+/// The song and the quiet sound, decoded.
 fn audio() -> AudioResources {
-    AudioResources::from([(
-        SONG,
-        Arc::new(rastersong_engine::sources::Modulator::new(&common::audio())),
-    )])
+    use rastersong_engine::sources::Modulator;
+    AudioResources::from([
+        (SONG, Arc::new(Modulator::new(&common::audio()))),
+        (QUIET, Arc::new(Modulator::new(&quiet()))),
+    ])
 }
 
 fn build(composition: &Composition) -> Result<Renderer, EngineError> {
@@ -207,15 +222,15 @@ fn renderer_for(composition: &Composition) -> Renderer {
 }
 
 fn other_backend() -> rastersong_engine::FakeBackend {
-    backend().with_video(
-        "other",
-        FakeVideo {
-            width: 16,
-            height: 8,
-            frame_count: FRAMES,
-            frame_rate: Rational::new(30, 1),
-        },
-    )
+    let video = |frame_count| FakeVideo {
+        width: 16,
+        height: 8,
+        frame_count,
+        frame_rate: Rational::new(30, 1),
+    };
+    backend()
+        .with_video("other", video(FRAMES))
+        .with_video("short", video(10))
 }
 
 /// The clip as the video track `Video`, followed by `tracks`.
@@ -914,4 +929,138 @@ fn a_graph_only_project_renders_its_items_length() {
     wait_until("the frames", || engine.buffered_from(0) >= 10);
     assert_eq!(engine.status(), EngineStatus::Ready);
     assert_eq!(engine.info().unwrap().frames, 10);
+}
+
+#[test]
+fn a_track_plays_items_of_different_files() {
+    // Half a second of the clip, then the short clip to its end: each item reads its own file,
+    // so the second lasts the short clip's 10 frames.
+    let tracks = vec![ComposedTrack::new(
+        "Video",
+        TrackKind::Video,
+        vec![
+            Item {
+                end: Some(0.5),
+                ..Item::whole(CLIP, 0.0)
+            },
+            Item::whole(SHORT, 0.5),
+        ],
+    )];
+    let comp = composition(&tracks, &[]);
+    let mut r = renderer_for(&comp);
+    assert_eq!(r.info().frames, 25);
+    let rendered = all_frames(&mut r, 25);
+    for (i, frame) in rendered.iter().enumerate() {
+        let shown = if i < 15 { i } else { i - 15 };
+        assert_eq!(frame[0], shown as u8, "frame {i}");
+    }
+}
+
+/// An audio track `mixed` playing the song for 4 frames, then the quiet sound.
+fn mixed() -> ComposedTrack {
+    ComposedTrack::new(
+        "mixed",
+        TrackKind::Audio,
+        vec![
+            Item {
+                end: Some(4.0 / FPS),
+                ..Item::whole(SONG, 0.0)
+            },
+            Item::whole(QUIET, 4.0 / FPS),
+        ],
+    )
+}
+
+#[test]
+fn a_stem_reads_the_item_playing() {
+    // The stem straight to the Audio Output: rendered sound, not the plain mix.
+    let stem =
+        louder_of(r#"{ "id": "a", "type": "audio_input", "params": { "source": "track:mixed" } }"#);
+    let tracks = with_video(vec![mixed()]);
+    let mut comp = composition(&tracks, &[(1, stem)]);
+    set_graph_tracks(&mut comp, vec![graph_track("G", vec![span(0, 10, 1)])]);
+    let mut r = renderer_for(&comp);
+    let peaks: Vec<f32> = (0..9)
+        .map(|i| {
+            r.render(i, &|| false).unwrap();
+            let block = r.audio().expect("every frame has a block");
+            block.samples.iter().fold(0.0f32, |m, s| m.max(s.abs()))
+        })
+        .collect();
+    // The song is loud; the quiet sound, after its fade in, is 0.1.
+    assert!(peaks[2] > 0.5, "{peaks:?}");
+    for (i, peak) in peaks.iter().enumerate().skip(6) {
+        assert!((peak - 0.1).abs() < 0.01, "frame {i}: {peaks:?}");
+    }
+}
+
+#[test]
+fn a_stem_takes_the_widest_layout_of_its_files() {
+    // The song is mono at 9 kHz, the quiet sound stereo at 48 kHz: the stem is stereo, in the
+    // quiet sound's longer blocks.
+    let tracks = with_video(vec![mixed()]);
+    let comp = composition(&tracks, &[]);
+    let r = renderer_for(&comp);
+    assert_eq!(
+        r.compile_options().sources.get("mixed"),
+        Some(&rastersong_engine::Layout::audio_channels(1600, 2))
+    );
+}
+
+#[test]
+fn video_and_graph_tracks_stack_the_same_way() {
+    // The other clip over the clip for frames 30..45: once on a video track above, once on a
+    // graph track showing a muted video track's stem. Elsewhere what is below shows through.
+    let over = |position: f64| {
+        ComposedTrack::new(
+            "other",
+            TrackKind::Video,
+            vec![Item {
+                end: Some(0.5),
+                ..Item::whole(OTHER, position)
+            }],
+        )
+    };
+    let bottom = ComposedTrack::new("bottom", TrackKind::Video, vec![Item::whole(CLIP, 0.0)]);
+    let video = composition(&[over(1.0), bottom.clone()], &[]);
+    let mut muted = over(1.0);
+    muted.in_mix = false;
+    let mut graphs = composition(&[muted, bottom], &[(1, show("track:other", ""))]);
+    set_graph_tracks(&mut graphs, vec![graph_track("G", vec![span(30, 45, 1)])]);
+    let (a, b) = (
+        all_frames(&mut renderer_for(&video), FRAMES),
+        all_frames(&mut renderer_for(&graphs), FRAMES),
+    );
+    for i in 0..FRAMES {
+        assert_eq!(a[i], b[i], "frame {i}");
+        let shown = if (30..45).contains(&i) { i - 30 } else { i };
+        assert_eq!(a[i][0], shown as u8, "frame {i}");
+    }
+}
+
+#[test]
+fn a_muted_graph_track_passes_what_is_below() {
+    // The top graph shows the middle graph track, which is muted: it reads what is below the
+    // middle track, the plain video, not zeros.
+    let tracks = video_track();
+    let mut comp = composition(&tracks, &[(1, show("graph:Middle", "")), (2, invert())]);
+    set_graph_tracks(
+        &mut comp,
+        vec![
+            graph_track("Top", vec![span(0, 10, 1)]),
+            graph_track("Middle", vec![span(0, 10, 2)]),
+        ],
+    );
+    track(&mut comp, "Middle").in_mix = false;
+    let plain = reference(&passthrough(), 10);
+    assert_eq!(all_frames(&mut renderer_for(&comp), 10), plain);
+    // Unmuted, it shows the inverted picture.
+    track(&mut comp, "Middle").in_mix = true;
+    assert_eq!(
+        all_frames(&mut renderer_for(&comp), 10),
+        reference(&invert(), 10)
+    );
+    // `graph:` and `track:` name a track the same way, whatever its kind.
+    *graph_of(&mut comp, 1) = GraphDesc::from_json(&show("graph:Video", "")).unwrap();
+    assert_eq!(all_frames(&mut renderer_for(&comp), 10), plain);
 }

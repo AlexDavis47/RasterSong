@@ -111,10 +111,10 @@ pub struct CacheUse {
     pub budget: usize,
 }
 
-/// A decoded audio track, for playback and display.
+/// A decoded audio resource, for playback and display.
 #[derive(Debug, Clone)]
-pub struct LoadedTrack {
-    pub name: String,
+pub struct LoadedAudio {
+    pub resource: ResourceId,
     pub clip: Arc<AudioClip>,
     /// Peaks for drawing the track.
     pub waveform: Arc<Waveform>,
@@ -273,7 +273,7 @@ struct State {
     looping: Option<Range<usize>>,
     status: EngineStatus,
     info: Option<RenderInfo>,
-    loaded: Vec<LoadedTrack>,
+    loaded: Vec<LoadedAudio>,
     /// What each node of the current graph costs, once it has compiled.
     node_stats: Vec<NodeStats>,
     /// The current render's latency and warmup, once it has compiled.
@@ -642,8 +642,8 @@ impl Engine {
         }
     }
 
-    /// The decoded audio tracks, once loaded.
-    pub fn loaded_tracks(&self) -> Vec<LoadedTrack> {
+    /// The decoded audio resources the audio tracks play, once loaded.
+    pub fn loaded_audio(&self) -> Vec<LoadedAudio> {
         lock(&self.shared.state).loaded.clone()
     }
 
@@ -1220,21 +1220,23 @@ impl Worker {
         self.notify();
     }
 
-    /// Decodes the audio every audio track plays (reusing earlier decodes of the same file).
-    /// Returns it by resource, and each audio track's for playback.
+    /// Decodes the audio every item on an audio track plays (reusing earlier decodes of the same
+    /// file). Returns it by resource, for rendering and for playback.
     fn load_audio(
         &mut self,
         composition: &Composition,
-    ) -> Result<(AudioResources, Vec<LoadedTrack>), Failure> {
-        let played = |track: &ComposedTrack| {
-            composition
-                .track_resource(track)
-                .and_then(|r| Some((r.id, r.file()?.clone())))
-        };
-        let tracks: Vec<(&ComposedTrack, ResourceId, MediaFile)> = composition
-            .tracks_of(TrackKind::Audio)
-            .filter_map(|t| played(t).map(|(id, file)| (t, id, file)))
-            .collect();
+    ) -> Result<(AudioResources, Vec<LoadedAudio>), Failure> {
+        // Each resource once, with the first track that plays it to name it in errors.
+        let mut tracks: Vec<(&ComposedTrack, ResourceId, MediaFile)> = Vec::new();
+        for track in composition.tracks_of(TrackKind::Audio) {
+            for resource in composition.played_by(track) {
+                if let Some(file) = resource.file()
+                    && !tracks.iter().any(|(_, id, _)| *id == resource.id)
+                {
+                    tracks.push((track, resource.id, file.clone()));
+                }
+            }
+        }
         let mut decoded = lock(&self.shared.audio);
         // Forget files no track plays any more.
         decoded.retain(|(path, stream), _| {
@@ -1246,8 +1248,8 @@ impl Worker {
         let mut loaded = Vec::with_capacity(tracks.len());
         for (track, id, file) in tracks {
             let entry = self.decode(&mut decoded, &track.name, &file)?;
-            loaded.push(LoadedTrack {
-                name: track.name.clone(),
+            loaded.push(LoadedAudio {
+                resource: id,
                 clip: entry.clip,
                 waveform: entry.waveform,
             });
@@ -1296,13 +1298,16 @@ impl Worker {
         let backend = &self.shared.backend;
         let mut first_video = None;
         let mut durations = HashMap::new();
-        for track in &composition.tracks {
-            let Some((resource, file)) = composition
-                .track_resource(track)
-                .and_then(|r| Some((r, r.file()?)))
-            else {
+        let played = composition.tracks.iter().flat_map(|track| {
+            composition
+                .played_by(track)
+                .into_iter()
+                .filter_map(move |r| Some((track, r, r.file()?)))
+        });
+        for (track, resource, file) in played {
+            if durations.contains_key(&resource.id) {
                 continue;
-            };
+            }
             let duration = match track.kind {
                 TrackKind::Graph => continue,
                 TrackKind::Video => {

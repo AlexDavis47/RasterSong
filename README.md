@@ -42,7 +42,7 @@ More setup, testing and packaging details are in [Development](docs/development.
 - [Example graphs](examples/graphs/)
 
 ## License
-
+ 
 RasterSong is source-available, not open source. You can read, study and build it for personal use;
 redistribution and commercial use need permission. See [LICENSE](LICENSE). RasterSong uses FFmpeg under the LGPL;
 see the About screen in the app for details.

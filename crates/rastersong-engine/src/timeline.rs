@@ -100,6 +100,27 @@ impl TrackKind {
     pub fn duplicates(self) -> bool {
         self == Self::Graph
     }
+
+    /// How a track of this kind goes over what is below it where one of its items plays.
+    pub fn stacks(self) -> Stack {
+        match self {
+            Self::Graph => Stack::PictureAndSound,
+            Self::Video => Stack::Picture,
+            Self::Audio => Stack::Sum,
+        }
+    }
+}
+
+/// How a track's output goes over what is below it: the one rule the video mix and the graph
+/// tracks share. Where a track plays nothing, what is below shows through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stack {
+    /// Its picture covers the picture below, where it has one; it has no sound (video).
+    Picture,
+    /// Its picture and its sound replace what is below (graphs).
+    PictureAndSound,
+    /// Its sound is added to what is below, at its level; it has no picture (audio).
+    Sum,
 }
 
 /// A stretch of a resource placed on a track.
@@ -310,8 +331,7 @@ impl Item {
 
     /// The gain of the item's audio at timeline time `t`: 0 outside the item or when muted,
     /// rising linearly to 1 over the fade at its start and falling back to 0 over the fade at
-    /// its end. Where items overlap (only in files written by hand), each later item is mixed
-    /// over what is below it by its gain.
+    /// its end. Items on a track never overlap, so a track's items are summed.
     pub fn gain_at(&self, t: f64, duration: f64) -> f64 {
         let end = self.timeline_end(duration);
         if self.muted || t < self.position || t >= end {
@@ -331,13 +351,19 @@ impl Item {
     }
 }
 
-/// The item of `items` that plays at timeline time `t`, and the resource time it plays: the last
-/// one listed if items overlap.
-pub fn item_at(items: &[Item], t: f64, duration: f64) -> Option<(&Item, f64)> {
+/// The item of `items` that plays at timeline time `t`, and the resource time it plays. Each
+/// item's resource lasts `duration(item)` seconds; an item whose length isn't known (`None`)
+/// plays nothing. Items on a track never overlap; if they do (a file written by hand), the last
+/// one listed wins.
+pub fn item_at(
+    items: &[Item],
+    t: f64,
+    duration: impl Fn(&Item) -> Option<f64>,
+) -> Option<(&Item, f64)> {
     items
         .iter()
         .rev()
-        .find_map(|item| item.plays_at(t, duration).map(|s| (item, s)))
+        .find_map(|item| item.plays_at(t, duration(item)?).map(|s| (item, s)))
 }
 
 /// Where the last of `items` ends on the timeline, in seconds (0 with none).
@@ -492,9 +518,12 @@ mod tests {
             Item::whole(ResourceId(1), 0.0),
             Item::whole(ResourceId(1), 1.0),
         ];
-        assert_eq!(item_at(&items, 0.5, 2.0).map(|(_, s)| s), Some(0.5));
-        assert_eq!(item_at(&items, 1.5, 2.0).map(|(_, s)| s), Some(0.5));
-        assert_eq!(item_at(&items, 3.5, 2.0), None);
+        let two = |_: &Item| Some(2.0);
+        assert_eq!(item_at(&items, 0.5, two).map(|(_, s)| s), Some(0.5));
+        assert_eq!(item_at(&items, 1.5, two).map(|(_, s)| s), Some(0.5));
+        assert_eq!(item_at(&items, 3.5, two), None);
+        // An item of a resource whose length isn't known plays nothing.
+        assert_eq!(item_at(&items, 0.5, |_| None), None);
         assert_eq!(items_end(&items, 2.0), 3.0);
         assert_eq!(items_end(&[], 2.0), 0.0);
     }

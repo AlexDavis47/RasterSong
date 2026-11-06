@@ -106,10 +106,19 @@ fn loaded_quick(app: App) -> Harness<'static, App> {
     )
 }
 
-/// Steps until the first second is rendered.
+/// Steps until the first second is rendered and the length of every video track with items is
+/// known. The length comes from the thumbnail probe on its own thread, and until then the
+/// track's items aren't drawn, so a click on one would land on a "loading" lane.
 fn settled(mut harness: Harness<'static, App>) -> Harness<'static, App> {
     step_until(&mut harness, "rendered frames", |app| {
         app.engine().buffered_from(0) >= 30
+    });
+    step_until(&mut harness, "video lengths", |app| {
+        let videos = app.project().videos();
+        app.video_durations()
+            .iter()
+            .zip(videos)
+            .all(|(duration, track)| duration.is_some() || track.items.is_empty())
     });
     harness.run_steps(2);
     harness

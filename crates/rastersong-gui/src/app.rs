@@ -12,7 +12,7 @@ use eframe::egui::{
     self, Color32, CornerRadius, FontId, Margin, RichText, Sense, Stroke, Ui, UiBuilder, Vec2,
     WidgetInfo, WidgetType, vec2,
 };
-use rastersong_engine::LoadedTrack;
+use rastersong_engine::LoadedAudio;
 use rastersong_engine::playback::{MixTrack, Mixer};
 use rastersong_engine::{
     AudioSink, BackendInfo, CompileOptions, Composition, DEFAULT_GRAPH_NAME, Engine, EngineConfig,
@@ -34,7 +34,7 @@ const AUDIO_RATES: [u32; 4] = [44_100, 48_000, 88_200, 96_000];
 
 /// One track as playback mixes it: its name, items and gain.
 /// A track as playback mixes it: name, items, level, and whether it is routed to the master bus.
-type MixEntry = (String, Vec<Item>, f32, bool);
+type MixEntry = (Vec<Item>, f32, bool);
 use crate::editor::{CanvasContext, GraphEditor, InspectorContext, StatsContext, without_layout};
 use crate::history::History;
 use crate::item_inspector::{ItemEdit, graph_item_inspector};
@@ -142,9 +142,8 @@ pub struct App {
     /// node's layouts, tags and warnings, including nodes that don't feed the output.
     inspected_for: Option<(GraphDesc, CompileOptions)>,
     inspected: Vec<NodeStats>,
-    /// Mix last given to the audio output: (track, offset, gain) per track.
-    /// What the playback mix was last built from: the render's audio, and the tracks' names,
-    /// offsets and gains.
+    /// What the playback mix was last built from: the render's audio, and each audio track's
+    /// items, gain and whether it is on the master bus.
     sent_mix: Option<(AudioSink, Vec<MixEntry>)>,
     /// The connection being listened to with the Listen tool, and from when.
     listening: Option<Listening>,
@@ -1676,19 +1675,24 @@ impl App {
         // bus: its track mix is the tracks routed to it.
         let master = self.project.master_bus().to_owned();
         let composition = self.composition_of(&self.project);
-        // The tracks playing a file that is there.
+        // The items playing a file that is there.
         let mix: Vec<MixEntry> = composition
             .tracks_of(TrackKind::Audio)
-            .filter(|t| composition.track_resource(t).is_some())
             .map(|t| {
-                let on_master = t.bus == master;
-                (t.name.clone(), t.items.clone(), t.mix_gain(), on_master)
+                let items = t
+                    .items
+                    .iter()
+                    .filter(|i| composition.resource(i.resource).is_some())
+                    .cloned()
+                    .collect();
+                (items, t.mix_gain(), t.bus == master)
             })
             .collect();
-        let loaded = self.engine.loaded_tracks();
+        let loaded = self.engine.loaded_audio();
         let decoded = mix
             .iter()
-            .all(|(name, ..)| loaded.iter().any(|l| &l.name == name));
+            .flat_map(|(items, ..)| items)
+            .all(|i| loaded.iter().any(|l| l.resource == i.resource));
         let sink = self.engine.audio_sink();
         let wanted = (sink, mix);
         if decoded && self.sent_mix.as_ref() != Some(&wanted) {
@@ -1704,16 +1708,18 @@ impl App {
     }
 
     /// The tracks playback mixes: the master bus's track mix.
-    fn mix_tracks(mix: &[MixEntry], loaded: &[LoadedTrack]) -> Vec<MixTrack> {
+    fn mix_tracks(mix: &[MixEntry], loaded: &[LoadedAudio]) -> Vec<MixTrack> {
         mix.iter()
-            .filter(|(_, _, _, on_master)| *on_master)
-            .filter_map(|(name, items, gain, _)| {
-                let clip = loaded.iter().find(|l| &l.name == name)?.clip.clone();
-                Some(MixTrack {
-                    clip,
-                    items: items.clone(),
-                    gain: *gain,
-                })
+            .filter(|(_, _, on_master)| *on_master)
+            .map(|(items, gain, _)| MixTrack {
+                items: items
+                    .iter()
+                    .filter_map(|i| {
+                        let clip = loaded.iter().find(|l| l.resource == i.resource)?;
+                        Some((i.clone(), clip.clip.clone()))
+                    })
+                    .collect(),
+                gain: *gain,
             })
             .collect()
     }
@@ -2777,7 +2783,7 @@ impl App {
                 (info.frames, info.frame_rate.as_f64())
             });
         self.tidy_item_selection();
-        let loaded = self.engine.loaded_tracks();
+        let loaded = self.engine.loaded_audio();
         self.update_thumbnails(ui.ctx());
         let tracks: Vec<TrackView> = (self.media_offset()..self.project.tracks.len())
             .map(|i| self.track_view(i, &loaded))
@@ -2864,7 +2870,7 @@ impl App {
     }
 
     /// Track `i` as the timeline shows it.
-    fn track_view(&self, i: usize, loaded: &[LoadedTrack]) -> TrackView {
+    fn track_view(&self, i: usize, loaded: &[LoadedAudio]) -> TrackView {
         let t = &self.project.tracks[i];
         let resource = self.project.track_resource(t);
         let base = TrackView {
@@ -2924,7 +2930,7 @@ impl App {
                 }
             }
             TrackKind::Audio => {
-                let loaded = loaded.iter().find(|l| l.name == t.name);
+                let loaded = resource.and_then(|r| loaded.iter().find(|l| l.resource == r.id));
                 TrackView {
                     duration: loaded.map(|l| l.clip.duration_secs()),
                     waveform: loaded.map(|l| l.waveform.clone()),
@@ -3432,10 +3438,11 @@ impl App {
                 .and_then(|t| t.service.info())
                 .map(|v| v.frame_count as f64 / v.frame_rate.as_f64());
         }
+        let id = self.project.track_resource(track)?.id;
         self.engine
-            .loaded_tracks()
+            .loaded_audio()
             .iter()
-            .find(|l| l.name == track.name)
+            .find(|l| l.resource == id)
             .map(|l| l.clip.duration_secs())
     }
 

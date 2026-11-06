@@ -15,7 +15,7 @@ use crate::sources::Modulator;
 use crate::timeline::{Bus, TrackKind};
 use crate::{
     AudioResources, AudioSink, Composition, EngineError, FrameSink, Project, RenderInfo,
-    RenderSettings, RenderedFrame, Resource, ResourceContent,
+    RenderSettings, RenderedFrame, Resource, ResourceContent, ResourceId,
 };
 
 /// What to render: a project, as the render needs it.
@@ -59,43 +59,45 @@ impl ExportJob {
         self.buses().into_iter().find(|b| b.name == name)
     }
 
-    /// Decodes the audio every audio track plays. Returns it by resource, and the audio tracks
-    /// the sound can be mixed from.
+    /// Decodes the audio every item on an audio track plays, each file once. Returns it by
+    /// resource, and the audio tracks the sound can be mixed from.
     pub fn load(
         &self,
         backend: &dyn MediaBackend,
         cache: Option<&AudioCache>,
     ) -> Result<(AudioResources, Vec<SourceTrack>), EngineError> {
         let mut audio = AudioResources::new();
-        let mut clips: HashMap<_, Arc<rastersong_media::AudioClip>> = HashMap::new();
+        let mut clips: HashMap<ResourceId, Arc<rastersong_media::AudioClip>> = HashMap::new();
         let mut sources = Vec::new();
         for track in self.composition.tracks_of(TrackKind::Audio) {
-            let Some(resource) = self.composition.track_resource(track) else {
-                continue;
-            };
-            let Some(file) = resource.file() else {
-                continue;
-            };
-            let clip = match clips.entry(resource.id) {
-                Entry::Occupied(known) => known.get().clone(),
-                Entry::Vacant(slot) => {
-                    let clip = match cache {
-                        Some(cache) => cache.load(backend, &file.path, file.audio_options()),
-                        None => backend.load_audio(&file.path, file.audio_options()),
-                    }
-                    .map_err(|error| EngineError::AudioTrack {
-                        name: track.name.clone(),
-                        error,
-                    })?;
-                    audio.insert(resource.id, Arc::new(Modulator::new(&clip)));
-                    slot.insert(Arc::new(clip)).clone()
+            for resource in self.composition.played_by(track) {
+                let (Some(file), Entry::Vacant(slot)) = (resource.file(), clips.entry(resource.id))
+                else {
+                    continue;
+                };
+                let clip = match cache {
+                    Some(cache) => cache.load(backend, &file.path, file.audio_options()),
+                    None => backend.load_audio(&file.path, file.audio_options()),
                 }
-            };
+                .map_err(|error| EngineError::AudioTrack {
+                    name: track.name.clone(),
+                    error,
+                })?;
+                audio.insert(resource.id, Arc::new(Modulator::new(&clip)));
+                slot.insert(Arc::new(clip));
+            }
+            let items: Vec<_> = track
+                .items
+                .iter()
+                .filter_map(|i| Some((i.clone(), clips.get(&i.resource)?.clone())))
+                .collect();
+            if items.is_empty() {
+                continue;
+            }
             sources.push(SourceTrack {
                 bus: track.bus.clone(),
                 track: MixTrack {
-                    clip,
-                    items: track.items.clone(),
+                    items,
                     gain: track.mix_gain(),
                 },
             });
@@ -401,16 +403,14 @@ mod tests {
             SourceTrack {
                 bus: "Main".into(),
                 track: MixTrack {
-                    clip: clip(0.5),
-                    items: vec![Item::whole(crate::ResourceId(0), 0.0)],
+                    items: vec![(Item::whole(crate::ResourceId(0), 0.0), clip(0.5))],
                     gain: 1.0,
                 },
             },
             SourceTrack {
                 bus: "Stems".into(),
                 track: MixTrack {
-                    clip: clip(0.25),
-                    items: vec![Item::whole(crate::ResourceId(0), 1.0)],
+                    items: vec![(Item::whole(crate::ResourceId(0), 1.0), clip(0.25))],
                     gain: 0.5,
                 },
             },
