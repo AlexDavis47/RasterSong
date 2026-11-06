@@ -298,8 +298,8 @@ meters already show on hover.
 - [x] **feature** **Inspection on hover.** Hovering a connection shows its meter, readings and a view of the signal at
   the playhead; hold **Alt** and scroll to go through the views (picture, scope, spectrum, readings only; remembered for audio and for other signals),
   any signal in any view. The view is a setting; the update rate while the playhead moves is a project setting.
-- [x] **feature** **Listen key.** Hold **Shift** over a connection to hear it through the Audio Output sink path, with the
-  playback ducked and fades in and out.
+- [x] **feature** **Listen key.** Hold **Shift** over a connection to hear it through the Audio Output sink path, in place of
+  the playback (kept under it at the Playback while listening setting, 0% by default), fading in and out.
 - [ ] **feature** Keys are fixed (Alt for the views, Shift to listen) until the Settings page can rebind them.
 - [x] **feature** **Engine taps.** *(done: see [Engine](engine.md#taps-and-listening); a dropped connection answers "not rendered")* The engine can be asked for the output of any connection at one frame without
   changing the render or the cache: the request is read-only, rate-limited, and dropped when the playhead moves or
@@ -340,7 +340,7 @@ Reusable widgets, built once in `rastersong-gui` (a `widgets/` module) and used 
 - [x] Reaper-style track headers, grab-scroll, scroll-zoom, tick lines, tempo ruler, thumbnails and waveforms
 - [x] **chore** Removed the Fit button (its tooltip was wrong and F already fits the view).
 - [x] **bug** Switching to Tempo mode added the tempo bar above the timeline and pushed it down. A toolbar is
-  always there now, with the Time / Tempo switch, the tempo, the Metronome (heard in Tempo mode) and Snap, which
+  always there now, with the Time / Tempo switch, the tempo, the Metronome (heard in either mode) and Snap, which
   left the ruler's corner.
 - [x] **chore** UI polish pass (October 2026): note-length units (`16th`, `beat`, `bar`, dotted and triplet) picked on the value box with a Free / Sync switch, a unit per length or rate, rates readable as a period ("one cycle every 2 bars"), and one time signature field (`6 / 8`) shared by the Beat node, the timeline and Settings, samples per second
   in the graph statistics, round metronome lights, one default height for every track with Ctrl+scroll and reset
@@ -931,6 +931,14 @@ independent of each other.
      stage 7.
    - [x] **bug** An output's signal name in the node inspector ran under its layout readout ("1600×1 stereo") when
      the row was narrow; it is now cut short before it.
+11. [x] **chore** Internal details out of the UI (November 2026): the node inspector's line under the name is the
+    description alone (no repeated type, no node id), its Output section is gone (the probe shows what an
+    output carries; the meters have their own section), the probe drops the wire's ends, the tag and the caption
+    under each view ([Desktop app](app.md#inspector)).
+    - [x] **feature** Listening to a connection plays it in place of the playback; **Playback while listening**
+      in Settings mixes some back in ([Desktop app](app.md#node-graph)).
+    - [x] **feature** The Metronome works in Time mode too: the Time / Tempo switch changes only the ruler
+      ([Desktop app](app.md#timeline)).
 
 ## Code health and DRY
 

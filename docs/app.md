@@ -81,16 +81,18 @@ no further than 85%: a graph wider than that starts from its inputs on the left,
   node to copy, duplicate, bypass or delete it; Delete removes the selection, Backspace removes it and reconnects
   the wires around it, Ctrl+D duplicates it.
 - **Inspecting a connection.** Resting the pointer on a wire or an output pin shows what it carries at the
-  playhead in the **probe**: the wire's ends and what it carries, the view, a meter and the mean, min, max and
-  RMS. Like a tooltip, the probe opens once the pointer has stopped on the wire or pin and rested there for the tooltip delay (sliding along a wire doesn't open it), and not while another window is over the canvas. While the next answer is on its way the probe keeps showing the last one, so a connection that isn't rendered doesn't flash back to "Looking…" as the playhead moves. Beside the view is the **drum**, a wheel of the views with the one shown in the middle; it wraps around,
+  playhead in the **probe**: the wire's colour and what it carries (its size and how many samples it holds), the
+  view, a meter and the mean, min, max and RMS. It doesn't name the wire's ends or its tag: the canvas already
+  shows where a wire comes from and goes, and its colour says what it carries. Like a tooltip, the probe opens once the pointer has stopped on the wire or pin and rested there for the tooltip delay (sliding along a wire doesn't open it), and not while another window is over the canvas. While the next answer is on its way the probe keeps showing the last one, so a connection that isn't rendered doesn't flash back to "Looking…" as the playhead moves. Beside the view is the **drum**, a wheel of the views with the one shown in the middle; it wraps around,
   so past Readings comes Picture again. The probe stays open while the pointer moves onto it: click a view on
   the drum, scroll over it, or click it and use ↑/↓. The view is a **picture** (the signal stretched over the project's shape, the way Video Output does), a **scope**
   (the waveform), a **spectrum** (an FFT on a logarithmic frequency axis, smoothed between updates) or
   **readings only**, and any signal can be seen any way: audio as a picture, video as a spectrum. Hold **Alt**
   over a connection and scroll to turn the drum, one click of the wheel to a view; the drum settles with a short
   ease, the view fades and resizes from one to the next, and the wheel stops zooming meanwhile. The view is remembered separately for
-  audio and for other signals (File → Settings). Hold **Shift** to hear the connection through the speakers,
-  turning the playback down while the pointer stays on it. It plays along with the transport, so it is silent
+  audio and for other signals (File → Settings). Hold **Shift** to hear the connection through the speakers
+  in place of the playback while the pointer stays on it; **Playback while listening** (File → Settings →
+  Application, 0% by default) keeps that much of the playback under it. It plays along with the transport, so it is silent
   while playback is stopped: sound and picture always match. How often the view asks for a new frame while the playhead moves is the project's **update
   rate** (File → Settings → Inspecting connections). It all reads through the engine's
   [taps](engine.md#taps-and-listening), so it never changes the render. The picture, scope, spectrum and meter are
@@ -107,7 +109,7 @@ no further than 85%: a graph wider than that starts from its inputs on the left,
   colour as a crisp line, glowing in the part's). Hovering the small wires icon in the canvas's bottom-right
   corner shows the key: what each colour carries, and that thickness is RMS.
 - Compile notes and warnings show as a badge on the node's corner, with the message in its tooltip and in the
-  inspector, which also lists what each output carries. Notes (a signal whose tag doesn't suit the node, say) get
+  inspector. Notes (a signal whose tag doesn't suit the node, say) get
   a quiet "i" badge; warnings (something lost or ignored) a yellow "!", an amber outline, and the message in a
   note under the node. Neither stops the render. With several inputs,
   the main input (which sets the output's length and layout) has a ring around its pin.
@@ -133,8 +135,8 @@ An **item** of any kind shows the resource it plays and its track, and a **Playi
 its kind can do: **Pre-roll** for a graph item, the **Speed** it plays its file at for a video or audio item
 (changed by Alt+dragging an edge). What a graph reads is set on its own source nodes, not on its items.
 
-A **node** shows its name (shown on the node instead of its type; it changes on Enter or clicking away, and the type's own name unnames it), "Kind · id — description", its notes and
-warnings, what each output carries (port, colour, tag, size) with its meters, its shared settings (Resampling, Grouping, Channels, and
+A **node** shows its name (shown on the node instead of its type; it changes on Enter or clicking away, and the type's own name unnames it), what it does (the type's description), its notes and
+warnings, its **Meters** for nodes that have them, its shared settings (Resampling, Grouping, Channels, and
 Layout for generators; see
 [Node behavior](node-behavior.md#shared-node-settings)) and its parameters, with units, sliders (always linear) reset-to-default buttons, and an `int` toggle on numbers that are not whole-only (on lengths and rates, **Free / Sync** at the top of the unit menu each carries on its value box, with **Per / Every** for a rate) (which rounds the value and, when a signal modulates it, every sample). Parameters that only make sense whole (Beat numerator, denominator and steps, Pack channels, Chorus voices, Phaser stages, Noise seed, Sample & Hold levels, Resample width and height) are declared `.integer()` in their spec: the slider handle jumps between whole values, typed numbers round, and they have no toggle. Each slider covers the parameter's
 usual range; typing (or dragging the value box) past it, up to the node's limits, widens the slider to match. Right-click a slider to set its range; the range is saved with the node in the graph (`"ranges"`), and it is also what a modulating signal is held to. Each
@@ -220,8 +222,8 @@ The timeline has three **sections** under a ruler, each named in a label above i
 line: **Graphs** on top, then **Video**, then **Audio**. Tracks stay in their section and reorder within it. The timeline's title row is the same in both
 modes, so switching moves nothing: one group holds the **Time** / **Tempo** switch (a ruler of minutes and seconds,
 or of bars and beats), the tempo (bpm counting the time signature's beat, the time signature as `4 / 4` in the shared time signature field, first beat; note-length units in nodes follow it in either
-mode) and the **Metronome** toggle, which plays only in Tempo mode, amber while on, with a light for each beat of
-the bar. At the right are the **loop region** ("Loop 0:01.00 – 0:03.00", or in bars, "2.1 – 4.1", in Tempo mode;
+mode) and the **Metronome** toggle, amber while on, with a light for each beat of the bar. The switch changes only
+the ruler: the Metronome is there and clicks in either mode. At the right are the **loop region** ("Loop 0:01.00 – 0:03.00", or in bars, "2.1 – 4.1", in Tempo mode;
 bright while looping; click it to turn looping on or off, like R) and **Snap** ("Snap · beats" in Tempo mode).
 Without a loop region it says how to make one.
 
@@ -381,7 +383,8 @@ With several buses, each audio track's header shows the bus it is routed to, wit
 **File → Settings…** (Ctrl+,) opens a window with two pages. **Application** is remembered on this computer:
 **Appearance** (theme, wire style, language), the **graph editor** (node latency and warmup display, node
 processing time, graph statistics, keeping input connections when duplicating and pasting, opening graphs with a
-single click in Resources and on the timeline), the view hovering an audio connection or
+single click in Resources and on the timeline, how loud the playback stays while listening to a connection), the
+view hovering an audio connection or
 any other connection shows, and **Rendering** (the default preview resolution, the cache size in MiB and how many
 seconds to render ahead, each with a reset button).
 **Project** is saved in the project file: the **picture** (resolution and frame rate, from 23.976 to 60 fps with

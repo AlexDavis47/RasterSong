@@ -30,6 +30,8 @@ pub struct Settings {
     pub preview_divisor: u32,
     /// Playback volume, `0..=1`.
     pub volume: f32,
+    /// While listening to a connection, how loud the playback stays under it, `0..=1`.
+    pub listen_mix: f32,
     /// Click on every beat during playback, to check the tempo by ear.
     pub metronome: bool,
     /// Duplicate and Paste connect the new nodes to the sources of the originals.
@@ -58,6 +60,7 @@ impl Default for Settings {
             views: crate::editor::ViewChoice::default(),
             preview_divisor: 2,
             volume: 0.8,
+            listen_mix: 0.0,
             metronome: false,
             keep_connections: true,
             language: rastersong_lang::ENGLISH_CODE.to_owned(),

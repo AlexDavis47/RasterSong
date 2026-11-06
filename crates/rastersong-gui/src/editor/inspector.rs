@@ -1,6 +1,6 @@
 //! The inspector of the active node, in the inspector's one layout: the kind with the node's
-//! category and Bypass, its name and what it is, then what its outputs carry, its shared settings
-//! and its parameters.
+//! category and Bypass, its name and what it does, then its meters, its shared settings and its
+//! parameters. What its outputs carry is in the probe, on hovering a pin or wire.
 
 use std::collections::BTreeMap;
 
@@ -24,7 +24,7 @@ use crate::name_edit::name_edit;
 use crate::theme::Theme;
 use crate::widgets::{
     CHOICE_WIDTH, KeyButton, about, inspector, inspector_body, inspector_header, kind_row,
-    name_style, section, setting_row, swatch, time_signature, toggle_box,
+    name_style, section, setting_row, time_signature, toggle_box,
 };
 
 /// What the inspector needs from outside the editor.
@@ -52,9 +52,6 @@ struct Pin {
     /// The wire modulating it: its colour, and where it comes from ("Split · low").
     wire: Option<(Color32, String)>,
 }
-
-/// Width of the column naming each output.
-const PORT_WIDTH: f32 = 34.0;
 
 impl GraphEditor {
     pub fn show_inspector(&mut self, ui: &mut Ui, ctx: &InspectorContext) {
@@ -92,10 +89,7 @@ impl GraphEditor {
         };
         let theme = Theme::of(ui.ctx());
         let pins = self.pins(key, &kind, theme);
-        let outputs: Vec<Color32> = (0..kind.spec.outputs.len())
-            .map(|i| self.output_color(key, i, theme).solid())
-            .collect();
-        // What the last compile found: the node's signals and warnings.
+        // What the last compile found: the node's notes and warnings.
         let compiled = self.compiled(key).cloned();
         let mut toggled: Option<(usize, bool)> = None;
         let mut disconnect: Option<usize> = None;
@@ -135,24 +129,17 @@ impl GraphEditor {
             if let Some(name) = edit.committed {
                 node.label = (name != kind.label()).then_some(name);
             }
-            about(
-                ui,
-                &tr_args(
-                    "inspector.node.about",
-                    &[
-                        ("kind", kind.label()),
-                        ("id", &node.id),
-                        ("description", kind.description()),
-                    ],
-                ),
-            );
+            about(ui, kind.description());
             if let Some(compiled) = &compiled {
                 diagnostics(ui, compiled, theme);
             }
         });
         inspector_body(ui, |ui| {
-            if let Some(compiled) = &compiled {
-                signals(ui, &kind, compiled, &outputs, ctx.meters, &node.id);
+            if !kind.spec.meters.is_empty() {
+                section(ui, tr("inspector.meters"), |ui| {
+                    ui.spacing_mut().item_spacing.y = 6.0;
+                    node_meters(ui, &kind, ctx.meters, &node.id);
+                });
             }
             let shared_settings =
                 kind.spec.inputs.len() > 1 || kind.spec.per_channel || kind.spec.takes_layout;
@@ -583,74 +570,6 @@ struct ParamRow<'a, 'u> {
     slider: &'a mut Option<(f64, f64)>,
 }
 
-/// What each output carries, as the last compile worked it out: its colour, tag and size; then
-/// the node's meters.
-fn signals(
-    ui: &mut Ui,
-    kind: &NodeType,
-    compiled: &NodeStats,
-    colors: &[Color32],
-    meters: &[NodeMeters],
-    id: &str,
-) {
-    if compiled.outputs.is_empty() && kind.spec.meters.is_empty() {
-        return;
-    }
-    let theme = Theme::of(ui.ctx());
-    let title = if compiled.outputs.len() > 1 {
-        tr("inspector.outputs")
-    } else {
-        tr("inspector.output")
-    };
-    section(ui, title, |ui| {
-        ui.spacing_mut().item_spacing.y = 6.0;
-        let output = |i: usize| kind.spec.outputs.get(i).map_or("?", |o| o.name);
-        // Split's unused channels are silence; listing them adds nothing.
-        let shown = match compiled.inputs.first() {
-            Some(input) if kind.kind == rastersong_engine::SPLIT => {
-                (input.samples_per_pixel as usize).clamp(1, compiled.outputs.len())
-            }
-            _ => compiled.outputs.len(),
-        };
-        for (i, layout) in compiled.outputs.iter().take(shown).enumerate() {
-            // A line of text, not a row of controls: only as tall as its text.
-            let size = egui::vec2(ui.available_width(), 16.0);
-            let row = egui::Layout::left_to_right(egui::Align::Center);
-            ui.allocate_ui_with_layout(size, row, |ui| {
-                ui.spacing_mut().item_spacing.x = 8.0;
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(PORT_WIDTH, 16.0), egui::Sense::hover());
-                ui.painter().text(
-                    rect.left_center(),
-                    egui::Align2::LEFT_CENTER,
-                    output(i),
-                    egui::FontId::monospace(12.0),
-                    theme.text_dim,
-                );
-                swatch(ui, 18.0, colors.get(i).copied().unwrap_or(theme.text_dim));
-                // The layout on the right first, so the signal's name is cut short before it.
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(
-                        RichText::new(layout.to_string())
-                            .monospace()
-                            .size(12.0)
-                            .color(theme.surfaces.text_faint),
-                    );
-                    let rest = egui::vec2(ui.available_width(), 16.0);
-                    ui.allocate_ui_with_layout(rest, row, |ui| {
-                        ui.add(
-                            egui::Label::new(RichText::new(layout.tag.to_string()).size(12.0))
-                                .truncate(),
-                        )
-                        .on_hover_text(tr("editor.inspector.signal_help"));
-                    });
-                });
-            });
-        }
-        node_meters(ui, kind, meters, id);
-    });
-}
-
 /// A setting's row with a drop-down of `options` (value, label, help). Alt+click or right-click
 /// resets it to `default`. `id` is the drop-down's id; `name` and `help` are the lang keys of the
 /// setting's name and help.
@@ -1070,9 +989,6 @@ fn locked_diamond(ui: &mut Ui) -> egui::Response {
 /// The meters `kind` declares, drawn from what the node `id` published for the last frame.
 fn node_meters(ui: &mut Ui, kind: &NodeType, meters: &[NodeMeters], id: &str) {
     let spec = kind.spec.meters;
-    if spec.is_empty() {
-        return;
-    }
     // The meters are always drawn: while a frame is rendering after an edit there are no
     // readings, and the last ones are shown so the inspector does not change height.
     let values = meters.iter().find(|m| &*m.node == id);

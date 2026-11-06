@@ -147,8 +147,8 @@ board's *Show node* button or its line about the last good frame.
 
 ### The wire probe
 
-Hovering a wire opens the probe, as now: the wire's ends ("Three-Band Split.low → Delay.in"), what it carries,
-a view, a meter and the readings. The list of views becomes a **drum**:
+Hovering a wire opens the probe, as now: what it carries, a view, a meter and the readings (as built, the probe no
+longer names the wire's ends or its tag, and the views have no caption under them). The list of views becomes a **drum**:
 a vertical wheel of view icons (Picture, Scope, Spectrum, Readings) beside the view, with the active one in the
 middle, highlighted, and its neighbours tilting away above and below. It **wraps around**: past Readings comes
 Picture again.
@@ -178,8 +178,8 @@ Follows the selection, and every kind of selection uses one layout: a header wit
 "Track"), the name (editable through `name_edit`) and the actions that apply to it (Bypass with its Alt+click hint
 for a node), then sections with capital labels.
 
-For a node: the name, the type with a one-line description, what each output carries, the node settings, then the
-parameters. A **modulated parameter** gets a card: the slider with the modulated range outlined and the ghost
+For a node: the name, the type's one-line description, its meters, the node settings, then the parameters (as
+built, what each output carries is left to the probe). A **modulated parameter** gets a card: the slider with the modulated range outlined and the ghost
 handle at the live value, the amount knob, the source ("from Three-Band Split · low"), one way / both ways, and
 "Moves by" in the parameter's unit. The behaviour is the same as in [Inspector](app.md#inspector).
 
@@ -228,8 +228,8 @@ snapping and loop edges already followed the grid before this stage, and Shift a
 
 - **The tempo fields live in one group attached to the Time/Tempo switch**: bpm (drag to scrub, click to
   type), beats per bar, first beat, and the **Metronome** toggle with a beat light per beat showing the current one.
-  Unlike the board, the group stays in Time mode (the Metronome greyed out), so switching modes moves nothing
-  on the toolbar. File → Settings → Project still edits the same fields.
+  Unlike the board, the group stays in Time mode, so switching modes moves nothing on the toolbar; the Metronome
+  works in both modes. File → Settings → Project still edits the same fields.
 - **The ruler has two tiers**: bar numbers bold on top, beats small below (2.2, 2.3, …).
 - **Every other bar is shaded** down through the lanes, and beat lines are fainter than bar lines.
 - An **amber marker** on the ruler shows the first beat.

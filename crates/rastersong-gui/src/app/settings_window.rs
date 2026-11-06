@@ -393,6 +393,27 @@ impl App {
             });
         }
         help(ui, tr("settings.views.help"));
+        ui.horizontal(|ui| {
+            ui.label(tr("settings.listen_mix"));
+            let mut percent = f64::from(self.settings.listen_mix) * 100.0;
+            if ui
+                .add(
+                    ValueBox::new(&mut percent)
+                        .range(0.0..=100.0)
+                        .max_decimals(0)
+                        .speed(1.0)
+                        .suffix(tr("settings.listen_mix.suffix")),
+                )
+                .changed()
+            {
+                self.settings.listen_mix = (percent / 100.0) as f32;
+            }
+            let default = Settings::default().listen_mix;
+            if reset_button(ui, self.settings.listen_mix != default) {
+                self.settings.listen_mix = default;
+            }
+        });
+        help(ui, tr("settings.listen_mix.help"));
         ui.checkbox(&mut self.settings.node_stats, tr("settings.node_stats"));
         help(ui, tr("settings.node_stats.help"));
         ui.checkbox(

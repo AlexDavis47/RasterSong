@@ -7,7 +7,7 @@ use rastersong_lang::{tr, tr_args};
 use super::canvas::{Geometry, Pin, wire_points};
 use super::inspect::{InspectContext, InspectMode, Visual, show_view};
 use super::{GraphEditor, NodeKey, Wire, modulation};
-use crate::theme::{self, Theme};
+use crate::theme::Theme;
 use crate::widgets::{DRUM_WIDTH, drum, kbd_text, section_label, signal_meter};
 
 /// How close (in screen pixels) the pointer must be to a wire for its tooltip.
@@ -129,7 +129,7 @@ impl GraphEditor {
             .map(|(_, wire)| wire)
     }
 
-    /// What an output carries at the playhead: its layout and tag, then its level.
+    /// What an output carries at the playhead: its layout, then its level.
     fn signal_tip(&self, key: NodeKey, output: usize, readings: &Readings) -> Tip {
         let mut tip = Tip::default();
         let Some(node) = self.node(key) else {
@@ -145,12 +145,6 @@ impl GraphEditor {
         }
         tip.source = Some((node.id.to_string(), output));
         tip.output = Some((key, output));
-        let port = self
-            .registry
-            .get(&node.kind)
-            .and_then(|kind| kind.spec.outputs.get(output))
-            .map_or("", |o| o.name);
-        tip.ends = vec![end(&node.id, port)];
         tip.level = readings
             .levels
             .iter()
@@ -302,52 +296,9 @@ impl GraphEditor {
         self.node(key).map(|n| n.id.to_string()).unwrap_or_default()
     }
 
+    /// A wire carries what its source output does; where it goes, the canvas already shows.
     fn wire_tip(&self, wire: Wire, readings: &Readings) -> Tip {
-        let port_name = |key: NodeKey, port: usize, input: bool| -> String {
-            let Some(node) = self.node(key) else {
-                return String::new();
-            };
-            let Some(kind) = self.registry.get(&node.kind) else {
-                return String::new();
-            };
-            if input {
-                match modulation::as_param(port) {
-                    Some(index) => kind
-                        .spec
-                        .params
-                        .get(index)
-                        .map(|p| format!("@{}", p.name))
-                        .unwrap_or_default(),
-                    None => kind
-                        .spec
-                        .inputs
-                        .get(port)
-                        .map(|i| i.name.to_owned())
-                        .unwrap_or_default(),
-                }
-            } else {
-                kind.spec
-                    .outputs
-                    .get(wire.from.1)
-                    .map(|o| o.name.to_owned())
-                    .unwrap_or_default()
-            }
-        };
-        let mut tip = self.signal_tip(wire.from.0, wire.from.1, readings);
-        let (from, out) = (
-            self.name_of(wire.from.0),
-            port_name(wire.from.0, wire.from.1, false),
-        );
-        let (to, into) = (
-            self.name_of(wire.to.0),
-            port_name(wire.to.0, wire.to.1, true),
-        );
-        tip.title = Some(tr_args(
-            "editor.tip.wire",
-            &[("from", &from), ("out", &out), ("to", &to), ("in", &into)],
-        ));
-        tip.ends = vec![end(&from, &out), end(&to, &into)];
-        tip
+        self.signal_tip(wire.from.0, wire.from.1, readings)
     }
 
     fn pin_tip(&self, pin: Pin, readings: &Readings) -> Tip {
@@ -385,8 +336,6 @@ struct Tip {
     /// The node output the tip is about (by id, and by key), and whether it carries audio.
     source: Option<(String, usize)>,
     output: Option<(NodeKey, usize)>,
-    /// The ends of the connection ("Split.low", "Delay.in"), or the output alone for a pin.
-    ends: Vec<String>,
     /// The colour of the wire.
     color: Option<Color32>,
     audio: bool,
@@ -414,7 +363,7 @@ impl Tip {
         self.content(ui);
     }
 
-    /// Lays the probe out: the connection's ends and what it carries, the drum of views beside
+    /// Lays the probe out: what the connection carries, the drum of views beside
     /// the view, the meter and the readings, and the keys. Returns the steps the drum was turned,
     /// and where it is.
     fn show_probe(&self, ui: &mut Ui) -> (i32, Rect) {
@@ -436,16 +385,7 @@ impl Tip {
                     bottom: 8,
                 };
                 section(ui, header, |ui| {
-                    ui.spacing_mut().item_spacing.y = 3.0;
                     self.heading(ui, theme);
-                    if !self.facts.is_empty() {
-                        ui.label(
-                            egui::RichText::new(self.facts.join(" · "))
-                                .monospace()
-                                .size(11.0)
-                                .color(theme.text_dim),
-                        );
-                    }
                 });
                 divider(ui, theme);
                 let row = ui.horizontal_top(|ui| {
@@ -466,11 +406,6 @@ impl Tip {
                         if let Some(visual) = &self.visual {
                             show_view(ui, visual, self.mode, self.color.unwrap_or(theme.accent));
                         }
-                        ui.label(
-                            egui::RichText::new(self.mode.about())
-                                .size(11.0)
-                                .color(theme.surfaces.text_faint),
-                        );
                     });
                     drum.response.rect.right()
                 });
@@ -500,7 +435,7 @@ impl Tip {
         (turned, drum_rect)
     }
 
-    /// The probe's first line: the wire's colour, then its ends with an arrow between.
+    /// The probe's first line: the wire's colour, then what it carries.
     fn heading(&self, ui: &mut Ui, theme: &Theme) {
         ui.spacing_mut().interact_size.y = 18.0;
         ui.horizontal(|ui| {
@@ -509,19 +444,12 @@ impl Tip {
                 let (rect, _) = ui.allocate_exact_size(vec2(14.0, 3.0), Sense::hover());
                 ui.painter().rect_filled(rect, 2.0, color);
             }
-            for (i, end) in self.ends.iter().enumerate() {
-                if i > 0 {
-                    ui.label(
-                        egui::RichText::new(tr("editor.tip.arrow"))
-                            .color(theme.surfaces.text_faint),
-                    );
-                }
-                ui.label(
-                    egui::RichText::new(end)
-                        .font(theme::semibold(theme::TITLE_SIZE))
-                        .color(theme.surfaces.text),
-                );
-            }
+            ui.label(
+                egui::RichText::new(self.facts.join(" · "))
+                    .monospace()
+                    .size(11.0)
+                    .color(theme.text_dim),
+            );
         });
     }
 
@@ -646,11 +574,6 @@ fn divider(ui: &mut Ui, theme: &Theme) {
     ui.painter().hline(rect.x_range(), rect.center().y, stroke);
 }
 
-/// One end of a connection: the node and its port.
-fn end(node: &str, port: &str) -> String {
-    tr_args("editor.tip.end", &[("node", node), ("port", port)])
-}
-
 /// A grid row: the label, then the number in monospace with a fixed width and a sign.
 fn row(ui: &mut Ui, label: &str, value: f32) {
     ui.label(label);
@@ -658,20 +581,15 @@ fn row(ui: &mut Ui, label: &str, value: f32) {
     ui.end_row();
 }
 
-/// The lines describing a layout and its tag.
+/// The line describing a layout: its shape and how many samples it holds.
 fn layout_lines(layout: &Layout) -> Vec<String> {
-    let mut lines = vec![tr_args(
+    vec![tr_args(
         "editor.tip.layout",
         &[
             ("layout", &layout.to_string()),
             ("samples", &layout.len().to_string()),
         ],
-    )];
-    let tag = layout.tag.to_string();
-    if !tag.is_empty() {
-        lines.push(tr_args("editor.tip.tag", &[("tag", &tag)]));
-    }
-    lines
+    )]
 }
 
 #[cfg(test)]
