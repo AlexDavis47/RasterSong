@@ -49,7 +49,7 @@ pub struct InspectorContext<'a> {
 struct Pin {
     /// Whether the pin shows on the node.
     exposed: bool,
-    /// The wire modulating it: its colour, and where it comes from ("Split · low").
+    /// The wire modulating it: its color, and where it comes from ("Split · low").
     wire: Option<(Color32, String)>,
 }
 
@@ -655,7 +655,7 @@ struct ParamRow<'a, 'u> {
     integer: Option<&'a mut bool>,
     /// Whether the parameter's pin shows on the node, for parameters that can be modulated.
     expose: Option<&'a mut bool>,
-    /// The modulation of a connected parameter, the wire's colour and where it comes from.
+    /// The modulation of a connected parameter, the wire's color and where it comes from.
     modulation: Option<(&'a mut Modulation, Color32, &'a str)>,
     /// A modulated parameter's value at the playhead.
     live: Option<f64>,

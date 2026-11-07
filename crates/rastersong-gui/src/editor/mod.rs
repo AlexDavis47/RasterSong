@@ -1330,7 +1330,7 @@ mod tests {
         let split = editor.key_of("split").unwrap();
         editor.add_note_to(split);
         editor.add_node(rastersong_engine::COMMENT, pos2(0.0, 0.0));
-        editor.node_mut(split).unwrap().description = Some("three colours".into());
+        editor.node_mut(split).unwrap().description = Some("three colors".into());
         assert_eq!(editor.node_count(), 12);
         assert_eq!(without_layout(&editor.to_desc()), before);
     }

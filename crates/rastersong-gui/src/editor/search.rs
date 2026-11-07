@@ -240,7 +240,7 @@ impl GraphEditor {
         }
     }
 
-    /// A pin as the palette names it ("Three-Band Split.high"), with its wire's colour.
+    /// A pin as the palette names it ("Three-Band Split.high"), with its wire's color.
     fn pin_name(
         &self,
         geometry: &[Geometry],

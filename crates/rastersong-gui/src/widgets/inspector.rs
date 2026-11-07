@@ -1,4 +1,4 @@
-//! The inspector's one layout, whatever is selected: a header with the kind of thing, a coloured
+//! The inspector's one layout, whatever is selected: a header with the kind of thing, a colored
 //! tag and the actions that apply to it, then its name and a line about it; under a divider, the
 //! sections, each under a capital label.
 
@@ -67,7 +67,7 @@ pub fn inspector_body<R>(ui: &mut Ui, body: impl FnOnce(&mut Ui) -> R) -> R {
         .inner
 }
 
-/// The header's first row: `kind` ("Node") as a capital label, `tag` in its colour, and
+/// The header's first row: `kind` ("Node") as a capital label, `tag` in its color, and
 /// `actions` laid out from the right edge leftwards.
 pub fn kind_row(
     ui: &mut Ui,
@@ -139,7 +139,7 @@ pub fn section_label(ui: &mut Ui, text: &str) -> egui::Response {
     section_label_in(ui, text, color)
 }
 
-/// A [`section_label`] in `color`: the timeline's section names take their kind's colour.
+/// A [`section_label`] in `color`: the timeline's section names take their kind's color.
 pub fn section_label_in(ui: &mut Ui, text: &str, color: Color32) -> egui::Response {
     ui.label(
         RichText::new(text.to_uppercase())

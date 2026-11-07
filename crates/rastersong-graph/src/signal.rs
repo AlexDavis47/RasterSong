@@ -108,7 +108,7 @@ impl std::fmt::Display for Layout {
 
 /// What a signal is meant to be: its kind, what its interleaved channels are, which part of a
 /// whole it is, and its nominal range. Worked out when the graph compiles and carried in every
-/// [`Layout`]. **Advisory only**: it colours wires and produces warnings, but no node may refuse
+/// [`Layout`]. **Advisory only**: it colors wires and produces warnings, but no node may refuse
 /// or convert a signal because of it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Tag {

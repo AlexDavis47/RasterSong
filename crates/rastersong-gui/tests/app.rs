@@ -2797,7 +2797,7 @@ fn fills_at(harness: &Harness<'_, App>, at: Pos2) -> Vec<egui::Color32> {
 }
 
 #[test]
-fn graph_items_take_their_resources_colour() {
+fn graph_items_take_their_resources_color() {
     let mut harness = loaded_with(graph_app(|_, _, _| {}));
     let second = harness.state().project().graph_ids().nth(1).unwrap();
     harness
@@ -2910,7 +2910,7 @@ fn dragging_a_header_moves_the_track_within_its_section() {
         track_names(harness.state().project().tracks().collect()),
         ["video", "video 2", "audio", "audio 2"]
     );
-    // Dragged by the bar of its kind's colour, which only senses hovering.
+    // Dragged by the bar of its kind's color, which only senses hovering.
     let second_video = harness
         .get_all_by_label("Video track")
         .nth(1)
@@ -3204,7 +3204,7 @@ fn a_resources_menu_colors_it_and_its_items_take_the_color() {
     harness.get_by_label("Teal").click();
     harness.run_steps(2);
     assert_eq!(resource(&harness).color, Some(LabelColor::Teal));
-    // The timeline item menu has no colour of its own: the item takes its resource's.
+    // The timeline item menu has no color of its own: the item takes its resource's.
     let audio = item_bar_point(&harness, 0.5, 1);
     right_click(&mut harness, audio);
     assert!(harness.query_by_label_contains("Color").is_none());
@@ -4447,7 +4447,7 @@ fn a_dropped_wire_names_what_the_new_node_connects_to() {
 }
 
 #[test]
-fn a_nodes_colour_strip_keeps_to_its_rounded_corners() {
+fn a_nodes_color_strip_keeps_to_its_rounded_corners() {
     // Drawn as the node's own rounded rect cut to the strip, not as a short rect whose corners
     // epaint would clamp to half its height.
     let harness = loaded();
@@ -5088,11 +5088,11 @@ fn typing_a_description_saves_it_without_rerendering() {
     let field = harness.get_by(|n| n.role() == Role::MultilineTextInput);
     field.click();
     harness.run_steps(1);
-    harness.event(Event::Text("Three colours".into()));
+    harness.event(Event::Text("Three colors".into()));
     harness.run_steps(2);
     let desc = harness.state().editor().to_desc();
     let split = desc.nodes.iter().find(|n| n.id == "split").unwrap();
-    assert_eq!(split.description.as_deref(), Some("Three colours"));
+    assert_eq!(split.description.as_deref(), Some("Three colors"));
     harness.run_steps(3);
     assert!(Arc::ptr_eq(
         &before,

@@ -2,7 +2,7 @@ use crate::nodes::{Category, NodeKind, NodeSpec};
 use crate::{Layout, LayoutContext, Node, OutputSpec, ParamSpec, Params};
 use crate::{ProcessContext, Range, Signal};
 
-/// The same value in every sample. As video it is a flat colour (0 black, 1 white); as audio it is
+/// The same value in every sample. As video it is a flat color (0 black, 1 white); as audio it is
 /// silence at 0 or a DC offset. Unconnected inputs read one with the value 0.
 #[derive(Debug)]
 pub struct Constant {

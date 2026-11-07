@@ -31,7 +31,7 @@ pub enum ResourceAction {
     /// Add a track playing each resource, at the playhead.
     AddToTimeline(Vec<ResourceId>),
     Rename(ResourceId, String),
-    /// Give the resources a label colour (`None` for their kind's own), which their items take
+    /// Give the resources a label color (`None` for their kind's own), which their items take
     /// too.
     SetColor(Vec<ResourceId>, Option<LabelColor>),
     /// Add a copy of the resource, for kinds that [duplicate](TrackKind::duplicates).
@@ -165,7 +165,7 @@ pub struct Card<'a> {
     /// Shown as a button over the card's picture when it is set (Relocate for a missing file):
     /// label, help.
     pub fix_button: Option<(&'a str, &'a str)>,
-    /// The label colour, drawn as a band along the top of the picture.
+    /// The label color, drawn as a band along the top of the picture.
     pub color: Option<LabelColor>,
 }
 
@@ -287,7 +287,7 @@ fn paint_thumb(painter: &Painter, rect: Rect, thumb: Thumb, missing: bool, theme
     }
 }
 
-/// The label colours a resource of `kind` can take, its kind's own first, each with its swatch
+/// The label colors a resource of `kind` can take, its kind's own first, each with its swatch
 /// at the end of the row and the `current` one checked. Returns the one clicked.
 fn label_color_menu(
     ui: &mut Ui,

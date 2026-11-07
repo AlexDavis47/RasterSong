@@ -27,7 +27,7 @@ use rastersong_lang::{tr, tr_args};
 use crate::effects::Glow;
 use crate::theme::{CARD_RADIUS, SMALL_SIZE, Theme, WireStyle, semibold};
 
-/// The category colour strip along a node's top edge, and the header it starts (strip and
+/// The category color strip along a node's top edge, and the header it starts (strip and
 /// title row).
 const STRIP: f32 = 5.0;
 const HEADER: f32 = 28.0;
@@ -81,7 +81,7 @@ pub struct CanvasContext<'a> {
     pub inspect: Option<super::inspect::InspectContext<'a>>,
 }
 
-/// How deep [`GraphEditor::output_color`] follows inherited colours upstream.
+/// How deep [`GraphEditor::output_color`] follows inherited colors upstream.
 const MAX_COLOR_DEPTH: usize = 64;
 
 /// One end of a wire being dragged.
@@ -291,10 +291,10 @@ impl GraphEditor {
             .collect()
     }
 
-    /// The colours of output `port` of `key`, from the tag the last compile gave it. Before a
+    /// The colors of output `port` of `key`, from the tag the last compile gave it. Before a
     /// node is compiled (or when it doesn't feed the output), from its output's tag rule:
     /// whatever a rule leaves open is looked up through the node's main input, upstream until
-    /// it's known. A wire with no kind takes its node's category colour.
+    /// it's known. A wire with no kind takes its node's category color.
     pub(super) fn output_color(&self, key: NodeKey, port: usize, theme: &Theme) -> WireColor {
         let category = theme.category(self.kind_of(key).map(|k| k.spec.category));
         if let Some(layout) = self.compiled(key).and_then(|s| s.outputs.get(port)) {
@@ -1025,7 +1025,7 @@ impl GraphEditor {
         if bypassed {
             draw_hatch(painter, rect, radius, theme.node_hatch, zoom);
         }
-        // The category colour strip, then the title row under it, so colour and text don't
+        // The category color strip, then the title row under it, so color and text don't
         // compete. The strip is the node's own rounded shape cut to its top, so it keeps to the
         // outline's corners: a rect as short as the strip would have its corners clamped to
         // half its height, and poke out past the outline.
@@ -1189,7 +1189,7 @@ impl GraphEditor {
         painter.galley(note.min + pad, galley, theme.warning_note_text);
     }
 
-    /// The node's latency and warmup in small text under it, in the warning colour when the warmup
+    /// The node's latency and warmup in small text under it, in the warning color when the warmup
     /// hit the limit. Returns whether there was any to show.
     fn draw_node_stats(
         &self,
@@ -1348,7 +1348,7 @@ enum Badge {
     Error,
 }
 
-/// A node's badge: an "i" on a quiet disc for notes, an exclamation mark on a warning-coloured
+/// A node's badge: an "i" on a quiet disc for notes, an exclamation mark on a warning-colored
 /// one for warnings, a cross on a red one for the failing node.
 fn draw_badge(painter: &egui::Painter, theme: &Theme, rect: Rect, badge: Badge) {
     let ground = theme.surfaces.ground;
@@ -1401,8 +1401,8 @@ fn draw_hatch(painter: &egui::Painter, rect: Rect, radius: f32, color: Color32, 
     }
 }
 
-/// The key to the wire colours, in the canvas's bottom-right corner `bottom` above its edge:
-/// what each colour carries and that thickness is level. Left out when the canvas is too small
+/// The key to the wire colors, in the canvas's bottom-right corner `bottom` above its edge:
+/// what each color carries and that thickness is level. Left out when the canvas is too small
 /// to spare the room.
 fn draw_legend(ui: &Ui, canvas: Rect, bottom: f32, theme: &Theme) {
     let p = &theme.ports;
@@ -1442,7 +1442,7 @@ fn draw_legend(ui: &Ui, canvas: Rect, bottom: f32, theme: &Theme) {
 /// Side of the wire legend's icon.
 const LEGEND_ICON: f32 = 26.0;
 
-/// The key the legend's icon opens: what each wire colour carries, and that thickness is level.
+/// The key the legend's icon opens: what each wire color carries, and that thickness is level.
 fn legend_key(ui: &mut Ui, theme: &Theme) {
     let p = &theme.ports;
     // Each row: its swatches (one long one, or a short one per part) and its words.
@@ -1500,8 +1500,8 @@ fn draw_param_pin(painter: &egui::Painter, theme: &Theme, p: Pos2, hovered: bool
     ));
 }
 
-/// A wire's colours: the kind of signal (video or audio), and the part of it the wire carries
-/// (a colour channel or frequency band), if any.
+/// A wire's colors: the kind of signal (video or audio), and the part of it the wire carries
+/// (a color channel or frequency band), if any.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct WireColor {
     pub base: Color32,
@@ -1516,16 +1516,16 @@ impl WireColor {
         }
     }
 
-    /// The single colour that best identifies the wire: its part, or else its kind.
+    /// The single color that best identifies the wire: its part, or else its kind.
     pub fn solid(self) -> Color32 {
         self.part.unwrap_or(self.base)
     }
 }
 
-/// Rings of the gradient style, from the edge (base colour) to the centre (part colour).
+/// Rings of the gradient style, from the edge (base color) to the centre (part color).
 const GRADIENT_STEPS: usize = 6;
 /// The thinnest the crisp middle of a wire gets in the styles that draw one, so a quiet wire still
-/// shows its own colour.
+/// shows its own color.
 const MIN_CORE: f32 = 2.0;
 
 /// The control points of the curve a wire is drawn along.
@@ -1582,7 +1582,7 @@ fn draw_wire(
 /// The widths of the outline style: the crisp middle, and the border on each side of it. The
 /// border grows with the wire, so thin and thick wires keep the same proportions; it never goes
 /// under a pixel, so the outline always shows, and the middle never under [`MIN_CORE`], so the
-/// base colour does too.
+/// base color does too.
 fn outline_widths(width: f32) -> (f32, f32) {
     let core = width.max(MIN_CORE);
     (core, (core * 0.4).max(1.0))
@@ -1619,10 +1619,10 @@ mod tests {
     }
 
     #[test]
-    fn wire_styles_keep_both_colours_visible_at_any_thickness() {
+    fn wire_styles_keep_both_colors_visible_at_any_thickness() {
         for width in [1.0, 1.5, 3.0, 7.0] {
             let (core, border) = outline_widths(width);
-            assert!(core >= MIN_CORE && core >= width, "the base colour shows");
+            assert!(core >= MIN_CORE && core >= width, "the base color shows");
             assert!(border >= 1.0, "the outline shows");
             assert!(
                 border <= core * 0.5,
@@ -1637,7 +1637,7 @@ mod tests {
     }
 
     #[test]
-    fn wires_take_their_colour_from_what_they_carry() {
+    fn wires_take_their_color_from_what_they_carry() {
         let graph = rastersong_engine::GraphDesc::from_json(include_str!(
             "../../../../examples/graphs/am_bands.json"
         ))

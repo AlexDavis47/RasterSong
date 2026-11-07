@@ -31,7 +31,7 @@ impl Glow {
         }
     }
 
-    /// The layers to draw, outermost first, as `(distance past the edge, colour)`. Draw each at
+    /// The layers to draw, outermost first, as `(distance past the edge, color)`. Draw each at
     /// its distance, so the faint outer layers end up beneath the brighter inner ones.
     pub fn layers(&self) -> Vec<(f32, Color32)> {
         // Together the layers add up to about `strength` where they all overlap.
@@ -44,7 +44,7 @@ impl Glow {
             .collect()
     }
 
-    /// Paints a stroke of `core_width` through `draw(width, colour)`, which strokes the shape at
+    /// Paints a stroke of `core_width` through `draw(width, color)`, which strokes the shape at
     /// that width. Only the halo is painted; draw the crisp line on top.
     pub fn stroke(&self, core_width: f32, mut draw: impl FnMut(f32, Color32)) {
         for (reach, color) in self.layers() {

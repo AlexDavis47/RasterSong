@@ -1665,7 +1665,7 @@ impl App {
             .set_preview_scale(self.settings.preview_scale());
     }
 
-    /// Gives the editor every node's layouts, tags and warnings (for wire colours, ports and the
+    /// Gives the editor every node's layouts, tags and warnings (for wire colors, ports and the
     /// inspector), with latency and warmup from the engine's compiled graph. The graph is
     /// inspected again only when it or what it's compiled against changes.
     fn update_inspection(&mut self) {
@@ -3628,7 +3628,7 @@ impl App {
 /// Height of the buttons in the row over the graph canvas.
 const HEADER_BUTTON_HEIGHT: f32 = 30.0;
 
-/// The canvas header's count of problems ("1 error · 1 warning") in the colour of the worst,
+/// The canvas header's count of problems ("1 error · 1 warning") in the color of the worst,
 /// or `None` with none.
 fn problem_count(errors: usize, warnings: usize, theme: &Theme) -> Option<(String, egui::Color32)> {
     let count = |n: usize, one: &str, many: &str| match n {

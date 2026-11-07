@@ -48,7 +48,7 @@ const FACTORY: &[(&str, &str)] = factory![
     "Start Here",
     "Pulse to the Beat",
     "Bass Brightness",
-    "Colour Bands",
+    "Color Bands",
     "Sound as Picture",
     "Picture as Sound",
     "Echo Trails",

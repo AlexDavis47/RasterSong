@@ -47,8 +47,8 @@ pub struct Resource {
     /// What the panel shows, and what tracks made from it are named after. Unique among
     /// resources of every kind.
     pub name: String,
-    /// The label colour the panel and the timeline draw it and its items in, to tell resources
-    /// apart. `None` is its track kind's own colour. It changes nothing in the render.
+    /// The label color the panel and the timeline draw it and its items in, to tell resources
+    /// apart. `None` is its track kind's own color. It changes nothing in the render.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<LabelColor>,
     pub content: ResourceContent,
@@ -500,7 +500,7 @@ impl Project {
         users
     }
 
-    /// Adds a copy of resource `id` named after it, with its colour, and returns the copy's
+    /// Adds a copy of resource `id` named after it, with its color, and returns the copy's
     /// id. Only kinds that [duplicate](TrackKind::duplicates) can be copied.
     pub fn duplicate_resource(&mut self, id: ResourceId) -> Option<ResourceId> {
         let resource = self.resource(id).filter(|r| r.kind().duplicates())?;
@@ -529,7 +529,7 @@ impl Project {
         true
     }
 
-    /// Gives resource `id` the label colour `color` (`None` for its track kind's own). Returns
+    /// Gives resource `id` the label color `color` (`None` for its track kind's own). Returns
     /// whether it changed.
     pub fn set_resource_color(&mut self, id: ResourceId, color: Option<LabelColor>) -> bool {
         match self.resource_mut(id) {

@@ -336,7 +336,7 @@ struct Tip {
     /// The node output the tip is about (by id, and by key), and whether it carries audio.
     source: Option<(String, usize)>,
     output: Option<(NodeKey, usize)>,
-    /// The colour of the wire.
+    /// The color of the wire.
     color: Option<Color32>,
     audio: bool,
     /// The picture, scope or spectrum of the signal, and which it is.
@@ -435,7 +435,7 @@ impl Tip {
         (turned, drum_rect)
     }
 
-    /// The probe's first line: the wire's colour, then what it carries.
+    /// The probe's first line: the wire's color, then what it carries.
     fn heading(&self, ui: &mut Ui, theme: &Theme) {
         ui.spacing_mut().interact_size.y = 18.0;
         ui.horizontal(|ui| {

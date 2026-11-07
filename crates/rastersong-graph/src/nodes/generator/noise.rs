@@ -196,7 +196,7 @@ mod tests {
     }
 
     #[test]
-    fn colours_run_from_slow_to_fast() {
+    fn colors_run_from_slow_to_fast() {
         let order = ["brown", "pink", "white", "blue", "violet"].map(roughness);
         assert!(order.windows(2).all(|w| w[0] < w[1]), "{order:?}");
     }

@@ -573,7 +573,7 @@ fn track_screenshots() {
     wait_for_frames(&mut harness, 10);
     save(&mut harness, "dark-16-two-tracks");
 
-    // Drag the second audio header above the first, by the bar of its kind colour.
+    // Drag the second audio header above the first, by the bar of its kind color.
     let from = harness
         .get_all_by_label("Audio track")
         .nth(1)
@@ -1089,7 +1089,7 @@ fn drag_bubble_screenshots() {
     save(&mut harness, "dark-30-drag-bubble");
 }
 
-/// Resource label colours, the Resources tabs and cards, the canvas header's graph menu and the
+/// Resource label colors, the Resources tabs and cards, the canvas header's graph menu and the
 /// fullscreen preview.
 #[test]
 #[ignore = "needs a GPU; run explicitly to look at the UI"]
