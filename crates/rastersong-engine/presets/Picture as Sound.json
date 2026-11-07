@@ -1,0 +1,120 @@
+{
+  "version": 0,
+  "description": "Plays the picture: its pixels read as samples and sent to the speakers, quietly. Bright, busy frames sound harsh; flat ones are calm.",
+  "nodes": [
+    {
+      "id": "c_hear",
+      "type": "comment",
+      "label": "Hear the picture",
+      "position": [
+        -30,
+        -30
+      ],
+      "size": [
+        800,
+        320
+      ],
+      "description": "Interleave lays each pixel's red, green and blue end to end; Video to Audio maps 0..1 to -1..1. The result replaces the soundtrack."
+    },
+    {
+      "id": "video",
+      "type": "video_input",
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "packed",
+      "type": "interleave",
+      "position": [
+        190,
+        0
+      ]
+    },
+    {
+      "id": "as_audio",
+      "type": "to_audio",
+      "position": [
+        380,
+        0
+      ]
+    },
+    {
+      "id": "soften",
+      "type": "filter",
+      "position": [
+        570,
+        0
+      ],
+      "params": {
+        "cutoff": 2000.0
+      },
+      "description": "Takes the harsh top off."
+    },
+    {
+      "id": "quiet",
+      "type": "gain",
+      "position": [
+        380,
+        140
+      ],
+      "label": "Volume",
+      "params": {
+        "gain": -18.0
+      },
+      "description": "Pixels are loud as sound: keep this low."
+    },
+    {
+      "id": "sound",
+      "type": "audio_output",
+      "position": [
+        570,
+        170
+      ]
+    },
+    {
+      "id": "out",
+      "type": "output",
+      "position": [
+        190,
+        170
+      ]
+    },
+    {
+      "id": "n_careful",
+      "type": "note",
+      "description": "Turn your volume down before pressing play.",
+      "position": [
+        790,
+        -30
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "from": "video",
+      "to": "out"
+    },
+    {
+      "from": "video",
+      "to": "packed"
+    },
+    {
+      "from": "packed",
+      "to": "as_audio"
+    },
+    {
+      "from": "as_audio",
+      "to": "soften"
+    },
+    {
+      "from": "soften",
+      "to": "quiet"
+    },
+    {
+      "from": "quiet",
+      "to": "sound"
+    }
+  ]
+}

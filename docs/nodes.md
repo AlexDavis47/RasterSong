@@ -1185,3 +1185,28 @@ A Named Input in a graph on a higher graph track reads it by picking this graph'
 |---|---|---|---|---|
 | `stretch` (Stretch to fit) | `on` | `on`, `off` | no | on stretches a signal of any size or kind to the project size, as if it were wired to the video input, so the output always shows something; off requires an RGB or mono signal of exactly the project size |
 
+## Annotations
+
+| Node | What it does |
+|---|---|
+| [Comment](#comment) | A titled box behind a group of nodes, to say what they do together |
+| [Note](#note) | A sticky note for a remark about the graph, which can point at a node |
+
+### `comment`
+
+**Comment**: A titled box behind a group of nodes, to say what they do together
+
+Comments only explain the graph: they have no ports and render nothing. Drag its title to move it with every node inside it; drag its bottom-right corner to resize it. Its title is the node's name and the text under it its description, both set in the inspector.
+
+**Outputs**
+
+
+### `note`
+
+**Note**: A sticky note for a remark about the graph, which can point at a node
+
+Notes only explain the graph: they have no ports and render nothing. Its text is the node's description, set in the inspector. Attached to a node (in the inspector, or made with Add Note in the node's right-click menu), it follows that node and points at it. Drag it to move it around that node.
+
+**Outputs**
+
+

@@ -1,0 +1,195 @@
+{
+  "version": 0,
+  "description": "Each colour of the picture follows its own part of the sound: red the lows, green the mids, blue the highs.",
+  "nodes": [
+    {
+      "id": "c_split",
+      "type": "comment",
+      "label": "Pull apart",
+      "position": [
+        -30,
+        -30
+      ],
+      "size": [
+        400,
+        370
+      ],
+      "description": "Split gives the picture's red, green and blue; Three-Band Split the sound's lows, mids and highs."
+    },
+    {
+      "id": "video",
+      "type": "video_input",
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "split",
+      "type": "split",
+      "position": [
+        190,
+        0
+      ]
+    },
+    {
+      "id": "audio",
+      "type": "audio_input",
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "id": "bands",
+      "type": "three_band",
+      "position": [
+        190,
+        200
+      ],
+      "params": {
+        "low_hz": 200.0,
+        "high_hz": 3000.0
+      }
+    },
+    {
+      "id": "c_mix",
+      "type": "comment",
+      "label": "Multiply",
+      "position": [
+        390,
+        -30
+      ],
+      "size": [
+        210,
+        420
+      ],
+      "description": "Each colour lights up when its band plays."
+    },
+    {
+      "id": "am_red",
+      "type": "am",
+      "position": [
+        420,
+        0
+      ],
+      "label": "Red × lows",
+      "params": {
+        "depth": 2.5
+      }
+    },
+    {
+      "id": "am_green",
+      "type": "am",
+      "position": [
+        420,
+        125
+      ],
+      "label": "Green × mids",
+      "params": {
+        "depth": 2.5
+      }
+    },
+    {
+      "id": "am_blue",
+      "type": "am",
+      "position": [
+        420,
+        250
+      ],
+      "label": "Blue × highs",
+      "params": {
+        "depth": 2.5
+      }
+    },
+    {
+      "id": "combine",
+      "type": "combine",
+      "position": [
+        640,
+        100
+      ],
+      "description": "The three channels back into one picture."
+    },
+    {
+      "id": "out",
+      "type": "output",
+      "position": [
+        830,
+        100
+      ]
+    },
+    {
+      "id": "sound",
+      "type": "audio_output",
+      "position": [
+        830,
+        300
+      ]
+    },
+    {
+      "id": "n_depth",
+      "type": "note",
+      "description": "Depth sets how strongly a band drives its colour. Try a different value on each.",
+      "position": [
+        640,
+        -30
+      ],
+      "attached": "am_red"
+    }
+  ],
+  "connections": [
+    {
+      "from": "video",
+      "to": "split"
+    },
+    {
+      "from": "audio",
+      "to": "bands"
+    },
+    {
+      "from": "split.c1",
+      "to": "am_red.carrier"
+    },
+    {
+      "from": "bands.low",
+      "to": "am_red.modulator"
+    },
+    {
+      "from": "split.c2",
+      "to": "am_green.carrier"
+    },
+    {
+      "from": "bands.mid",
+      "to": "am_green.modulator"
+    },
+    {
+      "from": "split.c3",
+      "to": "am_blue.carrier"
+    },
+    {
+      "from": "bands.high",
+      "to": "am_blue.modulator"
+    },
+    {
+      "from": "am_red",
+      "to": "combine.c1"
+    },
+    {
+      "from": "am_green",
+      "to": "combine.c2"
+    },
+    {
+      "from": "am_blue",
+      "to": "combine.c3"
+    },
+    {
+      "from": "combine",
+      "to": "out"
+    },
+    {
+      "from": "audio",
+      "to": "sound"
+    }
+  ]
+}

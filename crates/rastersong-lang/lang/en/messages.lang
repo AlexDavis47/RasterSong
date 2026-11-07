@@ -7,6 +7,7 @@ category.structure = Channels
 category.convert = Conversion
 category.effect = Effects
 category.output = Output
+category.annotation = Annotations
 
 # --- What a signal is said to be ---
 signal.untagged = untagged

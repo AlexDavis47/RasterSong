@@ -940,6 +940,30 @@ independent of each other.
     - [x] **feature** The Metronome works in Time mode too: the Time / Tempo switch changes only the ruler
       ([Desktop app](app.md#timeline)).
 
+## Onboarding (November 2026)
+
+User testing found new users overwhelmed by an empty graph. The answer is graphs to start from that explain
+themselves.
+
+- [x] **feature** Node descriptions: a Description field for every node, drawn under it
+  ([Desktop app](app.md#comments-notes-and-descriptions)).
+- [x] **feature** Comment nodes: a resizable box behind the nodes, its title and description above it, carrying the
+  nodes inside when dragged by its title ([Desktop app](app.md#comments-notes-and-descriptions)).
+- [x] **feature** Note nodes: sticky notes that can be attached to a node, follow it and point at it.
+- [x] **feature** Attaching a note by dragging its tab onto a node, not by picking from a list; comments and notes
+  take notes too ([Desktop app](app.md#comments-notes-and-descriptions)).
+- [x] **feature** Node names renamed in place like every name (double-click, F2, Rename), with Restore default
+  name and the node's type shown under its name ([Desktop app](app.md#inspector)).
+- [x] **feature** Presets: factory presets, the user preset folder (the user library) with Open folder and Change…
+  in Settings, the New graph picker, and the canvas header's Load preset / Save as preset
+  ([Desktop app](app.md#presets)).
+- [x] **feature** Nine annotated factory presets, from Start Here to Datamosh (`crates/rastersong-engine/presets/`).
+- [ ] **feature** Factory presets in other languages: per-language preset files beside the lang files.
+- [ ] **feature** A filter field in the New graph picker once there are many presets, and folders inside the preset
+  folder shown as groups.
+- [ ] **feature** Attach a note by dropping it on a node, and detach it by dragging it far away.
+- [ ] **feature** Collapse a comment to its title, hiding the nodes inside.
+
 ## Code health and DRY
 
 The aim: one implementation per idea, so fixes and features land in one place. Known candidates to consolidate:

@@ -9,7 +9,7 @@ use rastersong_engine::{
 use rastersong_lang::{tr, tr_args};
 
 use super::{AUDIO_RATES, App};
-use crate::name_edit::name_edit;
+use crate::name_edit::{name_label, start_rename};
 use crate::settings::Settings;
 use crate::theme::{ThemeChoice, WireStyle};
 use crate::value_box::ValueBox;
@@ -147,10 +147,26 @@ impl App {
         let mut remove = None;
         for (i, bus) in self.project.buses.iter_mut().enumerate() {
             ui.horizontal(|ui| {
-                let edit = name_edit(ui, ui.id().with(("bus-name", i)), &bus.name, |e| {
-                    e.desired_width(120.0)
-                });
-                edit.response.on_hover_text(tr("settings.buses.name.help"));
+                // The name in place, renamed like every name: double-click it or use its menu.
+                let id = egui::Id::new(("bus-name", i));
+                let size = egui::vec2(120.0, ui.spacing().interact_size.y);
+                let edit = ui
+                    .allocate_ui_with_layout(
+                        size,
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            name_label(ui, id, &bus.name, egui::TextStyle::Body.resolve(ui.style()))
+                        },
+                    )
+                    .inner;
+                edit.response
+                    .on_hover_text(tr("settings.buses.name.help"))
+                    .context_menu(|ui| {
+                        if ui.button(tr("resources.rename")).clicked() {
+                            start_rename(ui.ctx(), id);
+                            ui.close();
+                        }
+                    });
                 if let Some(name) = edit.committed {
                     rename = Some((bus.name.clone(), name));
                 }
@@ -433,6 +449,29 @@ impl App {
             tr("settings.open_graphs_on_click"),
         );
         help(ui, tr("settings.open_graphs_on_click.help"));
+
+        section(ui, tr("settings.presets"));
+        let dir = self.settings.library_dir();
+        ui.horizontal(|ui| {
+            ui.label(tr("settings.library"));
+            ui.monospace(dir.display().to_string());
+        });
+        ui.horizontal(|ui| {
+            if ui.button(tr("settings.library.open")).clicked()
+                && let Err(e) = super::presets::open_folder(&dir)
+            {
+                self.error = Some(e.to_string());
+            }
+            if ui.button(tr("settings.library.change")).clicked()
+                && let Some(picked) = rfd::FileDialog::new().set_directory(&dir).pick_folder()
+            {
+                self.settings.library_dir = Some(picked);
+            }
+            if reset_button(ui, self.settings.library_dir.is_some()) {
+                self.settings.library_dir = None;
+            }
+        });
+        help(ui, tr("settings.library.help"));
     }
 
     /// Says so when the graph needs more warmup than the limit allows, and which node needs it.

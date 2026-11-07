@@ -24,6 +24,7 @@ use rastersong_engine::{
 use rastersong_lang::{tr, tr_args};
 
 mod export_window;
+mod presets;
 mod settings_window;
 
 pub use export_window::ExportState;
@@ -208,6 +209,12 @@ pub struct App {
     audio_cache: Option<rastersong_engine::AudioCache>,
     /// The output bus waiting on the "remove bus?" warning.
     bus_removal: Option<String>,
+    /// The New graph picker, while it is open.
+    new_graph_picker: Option<presets::NewGraphPicker>,
+    /// The presets the canvas header's Presets menu offers, read when it was opened.
+    header_presets: Option<presets::Presets>,
+    /// The Save as preset dialog, while it is open.
+    save_preset_dialog: Option<presets::SavePresetDialog>,
     /// Files with several streams, waiting on the import dialog in turn.
     pending_imports: VecDeque<PendingImport>,
     /// The resource waiting on the "remove resource?" warning, because tracks play it.
@@ -298,6 +305,9 @@ impl App {
             export_outcome: None,
             audio_cache: None,
             bus_removal: None,
+            new_graph_picker: None,
+            header_presets: None,
+            save_preset_dialog: None,
             pending_imports: VecDeque::new(),
             resource_removal: None,
             initialized: false,
@@ -660,11 +670,9 @@ impl App {
     }
 
     /// Adds a passthrough graph and opens it. Returns its id.
+    /// Adds an empty graph (the passthrough) and opens it.
     pub fn new_graph(&mut self) -> ResourceId {
-        self.store_editor();
-        let id = self.project.add_graph(DEFAULT_GRAPH_NAME, None);
-        self.open_graph(id);
-        id
+        self.new_graph_from(None)
     }
 
     /// Shows graph resource `id` in the editor. Opening a graph changes nothing in the render:
@@ -816,9 +824,7 @@ impl App {
     fn resource_action(&mut self, action: ResourceAction) {
         match action {
             ResourceAction::Import => self.pick_media(),
-            ResourceAction::NewGraph => {
-                self.new_graph();
-            }
+            ResourceAction::NewGraph => self.open_new_graph_picker(),
             ResourceAction::Open(id) => self.open_graph(id),
             ResourceAction::AddToTimeline(ids) => {
                 let at = self.clock.frame() as f64 / self.clock_rate();
@@ -1128,6 +1134,8 @@ impl App {
         self.import_dropped_files(ui);
         self.windows(ui);
         self.resource_dialogs(ui);
+        self.new_graph_picker(ui.ctx());
+        self.save_preset_dialog(ui.ctx());
         self.confirm_dialog(ui);
         self.update_title(ui);
         let hint = self.pointer_hint(ui);
@@ -1435,7 +1443,7 @@ impl App {
             });
         });
         if new {
-            self.new_graph();
+            self.open_new_graph_picker();
         }
     }
 
@@ -1515,7 +1523,7 @@ impl App {
         });
     }
 
-    /// The canvas header's buttons, from the right: Frame graph, Add node.
+    /// The canvas header's buttons, from the right: Frame graph, Add node, Presets.
     fn graph_header_buttons(&mut self, ui: &mut Ui) {
         ui.spacing_mut().item_spacing.x = 6.0;
         let height = HEADER_BUTTON_HEIGHT;
@@ -1537,6 +1545,7 @@ impl App {
         {
             self.editor.open_search();
         }
+        self.presets_menu(ui);
     }
 
     /// "Graph › name", where it plays, and how many errors and warnings it has. Clicking the name
@@ -2190,15 +2199,7 @@ impl App {
             .map_err(|e| e.to_string())
             .and_then(|json| GraphDesc::from_json(&json).map_err(|e| e.to_string()));
         match graph {
-            Ok(graph) => {
-                if self.open_graph.is_none() {
-                    self.new_graph();
-                }
-                self.editor.load(&graph);
-                if !self.editor.warnings.is_empty() {
-                    self.error = Some(self.editor.warnings.join("\n"));
-                }
-            }
+            Ok(graph) => self.load_into_open_graph(&graph),
             Err(e) => self.error = Some(format!("{}: {e}", path.display())),
         }
     }

@@ -98,6 +98,15 @@ pub(super) enum Interaction {
     Idle,
     Pan,
     MoveNodes,
+    /// A comment's bottom-right corner dragged.
+    Resize {
+        key: NodeKey,
+    },
+    /// A note's attach tab dragged: dropped on a node, the note attaches to it; on empty canvas,
+    /// it comes loose.
+    Attach {
+        note: NodeKey,
+    },
     /// Box selection from a graph-space corner. `additive` keeps the existing selection.
     BoxSelect {
         start: Pos2,
@@ -114,11 +123,25 @@ pub(super) enum Interaction {
     },
 }
 
+/// Which layer of the canvas a node is drawn on: comments behind the wires, nodes, then notes
+/// above everything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum Layer {
+    Comment,
+    Node,
+    Note,
+}
+
 /// Where a node and its pins are, in graph space.
 #[derive(Debug, Clone)]
 pub(super) struct Geometry {
     pub key: NodeKey,
     pub rect: Rect,
+    /// The part that a press grabs: the whole node, or a comment's title band.
+    pub grab: Rect,
+    pub layer: Layer,
+    /// The height of the node's description drawn under it.
+    pub below: f32,
     pub title: String,
     pub category: Option<Category>,
     pub inputs: Vec<InputPin>,
@@ -153,12 +176,33 @@ impl GraphEditor {
                 .size()
                 .x
         };
-        self.draw_order()
+        let wrapped_height = |text: &str, font: FontId, width: f32| {
+            ui.painter()
+                .layout(text.to_owned(), font, Color32::PLACEHOLDER, width)
+                .size()
+                .y
+        };
+        let mut order = self.draw_order();
+        order.sort_by_key(|&i| super::annotations::layer_of(&self.nodes[i]));
+        order
             .into_iter()
             .map(|i| {
                 let node = &self.nodes[i];
                 let kind = self.registry.get(&node.kind);
                 let title = self.node_title(node);
+                if let Some((rect, grab)) = self.annotation_rects(node, &wrapped_height) {
+                    return Geometry {
+                        key: node.key,
+                        rect,
+                        grab,
+                        layer: super::annotations::layer_of(node),
+                        below: 0.0,
+                        title,
+                        category: kind.map(|k| k.spec.category),
+                        inputs: Vec::new(),
+                        outputs: Vec::new(),
+                    };
+                }
                 // (name, required, port, parameter): inputs, then exposed parameters.
                 let mut inputs: Vec<(&'static str, bool, usize, bool)> = kind
                     .map(|k| {
@@ -216,6 +260,9 @@ impl GraphEditor {
                 Geometry {
                     key: node.key,
                     rect,
+                    grab: rect,
+                    layer: Layer::Node,
+                    below: self.description_height(node, width, &wrapped_height),
                     title,
                     category: kind.map(|k| k.spec.category),
                     inputs: inputs
@@ -350,6 +397,14 @@ impl GraphEditor {
         let output_colors = self.output_colors(theme);
         self.smooth_costs(ctx.costs);
 
+        // Notes' tails, under everything they cross, then comments, behind the wires.
+        for g in geometry.iter().filter(|g| g.layer == Layer::Note) {
+            self.draw_note_tail(&painter, theme, g, &geometry, to_screen);
+        }
+        for g in geometry.iter().filter(|g| g.layer == Layer::Comment) {
+            self.draw_comment(&painter, theme, g, to_screen);
+        }
+
         // Wires, behind the nodes.
         let pin_pos = |pin: Pin| -> Option<Pos2> {
             match pin {
@@ -399,8 +454,8 @@ impl GraphEditor {
         let hovered_pin = pointer.and_then(|p| self.pin_at(&geometry, rect, p));
         // The lines of text under each node (latency and warmup, then processing time), so a
         // warning goes below them.
-        let mut lines_below: BTreeMap<NodeKey, u8> = BTreeMap::new();
-        for g in &geometry {
+        let mut lines_below: BTreeMap<NodeKey, f32> = BTreeMap::new();
+        for g in geometry.iter().filter(|g| g.layer == Layer::Node) {
             let with_stats = ctx.show_stats
                 && self.compiled(g.key).is_some_and(|stats| {
                     self.draw_node_stats(&painter, &visuals, theme, g, to_screen, stats)
@@ -425,9 +480,16 @@ impl GraphEditor {
                     with_stats,
                 );
             let lines = u8::from(with_stats) + u8::from(with_cost);
-            if lines > 0 {
-                lines_below.insert(g.key, lines);
+            let text = f32::from(lines) * NODE_TEXT_LINE * view.zoom;
+            self.draw_description(&painter, theme, g, to_screen, text);
+            let below = text + g.below * view.zoom;
+            if below > 0.0 {
+                lines_below.insert(g.key, below);
             }
+        }
+        // Notes, above the nodes.
+        for g in geometry.iter().filter(|g| g.layer == Layer::Note) {
+            self.draw_note(&painter, theme, g, to_screen);
         }
         // Compile notes and warnings: a badge on the node's corner, the messages in its tooltip,
         // and a warning's message in a note under the node too. Notes (a signal used as
@@ -445,8 +507,8 @@ impl GraphEditor {
                 continue;
             };
             if severity == Severity::Warning && self.view.zoom > 0.45 {
-                let lines = lines_below.get(&g.key).copied().unwrap_or(0);
-                self.draw_warning_note(&painter, theme, g, to_screen, lines, warnings);
+                let below = lines_below.get(&g.key).copied().unwrap_or(0.0);
+                self.draw_warning_note(&painter, theme, g, to_screen, below, warnings);
             }
             let badge = self.badge_rect(g, to_screen);
             draw_badge(
@@ -495,6 +557,22 @@ impl GraphEditor {
             };
             let color = WireColor::plain(theme.accent);
             draw_wire(&painter, a, b, 2.0, color, WireStyle::Solid);
+        }
+
+        // A note's attach tab being dragged, and what a drop would attach it to.
+        if let (Interaction::Attach { note }, Some(pointer)) = (self.interaction, pointer) {
+            let graph = ((pointer - rect.min - view.offset) / view.zoom).to_pos2();
+            let target = self.attach_target_at(&geometry, note, graph);
+            self.draw_attach_drag(&painter, theme, &geometry, note, pointer, target, to_screen);
+        } else if self.interaction == Interaction::Idle
+            && pointer.is_some_and(|p| {
+                response.hovered() && self.attach_tab_at(&geometry, to_screen, p).is_some()
+            })
+        {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+            response
+                .clone()
+                .on_hover_text_at_pointer(tr("editor.note.tab_help"));
         }
 
         // Box selection.
@@ -606,11 +684,12 @@ impl GraphEditor {
                 for node in self
                     .nodes
                     .iter_mut()
-                    .filter(|n| self.selected.contains(&n.key))
+                    .filter(|n| self.selected.contains(&n.key) || self.carried.contains(&n.key))
                 {
                     node.pos += moved;
                 }
             }
+            Interaction::Resize { key } => self.resize_comment(key, delta / self.view.zoom),
             Interaction::RightButton { start, panning } => {
                 let panning =
                     panning || pointer.is_some_and(|p| p.distance(start) > DRAG_THRESHOLD);
@@ -624,6 +703,20 @@ impl GraphEditor {
 
         if released(PointerButton::Primary) {
             match self.interaction {
+                Interaction::Attach { note } => {
+                    // Dropped back on the note itself, nothing changes.
+                    if let Some(p) = pointer.filter(|&p| rect.contains(p)) {
+                        let target = self.attach_target_at(geometry, note, to_graph(p));
+                        let on_itself = geometry
+                            .iter()
+                            .rev()
+                            .find(|g| g.rect.contains(to_graph(p)))
+                            .is_some_and(|g| g.key == note);
+                        if !on_itself && target != self.attached_to(note) {
+                            self.attach(note, target);
+                        }
+                    }
+                }
                 Interaction::Wire { from } => {
                     let target = pointer.and_then(|p| self.pin_at(geometry, rect, p));
                     match (from, target) {
@@ -644,7 +737,10 @@ impl GraphEditor {
                         let area = Rect::from_two_pos(start, to_graph(p));
                         let inside: BTreeSet<NodeKey> = geometry
                             .iter()
-                            .filter(|g| g.rect.intersects(area))
+                            .filter(|g| match g.layer {
+                                Layer::Comment => area.contains_rect(g.rect),
+                                _ => g.rect.intersects(area),
+                            })
                             .map(|g| g.key)
                             .collect();
                         if !additive {
@@ -684,17 +780,23 @@ impl GraphEditor {
 
         // Keys act when the pointer is over the canvas and no text field has focus.
         if hovered && !ui.ctx().egui_wants_keyboard_input() {
-            let (delete, repair, duplicate, invert, frame, select_all, escape) = ui.input(|i| {
-                (
-                    i.key_pressed(Key::Delete),
-                    i.key_pressed(Key::Backspace),
-                    i.modifiers.command && i.key_pressed(Key::D),
-                    i.modifiers.shift,
-                    i.key_pressed(Key::F),
-                    i.modifiers.command && i.key_pressed(Key::A),
-                    i.key_pressed(Key::Escape),
-                )
-            });
+            let (delete, repair, duplicate, invert, frame, select_all, escape, rename) =
+                ui.input(|i| {
+                    (
+                        i.key_pressed(Key::Delete),
+                        i.key_pressed(Key::Backspace),
+                        i.modifiers.command && i.key_pressed(Key::D),
+                        i.modifiers.shift,
+                        i.key_pressed(Key::F),
+                        i.modifiers.command && i.key_pressed(Key::A),
+                        i.key_pressed(Key::Escape),
+                        i.key_pressed(Key::F2),
+                    )
+                });
+            // F2 renames the node in the inspector, like a selected card or track.
+            if rename && self.active.is_some() {
+                crate::name_edit::start_rename(ui.ctx(), super::inspector::node_name_id());
+            }
             if delete {
                 self.delete_selection();
             }
@@ -784,6 +886,16 @@ impl GraphEditor {
                 Pin::Out(..) => Interaction::Wire { from: pin },
             };
         }
+        if let Some(key) = self.resize_handle_at(geometry, |q| graph_to_screen(view, rect, q), p) {
+            self.selected = BTreeSet::from([key]);
+            self.active = Some(key);
+            return Interaction::Resize { key };
+        }
+        if let Some(note) = self.attach_tab_at(geometry, |q| graph_to_screen(view, rect, q), p) {
+            self.selected = BTreeSet::from([note]);
+            self.active = Some(note);
+            return Interaction::Attach { note };
+        }
         if let Some(key) = self.node_at(geometry, rect, p) {
             if additive {
                 if !self.selected.remove(&key) {
@@ -794,6 +906,7 @@ impl GraphEditor {
             }
             self.active = Some(key);
             self.raise(key);
+            self.carried = self.carried(geometry, &self.selected);
             return Interaction::MoveNodes;
         }
         Interaction::BoxSelect {
@@ -832,7 +945,7 @@ impl GraphEditor {
         geometry
             .iter()
             .rev()
-            .find(|g| g.rect.contains(graph))
+            .find(|g| g.grab.contains(graph))
             .map(|g| g.key)
     }
 
@@ -1039,15 +1152,15 @@ impl GraphEditor {
         Rect::from_center_size(to_screen(g.rect.right_top()), vec2(size, size))
     }
 
-    /// A warning's messages in a note under the node, below the `lines` of text under it
-    /// (latency and warmup, processing time).
+    /// A warning's messages in a note under the node, `below` (screen pixels) under its box, past
+    /// the text under it (latency and warmup, processing time, its description).
     fn draw_warning_note(
         &self,
         painter: &egui::Painter,
         theme: &Theme,
         g: &Geometry,
         to_screen: impl Fn(Pos2) -> Pos2,
-        lines: u8,
+        below: f32,
         diagnostics: &[rastersong_engine::Diagnostic],
     ) {
         let zoom = self.view.zoom;
@@ -1064,8 +1177,7 @@ impl GraphEditor {
             theme.warning_note_text,
             NOTE_WIDTH * zoom - 2.0 * pad.x,
         );
-        let text = f32::from(lines) * NODE_TEXT_LINE * zoom;
-        let top_left = to_screen(g.rect.left_bottom()) + vec2(0.0, 8.0 * zoom + text);
+        let top_left = to_screen(g.rect.left_bottom()) + vec2(0.0, 8.0 * zoom + below);
         let note = Rect::from_min_size(top_left, galley.size() + 2.0 * pad);
         painter.rect(
             note,

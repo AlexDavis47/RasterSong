@@ -1,0 +1,122 @@
+{
+  "version": 0,
+  "description": "Shows the sound itself as a picture: each frame's samples laid out row by row, then mixed over the video.",
+  "nodes": [
+    {
+      "id": "c_numbers",
+      "type": "comment",
+      "label": "Everything is numbers",
+      "position": [
+        -30,
+        -30
+      ],
+      "size": [
+        610,
+        240
+      ],
+      "description": "A frame of sound is a list of samples, a frame of video a grid of pixels. Stretch to Match lays the samples over the picture's grid."
+    },
+    {
+      "id": "video",
+      "type": "video_input",
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "audio",
+      "type": "audio_input",
+      "position": [
+        0,
+        110
+      ]
+    },
+    {
+      "id": "stretch",
+      "type": "stretch",
+      "position": [
+        190,
+        30
+      ]
+    },
+    {
+      "id": "as_video",
+      "type": "to_video",
+      "position": [
+        380,
+        30
+      ],
+      "description": "Sound runs from -1 to 1, video from 0 to 1: this maps one onto the other."
+    },
+    {
+      "id": "mix",
+      "type": "blend",
+      "position": [
+        620,
+        0
+      ],
+      "params": {
+        "mode": "screen",
+        "amount": 0.7
+      },
+      "description": "Screen lightens: the waveform glows over the picture."
+    },
+    {
+      "id": "out",
+      "type": "output",
+      "position": [
+        810,
+        0
+      ]
+    },
+    {
+      "id": "sound",
+      "type": "audio_output",
+      "position": [
+        810,
+        150
+      ]
+    },
+    {
+      "id": "n_probe",
+      "type": "note",
+      "description": "Rest the pointer on the wire out of Stretch to Match, then hold Alt and scroll to see the same numbers as a picture, a scope or a spectrum.",
+      "position": [
+        190,
+        250
+      ],
+      "attached": "stretch"
+    }
+  ],
+  "connections": [
+    {
+      "from": "video",
+      "to": "stretch.like"
+    },
+    {
+      "from": "audio",
+      "to": "stretch.in"
+    },
+    {
+      "from": "stretch",
+      "to": "as_video"
+    },
+    {
+      "from": "video",
+      "to": "mix.a"
+    },
+    {
+      "from": "as_video",
+      "to": "mix.b"
+    },
+    {
+      "from": "mix",
+      "to": "out"
+    },
+    {
+      "from": "audio",
+      "to": "sound"
+    }
+  ]
+}

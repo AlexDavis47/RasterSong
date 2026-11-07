@@ -2,8 +2,9 @@
 //! tag and the actions that apply to it, then its name and a line about it; under a divider, the
 //! sections, each under a capital label.
 
-use eframe::egui::{self, Color32, Margin, Rect, RichText, Sense, Stroke, TextEdit, Ui, vec2};
+use eframe::egui::{self, Color32, Margin, Rect, RichText, Sense, Stroke, Ui, vec2};
 
+use crate::name_edit::{NameEdit, name_label};
 use crate::theme::{self, SMALL_SIZE, Theme};
 
 /// Space between the inspector's edge and what it holds, across.
@@ -104,12 +105,13 @@ pub fn pill(ui: &mut Ui, text: &str, color: Color32) -> egui::Response {
     response
 }
 
-/// How the name field looks: large semibold text with no frame, as wide as the inspector.
-pub fn name_style(edit: TextEdit<'_>) -> TextEdit<'_> {
-    edit.font(theme::semibold(15.0))
-        // The frame's margin, not `margin`, which a frame replaces.
-        .frame(egui::Frame::NONE.inner_margin(Margin::symmetric(0, 7)))
-        .desired_width(f32::INFINITY)
+/// The name at the top of an inspector (a track's, a node's): large semibold text with room
+/// above and below, renamed in place through [`name_label`] with `id`.
+pub fn inspector_name(ui: &mut Ui, id: egui::Id, name: &str) -> NameEdit {
+    ui.add_space(7.0);
+    let edit = name_label(ui, id, name, theme::semibold(15.0));
+    ui.add_space(5.0);
+    edit
 }
 
 /// The line under the name: what the thing is, in muted text.

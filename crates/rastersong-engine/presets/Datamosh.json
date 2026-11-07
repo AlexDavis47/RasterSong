@@ -1,0 +1,176 @@
+{
+  "version": 0,
+  "description": "A deliberate glitch: the picture is misread as sound the way some broken files do, pumped and filtered by the music, then read back as a picture.",
+  "nodes": [
+    {
+      "id": "c_glitch",
+      "type": "comment",
+      "label": "Picture into sound and back",
+      "position": [
+        -30,
+        -30
+      ],
+      "size": [
+        1010,
+        350
+      ],
+      "description": "Both conversions use the bugged mapping, which wraps at mid-gray like a signed/unsigned mix-up. What happens in between smears and tears the picture."
+    },
+    {
+      "id": "video",
+      "type": "video_input",
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "packed",
+      "type": "interleave",
+      "position": [
+        190,
+        0
+      ]
+    },
+    {
+      "id": "encode",
+      "type": "to_audio",
+      "position": [
+        380,
+        0
+      ],
+      "params": {
+        "mapping": "bugged"
+      }
+    },
+    {
+      "id": "pump",
+      "type": "am",
+      "position": [
+        570,
+        0
+      ],
+      "params": {
+        "depth": 1.5
+      }
+    },
+    {
+      "id": "smear",
+      "type": "filter",
+      "position": [
+        760,
+        0
+      ],
+      "params": {
+        "cutoff": 60.0,
+        "slope": "6"
+      },
+      "modulation": {
+        "cutoff": {
+          "amount": 56.25
+        }
+      },
+      "ranges": {
+        "cutoff": [
+          1e-06,
+          200.0
+        ]
+      },
+      "description": "Smears along each row; the music opens it."
+    },
+    {
+      "id": "decode",
+      "type": "to_video",
+      "position": [
+        570,
+        220
+      ],
+      "params": {
+        "mapping": "bugged"
+      }
+    },
+    {
+      "id": "unpacked",
+      "type": "pack",
+      "position": [
+        760,
+        220
+      ]
+    },
+    {
+      "id": "out",
+      "type": "output",
+      "position": [
+        950,
+        220
+      ]
+    },
+    {
+      "id": "audio",
+      "type": "audio_input",
+      "position": [
+        190,
+        220
+      ]
+    },
+    {
+      "id": "sound",
+      "type": "audio_output",
+      "position": [
+        380,
+        220
+      ]
+    },
+    {
+      "id": "n_bypass",
+      "type": "note",
+      "description": "Alt+click a node to bypass it and see what it adds to the glitch.",
+      "position": [
+        380,
+        350
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "from": "video",
+      "to": "packed"
+    },
+    {
+      "from": "packed",
+      "to": "encode"
+    },
+    {
+      "from": "encode",
+      "to": "pump"
+    },
+    {
+      "from": "audio",
+      "to": "pump.modulator"
+    },
+    {
+      "from": "pump",
+      "to": "smear"
+    },
+    {
+      "from": "audio",
+      "to": "smear.@cutoff"
+    },
+    {
+      "from": "smear",
+      "to": "decode"
+    },
+    {
+      "from": "decode",
+      "to": "unpacked"
+    },
+    {
+      "from": "unpacked",
+      "to": "out"
+    },
+    {
+      "from": "audio",
+      "to": "sound"
+    }
+  ]
+}

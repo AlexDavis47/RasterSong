@@ -7,11 +7,11 @@ use rastersong_engine::{Project, TrackKind};
 use rastersong_lang::{tr, tr_args};
 
 use crate::editor::param_field::{NumberRange, param_field};
-use crate::name_edit::name_edit;
+use crate::name_edit::start_rename;
 use crate::theme::{self, Theme};
 use crate::timeline::TrackAction;
 use crate::widgets::{
-    CHOICE_WIDTH, about, inspector_body, inspector_header, kind_row, name_style, section,
+    CHOICE_WIDTH, about, inspector_body, inspector_header, inspector_name, kind_row, section,
     setting_row, setting_toggle,
 };
 
@@ -35,13 +35,15 @@ pub fn track_inspector(
     };
     inspector_header(ui, |ui| {
         kind_row(ui, tr("inspector.kind.track"), Some((kind, color)), |_| {});
-        let edit = name_edit(
-            ui,
-            egui::Id::new("track-inspector-name"),
-            &track.name,
-            name_style,
-        );
-        edit.response.on_hover_text(tr("inspector.track.name.help"));
+        let edit = inspector_name(ui, track_inspector_name_id(), &track.name);
+        edit.response
+            .on_hover_text(tr("inspector.track.name.help"))
+            .context_menu(|ui| {
+                if ui.button(tr("resources.rename")).clicked() {
+                    start_rename(ui.ctx(), track_inspector_name_id());
+                    ui.close();
+                }
+            });
         if let Some(name) = edit.committed {
             actions.push(TrackAction::Rename(row, name));
         }
@@ -146,4 +148,9 @@ pub fn track_inspector(
         });
     });
     actions
+}
+
+/// The id of the track's name in its inspector: [`start_rename`] with it renames the track.
+fn track_inspector_name_id() -> egui::Id {
+    egui::Id::new("track-inspector-name")
 }

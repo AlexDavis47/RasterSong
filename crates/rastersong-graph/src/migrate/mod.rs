@@ -43,6 +43,7 @@ mod tests {
     fn graph(version: u32) -> GraphDesc {
         GraphDesc {
             version,
+            description: None,
             nodes: Vec::new(),
             connections: Vec::new(),
         }

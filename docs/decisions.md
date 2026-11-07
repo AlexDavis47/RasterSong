@@ -923,6 +923,34 @@ hard to judge. How much of the playback stays is **Playback while listening**, a
 default (rule 21: some want the context). The Metronome no longer depends on Tempo mode: the Time / Tempo switch
 changes how the ruler reads, not what plays.
 
+### Comments and notes are nodes (November 2026)
+
+Comments and notes are `NodeDesc` entries of the node types `comment` and `note` (category *Annotations*, no
+ports, no parameters), not a separate list of annotations beside the nodes. A second type would need its own
+selection, dragging, copy and paste, deleting and undo, the parallel paths [Contributing](../CONTRIBUTING.md) rule
+6 forbids. A comment's title is the node's `label` and every node's text its `description`, so renaming and
+describing are the same for all nodes. Only two fields are theirs: `size` (a comment's box) and `attached` (the node
+a note points at). Any node can take a note, a comment or another note too: a note is a node, and a kind that
+takes no notes would be the feature-on-one-side split rule 6b names. What must never diverge: annotations are taken out by one function,
+`rastersong_graph::without_annotations`, which `Graph::compile`, `Graph::inspect`, `render_form` and the
+editor's `without_layout` all go through, so a comment, a note or a description never changes what renders or
+re-renders a frame.
+
+### Presets are copies; one library folder (November 2026)
+
+New users were overwhelmed by an empty graph. Graphs to start from are **presets**: using one copies it into the
+project (a new graph resource from the New graph picker, or Load preset into the open graph), so a preset never
+changes a project after the fact. The user's presets live in **one folder**, the user library the roadmap already
+plans in AppData (`<app data>/Library`); the Embedding stage's *linked* library graphs will read the same folder, so
+there is never a second place for graphs. A preset is named after its file, so a file copied into the folder is a
+preset with no other step, and the graph's own `description` says what it does. The picker comes from + New, and
+the canvas header has Presets (Load, Save as, Open folder); there is no Presets tab in Resources, and placing graphs
+on the timeline is unchanged.
+
+**Factory preset text lives in the preset files**, not in the lang files: names, descriptions and annotations are
+content, like example graphs, and are English for now. A test keeps every factory preset compiling without
+warnings and requires each to explain itself with at least one comment or note.
+
 ## Open
 
 ### A track takes any file; one item inspector (November 2026)

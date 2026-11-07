@@ -57,7 +57,12 @@ impl GraphEditor {
             .map(|layout| layout.len() as u64)
             .sum();
         GraphTotals {
-            nodes: self.nodes.len(),
+            // Comments and notes aren't part of what renders.
+            nodes: self
+                .nodes
+                .iter()
+                .filter(|n| !self.is_annotation(n.key))
+                .count(),
             connections: self.wires.len(),
             samples_per_block,
             micros: (!self.costs.is_empty()).then(|| self.costs.values().sum()),

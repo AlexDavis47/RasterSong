@@ -103,6 +103,10 @@ node.combine.input.c7 = Channel 7
 node.combine.input.c8 = Channel 8
 node.combine.output.out = The channels interleaved, pixel by pixel
 
+node.comment.label = Comment
+node.comment.description = A titled box behind a group of nodes, to say what they do together
+node.comment.doc = Comments only explain the graph: they have no ports and render nothing. Drag its title to move it with every node inside it; drag its bottom-right corner to resize it. Its title is the node's name and the text under it its description, both set in the inspector.
+
 node.compressor.label = Compressor
 node.compressor.description = Turns loud parts down, following the input or a sidechain
 node.compressor.input.in = The signal to compress
@@ -319,6 +323,10 @@ node.noise.param.amplitude.label = Amplitude
 node.noise.param.amplitude.help = Scales the noise, which spans -1 to 1 before the offset is added
 node.noise.param.offset.label = Offset
 node.noise.param.offset.help = Added to the noise: 0.5 with amplitude 0.5 fills the video range 0 to 1, 0 suits audio
+
+node.note.label = Note
+node.note.description = A sticky note for a remark about the graph, which can point at a node
+node.note.doc = Notes only explain the graph: they have no ports and render nothing. Its text is the node's description, set in the inspector. Attached to a node (in the inspector, or made with Add Note in the node's right-click menu), it follows that node and points at it. Drag it to move it around that node.
 
 node.offset.label = Offset
 node.offset.description = Adds a constant to every sample

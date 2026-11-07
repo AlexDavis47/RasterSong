@@ -446,6 +446,8 @@ impl Graph {
         registry: &Registry,
         options: &CompileOptions,
     ) -> Result<Self, GraphError> {
+        let annotated = without_annotations(desc, registry);
+        let desc = annotated.as_ref().unwrap_or(desc);
         let bypassed = apply_bypass(desc, registry);
         let desc = bypassed.as_ref().unwrap_or(desc);
         check_named_outputs(desc)?;
@@ -538,6 +540,8 @@ impl Graph {
         registry: &Registry,
         options: &CompileOptions,
     ) -> Vec<NodeStats> {
+        let annotated = without_annotations(desc, registry);
+        let desc = annotated.as_ref().unwrap_or(desc);
         let bypassed = apply_bypass(desc, registry);
         let desc = bypassed.as_ref().unwrap_or(desc);
         let filled = fill_missing_inputs(desc, registry);
@@ -1509,6 +1513,28 @@ fn connect(desc: &GraphDesc, pending: &mut [Pending]) -> Result<(), GraphError> 
     Ok(())
 }
 
+/// `desc` without its comments and notes (the nodes whose category
+/// [is an annotation](crate::Category::is_annotation)), which only explain the graph. `None` when
+/// it has none. Annotations have no ports, so no connection is lost.
+pub fn without_annotations(desc: &GraphDesc, registry: &Registry) -> Option<GraphDesc> {
+    let annotation = |n: &NodeDesc| {
+        registry
+            .get(&n.kind)
+            .is_some_and(|t| t.spec.category.is_annotation())
+    };
+    desc.nodes.iter().any(annotation).then(|| GraphDesc {
+        version: desc.version,
+        description: desc.description.clone(),
+        nodes: desc
+            .nodes
+            .iter()
+            .filter(|n| !annotation(n))
+            .cloned()
+            .collect(),
+        connections: desc.connections.clone(),
+    })
+}
+
 /// The part of `desc` that decides what is rendered: bypassed nodes rewired away, nodes that don't
 /// feed the output dropped, and everything that only matters to the editor (labels, positions,
 /// exposed pins, modulation settings of unconnected parameters) cleared. Two graphs with equal
@@ -1516,6 +1542,7 @@ fn connect(desc: &GraphDesc, pending: &mut [Pending]) -> Result<(), GraphError> 
 pub fn render_form(desc: &GraphDesc, registry: &Registry) -> GraphDesc {
     let bypassed = apply_bypass(desc, registry);
     let mut form = contributing(bypassed.as_ref().unwrap_or(desc));
+    form.description = None;
     let connected: HashSet<(String, String)> = form
         .connections
         .iter()
@@ -1529,6 +1556,9 @@ pub fn render_form(desc: &GraphDesc, registry: &Registry) -> GraphDesc {
         node.bypass = false;
         node.label = None;
         node.position = None;
+        node.description = None;
+        node.size = None;
+        node.attached = None;
         node.exposed = None;
         node.modulation
             .retain(|param, _| connected.contains(&(node.id.clone(), param.clone())));
@@ -1657,6 +1687,7 @@ fn without_idle_outputs(desc: &GraphDesc, options: &CompileOptions) -> Option<Gr
         .collect();
     (!removed.is_empty()).then(|| GraphDesc {
         version: desc.version,
+        description: None,
         nodes: desc
             .nodes
             .iter()
@@ -1698,6 +1729,7 @@ fn contributing(desc: &GraphDesc) -> GraphDesc {
     }
     GraphDesc {
         version: desc.version,
+        description: None,
         nodes: desc
             .nodes
             .iter()
@@ -1821,6 +1853,7 @@ fn apply_bypass(desc: &GraphDesc, registry: &Registry) -> Option<GraphDesc> {
     }
     Some(GraphDesc {
         version: desc.version,
+        description: None,
         nodes: desc
             .nodes
             .iter()

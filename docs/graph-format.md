@@ -22,8 +22,22 @@ or its main input. Unknown parameters are rejected, which catches typos.
 ```
 
 Nodes may also carry `"position": [x, y]` (their place in the editor), `"label"` (a name shown instead of the node
-type's) and `"exposed"` (which parameter pins show, when that differs from the type's defaults). None of these
-affect rendering. These do: `"bypass": true` passes the main input straight to the first output, skipping the
+type's), `"description"` (the user's note on what the node does, shown under it) and `"exposed"` (which parameter
+pins show, when that differs from the type's defaults). None of these affect rendering. A graph may carry a
+`"description"` of its own, shown when it is offered as a [preset](app.md#presets).
+
+**Comments and notes** are nodes of type `"comment"` and `"note"`, with no ports or parameters; they are taken out
+before a graph is compiled, so they never affect rendering. A comment's title is its `"label"`, its text its
+`"description"`, and `"size": [width, height]` is its box (its `"position"` is the box's top-left corner; the text
+sits above it). A note's text is its `"description"`; `"attached": "node_id"` attaches it to a node, which it
+then moves with and points at:
+
+```json
+{ "id": "c", "type": "comment", "label": "Listen to the bass", "description": "The lows, then their level.",
+  "position": [-30, -30], "size": [420, 300] },
+{ "id": "n", "type": "note", "description": "Lower Low / mid to follow only the kick.", "attached": "bands",
+  "position": [190, -200] }
+``` These do: `"bypass": true` passes the main input straight to the first output, skipping the
 node; `"integer"` lists number parameters rounded to whole values (the value and every modulated sample); and the
 shared settings `"interpolation"`, `"grouping"`, `"channels"` and `"layout"` (see
 [Node behavior](node-behavior.md#shared-node-settings)), each written only when not at its default. A signal connected to a parameter (`{ "from": "audio", "to": "wave.@time" }`) modulates it, with

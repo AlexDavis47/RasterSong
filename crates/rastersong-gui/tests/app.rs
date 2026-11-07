@@ -1805,6 +1805,26 @@ fn tracks_offer_the_buses_and_project_settings_add_them() {
 }
 
 #[test]
+fn double_clicking_a_bus_name_in_the_settings_renames_it() {
+    let mut harness = loaded_quick(app_with_project(|project| {
+        project.buses.push(rastersong_engine::Bus::new("Stems", 1));
+    }));
+    shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Comma);
+    harness.get_by_label("Project").click();
+    harness.run_steps(3);
+    harness.get_by_label("+ Add bus").scroll_to_me();
+    harness.run_steps(30);
+    let name = harness
+        .get(By::new().role(Role::Label).label("Stems"))
+        .rect()
+        .center();
+    double_click(&mut harness, name);
+    harness.run_steps(1);
+    type_then(&mut harness, "Drums", egui::Key::Enter);
+    assert_eq!(harness.state().project().buses[1].name, "Drums");
+}
+
+#[test]
 fn the_picture_follows_the_video_until_a_frame_rate_is_picked() {
     let mut harness = loaded();
     shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Comma);
@@ -2534,6 +2554,10 @@ fn removing_the_open_graph_opens_another() {
     assert_eq!(harness.state().open_graph_id(), None);
     harness.get_by_label_contains("No graph is open");
     harness.get_by_label("+ New graph").click();
+    // It asks what to start from; the empty graph is picked to begin with. The picker's
+    // layout settles over a few frames.
+    harness.run_steps(6);
+    harness.get_by_label("Create").click();
     harness.run_steps(3);
     let open = harness
         .state()
@@ -4634,26 +4658,102 @@ fn clicking_a_track_shows_its_inspector_until_a_node_is_clicked() {
     assert!(harness.query_by_label("NODE").is_some());
 }
 
+/// Where the inspector shows `text` as a label, the topmost first: a node's name sits above its
+/// type, which reads the same while the node is unnamed.
+fn inspector_label(harness: &Harness<'_, App>, text: &str) -> Pos2 {
+    let panel = harness.state().inspector_rect();
+    harness
+        .query_all(By::new().role(Role::Label).label(text))
+        .map(|n| n.rect())
+        .filter(|r| panel.contains(r.center()))
+        .min_by(|a, b| a.min.y.total_cmp(&b.min.y))
+        .unwrap_or_else(|| panic!("{text} in the inspector"))
+        .center()
+}
+
 #[test]
-fn the_inspector_renames_a_node_when_the_name_is_committed() {
+fn double_clicking_the_inspectors_name_renames_the_node_and_keeps_its_type() {
+    let mut harness = loaded_quick(app());
+    select(&mut harness, "bands");
+    // Past the double-click window, so the canvas click and the name's make no triple click.
+    harness.run_steps(30);
+    let bands = key(&harness, "bands");
+    let name = inspector_label(&harness, "Three-Band Split");
+    let before = fields(&harness);
+    double_click(&mut harness, name);
+    harness.run_steps(1);
+    assert_eq!(fields(&harness), before + 1, "the name turned into a field");
+    type_then(&mut harness, "Lows", egui::Key::Enter);
+    let label = harness.state().editor().node(bands).unwrap().label.clone();
+    assert_eq!(label.as_deref(), Some("Lows"));
+    assert_eq!(fields(&harness), before);
+    // The type stays under the new name.
+    let renamed = inspector_label(&harness, "Lows");
+    let kind = inspector_label(&harness, "Three-Band Split");
+    assert!(kind.y > renamed.y, "the type is under the name");
+}
+
+#[test]
+fn restore_default_name_in_the_names_menu_unnames_the_node() {
+    let mut harness = loaded_quick(app());
+    select(&mut harness, "bands");
+    // Past the double-click window, so the canvas click and the name's make no triple click.
+    harness.run_steps(30);
+    let bands = key(&harness, "bands");
+    let at = inspector_label(&harness, "Three-Band Split");
+    double_click(&mut harness, at);
+    harness.run_steps(1);
+    type_then(&mut harness, "Lows", egui::Key::Enter);
+    assert!(
+        harness
+            .state()
+            .editor()
+            .node(bands)
+            .unwrap()
+            .label
+            .is_some()
+    );
+    let at = inspector_label(&harness, "Lows");
+    right_click(&mut harness, at);
+    harness.get_by_label("Restore default name").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().editor().node(bands).unwrap().label, None);
+}
+
+#[test]
+fn f2_on_the_canvas_renames_the_selected_node_and_escape_cancels() {
     let mut harness = loaded();
     select(&mut harness, "bands");
     let bands = key(&harness, "bands");
-    let panel = harness.state().inspector_rect();
-    let field = harness
-        .query_all_by_role(egui::accesskit::Role::TextInput)
-        .map(|n| n.rect())
-        .find(|r| panel.contains(r.center()))
-        .expect("the name field");
-    click(&mut harness, field.center(), PointerButton::Primary);
-    harness.key_press_modifiers(Modifiers::COMMAND, egui::Key::A);
-    harness.event(Event::Text("Lows".into()));
+    let canvas = harness.state().editor().canvas_rect();
+    harness.event(Event::PointerMoved(pos2(
+        canvas.left() + 30.0,
+        canvas.bottom() - 80.0,
+    )));
+    harness.run_steps(1);
+    harness.key_press(egui::Key::F2);
     harness.run_steps(2);
+    type_then(&mut harness, "nope", egui::Key::Escape);
     assert_eq!(harness.state().editor().node(bands).unwrap().label, None);
-    harness.key_press(egui::Key::Enter);
+    harness.key_press(egui::Key::F2);
     harness.run_steps(2);
+    type_then(&mut harness, "Lows", egui::Key::Enter);
     let label = harness.state().editor().node(bands).unwrap().label.clone();
     assert_eq!(label.as_deref(), Some("Lows"));
+}
+
+#[test]
+fn double_clicking_the_track_inspectors_name_renames_the_track() {
+    let mut harness = loaded_quick(app());
+    let at = header_name(&harness, "audio");
+    click(&mut harness, at, PointerButton::Primary);
+    assert_eq!(harness.state().selected_track(), Some("audio"));
+    harness.run_steps(30);
+    let at = inspector_label(&harness, "audio");
+    double_click(&mut harness, at);
+    harness.run_steps(1);
+    type_then(&mut harness, "drums", egui::Key::Enter);
+    assert_eq!(harness.state().project().audios()[0].name, "drums");
 }
 
 // --- Graph statistics and the text under nodes ---
@@ -4840,4 +4940,415 @@ fn the_track_inspector_shows_graph_tracks() {
         .click();
     harness.run_steps(2);
     assert!(harness.state().project().track("Effects").unwrap().solo);
+}
+
+/// The starter graph with a comment around the Video Input (the first column of the layout) and
+/// a note attached to Split.
+fn annotated_app() -> App {
+    app_with(|graph| {
+        let mut comment = rastersong_engine::NodeDesc::new("comment".into(), "comment");
+        comment.label = Some("Sources".into());
+        comment.position = Some([-30.0, -60.0]);
+        comment.size = Some([190.0, 160.0]);
+        let mut note = rastersong_engine::NodeDesc::new("note".into(), "note");
+        note.description = Some("Splits the picture".into());
+        note.position = Some([175.0, -140.0]);
+        note.attached = Some("split".into());
+        graph.nodes.push(comment);
+        graph.nodes.push(note);
+    })
+}
+
+#[test]
+fn dragging_a_comments_title_moves_the_nodes_inside_it() {
+    let mut harness = loaded_with(annotated_app());
+    let before = harness.state().engine().frame(0).unwrap();
+    let editor = harness.state().editor();
+    let comment = editor.node_screen_rect(key(&harness, "comment")).unwrap();
+    let video = editor.node_screen_rect(key(&harness, "video")).unwrap();
+    let split = editor.node_screen_rect(key(&harness, "split")).unwrap();
+    assert!(
+        comment.contains_rect(video),
+        "the comment holds the video input"
+    );
+    assert!(!comment.contains_rect(split));
+
+    let grab = comment.left_top() + vec2(30.0, 10.0);
+    drag(&mut harness, grab, grab + vec2(60.0, 40.0));
+    let editor = harness.state().editor();
+    let moved = |id: &str, was: egui::Rect| {
+        editor.node_screen_rect(key(&harness, id)).unwrap().min - was.min
+    };
+    assert!((moved("comment", comment) - vec2(60.0, 40.0)).length() < 1.0);
+    assert!(
+        (moved("video", video) - vec2(60.0, 40.0)).length() < 1.0,
+        "carried along"
+    );
+    assert_eq!(moved("split", split), vec2(0.0, 0.0), "outside, left alone");
+    harness.run_steps(3);
+    assert!(
+        Arc::ptr_eq(&before, &harness.state().engine().frame(0).unwrap()),
+        "annotations never re-render"
+    );
+}
+
+#[test]
+fn a_press_inside_a_comment_below_its_title_box_selects() {
+    let mut harness = loaded_with(annotated_app());
+    let comment = harness
+        .state()
+        .editor()
+        .node_screen_rect(key(&harness, "comment"))
+        .unwrap();
+    // The body under the title band is canvas: a drag there selects what it boxes.
+    let start = comment.left_bottom() + vec2(4.0, -4.0);
+    drag(&mut harness, start, start + vec2(30.0, 20.0));
+    let editor = harness.state().editor();
+    assert_eq!(
+        editor.node_screen_rect(key(&harness, "comment")).unwrap(),
+        comment,
+        "the comment stays put"
+    );
+    assert!(!editor.selected().contains(&key(&harness, "comment")));
+}
+
+#[test]
+fn dragging_a_comments_corner_resizes_it() {
+    let mut harness = loaded_with(annotated_app());
+    let comment = key(&harness, "comment");
+    let rect = harness.state().editor().node_screen_rect(comment).unwrap();
+    let zoom = harness.state().editor().view().zoom;
+    let corner = rect.max - vec2(4.0, 4.0);
+    drag(&mut harness, corner, corner + vec2(80.0, 50.0));
+    let after = harness.state().editor().node_screen_rect(comment).unwrap();
+    assert_eq!(after.min, rect.min, "resizing doesn't move it");
+    assert!((after.width() - rect.width() - 80.0).abs() < 1.0);
+    assert!((after.height() - rect.height() - 50.0).abs() < 1.0);
+    let saved = harness
+        .state()
+        .editor()
+        .to_desc()
+        .nodes
+        .into_iter()
+        .find(|n| n.id == "comment");
+    let [w, h] = saved.unwrap().size.unwrap();
+    assert!((w - (190.0 + 80.0 / zoom)).abs() < 1.5, "saved as {w}");
+    assert!((h - (160.0 + 50.0 / zoom)).abs() < 1.5, "saved as {h}");
+}
+
+#[test]
+fn an_attached_note_follows_its_node() {
+    let mut harness = loaded_with(annotated_app());
+    let note = key(&harness, "note");
+    let before = harness.state().editor().node_screen_rect(note).unwrap();
+    let split = key(&harness, "split");
+    let rect = harness.state().editor().node_screen_rect(split).unwrap();
+    let grab = rect.center_top() + vec2(0.0, 8.0);
+    drag(&mut harness, grab, grab + vec2(40.0, 30.0));
+    let after = harness.state().editor().node_screen_rect(note).unwrap();
+    assert!((after.min - before.min - vec2(40.0, 30.0)).length() < 1.0);
+}
+
+#[test]
+fn add_note_in_a_nodes_menu_attaches_a_note_to_it() {
+    let mut harness = loaded();
+    let bands = key(&harness, "bands");
+    let rect = harness.state().editor().node_screen_rect(bands).unwrap();
+    right_click(&mut harness, rect.center_top() + vec2(0.0, 8.0));
+    harness.get_by_label("Add note").click();
+    harness.run_steps(2);
+    let editor = harness.state().editor();
+    let note = editor.active().expect("the new note is selected");
+    assert_eq!(note.kind, "note");
+    assert_eq!(editor.attached_to(note.key), Some(bands));
+    let desc = editor.to_desc();
+    let saved = desc.nodes.iter().find(|n| n.kind == "note").unwrap();
+    assert_eq!(saved.attached.as_deref(), Some("bands"));
+}
+
+#[test]
+fn comment_around_in_a_nodes_menu_boxes_the_selection() {
+    let mut harness = loaded();
+    let am = key(&harness, "am_red");
+    let rect = harness.state().editor().node_screen_rect(am).unwrap();
+    right_click(&mut harness, rect.center_top() + vec2(0.0, 8.0));
+    harness.get_by_label("Comment around it").click();
+    harness.run_steps(2);
+    let editor = harness.state().editor();
+    let comment = editor.active().expect("the new comment is selected").key;
+    let boxed = editor.node_screen_rect(comment).unwrap();
+    assert!(boxed.contains_rect(editor.node_screen_rect(am).unwrap()));
+}
+
+#[test]
+fn typing_a_description_saves_it_without_rerendering() {
+    let mut harness = loaded();
+    let before = harness.state().engine().frame(0).unwrap();
+    select(&mut harness, "split");
+    let field = harness.get_by(|n| n.role() == Role::MultilineTextInput);
+    field.click();
+    harness.run_steps(1);
+    harness.event(Event::Text("Three colours".into()));
+    harness.run_steps(2);
+    let desc = harness.state().editor().to_desc();
+    let split = desc.nodes.iter().find(|n| n.id == "split").unwrap();
+    assert_eq!(split.description.as_deref(), Some("Three colours"));
+    harness.run_steps(3);
+    assert!(Arc::ptr_eq(
+        &before,
+        &harness.state().engine().frame(0).unwrap()
+    ));
+}
+
+/// The app with its preset folder in a fresh temporary folder named after `test`.
+fn app_with_presets(test: &str) -> (App, PathBuf) {
+    let dir =
+        std::env::temp_dir().join(format!("rastersong-presets-{test}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut app = app();
+    let mut settings = app.settings().clone();
+    settings.library_dir = Some(dir.clone());
+    app.set_settings(settings);
+    (app, dir)
+}
+
+/// Opens the New graph picker and waits for its layout to settle over a few frames.
+fn open_picker(harness: &mut Harness<'_, App>) {
+    harness.state_mut().open_new_graph_picker();
+    harness.run_steps(6);
+}
+
+#[test]
+fn new_graph_makes_the_preset_picked() {
+    let (app, dir) = app_with_presets("pick");
+    let mut harness = loaded_with(app);
+    open_picker(&mut harness);
+    harness.get_by_label("Empty graph");
+    harness.get_by_label("Bass Brightness").click();
+    harness.run_steps(1);
+    harness.get_by_label("Create").click();
+    harness.run_steps(3);
+    let state = harness.state();
+    assert_eq!(state.open_graph_name(), "Bass Brightness");
+    assert!(
+        state.editor().key_of("level").is_some(),
+        "the preset's nodes"
+    );
+    assert!(
+        harness.query_by_label("Create").is_none(),
+        "the picker closed"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn double_clicking_a_preset_makes_it_at_once() {
+    let (app, dir) = app_with_presets("double");
+    let mut harness = loaded_quick(app);
+    open_picker(&mut harness);
+    let card = harness.get_by_label("Start Here").rect().center();
+    click(&mut harness, card, PointerButton::Primary);
+    click(&mut harness, card, PointerButton::Primary);
+    harness.run_steps(2);
+    assert_eq!(harness.state().open_graph_name(), "Start Here");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn load_preset_replaces_the_open_graph_and_undo_brings_it_back() {
+    let (app, dir) = app_with_presets("load");
+    let mut harness = loaded_with(app);
+    let graph = harness.state().open_graph_id();
+    let nodes = harness.state().editor().node_count();
+    harness.get_by_label("Presets").click();
+    harness.run_steps(2);
+    harness.get_by_label_contains("Load preset").click();
+    harness.run_steps(2);
+    harness.get_by_label("Echo Trails").click();
+    harness.run_steps(3);
+    assert_eq!(
+        harness.state().open_graph_id(),
+        graph,
+        "the same graph resource"
+    );
+    assert!(harness.state().editor().key_of("echo").is_some());
+
+    let canvas = harness.state().editor().canvas_rect();
+    harness.event(Event::PointerMoved(canvas.center()));
+    shortcut(&mut harness, Modifiers::COMMAND, egui::Key::Z);
+    assert_eq!(harness.state().editor().node_count(), nodes);
+    assert!(harness.state().editor().key_of("echo").is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn save_as_preset_writes_a_file_that_new_graph_offers() {
+    let (app, dir) = app_with_presets("save");
+    let mut harness = loaded_with(app);
+    let save = |harness: &mut Harness<'_, App>| {
+        harness.get_by_label("Presets").click();
+        harness.run_steps(2);
+        harness.get_by_label("Save as preset…").click();
+        harness.run_steps(2);
+        let name = harness.state().open_graph_name().to_owned();
+        harness
+            .get_by(|n| n.role() == Role::TextInput && n.value().as_deref() == Some(name.as_str()))
+            .click();
+        harness.run_steps(1);
+        harness.key_press_modifiers(Modifiers::COMMAND, egui::Key::A);
+        harness.event(Event::Text("My Glow".into()));
+        harness.run_steps(2);
+    };
+    save(&mut harness);
+    harness.get_by_label("Save").click();
+    harness.run_steps(2);
+    let file = dir.join("My Glow.json");
+    let saved = GraphDesc::from_json(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert_eq!(saved.nodes.len(), harness.state().editor().node_count());
+
+    // Saving under the same name asks before replacing it.
+    save(&mut harness);
+    harness.get_by_label("Save").click();
+    harness.run_steps(2);
+    harness.get_by_label_contains("exists already");
+    harness.get_by_label("Replace it").click();
+    harness.run_steps(2);
+    assert!(
+        harness.query_by_label("Replace it").is_none(),
+        "the dialog closed"
+    );
+
+    open_picker(&mut harness);
+    harness.get_by_label("My Glow");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_default_preset_folder_is_the_library_in_the_apps_folder() {
+    let dir = rastersong_gui::settings::default_library_dir();
+    assert_eq!(dir.file_name().unwrap(), "Library");
+    assert_ne!(dir.parent().unwrap().file_name().unwrap(), "data");
+}
+
+#[test]
+fn alt_click_leaves_comments_and_notes_alone() {
+    let mut harness = loaded_with(annotated_app());
+    for id in ["comment", "note"] {
+        let rect = harness
+            .state()
+            .editor()
+            .node_screen_rect(key(&harness, id))
+            .unwrap();
+        let at = rect.left_top() + vec2(20.0, 8.0);
+        harness.event(Event::PointerMoved(at));
+        harness.run_steps(1);
+        for pressed in [true, false] {
+            harness.event(Event::PointerButton {
+                pos: at,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::ALT,
+            });
+            harness.run_steps(1);
+        }
+        let node = harness.state().editor().node(key(&harness, id)).unwrap();
+        assert!(!node.bypass, "{id} isn't bypassed");
+    }
+}
+
+/// Drags note `id`'s attach tab to `to`.
+fn drag_tab(harness: &mut Harness<'_, App>, id: &str, to: Pos2) {
+    let note = key(harness, id);
+    let tab = harness.state().editor().attach_tab_rect(note).unwrap();
+    drag(harness, tab.center(), to);
+}
+
+#[test]
+fn dragging_a_notes_tab_onto_a_node_attaches_it_and_onto_canvas_detaches_it() {
+    let mut harness = loaded_with(annotated_app());
+    let note = key(&harness, "note");
+    let rect_of = |harness: &Harness<'_, App>, id: &str| {
+        harness
+            .state()
+            .editor()
+            .node_screen_rect(key(harness, id))
+            .unwrap()
+    };
+    let before = rect_of(&harness, "note");
+    let bands = rect_of(&harness, "bands");
+    drag_tab(&mut harness, "note", bands.center());
+    assert_eq!(
+        harness.state().editor().attached_to(note),
+        Some(key(&harness, "bands"))
+    );
+    assert_eq!(rect_of(&harness, "note"), before, "the note stays put");
+    let desc = harness.state().editor().to_desc();
+    let saved = desc.nodes.iter().find(|n| n.id == "note").unwrap();
+    assert_eq!(saved.attached.as_deref(), Some("bands"));
+
+    // A comment takes a note too, dropped anywhere in its box.
+    let comment = rect_of(&harness, "comment");
+    drag_tab(
+        &mut harness,
+        "note",
+        comment.left_bottom() + vec2(6.0, -6.0),
+    );
+    assert_eq!(
+        harness.state().editor().attached_to(note),
+        Some(key(&harness, "comment"))
+    );
+
+    // Empty canvas loosens it.
+    let canvas = harness.state().editor().canvas_rect();
+    drag_tab(
+        &mut harness,
+        "note",
+        pos2(canvas.left() + 30.0, canvas.bottom() - 80.0),
+    );
+    assert_eq!(harness.state().editor().attached_to(note), None);
+}
+
+#[test]
+fn a_notes_tab_attaches_it_to_another_note() {
+    let mut harness = loaded_with(annotated_app());
+    // A second note, from the comment's menu.
+    let comment = key(&harness, "comment");
+    let rect = harness.state().editor().node_screen_rect(comment).unwrap();
+    right_click(&mut harness, rect.left_top() + vec2(30.0, 8.0));
+    harness.get_by_label("Add note").click();
+    harness.run_steps(2);
+    let second = harness.state().editor().active().unwrap().key;
+    let first = key(&harness, "note");
+    let tab = harness.state().editor().attach_tab_rect(second).unwrap();
+    let target = harness.state().editor().node_screen_rect(first).unwrap();
+    drag(&mut harness, tab.center(), target.center());
+    assert_eq!(harness.state().editor().attached_to(second), Some(first));
+}
+
+#[test]
+fn detach_in_a_notes_inspector_loosens_it() {
+    let mut harness = loaded_with(annotated_app());
+    select(&mut harness, "note");
+    let note = key(&harness, "note");
+    harness.get_by_label("Points at Split Channels");
+    harness.get_by_label("Detach").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().editor().attached_to(note), None);
+    harness.get_by_label_contains("Drag the tab under the note");
+}
+
+#[test]
+fn comments_and_notes_take_notes_from_their_menu() {
+    let mut harness = loaded_with(annotated_app());
+    for id in ["comment", "note"] {
+        let target = key(&harness, id);
+        let rect = harness.state().editor().node_screen_rect(target).unwrap();
+        right_click(&mut harness, rect.left_top() + vec2(30.0, 8.0));
+        harness.get_by_label("Add note").click();
+        harness.run_steps(2);
+        let editor = harness.state().editor();
+        let note = editor.active().expect("the new note is selected").key;
+        assert_ne!(note, target);
+        assert_eq!(editor.attached_to(note), Some(target), "a note on the {id}");
+    }
 }

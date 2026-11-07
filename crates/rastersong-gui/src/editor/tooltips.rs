@@ -283,7 +283,7 @@ impl GraphEditor {
             return Some(Target::Pin(pin));
         }
         let over_node = geometry.iter().any(|g| {
-            Rect::from_two_pos(to_screen(g.rect.min), to_screen(g.rect.max)).contains(pointer)
+            Rect::from_two_pos(to_screen(g.grab.min), to_screen(g.grab.max)).contains(pointer)
         });
         if over_node {
             return None;

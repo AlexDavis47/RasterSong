@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 
 use eframe::egui::{self, Color32, RichText, Ui};
 use rastersong_engine::{
-    AUDIO_BUS_OUTPUT, AUDIO_INPUT, BUS_PARAM, NAME_PARAM, NAMED_INPUT, SOURCE_PARAM, TRACK_PARAM,
-    VIDEO_INPUT,
+    AUDIO_BUS_OUTPUT, AUDIO_INPUT, BUS_PARAM, NAME_PARAM, NAMED_INPUT, NOTE, SOURCE_PARAM,
+    TRACK_PARAM, VIDEO_INPUT,
 };
 use rastersong_engine::{
     Channels, GeneratorLayout, Grouping, Interpolation, MeterKind, Modulation, NodeMeters,
@@ -20,11 +20,11 @@ use super::param_field::{
 };
 use super::unit_chip::unit_chip;
 use super::{GraphEditor, NodeKey, param_port};
-use crate::name_edit::name_edit;
-use crate::theme::Theme;
+use crate::name_edit::start_rename;
+use crate::theme::{SMALL_SIZE, Theme, medium};
 use crate::widgets::{
-    CHOICE_WIDTH, KeyButton, about, inspector, inspector_body, inspector_header, kind_row,
-    name_style, section, setting_row, time_signature, toggle_box,
+    CHOICE_WIDTH, KeyButton, about, inspector, inspector_body, inspector_header, inspector_name,
+    kind_row, section, setting_row, time_signature, toggle_box,
 };
 
 /// What the inspector needs from outside the editor.
@@ -94,6 +94,13 @@ impl GraphEditor {
         let mut toggled: Option<(usize, bool)> = None;
         let mut disconnect: Option<usize> = None;
         let mut bypass = false;
+        let annotation = kind.spec.category.is_annotation();
+        // What a note points at, by title; it is changed on the canvas, with the note's tab.
+        let attached = self
+            .attached_to(key)
+            .and_then(|t| self.node(t))
+            .map(|n| self.node_title(n));
+        let mut detach = false;
         let node = self.nodes.iter_mut().find(|n| n.key == key).unwrap();
 
         inspector_header(ui, |ui| {
@@ -108,6 +115,10 @@ impl GraphEditor {
                 tr("inspector.kind.node"),
                 Some((category.label(), theme.category(Some(category)))),
                 |ui| {
+                    // Annotations render nothing, so there is nothing to bypass.
+                    if annotation {
+                        return;
+                    }
                     let button = KeyButton::new(action, tr("editor.shortcut.alt_click"))
                         .height(SMALL_BUTTON)
                         .ghost();
@@ -120,21 +131,51 @@ impl GraphEditor {
                     }
                 },
             );
-            // Name: shown on the node instead of the type. Unnamed, the node is titled with its
-            // type, so the field shows that; committing the type's name (or nothing) unnames it.
+            // Name: shown on the node instead of the type, renamed in place like every name.
+            // Unnamed, the node is titled with its type; committing the type's name unnames it,
+            // as Restore default name does. The type stays under it, whatever the name.
             let current = node.label.as_deref().unwrap_or(kind.label()).to_owned();
-            let edit = name_edit(ui, egui::Id::new("node-name"), &current, name_style);
+            let edit = inspector_name(ui, node_name_id(), &current);
             edit.response
-                .on_hover_text(tr("editor.inspector.name_help"));
+                .on_hover_text(tr("editor.inspector.name_help"))
+                .context_menu(|ui| {
+                    let rename = egui::Button::new(tr("resources.rename")).shortcut_text("F2");
+                    if ui.add(rename).clicked() {
+                        start_rename(ui.ctx(), node_name_id());
+                        ui.close();
+                    }
+                    let restore = egui::Button::new(tr("editor.inspector.restore_name"));
+                    if ui.add_enabled(node.label.is_some(), restore).clicked() {
+                        node.label = None;
+                        ui.close();
+                    }
+                });
             if let Some(name) = edit.committed {
                 node.label = (name != kind.label()).then_some(name);
             }
+            ui.label(
+                RichText::new(kind.label())
+                    .size(SMALL_SIZE)
+                    .color(theme.surfaces.text_faint),
+            )
+            .on_hover_text(tr("editor.inspector.type_help"));
             about(ui, kind.description());
             if let Some(compiled) = &compiled {
                 diagnostics(ui, compiled, theme);
             }
         });
         inspector_body(ui, |ui| {
+            let title = if kind.kind == NOTE {
+                tr("editor.inspector.note_text")
+            } else {
+                tr("editor.inspector.description")
+            };
+            section(ui, title, |ui| {
+                description_field(ui, &mut node.description, annotation);
+                if kind.kind == NOTE {
+                    detach = attach_row(ui, attached.as_deref());
+                }
+            });
             if !kind.spec.meters.is_empty() {
                 section(ui, tr("inspector.meters"), |ui| {
                     ui.spacing_mut().item_spacing.y = 6.0;
@@ -323,10 +364,13 @@ impl GraphEditor {
                         }
                     }
                 });
-            } else if !shared_settings {
+            } else if !shared_settings && !annotation {
                 ui.weak(tr("editor.inspector.no_settings"));
             }
         });
+        if detach {
+            self.attach(key, None);
+        }
         if bypass {
             self.toggle_bypass(&[key].into());
         }
@@ -371,6 +415,55 @@ impl GraphEditor {
 }
 
 /// The notes and warnings the last compile left on the node.
+/// The node's description, typed into a field several lines high. Emptied, the node has none.
+fn description_field(ui: &mut Ui, description: &mut Option<String>, annotation: bool) {
+    let mut text = description.clone().unwrap_or_default();
+    let hint = if annotation {
+        tr("editor.inspector.annotation_hint")
+    } else {
+        tr("editor.inspector.description_hint")
+    };
+    let response = ui.add(
+        egui::TextEdit::multiline(&mut text)
+            .id(egui::Id::new("node-description"))
+            .hint_text(hint)
+            .desired_rows(if annotation { 5 } else { 3 })
+            .desired_width(f32::INFINITY),
+    );
+    if response.changed() {
+        *description = (!text.trim().is_empty()).then_some(text);
+    }
+}
+
+/// What a note points at (the title of `attached`), with a Detach button; or, loose, how to
+/// attach it: by dragging its tab on the canvas. Returns whether Detach was clicked.
+fn attach_row(ui: &mut Ui, attached: Option<&str>) -> bool {
+    let theme = Theme::of(ui.ctx());
+    let Some(title) = attached else {
+        ui.label(
+            RichText::new(tr("editor.inspector.attach_hint"))
+                .size(SMALL_SIZE)
+                .color(theme.surfaces.text_faint),
+        );
+        return false;
+    };
+    let mut detach = false;
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(tr_args("editor.inspector.attached", &[("node", title)]))
+                .font(medium(13.0)),
+        )
+        .on_hover_text(tr("editor.inspector.attached_help"));
+        detach = ui.small_button(tr("editor.inspector.detach")).clicked();
+    });
+    detach
+}
+
+/// The id of the active node's name in the inspector: [`start_rename`] with it renames the node.
+pub(super) fn node_name_id() -> egui::Id {
+    egui::Id::new("node-name")
+}
+
 fn diagnostics(ui: &mut Ui, compiled: &NodeStats, theme: &Theme) {
     for diagnostic in &compiled.diagnostics {
         match diagnostic.severity {
