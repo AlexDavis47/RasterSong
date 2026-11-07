@@ -132,7 +132,7 @@ node total:
   moves, come too). The box itself is canvas: box selection and right-click work in it as anywhere. Drag its
   bottom-right corner to resize it. Box selection picks a comment only when it holds the whole of it.
 - **Notes** are sticky notes drawn over the nodes, showing their text (set in the inspector, under **Note**). A
-  tab sticks out under each note: **drag the tab onto a node** to attach the note to it (a line follows the pointer
+  small tab sits in each note's top-right corner: **drag the tab onto a node** to attach the note to it (a line follows the pointer
   and the node a drop would attach to is outlined), and drop it on empty canvas to loosen it. **Add note** in any
   node's right-click menu adds a note already attached to it. Any node takes notes, comments and other notes too;
   dropped anywhere in a comment's box, the note attaches to the comment. Attached, a note moves with its node and

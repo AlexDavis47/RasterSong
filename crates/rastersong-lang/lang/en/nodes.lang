@@ -2,9 +2,10 @@
 # Shared parameters (`param.<name>.*`) apply to every node that has no entry of its own.
 
 param.mix.label = Mix
-param.mix.help = 0 is the dry input, 1 is only the processed signal; in between crossfades the two
+# Is this unused?
+param.mix.help = 0 is the dry input, 1 is the processed signal.
 param.time_signature.label = Time signature
-param.time_signature.help = A note length written as a time signature: the numerator counts notes of the denominator's length, a quarter note (4) being one beat. 1/4 is a beat, 4/4 four beats, 3/8 three eighths
+param.time_signature.help = A duration written as a musical time signature.
 
 node.am.label = Amplitude Modulation
 node.am.description = Scales the carrier by the modulator
@@ -12,42 +13,42 @@ node.am.input.carrier = The signal that gets scaled
 node.am.input.modulator = The signal that scales the carrier
 node.am.output.out = The processed signal
 node.am.param.depth.label = Depth
-node.am.param.depth.help = How strongly the modulator scales the carrier: carrier × (1 + depth × modulator)
+node.am.param.depth.help = How strongly the modulator scales the carrier
 
 node.audio_bus_output.label = Audio Bus Output
-node.audio_bus_output.description = The graph's sound for one of the other output buses: replaces that bus's track mix in its export
+node.audio_bus_output.description = Outputs a signal to the timeline's audio bus
 node.audio_bus_output.doc = Add one for each bus besides the master, which is the Audio Output's. With nothing connected, the bus plays its track mix: the audio tracks routed to it, at their volumes. A mono signal is written to every channel of the bus; any other signal is written as interleaved samples across the bus's channels. Each frame's block is resampled from its own rate to the project's audio rate, and clipped to -1 to 1. One naming the master bus, or a bus the project doesn't have, is not rendered.
-node.audio_bus_output.input.in = The sound to output, from -1 to 1: mono, stereo, or any signal read as samples
+node.audio_bus_output.input.in = The sound to output
 node.audio_bus_output.output.out = The sound as written
 node.audio_bus_output.param.volume.label = Volume
-node.audio_bus_output.param.volume.help = Louder or quieter, in decibels, before the sound is clipped to -1 to 1. 0 changes nothing; the meter shows the peak after the volume, so a peak above 0 dB will clip.
+node.audio_bus_output.param.volume.help = Trim volume before outputting, in decibels
 node.audio_bus_output.param.bus.label = Bus
 node.audio_bus_output.param.bus.help = The output bus this sound goes to, from the buses in Project settings other than the master
 node.audio_input.label = Audio Input
-node.audio_input.description = Sound: what is below the graph's item unless set otherwise, one frame's worth per block, -1 to 1, channels interleaved
+node.audio_input.description = Audio input from the timeline
 node.audio_input.doc = New graphs come with one reading what is below: below the lowest graph track that is the audio mix; above another graph track it is that track's sound where one of its items plays. Its Source can read the audio mix, one audio track on its own (before its volume and mute, so a muted kick can still drive an effect), or a graph track's main sound instead. A graph track must be below the one this graph plays on, or it reads silence; where none of its items plays it reads what is below that track. Nothing picked reads silence.
-node.audio_input.output.out = The sound, one frame's worth per block, from -1 to 1; stereo comes as L, R, L, R, …
+node.audio_input.output.out = Audio samples from the specified timeline source
 node.audio_input.param.source.label = Source
-node.audio_input.param.source.help = What this node reads: what is below, the audio mix, a track's stem, or a graph track below this one (what is below it where nothing plays on it)
+node.audio_input.param.source.help = What timeline source this input reads. As the lowest graph in the timeline it reads the audio mix. If above another graph, it reads that graph's output
 node.audio_output.label = Audio Output
-node.audio_output.description = The graph's sound: what graphs above read, and on the master bus what the preview plays and the export writes
+node.audio_output.description = Main audio output to the timeline from this graph
 node.audio_output.doc = Every graph has one, which can't be removed. With nothing connected, the master plays its track mix: the audio tracks routed to it, at their volumes; a track wired straight in is also used as it is. A mono signal is written to every channel of the bus; any other signal is written as interleaved samples across the bus's channels (a stereo signal to a stereo bus as it is). Each frame's block is resampled from its own rate to the project's audio rate, and clipped to -1 to 1. Use an Audio Bus Output for the other buses.
-node.audio_output.input.in = The sound to output, from -1 to 1: mono, stereo, or any signal read as samples
+node.audio_output.input.in = The sound to output
 node.audio_output.output.out = The sound as written
 node.audio_output.param.volume.label = Volume
-node.audio_output.param.volume.help = Louder or quieter, in decibels, before the sound is clipped to -1 to 1. 0 changes nothing; the meter shows the peak after the volume, so a peak above 0 dB will clip.
+node.audio_output.param.volume.help = Trim volume before outputting, in decibels
 
 
 
 node.beat.label = Beat
-node.beat.description = A 0 to 1 signal locked to the project's beats, restarting every note length: phase, decay, pulse or steps
+node.beat.description = A cycling signal locked to the project's beats, restarting every division
 node.beat.output.out = The beat-locked signal
 node.beat.param.numerator.label = Numerator
-node.beat.param.numerator.help = How many notes of the denominator's length each cycle lasts, as in a time signature: 1/4 is a beat, 4/4 four beats, 16/4 sixteen
+node.beat.param.numerator.help = How many notes of the denominator's length each cycle lasts
 node.beat.param.denominator.label = Denominator
-node.beat.param.denominator.help = The note the numerator counts, as a fraction of a whole note: 4 is a quarter note (a beat), 8 an eighth, 16 a sixteenth
+node.beat.param.denominator.help = The note the numerator counts, as a fraction of a whole note
 node.beat.param.shape.label = Shape
-node.beat.param.shape.help = phase rises 0 to 1, decay falls 1 to 0, pulse is on for the width, step climbs in stairs
+node.beat.param.shape.help = phase rises 0 to 1, decay falls 1 to 0, pulse is on/off for a duration based on width, step climbs in stairs
 node.beat.param.width.label = Width
 node.beat.param.width.help = For the pulse shape, the fraction of each cycle it stays on
 node.beat.param.steps.label = Steps
@@ -58,24 +59,24 @@ node.bitcrush.description = Reduces bit depth, posterizing the image
 node.bitcrush.input.in = The signal to process
 node.bitcrush.output.out = The processed signal
 node.bitcrush.param.bits.label = Bits
-node.bitcrush.param.bits.help = Bit depth; fewer bits means fewer levels
+node.bitcrush.param.bits.help = Bit depth. Fewer bits means more crushing
 
 node.blend.label = Blend
-node.blend.description = Combines two signals: add, multiply, screen, difference and more
+node.blend.description = Combines two signals using a blend mode
 node.blend.input.a = The base signal
 node.blend.input.b = The signal blended onto the base
 node.blend.output.out = The processed signal
 node.blend.param.mode.label = Mode
 node.blend.param.mode.help = How `a` and `b` are combined
 node.blend.param.amount.label = Amount
-node.blend.param.amount.help = 0 passes `a` through, 1 is the full blend
+node.blend.param.amount.help = Amount of 'b' to blend in
 
 node.chorus.label = Chorus
-node.chorus.description = Thickens the signal with delayed copies; modulate the time to make them drift
+node.chorus.description = Thickens the signal with delayed copies. Modulate the time to make them drift around
 node.chorus.input.in = The signal to process
 node.chorus.output.out = The processed signal
 node.chorus.param.time.label = Time
-node.chorus.param.time.help = Delay of the copies; wire an oscillator in here to make them drift
+node.chorus.param.time.help = Delay of the copies
 node.chorus.param.voices.label = Voices
 node.chorus.param.voices.help = How many delayed copies are mixed in
 node.chorus.param.spread.label = Spread
@@ -93,7 +94,7 @@ node.clamp.param.max.help = Samples above this are lowered to it
 node.combine.label = Combine Channels
 node.combine.description = Separate signals into one interleaved signal: R, G, B into RGB, or L, R into stereo
 node.combine.doc = Each connected input becomes one channel of the output, in order. The first input sets the size; the others are stretched to it. Three channels of video make RGB; two of audio make stereo.
-node.combine.input.c1 = Channel 1: red, or left. Sets the size
+node.combine.input.c1 = Channel 1: red, or left. Sets the signal type
 node.combine.input.c2 = Channel 2: green, or right
 node.combine.input.c3 = Channel 3: blue
 node.combine.input.c4 = Channel 4
@@ -104,7 +105,7 @@ node.combine.input.c8 = Channel 8
 node.combine.output.out = The channels interleaved, pixel by pixel
 
 node.comment.label = Comment
-node.comment.description = A titled box behind a group of nodes, to say what they do together
+node.comment.description = A container for grouping nodes together
 node.comment.doc = Comments only explain the graph: they have no ports and render nothing. Drag its title to move it with every node inside it; drag its bottom-right corner to resize it. Its title is the node's name and the text under it its description, both set in the inspector.
 
 node.compressor.label = Compressor

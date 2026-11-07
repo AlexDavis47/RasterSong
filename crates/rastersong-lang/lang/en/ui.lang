@@ -362,7 +362,7 @@ editor.inspector.annotation_hint = What to say
 editor.inspector.attached = Points at {node}
 editor.inspector.attached_help = The node this note follows and points at
 editor.inspector.detach = Detach
-editor.inspector.attach_hint = Drag the tab under the note onto a node to attach it
+editor.inspector.attach_hint = Drag the tab in the note's top-right corner onto a node to attach it
 
 editor.setting.resampling = Resampling
 editor.setting.resampling.help = How the other inputs are stretched or shrunk to the length of the main input

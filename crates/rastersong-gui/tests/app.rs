@@ -5275,6 +5275,13 @@ fn dragging_a_notes_tab_onto_a_node_attaches_it_and_onto_canvas_detaches_it() {
             .unwrap()
     };
     let before = rect_of(&harness, "note");
+    // The tab is inside the note, in its top-right corner.
+    let tab = harness.state().editor().attach_tab_rect(note).unwrap();
+    assert!(before.contains_rect(tab), "{tab:?} in {before:?}");
+    assert!(
+        (tab.right_top() - before.right_top()).length() < 10.0,
+        "in the corner"
+    );
     let bands = rect_of(&harness, "bands");
     drag_tab(&mut harness, "note", bands.center());
     assert_eq!(
@@ -5309,6 +5316,22 @@ fn dragging_a_notes_tab_onto_a_node_attaches_it_and_onto_canvas_detaches_it() {
 }
 
 #[test]
+fn dragging_a_note_away_from_its_tab_moves_it() {
+    let mut harness = loaded_with(annotated_app());
+    let note = key(&harness, "note");
+    let before = harness.state().editor().node_screen_rect(note).unwrap();
+    let grab = before.left_top() + vec2(20.0, 10.0);
+    drag(&mut harness, grab, grab + vec2(40.0, 30.0));
+    let after = harness.state().editor().node_screen_rect(note).unwrap();
+    assert!((after.min - before.min - vec2(40.0, 30.0)).length() < 1.0);
+    assert_eq!(
+        harness.state().editor().attached_to(note),
+        Some(key(&harness, "split")),
+        "still attached"
+    );
+}
+
+#[test]
 fn a_notes_tab_attaches_it_to_another_note() {
     let mut harness = loaded_with(annotated_app());
     // A second note, from the comment's menu.
@@ -5334,7 +5357,7 @@ fn detach_in_a_notes_inspector_loosens_it() {
     harness.get_by_label("Detach").click();
     harness.run_steps(2);
     assert_eq!(harness.state().editor().attached_to(note), None);
-    harness.get_by_label_contains("Drag the tab under the note");
+    harness.get_by_label_contains("Drag the tab in the note");
 }
 
 #[test]

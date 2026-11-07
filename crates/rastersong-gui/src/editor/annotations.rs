@@ -5,8 +5,8 @@
 //!   it moves the comment and every node inside it; the box itself is canvas, so box selection
 //!   and right-click work there as anywhere. Its bottom-right corner resizes it. The node's
 //!   position and size are the box's; the text grows upward from it.
-//! - A **note** is a sticky note drawn above the nodes, showing its description. A tab sticks out
-//!   of its bottom edge: dragging the tab onto any node (a comment or another note too) attaches
+//! - A **note** is a sticky note drawn above the nodes, showing its description. A small tab sits
+//!   in its top-right corner: dragging the tab onto any node (a comment or another note too) attaches
 //!   the note to it, and dropping it on empty canvas loosens it. Attached, the note moves with
 //!   its node and points at it with a speech bubble's tail.
 //! - Any other node's description is drawn in small text under it.
@@ -39,9 +39,12 @@ const HANDLE: f32 = 14.0;
 /// How wide a note is, and how far its tail reaches toward the node it points at.
 pub(super) const NOTE_WIDTH: f32 = 200.0;
 const TAIL_BASE: f32 = 14.0;
-/// The tab under a note that attaches it, at zoom 1: its size and how far in from the right.
-const TAB: Vec2 = vec2(24.0, 12.0);
-const TAB_INSET: f32 = 10.0;
+/// The tab in a note's top-right corner that attaches it, at zoom 1: its side and how far in
+/// from the note's top and right edges.
+const TAB: f32 = 14.0;
+const TAB_INSET: f32 = 5.0;
+/// How wide a note's text wraps: inside its padding, clear of the tab.
+const NOTE_TEXT_WIDTH: f32 = NOTE_WIDTH - 2.0 * PAD - (TAB + TAB_INSET - PAD + 3.0);
 /// How wide a node's description wraps under it.
 const DESCRIPTION_WIDTH: f32 = 220.0;
 const DESCRIPTION_FONT: f32 = 11.0;
@@ -83,11 +86,8 @@ impl GraphEditor {
             }
             Layer::Note => {
                 let text = description(node).unwrap_or_else(|| tr("editor.note.empty"));
-                let height = wrapped_height(
-                    text,
-                    FontId::proportional(TEXT_FONT),
-                    NOTE_WIDTH - 2.0 * PAD,
-                ) + 2.0 * PAD;
+                let height = wrapped_height(text, FontId::proportional(TEXT_FONT), NOTE_TEXT_WIDTH)
+                    + 2.0 * PAD;
                 let rect = Rect::from_min_size(node.pos, vec2(NOTE_WIDTH, height.max(36.0)));
                 Some((rect, rect))
             }
@@ -410,33 +410,6 @@ impl GraphEditor {
         let fill = theme.note_fill;
         let border = theme.note_border;
         let rounding = CornerRadius::same((4.0 * zoom).round().clamp(1.0, 6.0) as u8);
-        // The attach tab, sticking out from under the note's bottom edge, with a dot in it:
-        // solid while the note is attached.
-        let tab = attach_tab(rect, zoom);
-        let tab_round = (tab.height() / 2.0) as u8;
-        let tab_round = CornerRadius {
-            nw: 0,
-            ne: 0,
-            sw: tab_round,
-            se: tab_round,
-        };
-        painter.rect(
-            tab,
-            tab_round,
-            fill,
-            Stroke::new(1.0, border),
-            StrokeKind::Inside,
-        );
-        let dot_color = if node.attached.is_some() {
-            border
-        } else {
-            border.gamma_multiply(0.45)
-        };
-        painter.circle_filled(
-            tab.center() + vec2(0.0, tab.height() * 0.1),
-            (tab.height() * 0.2).max(1.5),
-            dot_color,
-        );
         painter.rect_filled(
             rect.translate(vec2(0.0, 2.0 * zoom)),
             rounding,
@@ -444,6 +417,22 @@ impl GraphEditor {
         );
         let outline = self.outline(g.key, border, theme);
         painter.rect(rect, rounding, fill, outline, StrokeKind::Inside);
+        // The attach tab in the top-right corner, with a dot in it: solid while the note is
+        // attached.
+        let tab = attach_tab(rect, zoom);
+        painter.rect(
+            tab,
+            CornerRadius::same((3.0 * zoom).round().clamp(1.0, 4.0) as u8),
+            border.gamma_multiply(0.18),
+            Stroke::new(1.0, border.gamma_multiply(0.7)),
+            StrokeKind::Inside,
+        );
+        let dot_color = if node.attached.is_some() {
+            border
+        } else {
+            border.gamma_multiply(0.45)
+        };
+        painter.circle_filled(tab.center(), (tab.height() * 0.2).max(1.0), dot_color);
         if zoom > 0.3 {
             let (text, color) = match description(node) {
                 Some(text) => (text, theme.note_text),
@@ -456,7 +445,7 @@ impl GraphEditor {
                 text.to_owned(),
                 FontId::proportional(TEXT_FONT * zoom),
                 color,
-                (NOTE_WIDTH - 2.0 * PAD) * zoom,
+                NOTE_TEXT_WIDTH * zoom,
             );
             painter.galley(rect.min + Vec2::splat(PAD * zoom), galley, color);
         }
@@ -505,15 +494,14 @@ fn description_width(width: f32) -> f32 {
     width.max(DESCRIPTION_WIDTH)
 }
 
-/// The attach tab of a note drawn at `note` (screen space): under its bottom edge, near the
-/// right, its top tucked under the note.
+/// The attach tab of a note drawn at `note` (screen space): a small square inside its top-right
+/// corner, scaled with the note.
 fn attach_tab(note: Rect, zoom: f32) -> Rect {
-    let z = zoom.clamp(0.6, 1.5);
-    let size = TAB * z;
+    let size = Vec2::splat(TAB * zoom);
     Rect::from_min_size(
         pos2(
-            note.right() - TAB_INSET * z - size.x,
-            note.bottom() - 2.0 * z,
+            note.right() - TAB_INSET * zoom - size.x,
+            note.top() + TAB_INSET * zoom,
         ),
         size,
     )
