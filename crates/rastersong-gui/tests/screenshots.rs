@@ -1158,16 +1158,19 @@ fn preset_screenshots() {
         harness.run_steps(8);
         save(&mut harness, &format!("{theme_name}-new-graph-picker"));
         // A category opened in the picker, then as a submenu of Load preset.
-        harness.get_by_label("tutorial").click();
+        harness.get_by_label("Tutorials").click();
         harness.run_steps(4);
-        save(&mut harness, &format!("{theme_name}-new-graph-picker-category"));
+        save(
+            &mut harness,
+            &format!("{theme_name}-new-graph-picker-category"),
+        );
         harness.get_by_label("Cancel").click();
         harness.run_steps(2);
         harness.get_by_label("Presets").click();
         harness.run_steps(2);
         harness.get_by_label_contains("Load preset").click();
         harness.run_steps(2);
-        harness.get_by_label_contains("tutorial").hover();
+        harness.get_by_label_contains("Tutorials").hover();
         harness.run_steps(4);
         save(&mut harness, &format!("{theme_name}-load-preset-category"));
     }

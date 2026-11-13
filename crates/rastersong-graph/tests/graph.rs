@@ -1177,7 +1177,7 @@ fn odd_audio_output_layouts_are_written_across_the_bus_with_a_warning() {
     let graph = compile(&json).unwrap();
     let warnings = graph.diagnostics();
     assert_eq!(warnings.len(), 1, "{warnings:?}");
-    assert!(warnings[0].message.contains("bus"));
+    assert!(warnings[0].message.contains("buzzy"));
 }
 
 /// A generator's parameter driven by a constant signal gives what the same value set by hand does.

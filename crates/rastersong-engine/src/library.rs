@@ -3,8 +3,8 @@
 //! graph into the project, so editing the project's graph never changes the preset.
 //!
 //! A preset is named after its file (`Beat Flash.json` is *Beat Flash*), and the graph's
-//! `description` says what it does. Folders are categories: `tutorial/Learn The Basics.json` is
-//! *Learn The Basics* in the *tutorial* category, and folders can nest. Factory presets are built
+//! `description` says what it does. Folders are categories: `Tutorials/Learn The Basics.json` is
+//! *Learn The Basics* in the *Tutorials* category, and folders can nest. Factory presets are built
 //! in from `presets/`.
 
 use std::path::{Path, PathBuf};
@@ -303,7 +303,7 @@ mod tests {
             .into_iter()
             .find(|p| p.name == "Learn The Basics")
             .unwrap();
-        assert_eq!(tutorial.category, ["tutorial"]);
+        assert_eq!(tutorial.category, ["Tutorials"]);
 
         let preset = |name: &str, category: &[&str]| Preset {
             name: name.to_owned(),

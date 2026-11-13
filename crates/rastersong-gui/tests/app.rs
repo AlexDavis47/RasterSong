@@ -5161,9 +5161,9 @@ fn preset_folders_are_sections_that_open_in_the_picker() {
     open_picker(&mut harness);
     assert!(
         harness.query_by_label("Learn The Basics").is_none(),
-        "the tutorial section starts closed"
+        "the Tutorials section starts closed"
     );
-    harness.get_by_label("tutorial").click();
+    harness.get_by_label("Tutorials").click();
     harness.run_steps(3);
     harness.get_by_label("Learn The Basics").click();
     harness.run_steps(1);
@@ -5184,7 +5184,7 @@ fn load_preset_shows_folders_as_submenus() {
     harness.get_by_label_contains("Load preset").click();
     harness.run_steps(2);
     assert!(harness.query_by_label("Learn Control Signals").is_none());
-    harness.get_by_label_contains("tutorial").click();
+    harness.get_by_label_contains("Tutorials").click();
     harness.run_steps(2);
     harness.get_by_label("Learn Control Signals");
     harness.get_by_label_contains("Mine").click();
