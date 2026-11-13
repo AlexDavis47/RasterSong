@@ -1,0 +1,160 @@
+{
+  "version": 0,
+  "description": "How to add new nodes and connect them together.",
+  "nodes": [
+    {
+      "id": "c_picture",
+      "type": "comment",
+      "label": "Video",
+      "position": [
+        -195.0,
+        -247.0
+      ],
+      "description": "The video flows left to right, along the wires.",
+      "size": [
+        636.0,
+        203.0
+      ]
+    },
+    {
+      "id": "video",
+      "type": "video_input",
+      "position": [
+        -165.0,
+        -217.0
+      ]
+    },
+    {
+      "id": "out",
+      "type": "output",
+      "position": [
+        297.0,
+        -221.0
+      ]
+    },
+    {
+      "id": "c_sound",
+      "type": "comment",
+      "label": "Audio",
+      "position": [
+        -144.0,
+        33.0
+      ],
+      "description": "Passed through untouched. Don't worry about this right now.",
+      "size": [
+        540.0,
+        120.0
+      ]
+    },
+    {
+      "id": "audio",
+      "type": "audio_input",
+      "position": [
+        -114.0,
+        63.0
+      ]
+    },
+    {
+      "id": "sound",
+      "type": "audio_output",
+      "position": [
+        266.0,
+        63.0
+      ]
+    },
+    {
+      "id": "note",
+      "type": "note",
+      "position": [
+        -438.0,
+        -216.0
+      ],
+      "description": "Right now the video signal isn't plugged into anything!\n\nTry right clicking in any empty space, or pressing `Tab` to add a new node between the two.",
+      "attached": "c_picture"
+    },
+    {
+      "id": "note_2",
+      "type": "note",
+      "position": [
+        -438.0,
+        -71.0
+      ],
+      "description": "Hint: Try adding \"Distortion\"",
+      "attached": "note"
+    },
+    {
+      "id": "note_3",
+      "type": "note",
+      "position": [
+        -187.0,
+        -106.0
+      ],
+      "description": "The video signal enters the graph from here.",
+      "attached": "video"
+    },
+    {
+      "id": "note_4",
+      "type": "note",
+      "position": [
+        228.0,
+        -110.0
+      ],
+      "description": "The video signal outputs to the timeline from here.",
+      "attached": "out"
+    },
+    {
+      "id": "note_5",
+      "type": "note",
+      "position": [
+        22.0,
+        -107.0
+      ],
+      "description": "Try adding a node above this note!"
+    },
+    {
+      "id": "note_6",
+      "type": "note",
+      "position": [
+        -440.0,
+        -4.0
+      ],
+      "description": "Once you have added the node, drag a wire from the output tap of \"In: Video\" into the input of your new node. And the output tap of your new node into the input of \"Video Output\"",
+      "attached": "note_2"
+    },
+    {
+      "id": "note_7",
+      "type": "note",
+      "position": [
+        -685.0,
+        7.0
+      ],
+      "description": "\"Taps\" are the circles or diamonds on nodes. Circles are signals, diamonds are controls! Only connect to the circles for now!",
+      "attached": "note_6"
+    },
+    {
+      "id": "note_8",
+      "type": "note",
+      "position": [
+        -444.0,
+        165.0
+      ],
+      "description": "Change some settings on the new node you added, and you should see the video start changing!",
+      "attached": "note_6"
+    },
+    {
+      "id": "note_9",
+      "type": "note",
+      "position": [
+        466.0,
+        -185.0
+      ],
+      "description": "Once you have finished all the notes on the left side of this block, you will be ready to start experimenting with RasterSong"
+    }
+  ],
+  "connections": [
+    {
+      "from": "audio.out",
+      "to": "sound.in"
+    }
+  ]
+}

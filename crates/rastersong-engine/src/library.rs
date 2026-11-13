@@ -3,7 +3,9 @@
 //! graph into the project, so editing the project's graph never changes the preset.
 //!
 //! A preset is named after its file (`Beat Flash.json` is *Beat Flash*), and the graph's
-//! `description` says what it does. Factory presets are built in from `presets/`.
+//! `description` says what it does. Folders are categories: `tutorial/Learn The Basics.json` is
+//! *Learn The Basics* in the *tutorial* category, and folders can nest. Factory presets are built
+//! in from `presets/`.
 
 use std::path::{Path, PathBuf};
 
@@ -25,6 +27,8 @@ pub enum PresetOrigin {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Preset {
     pub name: String,
+    /// The folders the preset sits in, outermost first; empty at the top level.
+    pub category: Vec<String>,
     pub graph: GraphDesc,
     pub origin: PresetOrigin,
 }
@@ -36,16 +40,19 @@ impl Preset {
     }
 }
 
-/// The factory presets' names and files, in the order they are offered: from the basics to the
-/// more involved.
+/// The factory presets' paths in `presets/` (without `.json`, folders as categories) and files, in
+/// the order they are offered: from the basics to the more involved. A test checks this list
+/// against the folder, so a preset file left off it fails the build's tests.
 macro_rules! factory {
-    ($($name:literal),* $(,)?) => {
-        &[$(($name, include_str!(concat!("../presets/", $name, ".json")))),*]
+    ($($path:literal),* $(,)?) => {
+        &[$(($path, include_str!(concat!("../presets/", $path, ".json")))),*]
     };
 }
 
 const FACTORY: &[(&str, &str)] = factory![
     "Start Here",
+    "Tutorials/Learn The Basics",
+    "Tutorials/Learn Control Signals",
     "Pulse to the Beat",
     "Bass Brightness",
     "Color Bands",
@@ -60,24 +67,93 @@ const FACTORY: &[(&str, &str)] = factory![
 pub fn factory_presets() -> Vec<Preset> {
     FACTORY
         .iter()
-        .map(|&(name, json)| Preset {
-            name: name.to_owned(),
-            graph: GraphDesc::from_json(json)
-                .unwrap_or_else(|e| panic!("factory preset `{name}` doesn't read: {e}")),
-            origin: PresetOrigin::Factory,
+        .map(|&(path, json)| {
+            let mut category: Vec<String> = path.split('/').map(str::to_owned).collect();
+            let name = category.pop().unwrap_or_default();
+            Preset {
+                graph: GraphDesc::from_json(json)
+                    .unwrap_or_else(|e| panic!("factory preset `{path}` doesn't read: {e}")),
+                name,
+                category,
+                origin: PresetOrigin::Factory,
+            }
         })
         .collect()
 }
 
-/// The graph files in the user library `dir`, by name (case doesn't matter), and the files that
-/// couldn't be read, with why. A folder that doesn't exist yet has no presets.
+/// Presets arranged by category, for menus and lists: each entry is a preset (its index in the
+/// slice it came from) or a category holding more entries. Entries keep the order of the presets;
+/// a category sits where its first preset would.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PresetEntry {
+    Preset(usize),
+    Category {
+        name: String,
+        entries: Vec<PresetEntry>,
+    },
+}
+
+/// `presets` as a tree of categories; see [`PresetEntry`].
+pub fn preset_tree(presets: &[Preset]) -> Vec<PresetEntry> {
+    let mut tree = Vec::new();
+    for (index, preset) in presets.iter().enumerate() {
+        let mut level = &mut tree;
+        for folder in &preset.category {
+            let at = level
+                .iter()
+                .position(|e| matches!(e, PresetEntry::Category { name, .. } if name == folder))
+                .unwrap_or_else(|| {
+                    level.push(PresetEntry::Category {
+                        name: folder.clone(),
+                        entries: Vec::new(),
+                    });
+                    level.len() - 1
+                });
+            let PresetEntry::Category { entries, .. } = &mut level[at] else {
+                unreachable!("found as a category")
+            };
+            level = entries;
+        }
+        level.push(PresetEntry::Preset(index));
+    }
+    tree
+}
+
+/// The graph files in the user library `dir` and the folders inside it (as categories), by
+/// category and then name (case doesn't matter), and the files that couldn't be read, with why. A
+/// folder that doesn't exist yet has no presets.
 pub fn user_presets(dir: &Path) -> (Vec<Preset>, Vec<(PathBuf, String)>) {
     let mut presets = Vec::new();
     let mut failed = Vec::new();
+    read_presets(dir, &[], &mut presets, &mut failed);
+    presets.sort_by_cached_key(|p| {
+        let mut key: Vec<String> = p.category.iter().map(|c| c.to_lowercase()).collect();
+        key.push(p.name.to_lowercase());
+        key
+    });
+    failed.sort();
+    (presets, failed)
+}
+
+/// Reads the graph files in `dir`, in `category`, and the folders inside it.
+fn read_presets(
+    dir: &Path,
+    category: &[String],
+    presets: &mut Vec<Preset>,
+    failed: &mut Vec<(PathBuf, String)>,
+) {
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return (presets, failed);
+        return;
     };
     for path in entries.filter_map(|e| e.ok()).map(|e| e.path()) {
+        if path.is_dir() {
+            if let Some(folder) = path.file_name().and_then(|s| s.to_str()) {
+                let mut inner = category.to_vec();
+                inner.push(folder.to_owned());
+                read_presets(&path, &inner, presets, failed);
+            }
+            continue;
+        }
         if !path.is_file() || path.extension().is_none_or(|e| e != GRAPH_EXTENSION) {
             continue;
         }
@@ -90,15 +166,13 @@ pub fn user_presets(dir: &Path) -> (Vec<Preset>, Vec<(PathBuf, String)>) {
         match graph {
             Ok(graph) => presets.push(Preset {
                 name,
+                category: category.to_vec(),
                 graph,
                 origin: PresetOrigin::User(path),
             }),
             Err(e) => failed.push((path, e)),
         }
     }
-    presets.sort_by_key(|p| p.name.to_lowercase());
-    failed.sort();
-    (presets, failed)
 }
 
 /// The file a preset named `name` is saved to in `dir`: the name, with the characters file names
@@ -191,6 +265,102 @@ mod tests {
                 preset.name
             );
         }
+    }
+
+    /// Every graph file under `presets/`, as its path without `.json`.
+    fn preset_files(dir: &Path, prefix: &str, found: &mut Vec<String>) {
+        for path in std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().path()) {
+            let name = path.file_stem().unwrap().to_str().unwrap();
+            if path.is_dir() {
+                let name = path.file_name().unwrap().to_str().unwrap();
+                preset_files(&path, &format!("{prefix}{name}/"), found);
+            } else if path.extension().is_some_and(|e| e == GRAPH_EXTENSION) {
+                found.push(format!("{prefix}{name}"));
+            }
+        }
+    }
+
+    #[test]
+    fn every_file_in_the_presets_folder_is_a_factory_preset() {
+        let mut files = Vec::new();
+        preset_files(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("presets"),
+            "",
+            &mut files,
+        );
+        files.sort();
+        let mut listed: Vec<String> = FACTORY.iter().map(|(p, _)| (*p).to_owned()).collect();
+        listed.sort();
+        assert_eq!(
+            files, listed,
+            "add each file in presets/ to FACTORY in library.rs, and only those"
+        );
+    }
+
+    #[test]
+    fn folders_are_categories() {
+        let tutorial = factory_presets()
+            .into_iter()
+            .find(|p| p.name == "Learn The Basics")
+            .unwrap();
+        assert_eq!(tutorial.category, ["tutorial"]);
+
+        let preset = |name: &str, category: &[&str]| Preset {
+            name: name.to_owned(),
+            category: category.iter().map(|&c| c.to_owned()).collect(),
+            graph: GraphDesc::from_json(crate::PASSTHROUGH_GRAPH).unwrap(),
+            origin: PresetOrigin::Factory,
+        };
+        let presets = [
+            preset("a", &[]),
+            preset("b", &["x"]),
+            preset("c", &["x", "y"]),
+            preset("d", &[]),
+            preset("e", &["x"]),
+        ];
+        use PresetEntry::{Category, Preset as P};
+        assert_eq!(
+            preset_tree(&presets),
+            [
+                P(0),
+                Category {
+                    name: "x".into(),
+                    entries: vec![
+                        P(1),
+                        Category {
+                            name: "y".into(),
+                            entries: vec![P(2)],
+                        },
+                        P(4),
+                    ],
+                },
+                P(3),
+            ]
+        );
+    }
+
+    #[test]
+    fn user_presets_read_from_folders_inside_the_library() {
+        let dir = scratch("folders");
+        let graph = GraphDesc::from_json(crate::PASSTHROUGH_GRAPH).unwrap();
+        save_preset(&dir, "Top", &graph).unwrap();
+        save_preset(&dir.join("Glitch").join("Heavy"), "Smear", &graph).unwrap();
+        save_preset(&dir.join("Glitch"), "Crush", &graph).unwrap();
+        let (presets, failed) = user_presets(&dir);
+        assert!(failed.is_empty());
+        let found: Vec<(Vec<String>, &str)> = presets
+            .iter()
+            .map(|p| (p.category.clone(), p.name.as_str()))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (vec!["Glitch".to_owned()], "Crush"),
+                (vec!["Glitch".to_owned(), "Heavy".to_owned()], "Smear"),
+                (vec![], "Top"),
+            ]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -957,10 +957,12 @@ themselves.
 - [x] **feature** Presets: factory presets, the user preset folder (the user library) with Open folder and Change…
   in Settings, the New graph picker, and the canvas header's Load preset / Save as preset
   ([Desktop app](app.md#presets)).
-- [x] **feature** Nine annotated factory presets, from Start Here to Datamosh (`crates/rastersong-engine/presets/`).
+- [x] **feature** Eleven annotated factory presets, from Start Here to Datamosh, with the Learn The Basics and
+  Learn Control Signals walkthroughs in the *tutorial* category (`crates/rastersong-engine/presets/`).
+- [x] **feature** Preset categories: folders in the factory presets and in the preset folder (nested too) are
+  submenus in Load preset and sections that open in the New graph picker ([Desktop app](app.md#presets)).
 - [ ] **feature** Factory presets in other languages: per-language preset files beside the lang files.
-- [ ] **feature** A filter field in the New graph picker once there are many presets, and folders inside the preset
-  folder shown as groups.
+- [ ] **feature** A filter field in the New graph picker once there are many presets.
 - [ ] **feature** Attach a note by dropping it on a node, and detach it by dragging it far away.
 - [ ] **feature** Collapse a comment to its title, hiding the nodes inside.
 

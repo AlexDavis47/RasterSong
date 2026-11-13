@@ -1,13 +1,15 @@
 //! Graph presets in the app: the **New graph** picker (an empty graph, the factory presets and the
 //! user's), and the canvas header's **Presets** menu, which loads a preset into the open graph or
 //! saves the open graph as one. Presets live in [`rastersong_engine::library`]; the user's are files
-//! in the folder Settings names.
+//! in the folder Settings names. Folders are categories, shown as submenus in the menu and as
+//! sections that open in the picker.
 
 use std::path::{Path, PathBuf};
 
 use eframe::egui::{self, Ui, vec2};
 use rastersong_engine::{
-    GraphDesc, Preset, ResourceId, factory_presets, save_preset, user_presets,
+    GraphDesc, Preset, PresetEntry, ResourceId, factory_presets, preset_tree, save_preset,
+    user_presets,
 };
 use rastersong_lang::{tr, tr_args};
 
@@ -20,6 +22,9 @@ use crate::widgets::{choice_card, section_label};
 pub(super) struct Presets {
     factory: Vec<Preset>,
     user: Vec<Preset>,
+    /// The factory and user presets by category.
+    factory_tree: Vec<PresetEntry>,
+    user_tree: Vec<PresetEntry>,
     /// Graph files in the folder that couldn't be read.
     unreadable: usize,
 }
@@ -27,8 +32,11 @@ pub(super) struct Presets {
 impl Presets {
     pub(super) fn read(dir: &Path) -> Self {
         let (user, failed) = user_presets(dir);
+        let factory = factory_presets();
         Self {
-            factory: factory_presets(),
+            factory_tree: preset_tree(&factory),
+            user_tree: preset_tree(&user),
+            factory,
             user,
             unreadable: failed.len(),
         }
@@ -158,18 +166,21 @@ impl App {
                         tr("presets.new.empty"),
                         tr("presets.new.empty.about"),
                     );
-                    let factory = picker.presets.factory.len();
+                    let presets = &picker.presets;
+                    let factory = presets.factory.len();
                     section_label(ui, tr("presets.new.factory"));
-                    for (i, preset) in picker.presets.factory.iter().enumerate() {
+                    card_tree(ui, "factory", &presets.factory_tree, &mut |ui, i| {
+                        let preset = &presets.factory[i];
                         card(ui, Some(i), &preset.name, preset.description());
-                    }
+                    });
                     section_label(ui, tr("presets.new.user"));
-                    if picker.presets.user.is_empty() {
+                    if presets.user.is_empty() {
                         ui.weak(tr("presets.new.user_empty"));
                     }
-                    for (i, preset) in picker.presets.user.iter().enumerate() {
+                    card_tree(ui, "user", &presets.user_tree, &mut |ui, i| {
+                        let preset = &presets.user[i];
                         card(ui, Some(factory + i), &preset.name, preset.description());
-                    }
+                    });
                     if picker.presets.unreadable > 0 {
                         ui.weak(tr_args(
                             "presets.new.unreadable",
@@ -224,19 +235,15 @@ impl App {
                 ui.weak(tr("presets.menu.load.help"));
                 ui.set_min_width(200.0);
                 section_label(ui, tr("presets.new.factory"));
-                for preset in &presets.factory {
-                    if load_button(ui, preset) {
-                        load = Some(preset.clone());
-                    }
+                if let Some(preset) = load_menu(ui, &presets.factory, &presets.factory_tree) {
+                    load = Some(preset);
                 }
                 section_label(ui, tr("presets.new.user"));
                 if presets.user.is_empty() {
                     ui.weak(tr("presets.menu.none"));
                 }
-                for preset in &presets.user {
-                    if load_button(ui, preset) {
-                        load = Some(preset.clone());
-                    }
+                if let Some(preset) = load_menu(ui, &presets.user, &presets.user_tree) {
+                    load = Some(preset);
                 }
             });
             if ui.button(tr("presets.menu.save")).clicked() {
@@ -334,6 +341,47 @@ impl App {
             self.save_preset_dialog = None;
         }
     }
+}
+
+/// The cards for `tree` in the New graph picker: `card` draws the preset at an index, and each
+/// category is a section that opens to show what it holds. `salt` keeps the sections' open state
+/// apart between the factory list and the user's.
+fn card_tree(ui: &mut Ui, salt: &str, tree: &[PresetEntry], card: &mut dyn FnMut(&mut Ui, usize)) {
+    for entry in tree {
+        match entry {
+            PresetEntry::Preset(i) => card(ui, *i),
+            PresetEntry::Category { name, entries } => {
+                let salt = format!("{salt}/{name}");
+                egui::CollapsingHeader::new(name)
+                    .id_salt(("preset-category", &salt))
+                    .show(ui, |ui| card_tree(ui, &salt, entries, card));
+            }
+        }
+    }
+}
+
+/// The presets of `tree` in the Load preset menu, each category a submenu. Returns the preset
+/// clicked.
+fn load_menu(ui: &mut Ui, presets: &[Preset], tree: &[PresetEntry]) -> Option<Preset> {
+    let mut load = None;
+    for entry in tree {
+        match entry {
+            PresetEntry::Preset(i) => {
+                if load_button(ui, &presets[*i]) {
+                    load = Some(presets[*i].clone());
+                }
+            }
+            PresetEntry::Category { name, entries } => {
+                ui.menu_button(name, |ui| {
+                    ui.set_min_width(200.0);
+                    if let Some(preset) = load_menu(ui, presets, entries) {
+                        load = Some(preset);
+                    }
+                });
+            }
+        }
+    }
+    load
 }
 
 /// A preset in the Load preset menu, with what it does in its tooltip. Returns whether it was

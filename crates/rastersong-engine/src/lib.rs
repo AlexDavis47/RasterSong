@@ -30,7 +30,9 @@ pub use composition::{
     ComposedResource, ComposedTrack, Composition, InputKind, InputPort, input_ports, port_of,
 };
 pub use error::EngineError;
-pub use library::{Preset, PresetOrigin, factory_presets, save_preset, user_presets};
+pub use library::{
+    Preset, PresetEntry, PresetOrigin, factory_presets, preset_tree, save_preset, user_presets,
+};
 pub use listen::ListenTarget;
 pub use offline::{FrameSink, RenderSettings, RenderedFrame, render};
 pub use project::{

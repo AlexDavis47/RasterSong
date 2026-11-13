@@ -945,11 +945,14 @@ plans in AppData (`<app data>/Library`); the Embedding stage's *linked* library 
 there is never a second place for graphs. A preset is named after its file, so a file copied into the folder is a
 preset with no other step, and the graph's own `description` says what it does. The picker comes from + New, and
 the canvas header has Presets (Load, Save as, Open folder); there is no Presets tab in Resources, and placing graphs
-on the timeline is unchanged.
+on the timeline is unchanged. **Folders are categories**, so grouping presets needs nothing beyond the file
+system, and the factory presets use the same rule as the user's.
 
 **Factory preset text lives in the preset files**, not in the lang files: names, descriptions and annotations are
 content, like example graphs, and are English for now. A test keeps every factory preset compiling without
-warnings and requires each to explain itself with at least one comment or note.
+warnings and requires each to explain itself with at least one comment or note. The factory presets are a list in
+`library.rs` rather than a scan of `presets/`, because the list sets the order they are taught in; a test checks
+the list against the folder, so a file left off it fails the tests instead of quietly not shipping.
 
 ## Open
 

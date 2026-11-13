@@ -5155,6 +5155,49 @@ fn double_clicking_a_preset_makes_it_at_once() {
 }
 
 #[test]
+fn preset_folders_are_sections_that_open_in_the_picker() {
+    let (app, dir) = app_with_presets("category");
+    let mut harness = loaded_with(app);
+    open_picker(&mut harness);
+    assert!(
+        harness.query_by_label("Learn The Basics").is_none(),
+        "the tutorial section starts closed"
+    );
+    harness.get_by_label("tutorial").click();
+    harness.run_steps(3);
+    harness.get_by_label("Learn The Basics").click();
+    harness.run_steps(1);
+    harness.get_by_label("Create").click();
+    harness.run_steps(3);
+    assert_eq!(harness.state().open_graph_name(), "Learn The Basics");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn load_preset_shows_folders_as_submenus() {
+    let (app, dir) = app_with_presets("submenu");
+    let graph = GraphDesc::from_json(rastersong_engine::PASSTHROUGH_GRAPH).unwrap();
+    rastersong_engine::save_preset(&dir.join("Mine").join("Deeper"), "Nested One", &graph).unwrap();
+    let mut harness = loaded_with(app);
+    harness.get_by_label("Presets").click();
+    harness.run_steps(2);
+    harness.get_by_label_contains("Load preset").click();
+    harness.run_steps(2);
+    assert!(harness.query_by_label("Learn Control Signals").is_none());
+    harness.get_by_label_contains("tutorial").click();
+    harness.run_steps(2);
+    harness.get_by_label("Learn Control Signals");
+    harness.get_by_label_contains("Mine").click();
+    harness.run_steps(2);
+    harness.get_by_label_contains("Deeper").click();
+    harness.run_steps(2);
+    harness.get_by_label("Nested One").click();
+    harness.run_steps(3);
+    assert_eq!(harness.state().editor().node_count(), graph.nodes.len());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn load_preset_replaces_the_open_graph_and_undo_brings_it_back() {
     let (app, dir) = app_with_presets("load");
     let mut harness = loaded_with(app);

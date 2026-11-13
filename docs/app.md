@@ -254,7 +254,10 @@ explain the idea it shows, from **Start Here** (the picture made brighter, the s
 **Datamosh**. **Your presets** are graph files in the **preset folder** (Settings → Application → Presets;
 `%APPDATA%\RasterSong\Library` on Windows by default, with **Open folder**, **Change…** and a reset button). A
 preset is named after its file, and the graph's description says what it does. Any graph file copied into the
-folder becomes a preset; files that can't be read are counted under the list.
+folder becomes a preset; files that can't be read are counted under the list. **Folders are categories**, for the
+factory presets and yours alike, and can nest: `tutorial/Learn The Basics.json` is *Learn The Basics* in
+*tutorial*. A category is a submenu in Load preset and a section that opens in the New graph picker, named after
+its folder.
 
 - **New graph** (the Graphs tab's **+ New**, or **+ New graph** on an empty canvas) opens a picker: **Empty graph**
   (the video wired to Video Output, the sound to Audio Output), then the factory presets and yours, each a card
