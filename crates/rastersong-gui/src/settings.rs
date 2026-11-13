@@ -47,6 +47,9 @@ pub struct Settings {
     pub snap: bool,
     /// One click on a graph in the Resources panel opens it, instead of a double-click.
     pub open_graphs_on_click: bool,
+    /// The folder the user's presets are kept in, when it isn't the default
+    /// ([`default_library_dir`]).
+    pub library_dir: Option<std::path::PathBuf>,
 }
 
 impl Default for Settings {
@@ -68,11 +71,33 @@ impl Default for Settings {
             render_ahead_secs: Self::DEFAULT_RENDER_AHEAD_SECS,
             snap: true,
             open_graphs_on_click: false,
+            library_dir: None,
         }
     }
 }
 
+/// Where the user's presets are kept unless Settings says otherwise: a `Library` folder in the
+/// app's data folder (`%APPDATA%\RasterSong\Library` on Windows).
+pub fn default_library_dir() -> std::path::PathBuf {
+    let data = eframe::storage_dir(APP_ID);
+    // On Windows eframe keeps its own files in a `data` folder inside the app's folder.
+    let app = data.map(|d| match d.file_name() {
+        Some(name) if name == "data" => d.parent().map_or(d.clone(), std::path::Path::to_path_buf),
+        _ => d,
+    });
+    app.unwrap_or_else(|| std::path::PathBuf::from(APP_ID))
+        .join("Library")
+}
+
+/// The name the app's data folder and window go by.
+pub const APP_ID: &str = "RasterSong";
+
 impl Settings {
+    /// The folder the user's presets are kept in.
+    pub fn library_dir(&self) -> std::path::PathBuf {
+        self.library_dir.clone().unwrap_or_else(default_library_dir)
+    }
+
     /// The key settings are stored under in eframe's storage.
     pub const STORAGE_KEY: &str = "rastersong-settings";
 

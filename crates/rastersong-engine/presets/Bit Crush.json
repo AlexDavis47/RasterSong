@@ -1,0 +1,113 @@
+{
+  "version": 0,
+  "description": "Posterizes the picture with a Bit Crush whose depth follows the music: louder means fewer levels.",
+  "nodes": [
+    {
+      "id": "c_crush",
+      "type": "comment",
+      "label": "Fewer levels",
+      "position": [
+        -30,
+        -30
+      ],
+      "size": [
+        540,
+        330
+      ],
+      "description": "Rounded to fewer steps."
+    },
+    {
+      "id": "video",
+      "type": "video_input",
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "crush",
+      "type": "bitcrush",
+      "position": [
+        190,
+        0
+      ],
+      "params": {
+        "bits": 6.0
+      },
+      "modulation": {
+        "bits": {
+          "amount": -20.0
+        }
+      },
+      "description": "Flat bands of colour; about 2 bits on the loudest parts."
+    },
+    {
+      "id": "out",
+      "type": "output",
+      "position": [
+        380,
+        0
+      ]
+    },
+    {
+      "id": "audio",
+      "type": "audio_input",
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "id": "level",
+      "type": "envelope",
+      "position": [
+        190,
+        200
+      ],
+      "label": "Loudness",
+      "params": {
+        "release": 80.0
+      }
+    },
+    {
+      "id": "sound",
+      "type": "audio_output",
+      "position": [
+        380,
+        200
+      ]
+    },
+    {
+      "id": "n_neg",
+      "type": "note",
+      "description": "The modulation amount is negative: a louder signal turns Bits down.",
+      "position": [
+        190,
+        -190
+      ],
+      "attached": "crush"
+    }
+  ],
+  "connections": [
+    {
+      "from": "video",
+      "to": "crush"
+    },
+    {
+      "from": "audio",
+      "to": "level"
+    },
+    {
+      "from": "level",
+      "to": "crush.@bits"
+    },
+    {
+      "from": "crush",
+      "to": "out"
+    },
+    {
+      "from": "audio",
+      "to": "sound"
+    }
+  ]
+}

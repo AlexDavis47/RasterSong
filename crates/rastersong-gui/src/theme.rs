@@ -1,6 +1,6 @@
-//! Every colour the app paints itself, for the dark and the light theme. Widgets use egui's own
-//! visuals (tuned in [`apply_style`]); the canvas, timeline and preview take their colours from
-//! here, so nothing else holds a colour literal.
+//! Every color the app paints itself, for the dark and the light theme. Widgets use egui's own
+//! visuals (tuned in [`apply_style`]); the canvas, timeline and preview take their colors from
+//! here, so nothing else holds a color literal.
 
 use eframe::egui::{self, Color32, CornerRadius};
 use rastersong_engine::{Category, Kind, LabelColor, Part, Tag, TagRule, TrackKind};
@@ -36,7 +36,7 @@ impl ThemeChoice {
     }
 }
 
-/// The name of an item label colour, as menus show it.
+/// The name of an item label color, as menus show it.
 pub fn label_color_name(color: LabelColor) -> &'static str {
     match color {
         LabelColor::Red => tr("label_color.red"),
@@ -53,7 +53,7 @@ pub fn label_color_name(color: LabelColor) -> &'static str {
 /// How wires are drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum WireStyle {
-    /// One flat colour.
+    /// One flat color.
     #[default]
     Solid,
     /// The signal's kind in the middle, outlined in the part it carries (e.g. red).
@@ -77,7 +77,7 @@ impl WireStyle {
     }
 }
 
-/// Wire colours: a base colour per kind of signal, and one per part of a signal (channel or
+/// Wire colors: a base color per kind of signal, and one per part of a signal (channel or
 /// band). See [`Tag`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct PortColors {
@@ -131,7 +131,7 @@ pub struct ItemColors {
     pub text: Color32,
 }
 
-/// Colours painted by the app.
+/// Colors painted by the app.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Theme {
     pub surfaces: Surfaces,
@@ -159,12 +159,16 @@ pub struct Theme {
     pub warning_note: Color32,
     pub warning_note_border: Color32,
     pub warning_note_text: Color32,
+    /// A sticky note on the canvas: its paper, edge and text.
+    pub note_fill: Color32,
+    pub note_border: Color32,
+    pub note_text: Color32,
     /// Inputs that must be connected.
     pub pin_required: Color32,
     pub pin_optional: Color32,
     pub pin_outline: Color32,
-    /// One colour per node category, in `Category::ALL` order, so a new category is a compile
-    /// error here until it gets a colour.
+    /// One color per node category, in `Category::ALL` order, so a new category is a compile
+    /// error here until it gets a color.
     pub categories: [Color32; Category::ALL.len()],
     pub unknown_category: Color32,
     pub error_bar: Color32,
@@ -183,11 +187,11 @@ pub struct Theme {
     pub video_item: ItemColors,
     pub audio_item: ItemColors,
     pub graph_item: ItemColors,
-    /// The item label colours, in the order of [`LabelColor::ALL`].
+    /// The item label colors, in the order of [`LabelColor::ALL`].
     pub item_labels: [ItemColors; 8],
     /// Graph tracks' kind: the bar in their headers, a graph item's outline.
     pub graph_block: Color32,
-    /// Text in the graph kind's colour: the GRAPHS section label.
+    /// Text in the graph kind's color: the GRAPHS section label.
     pub graph_text: Color32,
     pub cached: Color32,
     /// The drag bubble that follows the pointer during a drag, and its text.
@@ -231,6 +235,9 @@ impl Theme {
         warning_note: Color32::from_rgb(0x26, 0x23, 0x1b),
         warning_note_border: Color32::from_rgb(0x6e, 0x54, 0x20),
         warning_note_text: Color32::from_rgb(0xf4, 0xe3, 0xbd),
+        note_fill: Color32::from_rgb(0x3a, 0x35, 0x22),
+        note_border: Color32::from_rgb(0x7a, 0x6a, 0x30),
+        note_text: Color32::from_rgb(0xf6, 0xec, 0xc8),
         pin_required: Color32::from_gray(225),
         pin_optional: Color32::from_gray(120),
         pin_outline: Color32::from_gray(25),
@@ -241,6 +248,7 @@ impl Theme {
             Color32::from_rgb(0xd6, 0x5c, 0x8a),
             Color32::from_rgb(0xe0, 0x9a, 0x3c),
             Color32::from_rgb(0x5c, 0xb8, 0x5c),
+            Color32::from_rgb(0x8c, 0x98, 0xb0),
         ],
         unknown_category: Color32::from_gray(120),
         error_bar: Color32::from_rgb(0x5a, 0x1e, 0x1e),
@@ -367,6 +375,9 @@ impl Theme {
         warning_note: Color32::from_rgb(0xfd, 0xf5, 0xe1),
         warning_note_border: Color32::from_rgb(0xe3, 0xc0, 0x74),
         warning_note_text: Color32::from_rgb(0x5a, 0x42, 0x10),
+        note_fill: Color32::from_rgb(0xff, 0xf3, 0xb8),
+        note_border: Color32::from_rgb(0xe0, 0xc8, 0x5a),
+        note_text: Color32::from_rgb(0x4a, 0x3c, 0x0c),
         pin_required: Color32::from_rgb(0x3d, 0x40, 0x48),
         pin_optional: Color32::from_rgb(0xa9, 0xad, 0xb6),
         pin_outline: Color32::from_rgb(0xff, 0xff, 0xff),
@@ -377,6 +388,7 @@ impl Theme {
             Color32::from_rgb(0xc0, 0x40, 0x6e),
             Color32::from_rgb(0xcc, 0x7a, 0x14),
             Color32::from_rgb(0x38, 0x96, 0x38),
+            Color32::from_rgb(0x6a, 0x76, 0x8e),
         ],
         unknown_category: Color32::from_rgb(0x8a, 0x8e, 0x98),
         error_bar: Color32::from_rgb(0xf6, 0xd4, 0xd4),
@@ -479,12 +491,12 @@ impl Theme {
         }
     }
 
-    /// How label colour `label` is drawn.
+    /// How label color `label` is drawn.
     pub fn label_colors(&self, label: LabelColor) -> &ItemColors {
         &self.item_labels[label as usize]
     }
 
-    /// How a resource of `kind` and its items are drawn: in its label colour when it has one.
+    /// How a resource of `kind` and its items are drawn: in its label color when it has one.
     pub fn item_colors(&self, kind: TrackKind, label: Option<LabelColor>) -> &ItemColors {
         match (label, kind) {
             (Some(label), _) => self.label_colors(label),
@@ -494,7 +506,7 @@ impl Theme {
         }
     }
 
-    /// The base colour of a kind of signal, or `None` when it isn't known.
+    /// The base color of a kind of signal, or `None` when it isn't known.
     pub fn kind_color(&self, kind: Kind) -> Option<Color32> {
         match kind {
             Kind::Unknown => None,
@@ -503,7 +515,7 @@ impl Theme {
         }
     }
 
-    /// The colour of a part of a signal, or `None` for a whole signal or an unnamed channel.
+    /// The color of a part of a signal, or `None` for a whole signal or an unnamed channel.
     pub fn part_color(&self, part: Part) -> Option<Color32> {
         let p = &self.ports;
         match part {
@@ -519,12 +531,12 @@ impl Theme {
         }
     }
 
-    /// A compiled signal's wire colours: `(base, part)`.
+    /// A compiled signal's wire colors: `(base, part)`.
     pub fn tag_colors(&self, tag: Tag) -> (Option<Color32>, Option<Color32>) {
         (self.kind_color(tag.kind), self.part_color(tag.part))
     }
 
-    /// What an output's tag rule says about its wire's colours before the graph is compiled:
+    /// What an output's tag rule says about its wire's colors before the graph is compiled:
     /// `(base, part)`, each `None` where the rule leaves it to the main input. A part of
     /// `Some(None)` means "whole signal, no part".
     pub fn rule_colors(&self, rule: TagRule) -> (Option<Color32>, Option<Option<Color32>>) {

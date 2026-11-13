@@ -5,12 +5,60 @@
 //! cancels. While the field isn't being edited it always shows the current name, so a rename
 //! made elsewhere (the graph or the timeline) appears here at once.
 //!
-//! Names shown as plain text (resource cards, track headers) are renamed in place: a
-//! double-click on the name or F2 calls [`start_rename`], and [`rename_field`] then shows the
-//! field over the name, focused with the text selected, until it is committed or cancelled.
+//! Names shown as plain text (resource cards, track headers, the inspector's track and node
+//! names) are renamed in place: a double-click on the name or F2 calls [`start_rename`], and
+//! [`rename_field`] then shows the field over the name, focused with the text selected, until it
+//! is committed or cancelled. [`name_label`] is that name as a widget of its own, for every
+//! place but the resource card (which draws its name inside its drag source).
 
 use eframe::egui::text::{CCursor, CCursorRange};
-use eframe::egui::{Context, Id, Key, Rect, Response, TextEdit, Ui, UiBuilder};
+use eframe::egui::{
+    self, Context, FontId, Id, Key, Rect, Response, Sense, Stroke, TextEdit, Ui, UiBuilder, vec2,
+};
+
+use crate::theme::Theme;
+
+/// A name in plain text `font`, as wide as the space left, outlined while hovered, that a
+/// double-click (or [`start_rename`] with `id`, from F2 or a menu's Rename) turns into a field
+/// in place, outlined in the accent. Its response takes the caller's hover text and menu.
+pub fn name_label(ui: &mut Ui, id: Id, name: &str, font: FontId) -> NameEdit {
+    let theme = Theme::of(ui.ctx());
+    let color = ui.visuals().text_color();
+    let width = ui.available_width();
+    let mut job = egui::text::LayoutJob::simple_singleline(name.to_owned(), font.clone(), color);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(width);
+    let galley = ui.painter().layout_job(job);
+    let (rect, response) = ui.allocate_exact_size(vec2(width, galley.size().y), Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, name));
+    if response.double_clicked() {
+        start_rename(ui.ctx(), id);
+    }
+    let edit = rename_field(ui, id, rect, name, |e| {
+        e.frame(egui::Frame::NONE)
+            .margin(egui::Margin::ZERO)
+            .font(font)
+    });
+    let outline = match &edit {
+        Some(_) => Some(theme.accent),
+        None if response.hovered() => Some(theme.surfaces.border),
+        None => None,
+    };
+    if edit.is_none() {
+        ui.painter().galley(rect.left_top(), galley, color);
+    }
+    if let Some(color) = outline {
+        ui.painter().rect_stroke(
+            rect.expand2(vec2(3.0, 1.0)),
+            3,
+            Stroke::new(1.0, color),
+            egui::StrokeKind::Outside,
+        );
+    }
+    NameEdit {
+        response,
+        committed: edit.and_then(|e| e.committed),
+    }
+}
 
 /// What a [`name_edit`] did this frame.
 #[derive(Debug)]

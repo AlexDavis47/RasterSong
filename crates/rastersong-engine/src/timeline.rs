@@ -162,7 +162,7 @@ pub struct Item {
     pub pre_roll: bool,
 }
 
-/// A label colour for a resource, picked from a fixed set so every theme can draw it legibly.
+/// A label color for a resource, picked from a fixed set so every theme can draw it legibly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LabelColor {
@@ -177,7 +177,7 @@ pub enum LabelColor {
 }
 
 impl LabelColor {
-    /// Every colour, in the order menus list them.
+    /// Every color, in the order menus list them.
     pub const ALL: [Self; 8] = [
         Self::Red,
         Self::Orange,

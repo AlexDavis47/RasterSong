@@ -10,6 +10,7 @@ mod compose;
 mod composition;
 mod error;
 pub mod export;
+pub mod library;
 mod listen;
 mod offline;
 pub mod playback;
@@ -29,6 +30,9 @@ pub use composition::{
     ComposedResource, ComposedTrack, Composition, InputKind, InputPort, input_ports, port_of,
 };
 pub use error::EngineError;
+pub use library::{
+    Preset, PresetEntry, PresetOrigin, factory_presets, preset_tree, save_preset, user_presets,
+};
 pub use listen::ListenTarget;
 pub use offline::{FrameSink, RenderSettings, RenderedFrame, render};
 pub use project::{
@@ -40,9 +44,9 @@ pub use project::{
 pub use rastersong_graph::dsp::Fft;
 pub use rastersong_graph::nodes::support::UNBOUNDED_WARMUP;
 pub use rastersong_graph::nodes::{
-    AUDIO_BUS_OUTPUT, AUDIO_INPUT, AUDIO_OUTPUT, BELOW, BUS_PARAM, CHANNEL_PORTS, COMBINE,
+    AUDIO_BUS_OUTPUT, AUDIO_INPUT, AUDIO_OUTPUT, BELOW, BUS_PARAM, CHANNEL_PORTS, COMBINE, COMMENT,
     DEFAULT_AUDIO, DEFAULT_BUS, DEFAULT_VIDEO, MAX_CHANNELS, NAME_PARAM, NAMED_INPUT, NAMED_OUTPUT,
-    OUTPUT, SOURCE_PARAM, SPLIT, TRACK_PARAM, VIDEO_INPUT,
+    NOTE, OUTPUT, SOURCE_PARAM, SPLIT, TRACK_PARAM, VIDEO_INPUT,
 };
 pub use rastersong_graph::{
     Category, ChannelMap, Channels, CompileOptions, Connection, Diagnostic, FORMAT_VERSION,
@@ -50,7 +54,7 @@ pub use rastersong_graph::{
     MODULATION_AMOUNT_LIMITS, Meter, MeterKind, ModMode, Modulation, NodeCost, NodeDesc,
     NodeDiagnostic, NodeMeters, NodeStats, NodeType, OutputLevel, OutputSpec, ParamKind,
     ParamLevel, ParamSpec, ParamValue, Part, Range, Reading, Registry, Severity, ShownWhen, Tag,
-    TagRule, Tempo, Timing, Unit, audio_output_bus, range_span, render_form,
+    TagRule, Tempo, Timing, Unit, audio_output_bus, range_span, render_form, without_annotations,
 };
 pub use rastersong_media::{
     AudioCache, AudioClip, AudioOptions, AvailableFormat, BackendInfo, ExportFormat, FakeBackend,

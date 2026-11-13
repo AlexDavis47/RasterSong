@@ -1,0 +1,91 @@
+{
+  "version": 0,
+  "description": "Moving things leave fading copies behind them: a Delay of a few frames with feedback, mixed with the live picture.",
+  "nodes": [
+    {
+      "id": "c_echo",
+      "type": "comment",
+      "label": "An echo for pictures",
+      "position": [
+        -30,
+        -30
+      ],
+      "size": [
+        540,
+        230
+      ],
+      "description": "Plays what came earlier."
+    },
+    {
+      "id": "video",
+      "type": "video_input",
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "echo",
+      "type": "delay",
+      "position": [
+        190,
+        0
+      ],
+      "params": {
+        "time": 3.0,
+        "time.unit": "frame",
+        "feedback": 0.6,
+        "mix": 0.5
+      },
+      "description": "Feedback feeds each echo back in, so the copies keep fading."
+    },
+    {
+      "id": "out",
+      "type": "output",
+      "position": [
+        380,
+        0
+      ]
+    },
+    {
+      "id": "audio",
+      "type": "audio_input",
+      "position": [
+        0,
+        240
+      ]
+    },
+    {
+      "id": "sound",
+      "type": "audio_output",
+      "position": [
+        380,
+        240
+      ]
+    },
+    {
+      "id": "n_rows",
+      "type": "note",
+      "description": "Switch Time's unit to rows and use a tiny Time to bend the picture sideways instead.",
+      "position": [
+        190,
+        -190
+      ],
+      "attached": "echo"
+    }
+  ],
+  "connections": [
+    {
+      "from": "video",
+      "to": "echo"
+    },
+    {
+      "from": "echo",
+      "to": "out"
+    },
+    {
+      "from": "audio",
+      "to": "sound"
+    }
+  ]
+}

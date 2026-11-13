@@ -78,6 +78,12 @@ pub const COMBINE: &str = "combine";
 pub const MAX_CHANNELS: usize = 8;
 /// The port names of Split's outputs and Combine's inputs, one per channel.
 pub const CHANNEL_PORTS: [&str; MAX_CHANNELS] = ["c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8"];
+/// The node type name of a comment: a titled box behind a group of nodes, which carries them
+/// when moved. An annotation, taken out before compiling.
+pub const COMMENT: &str = "comment";
+/// The node type name of a note: a sticky note, optionally attached to a node. An annotation,
+/// taken out before compiling.
+pub const NOTE: &str = "note";
 
 /// Declares every built-in node: `category { file: [Types], … }`, one line per node file under
 /// `nodes/<category>/`. Generates the modules, the re-exports and [`Registry::default`].
@@ -168,6 +174,9 @@ nodes! {
         phaser: [Phaser],
         frequency_shifter: [FrequencyShifter],
     },
+    annotation {
+        notes: [Comment, StickyNote],
+    },
 }
 
 /// Groups node types in menus.
@@ -179,17 +188,20 @@ pub enum Category {
     Convert,
     Effect,
     Output,
+    /// Comments and notes: they explain the graph and take no part in rendering.
+    Annotation,
 }
 
 impl Category {
     /// Every category, in menu order. `ALL[c.index()] == c`.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Input,
         Self::Generator,
         Self::Structure,
         Self::Convert,
         Self::Effect,
         Self::Output,
+        Self::Annotation,
     ];
 
     pub fn index(self) -> usize {
@@ -204,6 +216,7 @@ impl Category {
             Self::Convert => tr("category.convert"),
             Self::Effect => tr("category.effect"),
             Self::Output => tr("category.output"),
+            Self::Annotation => tr("category.annotation"),
         }
     }
 
@@ -211,6 +224,12 @@ impl Category {
     /// every graph has one of. Input ports are added like any node.
     pub const fn user_addable(self) -> bool {
         !matches!(self, Self::Output)
+    }
+
+    /// Whether nodes of this category only annotate the graph: they have no ports, render
+    /// nothing and are taken out before compiling.
+    pub const fn is_annotation(self) -> bool {
+        matches!(self, Self::Annotation)
     }
 }
 
@@ -569,7 +588,10 @@ impl Registry {
             spec.params.len() <= MAX_PARAMS,
             "`{kind}` has more than {MAX_PARAMS} parameters"
         );
-        assert!(!spec.outputs.is_empty(), "`{kind}` has no outputs");
+        assert!(
+            !spec.outputs.is_empty() || spec.category.is_annotation(),
+            "`{kind}` has no outputs"
+        );
         let defaults = Params::new(spec.params, &EMPTY).expect("no values");
         constructor(&defaults)
             .unwrap_or_else(|e| panic!("`{kind}` fails with default parameters: {e}"));

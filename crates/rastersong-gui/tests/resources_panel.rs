@@ -521,7 +521,7 @@ fn media_cards_have_no_duplicate_and_graph_cards_no_relocate() {
 }
 
 #[test]
-fn graph_cards_take_a_colour_from_the_menu() {
+fn graph_cards_take_a_color_from_the_menu() {
     let mut harness = harness(false);
     harness.run_steps(2);
     graphs_tab(&mut harness);

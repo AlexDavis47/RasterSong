@@ -16,6 +16,10 @@ pub const FORMAT_VERSION: u32 = 0;
 #[serde(deny_unknown_fields)]
 pub struct GraphDesc {
     pub version: u32,
+    /// What the graph does, in a sentence or two: shown when picking it as a preset. Has no
+    /// effect on rendering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub nodes: Vec<NodeDesc>,
     #[serde(default)]
     pub connections: Vec<Connection>,
@@ -52,6 +56,18 @@ pub struct NodeDesc {
     /// Where the node sits in the editor. Has no effect on rendering.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position: Option<[f32; 2]>,
+    /// The user's note about what the node does, shown under it in the editor (inside it for a
+    /// comment or a note). Has no effect on rendering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// The size of a comment or note's box in the editor, when the user resized it. Has no
+    /// effect on rendering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<[f32; 2]>,
+    /// The id of the node a note is attached to: the note moves with it and points at it. Has no
+    /// effect on rendering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attached: Option<String>,
     /// How signals connected to parameters (`"node.@param"`) move them, by parameter name.
     /// A connected parameter with no entry uses its default amount, unipolar.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -85,6 +101,9 @@ impl NodeDesc {
             bypass: false,
             label: None,
             position: None,
+            description: None,
+            size: None,
+            attached: None,
             modulation: BTreeMap::new(),
             integer: Vec::new(),
             ranges: BTreeMap::new(),

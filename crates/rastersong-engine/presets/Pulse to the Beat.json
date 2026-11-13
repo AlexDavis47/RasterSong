@@ -1,0 +1,120 @@
+{
+  "version": 0,
+  "description": "Flashes the picture on every beat of the project's tempo, with a Beat generator driving a Gain.",
+  "nodes": [
+    {
+      "id": "c_beat",
+      "type": "comment",
+      "label": "The beat drives the gain",
+      "position": [
+        -30,
+        -30
+      ],
+      "size": [
+        570,
+        340
+      ],
+      "description": "Beat jumps to 1 on each beat and falls back to 0. It is wired to Gain's parameter pin, so each beat turns the gain up for a moment."
+    },
+    {
+      "id": "beat",
+      "type": "beat",
+      "position": [
+        0,
+        0
+      ],
+      "params": {
+        "shape": "decay"
+      },
+      "description": "1/4 is one beat. Try 1/8 for twice as fast."
+    },
+    {
+      "id": "video",
+      "type": "video_input",
+      "position": [
+        0,
+        150
+      ]
+    },
+    {
+      "id": "flash",
+      "type": "gain",
+      "position": [
+        190,
+        120
+      ],
+      "label": "Flash",
+      "params": {
+        "gain": 0.0
+      },
+      "modulation": {
+        "gain": {
+          "amount": 15.0
+        }
+      },
+      "description": "Up to about 11 dB brighter on each beat."
+    },
+    {
+      "id": "out",
+      "type": "output",
+      "position": [
+        380,
+        120
+      ]
+    },
+    {
+      "id": "audio",
+      "type": "audio_input",
+      "position": [
+        0,
+        270
+      ]
+    },
+    {
+      "id": "sound",
+      "type": "audio_output",
+      "position": [
+        380,
+        270
+      ]
+    },
+    {
+      "id": "n_tempo",
+      "type": "note",
+      "description": "Set the tempo in the timeline's title row; turn on the Metronome to check it by ear.",
+      "position": [
+        -280,
+        0
+      ],
+      "attached": "beat"
+    },
+    {
+      "id": "n_amount",
+      "type": "note",
+      "description": "Click Flash: drag the knob under its Gain to change how far each beat pushes it.",
+      "position": [
+        330,
+        -10
+      ],
+      "attached": "flash"
+    }
+  ],
+  "connections": [
+    {
+      "from": "video",
+      "to": "flash"
+    },
+    {
+      "from": "beat",
+      "to": "flash.@gain"
+    },
+    {
+      "from": "flash",
+      "to": "out"
+    },
+    {
+      "from": "audio",
+      "to": "sound"
+    }
+  ]
+}

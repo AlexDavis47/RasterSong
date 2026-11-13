@@ -1,0 +1,121 @@
+{
+  "version": 0,
+  "description": "The smallest useful graph: the picture made brighter, the sound passed through. Read the notes, then change Brightness.",
+  "nodes": [
+    {
+      "id": "c_picture",
+      "type": "comment",
+      "label": "Picture",
+      "position": [
+        -30,
+        -30
+      ],
+      "size": [
+        540,
+        175
+      ],
+      "description": "The video flows left to right, along the wires."
+    },
+    {
+      "id": "video",
+      "type": "video_input",
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "brightness",
+      "type": "offset",
+      "position": [
+        190,
+        0
+      ],
+      "label": "Brightness",
+      "params": {
+        "amount": 0.1
+      },
+      "description": "Adds to every pixel: video runs from 0 (black) to 1 (white)."
+    },
+    {
+      "id": "out",
+      "type": "output",
+      "position": [
+        380,
+        0
+      ]
+    },
+    {
+      "id": "c_sound",
+      "type": "comment",
+      "label": "Sound",
+      "position": [
+        -30,
+        200
+      ],
+      "size": [
+        540,
+        120
+      ],
+      "description": "Passed through untouched."
+    },
+    {
+      "id": "audio",
+      "type": "audio_input",
+      "position": [
+        0,
+        230
+      ]
+    },
+    {
+      "id": "sound",
+      "type": "audio_output",
+      "position": [
+        380,
+        230
+      ]
+    },
+    {
+      "id": "n_select",
+      "type": "note",
+      "description": "Click Brightness and drag its Amount in the inspector. The preview follows.",
+      "position": [
+        310,
+        -180
+      ],
+      "attached": "brightness"
+    },
+    {
+      "id": "n_add",
+      "type": "note",
+      "description": "Right-click empty space (or press Tab) to add a node. Drag from an output on a node's right to an input on another's left to connect them.",
+      "position": [
+        560,
+        -30
+      ]
+    },
+    {
+      "id": "n_probe",
+      "type": "note",
+      "description": "Rest the pointer on a wire to see what it carries. Hold Shift on it to hear it.",
+      "position": [
+        560,
+        130
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "from": "video",
+      "to": "brightness"
+    },
+    {
+      "from": "brightness",
+      "to": "out"
+    },
+    {
+      "from": "audio",
+      "to": "sound"
+    }
+  ]
+}

@@ -1,0 +1,154 @@
+{
+  "version": 0,
+  "description": "The picture brightens with the bass: the sound is split into bands, the low band's loudness follows the kick, and that moves Brightness.",
+  "nodes": [
+    {
+      "id": "c_listen",
+      "type": "comment",
+      "label": "Listen to the bass",
+      "position": [
+        -30,
+        -30
+      ],
+      "size": [
+        420,
+        300
+      ],
+      "description": "The lows, then their level."
+    },
+    {
+      "id": "audio",
+      "type": "audio_input",
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "bands",
+      "type": "three_band",
+      "position": [
+        190,
+        0
+      ],
+      "params": {
+        "low_hz": 150.0,
+        "high_hz": 3000.0
+      }
+    },
+    {
+      "id": "level",
+      "type": "envelope",
+      "position": [
+        190,
+        130
+      ],
+      "label": "Bass level",
+      "params": {
+        "attack": 5.0,
+        "release": 120.0
+      },
+      "description": "A longer Release fades the glow more slowly."
+    },
+    {
+      "id": "c_picture",
+      "type": "comment",
+      "label": "Light the picture",
+      "position": [
+        410,
+        -30
+      ],
+      "size": [
+        400,
+        300
+      ],
+      "description": "The bass level moves Brightness."
+    },
+    {
+      "id": "video",
+      "type": "video_input",
+      "position": [
+        440,
+        130
+      ]
+    },
+    {
+      "id": "brightness",
+      "type": "offset",
+      "position": [
+        630,
+        0
+      ],
+      "label": "Brightness",
+      "params": {
+        "amount": 0.0
+      },
+      "modulation": {
+        "amount": {
+          "amount": 30.0
+        }
+      }
+    },
+    {
+      "id": "out",
+      "type": "output",
+      "position": [
+        630,
+        130
+      ]
+    },
+    {
+      "id": "sound",
+      "type": "audio_output",
+      "position": [
+        0,
+        310
+      ]
+    },
+    {
+      "id": "n_low",
+      "type": "note",
+      "description": "Lower Low / mid to follow only the kick drum.",
+      "position": [
+        190,
+        -200
+      ],
+      "attached": "bands"
+    },
+    {
+      "id": "n_listen",
+      "type": "note",
+      "description": "Hold Shift on the wire out of Bass level to hear it.",
+      "position": [
+        190,
+        310
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "from": "audio",
+      "to": "bands"
+    },
+    {
+      "from": "bands.low",
+      "to": "level"
+    },
+    {
+      "from": "video",
+      "to": "brightness"
+    },
+    {
+      "from": "level",
+      "to": "brightness.@amount"
+    },
+    {
+      "from": "brightness",
+      "to": "out"
+    },
+    {
+      "from": "audio",
+      "to": "sound"
+    }
+  ]
+}

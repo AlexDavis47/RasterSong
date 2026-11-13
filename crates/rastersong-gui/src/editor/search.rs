@@ -240,7 +240,7 @@ impl GraphEditor {
         }
     }
 
-    /// A pin as the palette names it ("Three-Band Split.high"), with its wire's colour.
+    /// A pin as the palette names it ("Three-Band Split.high"), with its wire's color.
     fn pin_name(
         &self,
         geometry: &[Geometry],
@@ -328,7 +328,7 @@ impl GraphEditor {
                     let bypassable = selection
                         .iter()
                         .filter_map(|&k| self.node(k))
-                        .filter(|n| n.kind != ports::OUTPUT)
+                        .filter(|n| n.kind != ports::OUTPUT && !self.is_annotation(n.key))
                         .collect::<Vec<_>>();
                     if !bypassable.is_empty() {
                         let mut bypassed = bypassable.iter().all(|n| n.bypass);
@@ -343,6 +343,20 @@ impl GraphEditor {
                             close = true;
                         }
                     }
+                    ui.separator();
+                    // A note for one node, of any kind: comments and notes take notes too.
+                    if selection.len() == 1 && ui.button(tr("editor.menu.add_note")).clicked() {
+                        self.add_note_to(menu.node);
+                        close = true;
+                    }
+                    if ui
+                        .button(words("editor.menu.comment", "editor.menu.comment_many"))
+                        .clicked()
+                    {
+                        self.add_comment_around(&selection);
+                        close = true;
+                    }
+                    ui.separator();
                     if ui
                         .button(words("editor.menu.delete", "editor.menu.delete_many"))
                         .clicked()

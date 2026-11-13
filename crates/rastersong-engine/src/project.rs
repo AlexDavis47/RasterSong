@@ -993,7 +993,7 @@ mod inspect_rate_tests {
         assert_eq!(project.graph(new).unwrap().nodes.len(), 4);
         assert_eq!(project.graph(Project::FIRST_GRAPH), Some(&starter));
 
-        // A copy is a graph of its own with the original's colour; a stream of a file can't be
+        // A copy is a graph of its own with the original's color; a stream of a file can't be
         // copied.
         project.set_resource_color(new, Some(LabelColor::Pink));
         let copy = project.duplicate_resource(new).unwrap();
@@ -1041,7 +1041,7 @@ mod inspect_rate_tests {
     }
 
     #[test]
-    fn graph_resources_take_label_colours() {
+    fn graph_resources_take_label_colors() {
         let mut project =
             Project::new(GraphDesc::from_json(r#"{ "version": 0, "nodes": [] }"#).unwrap());
         assert!(project.set_resource_color(Project::FIRST_GRAPH, Some(LabelColor::Green)));

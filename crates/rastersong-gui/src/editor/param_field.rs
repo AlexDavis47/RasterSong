@@ -73,7 +73,7 @@ fn round_to_power_of_ten(value: f64, exponent: i32) -> f64 {
 pub struct Modulated<'a> {
     pub spec: &'a ParamSpec,
     pub modulation: &'a mut Modulation,
-    /// The connected wire's colour.
+    /// The connected wire's color.
     pub color: Color32,
     /// The value at the playhead, from the last rendered frame.
     pub live: Option<f64>,
@@ -553,7 +553,7 @@ pub fn amount_effect(spec: &ParamSpec, modulation: Modulation, range: (f64, f64)
     format!("{sign}{value}{space}{unit}")
 }
 
-/// The amount knob: an arc showing the amount in the wire's colour. Drag to change it,
+/// The amount knob: an arc showing the amount in the wire's color. Drag to change it,
 /// double-click or Alt+click to reset it. Returns where it went.
 fn amount_knob(ui: &mut Ui, m: &mut Modulated, range: (f64, f64)) -> Rect {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(KNOB_SIZE), Sense::click_and_drag());
@@ -653,7 +653,7 @@ fn paint_rail(ui: &Ui, rail: Rect, value_x: Option<f32>) {
     }
 }
 
-/// The span a modulating signal covers: a band over the rail in the wire's colour.
+/// The span a modulating signal covers: a band over the rail in the wire's color.
 fn paint_range(ui: &Ui, rail: Rect, lo: f32, hi: f32, color: Color32) {
     let band = Rect::from_min_max(pos2(lo, rail.top() - 1.0), pos2(hi, rail.bottom() + 1.0));
     ui.painter().rect(
@@ -683,7 +683,7 @@ fn paint_handle(ui: &Ui, response: &egui::Response, at: egui::Pos2) {
     );
 }
 
-/// The live value: a see-through handle in the wire's colour, over the real one.
+/// The live value: a see-through handle in the wire's color, over the real one.
 fn paint_ghost(ui: &Ui, at: egui::Pos2, color: Color32) {
     ui.painter().circle(
         at,

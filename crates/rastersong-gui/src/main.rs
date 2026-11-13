@@ -32,7 +32,7 @@ fn main() -> anyhow::Result<()> {
         ..Default::default()
     };
     eframe::run_native(
-        "RasterSong",
+        rastersong_gui::settings::APP_ID,
         options,
         Box::new(move |cc| {
             let mut app = App::with_starter_project(backend, Some(backend_info), AudioOut::start());

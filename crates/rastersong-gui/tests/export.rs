@@ -213,7 +213,8 @@ fn an_odd_size_says_which_side_and_offers_the_nearest_even_size() {
     }));
     harness.state_mut().open_export();
     harness.run_steps(2);
-    harness.get_by_label("H.264 needs an even width; 63 is odd.");
+    // The default format is H.264 where the FFmpeg build has an encoder for it, ProRes where not.
+    harness.get_by_label_contains("needs an even width; 63 is odd.");
     assert!(harness.query_by_label("Export… (fix size first)").is_some());
     harness.get_by_label("Use 64×36").click();
     harness.run_steps(2);

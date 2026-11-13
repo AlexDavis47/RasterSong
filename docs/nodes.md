@@ -6,25 +6,25 @@ Generated from the node definitions by `cargo xtask docs`; edit the node's sourc
 
 | Node | What it does |
 |---|---|
-| [Audio Input](#audio_input) | Sound: what is below the graph's item unless set otherwise, one frame's worth per block, -1 to 1, channels interleaved |
+| [Audio Input](#audio_input) | Audio input from the timeline |
 | [Named Input](#named_input) | What a Named Output of a graph on a lower graph track sends, picked by its track and name |
 | [Video Input](#video_input) | A picture: what is below the graph's item unless set otherwise, as RGB from 0 to 1 |
 
 ### `audio_input`
 
-**Audio Input**: Sound: what is below the graph's item unless set otherwise, one frame's worth per block, -1 to 1, channels interleaved
+**Audio Input**: Audio input from the timeline
 
 New graphs come with one reading what is below: below the lowest graph track that is the audio mix; above another graph track it is that track's sound where one of its items plays. Its Source can read the audio mix, one audio track on its own (before its volume and mute, so a muted kick can still drive an effect), or a graph track's main sound instead. A graph track must be below the one this graph plays on, or it reads silence; where none of its items plays it reads what is below that track. Nothing picked reads silence.
 
 **Outputs**
 
-- `out` (audio, -1 to 1): The sound, one frame's worth per block, from -1 to 1; stereo comes as L, R, L, R, …
+- `out` (audio, -1 to 1): Audio samples from the specified timeline source
 
 **Parameters**
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `source` (Source) | `below` | text | no | What this node reads: what is below, the audio mix, a track's stem, or a graph track below this one (what is below it where nothing plays on it) |
+| `source` (Source) | `below` | text | no | What timeline source this input reads. As the lowest graph in the timeline it reads the audio mix. If above another graph, it reads that graph's output |
 
 ### `named_input`
 
@@ -63,7 +63,7 @@ New graphs come with one reading what is below: below the lowest graph track tha
 
 | Node | What it does |
 |---|---|
-| [Beat](#beat) | A 0 to 1 signal locked to the project's beats, restarting every note length: phase, decay, pulse or steps |
+| [Beat](#beat) | A cycling signal locked to the project's beats, restarting every division |
 | [Constant](#constant) | The same value in every sample: a flat colour, or silence |
 | [Graph Progress](#graph_progress) | How far through its graph item the render is: 0 at the item's start, rising evenly to 1 at its end |
 | [Noise](#noise) | Random values in a chosen colour: grain in video, hiss in audio |
@@ -71,7 +71,7 @@ New graphs come with one reading what is below: below the lowest graph track tha
 
 ### `beat`
 
-**Beat**: A 0 to 1 signal locked to the project's beats, restarting every note length: phase, decay, pulse or steps
+**Beat**: A cycling signal locked to the project's beats, restarting every division
 
 **Outputs**
 
@@ -81,9 +81,9 @@ New graphs come with one reading what is below: below the lowest graph track tha
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `numerator` (Numerator) | 1 | 1 to 32 (up to 1 to 1024) | yes | How many notes of the denominator's length each cycle lasts, as in a time signature: 1/4 is a beat, 4/4 four beats, 16/4 sixteen |
-| `denominator` (Denominator) | 4 | 1 to 32 (up to 1 to 1024) | yes | The note the numerator counts, as a fraction of a whole note: 4 is a quarter note (a beat), 8 an eighth, 16 a sixteenth |
-| `shape` (Shape) | `decay` | `phase`, `decay`, `pulse`, `step` | no | phase rises 0 to 1, decay falls 1 to 0, pulse is on for the width, step climbs in stairs |
+| `numerator` (Numerator) | 1 | 1 to 32 (up to 1 to 1024) | yes | How many notes of the denominator's length each cycle lasts |
+| `denominator` (Denominator) | 4 | 1 to 32 (up to 1 to 1024) | yes | The note the numerator counts, as a fraction of a whole note |
+| `shape` (Shape) | `decay` | `phase`, `decay`, `pulse`, `step` | no | phase rises 0 to 1, decay falls 1 to 0, pulse is on/off for a duration based on width, step climbs in stairs |
 | `width` (Width) | 0.25 | 0 to 1 | yes | For the pulse shape, the fraction of each cycle it stays on. Used when `shape` is `pulse`. |
 | `steps` (Steps) | 4 | 1 to 32 (up to 1 to 1024) | yes | For the step shape, how many stairs each cycle climbs. Used when `shape` is `step`. |
 
@@ -168,7 +168,7 @@ Each connected input becomes one channel of the output, in order. The first inpu
 
 **Inputs**
 
-- `c1` (main, required): Channel 1: red, or left. Sets the size
+- `c1` (main, required): Channel 1: red, or left. Sets the signal type
 - `c2` (optional): Channel 2: green, or right
 - `c3` (optional): Channel 3: blue
 - `c4` (optional): Channel 4
@@ -370,8 +370,8 @@ Signals carry a tag (video or audio, which channels, the range of values) that c
 |---|---|
 | [Amplitude Modulation](#am) | Scales the carrier by the modulator |
 | [Bit Crush](#bitcrush) | Reduces bit depth, posterizing the image |
-| [Blend](#blend) | Combines two signals: add, multiply, screen, difference and more |
-| [Chorus](#chorus) | Thickens the signal with delayed copies; modulate the time to make them drift |
+| [Blend](#blend) | Combines two signals using a blend mode |
+| [Chorus](#chorus) | Thickens the signal with delayed copies. Modulate the time to make them drift around |
 | [Clamp](#clamp) | Limits every sample to a range |
 | [Compressor](#compressor) | Turns loud parts down, following the input or a sidechain |
 | [Crossfade](#crossfade) | Fades or cuts between two signals |
@@ -419,7 +419,7 @@ Can process R, G and B separately.
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `depth` (Depth) | 1 | -10 to 10 (up to -∞ to ∞) | yes | How strongly the modulator scales the carrier: carrier × (1 + depth × modulator) |
+| `depth` (Depth) | 1 | -10 to 10 (up to -∞ to ∞) | yes | How strongly the modulator scales the carrier |
 
 ### `bitcrush`
 
@@ -439,11 +439,11 @@ Can process R, G and B separately.
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `bits` (Bits) | 4 bits | 1 to 24 | yes | Bit depth; fewer bits means fewer levels |
+| `bits` (Bits) | 4 bits | 1 to 24 | yes | Bit depth. Fewer bits means more crushing |
 
 ### `blend`
 
-**Blend**: Combines two signals: add, multiply, screen, difference and more
+**Blend**: Combines two signals using a blend mode
 
 Can process R, G and B separately.
 
@@ -461,11 +461,11 @@ Can process R, G and B separately.
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
 | `mode` (Mode) | `add` | `add`, `subtract`, `multiply`, `screen`, `difference`, `min`, `max`, `average`, `overlay` | no | How `a` and `b` are combined |
-| `amount` (Amount) | 1 | 0 to 1 | yes | 0 passes `a` through, 1 is the full blend |
+| `amount` (Amount) | 1 | 0 to 1 | yes | Amount of 'b' to blend in |
 
 ### `chorus`
 
-**Chorus**: Thickens the signal with delayed copies; modulate the time to make them drift
+**Chorus**: Thickens the signal with delayed copies. Modulate the time to make them drift around
 
 Can process R, G and B separately.
 
@@ -481,10 +481,10 @@ Can process R, G and B separately.
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `time` (Time) | 20 `ms` | 0 to 50 (up to 0 to 1000) | yes | Delay of the copies; wire an oscillator in here to make them drift. Unit in `time.unit`. |
+| `time` (Time) | 20 `ms` | 0 to 50 (up to 0 to 1000) | yes | Delay of the copies. Unit in `time.unit`. |
 | `voices` (Voices) | 2 | 1 to 4 | yes | How many delayed copies are mixed in |
 | `spread` (Spread) | 0.3 | 0 to 0.6 | yes | How far apart the copies' delays are, as a fraction of the time |
-| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
+| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is the processed signal. |
 
 ### `clamp`
 
@@ -595,7 +595,7 @@ Can process R, G and B separately.
 |---|---|---|---|---|
 | `time` (Time) | 0.05 `row` | 0 to 100 (up to 0 to 1000) | yes | Delay length, in rows or frames. Small fractions of a row give the finest waves. Unit in `time.unit`. |
 | `feedback` (Feedback) | 0 | 0 to 0.99 | yes | How much of the delayed signal is fed back in |
-| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
+| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is the processed signal. |
 
 ### `distortion`
 
@@ -618,7 +618,7 @@ Can process R, G and B separately.
 | `shape` (Shape) | `soft` | `soft`, `hard`, `fold`, `wrap` | no | soft rounds off, hard clips flat, fold reflects loud parts back, wrap jumps from top to bottom |
 | `drive` (Drive) | 12 dB | 0 to 48 (up to -96 to 96) | yes | Gain before shaping; more drive, more distortion |
 | `bias` (Bias) | 0 | -1 to 1 (up to -100 to 100) | yes | Offset added before shaping, for uneven distortion |
-| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
+| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is the processed signal. |
 
 ### `dynamic_eq`
 
@@ -714,7 +714,7 @@ Can process R, G and B separately.
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
 | `depth` (Depth) | 0.5 `row` | 0 to 10 (up to 0 to 1000) | yes | How far the modulator pushes the carrier, in rows or frames: the modulator at +1 reads twice this far back, at -1 not at all. Unit in `depth.unit`. |
-| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
+| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is the processed signal. |
 
 ### `filter`
 
@@ -760,7 +760,7 @@ Can process R, G and B separately.
 |---|---|---|---|---|
 | `time` (Time) | 2 `ms` | 0 to 10 (up to 0 to 1000) | yes | Delay length; wire an oscillator in here to sweep the comb. Unit in `time.unit`. |
 | `feedback` (Feedback) | 0.5 | -0.95 to 0.95 | yes | How much of the delayed signal is fed back in; negative flips its sign |
-| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
+| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is the processed signal. |
 
 ### `frequency_shifter`
 
@@ -783,7 +783,7 @@ Can process R, G and B separately.
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
 | `shift` (Shift) | 100 `second` | -1000 to 1000 (up to -1000000000 to 1000000000) | yes | How far every frequency moves: positive shifts up, negative down. Cycles per unit in `shift.unit`, or one cycle every so many units in `shift.every`. |
-| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
+| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is the processed signal. |
 
 ### `gain`
 
@@ -915,7 +915,7 @@ Can process R, G and B separately.
 | `stages` (Stages) | 4 | 1 to 12 | yes | How many allpass filters are chained; every two add a notch |
 | `freq` (Frequency) | 1000 `second` | 20 to 5000 (up to 0.000001 to 1000000000) | yes | Where the notches sit; wire an oscillator in here to sweep them. Cycles per unit in `freq.unit`, or one cycle every so many units in `freq.every`. |
 | `feedback` (Feedback) | 0.3 | -0.95 to 0.95 | yes | How much of the chain's output is fed back in, which sharpens the notches |
-| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
+| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is the processed signal. |
 
 ### `quantize`
 
@@ -938,7 +938,7 @@ Can process R, G and B separately.
 | `step` (Step) | 0.125 | 0.001 to 1 (up to 0.000001 to 1000000) | yes | Size of one step: 0.25 gives the levels 0, 0.25, 0.5, 0.75, 1 |
 | `offset` (Offset) | 0 | -1 to 1 (up to -1000000 to 1000000) | yes | Where the steps start: steps sit at offset + n × step |
 | `rounding` (Rounding) | `nearest` | `nearest`, `floor`, `ceil` | no | nearest picks the closest step, floor the one below, ceil the one above |
-| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
+| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is the processed signal. |
 
 ### `rectify`
 
@@ -1008,7 +1008,7 @@ Can process R, G and B separately.
 | `size` (Size) | 0.5 | 0 to 1 | yes | How long the tail rings: higher is longer |
 | `damping` (Damping) | 0.5 | 0 to 1 | yes | How quickly the tail loses its fast detail: higher is duller |
 | `predelay` (Pre-delay) | 0 `ms` | 0 to 100 (up to 0 to 10000) | yes | Gap before the reverb starts. Unit in `predelay.unit`. |
-| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
+| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is the processed signal. |
 
 ### `ring_mod`
 
@@ -1029,7 +1029,7 @@ Can process R, G and B separately.
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is only the processed signal; in between crossfades the two |
+| `mix` (Mix) | 1 | 0 to 1 | yes | 0 is the dry input, 1 is the processed signal. |
 
 ### `sample_hold`
 
@@ -1101,20 +1101,20 @@ Can process R, G and B separately.
 
 | Node | What it does |
 |---|---|
-| [Audio Bus Output](#audio_bus_output) | The graph's sound for one of the other output buses: replaces that bus's track mix in its export |
-| [Audio Output](#audio_output) | The graph's sound: what graphs above read, and on the master bus what the preview plays and the export writes |
+| [Audio Bus Output](#audio_bus_output) | Outputs a signal to the timeline's audio bus |
+| [Audio Output](#audio_output) | Main audio output to the timeline from this graph |
 | [Named Output](#named_output) | An output other graphs read by its name, without adding to this graph's picture or sound |
 | [Video Output](#output) | The graph's picture: what graphs above read, and on top what the preview shows and the export writes. RGB, or mono shown as grayscale |
 
 ### `audio_bus_output`
 
-**Audio Bus Output**: The graph's sound for one of the other output buses: replaces that bus's track mix in its export
+**Audio Bus Output**: Outputs a signal to the timeline's audio bus
 
 Add one for each bus besides the master, which is the Audio Output's. With nothing connected, the bus plays its track mix: the audio tracks routed to it, at their volumes. A mono signal is written to every channel of the bus; any other signal is written as interleaved samples across the bus's channels. Each frame's block is resampled from its own rate to the project's audio rate, and clipped to -1 to 1. One naming the master bus, or a bus the project doesn't have, is not rendered.
 
 **Inputs**
 
-- `in` (main, required): The sound to output, from -1 to 1: mono, stereo, or any signal read as samples
+- `in` (main, required): The sound to output
 
 **Outputs**
 
@@ -1124,18 +1124,18 @@ Add one for each bus besides the master, which is the Audio Output's. With nothi
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `volume` (Volume) | 0 dB | -48 to 12 (up to -120 to 60) | yes | Louder or quieter, in decibels, before the sound is clipped to -1 to 1. 0 changes nothing; the meter shows the peak after the volume, so a peak above 0 dB will clip. |
+| `volume` (Volume) | 0 dB | -48 to 12 (up to -120 to 60) | yes | Trim volume before outputting, in decibels |
 | `bus` (Bus) | `` | text | no | The output bus this sound goes to, from the buses in Project settings other than the master |
 
 ### `audio_output`
 
-**Audio Output**: The graph's sound: what graphs above read, and on the master bus what the preview plays and the export writes
+**Audio Output**: Main audio output to the timeline from this graph
 
 Every graph has one, which can't be removed. With nothing connected, the master plays its track mix: the audio tracks routed to it, at their volumes; a track wired straight in is also used as it is. A mono signal is written to every channel of the bus; any other signal is written as interleaved samples across the bus's channels (a stereo signal to a stereo bus as it is). Each frame's block is resampled from its own rate to the project's audio rate, and clipped to -1 to 1. Use an Audio Bus Output for the other buses.
 
 **Inputs**
 
-- `in` (main, required): The sound to output, from -1 to 1: mono, stereo, or any signal read as samples
+- `in` (main, required): The sound to output
 
 **Outputs**
 
@@ -1145,7 +1145,7 @@ Every graph has one, which can't be removed. With nothing connected, the master 
 
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
-| `volume` (Volume) | 0 dB | -48 to 12 (up to -120 to 60) | yes | Louder or quieter, in decibels, before the sound is clipped to -1 to 1. 0 changes nothing; the meter shows the peak after the volume, so a peak above 0 dB will clip. |
+| `volume` (Volume) | 0 dB | -48 to 12 (up to -120 to 60) | yes | Trim volume before outputting, in decibels |
 
 ### `named_output`
 
@@ -1184,4 +1184,29 @@ A Named Input in a graph on a higher graph track reads it by picking this graph'
 | Name | Default | Range | Modulation | What it does |
 |---|---|---|---|---|
 | `stretch` (Stretch to fit) | `on` | `on`, `off` | no | on stretches a signal of any size or kind to the project size, as if it were wired to the video input, so the output always shows something; off requires an RGB or mono signal of exactly the project size |
+
+## Annotations
+
+| Node | What it does |
+|---|---|
+| [Comment](#comment) | A container for grouping nodes together |
+| [Note](#note) | A sticky note for a remark about the graph, which can point at a node |
+
+### `comment`
+
+**Comment**: A container for grouping nodes together
+
+Comments only explain the graph: they have no ports and render nothing. Drag its title to move it with every node inside it; drag its bottom-right corner to resize it. Its title is the node's name and the text under it its description, both set in the inspector.
+
+**Outputs**
+
+
+### `note`
+
+**Note**: A sticky note for a remark about the graph, which can point at a node
+
+Notes only explain the graph: they have no ports and render nothing. Its text is the node's description, set in the inspector. Attached to a node (in the inspector, or made with Add Note in the node's right-click menu), it follows that node and points at it. Drag it to move it around that node.
+
+**Outputs**
+
 

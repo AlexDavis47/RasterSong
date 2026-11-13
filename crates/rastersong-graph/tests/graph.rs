@@ -1177,7 +1177,7 @@ fn odd_audio_output_layouts_are_written_across_the_bus_with_a_warning() {
     let graph = compile(&json).unwrap();
     let warnings = graph.diagnostics();
     assert_eq!(warnings.len(), 1, "{warnings:?}");
-    assert!(warnings[0].message.contains("bus"));
+    assert!(warnings[0].message.contains("buzzy"));
 }
 
 /// A generator's parameter driven by a constant signal gives what the same value set by hand does.
@@ -1381,4 +1381,43 @@ fn inputs_read_what_their_source_names() {
     assert_eq!(out[0], 0.1);
     assert_eq!(read(&graph, "M"), 0.2);
     assert_eq!(read(&graph, "G"), 0.4);
+}
+
+/// `CHAIN` with a description on the delay, a comment around it, a note attached to it and a
+/// description of the whole graph.
+fn annotated_chain() -> String {
+    CHAIN
+        .replace(
+            r#""version": 0,"#,
+            r#""version": 0, "description": "Delays the picture by a frame","#,
+        )
+        .replace(
+            r#""params": { "time": 1 } }"#,
+            r#""params": { "time": 1 }, "description": "one frame behind" },
+           { "id": "c", "type": "comment", "label": "Echo", "description": "What it does",
+             "position": [-20, -40], "size": [300, 200] },
+           { "id": "n", "type": "note", "description": "Try 4", "attached": "d",
+             "position": [0, -80] }"#,
+        )
+}
+
+#[test]
+fn annotations_and_descriptions_never_reach_the_render() {
+    let annotated = annotated_chain();
+    let desc = GraphDesc::from_json(&annotated).unwrap();
+    assert_eq!(desc.nodes.len(), 5);
+    assert_eq!(render_form_of(&annotated), render_form_of(CHAIN));
+    // They compile, and render exactly what the plain chain does.
+    let video = |i: usize| i as f32 / 24.0;
+    let audio = |i: usize| i as f32 / 5.0;
+    let mut plain = compile(CHAIN).unwrap();
+    let mut with_notes = compile(&annotated).unwrap();
+    for frame in 0..3 {
+        let s = sources(|i| video(i + frame as usize), audio);
+        let expected = plain.process(frame, &s).unwrap().data.clone();
+        assert_eq!(with_notes.process(frame, &s).unwrap().data, expected);
+    }
+    let stripped = rastersong_graph::without_annotations(&desc, &Registry::default()).unwrap();
+    assert!(stripped.nodes.iter().all(|n| n.id != "c" && n.id != "n"));
+    assert_eq!(GraphDesc::from_json(&desc.to_json()).unwrap(), desc);
 }

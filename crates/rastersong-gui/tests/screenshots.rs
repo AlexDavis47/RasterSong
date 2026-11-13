@@ -573,7 +573,7 @@ fn track_screenshots() {
     wait_for_frames(&mut harness, 10);
     save(&mut harness, "dark-16-two-tracks");
 
-    // Drag the second audio header above the first, by the bar of its kind colour.
+    // Drag the second audio header above the first, by the bar of its kind color.
     let from = harness
         .get_all_by_label("Audio track")
         .nth(1)
@@ -1089,7 +1089,7 @@ fn drag_bubble_screenshots() {
     save(&mut harness, "dark-30-drag-bubble");
 }
 
-/// Resource label colours, the Resources tabs and cards, the canvas header's graph menu and the
+/// Resource label colors, the Resources tabs and cards, the canvas header's graph menu and the
 /// fullscreen preview.
 #[test]
 #[ignore = "needs a GPU; run explicitly to look at the UI"]
@@ -1128,5 +1128,50 @@ fn resources_and_colors_screenshots() {
         harness.get_by_label("Fullscreen").click();
         harness.run_steps(4);
         save(&mut harness, &format!("{name}-33-fullscreen"));
+    }
+}
+
+/// Factory presets with their comments, notes and descriptions on the canvas, and the New graph
+/// picker that offers them.
+#[test]
+#[ignore = "needs a GPU; run explicitly to look at the UI"]
+fn preset_screenshots() {
+    for (theme, theme_name) in [(ThemeChoice::Dark, "dark"), (ThemeChoice::Light, "light")] {
+        for preset in rastersong_engine::factory_presets() {
+            let app = app_edited(theme, 1, TimelineMode::Time, |project| {
+                *project.graph_mut(Project::FIRST_GRAPH).unwrap() = preset.graph.clone();
+            });
+            // A desktop-sized window, as the presets are laid out for.
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(1920.0, 1080.0))
+                .wgpu()
+                .build_ui_state(|ui, app: &mut App| app.ui(ui), app);
+            wait_for_frames(&mut harness, 10);
+            harness.get_by_label("Frame graph").click();
+            harness.run_steps(4);
+            let file = preset.name.to_lowercase().replace(' ', "-");
+            save(&mut harness, &format!("{theme_name}-preset-{file}"));
+        }
+        let mut harness = gpu_harness(app(theme));
+        wait_for_frames(&mut harness, 10);
+        harness.state_mut().open_new_graph_picker();
+        harness.run_steps(8);
+        save(&mut harness, &format!("{theme_name}-new-graph-picker"));
+        // A category opened in the picker, then as a submenu of Load preset.
+        harness.get_by_label("Tutorials").click();
+        harness.run_steps(4);
+        save(
+            &mut harness,
+            &format!("{theme_name}-new-graph-picker-category"),
+        );
+        harness.get_by_label("Cancel").click();
+        harness.run_steps(2);
+        harness.get_by_label("Presets").click();
+        harness.run_steps(2);
+        harness.get_by_label_contains("Load preset").click();
+        harness.run_steps(2);
+        harness.get_by_label_contains("Tutorials").hover();
+        harness.run_steps(4);
+        save(&mut harness, &format!("{theme_name}-load-preset-category"));
     }
 }

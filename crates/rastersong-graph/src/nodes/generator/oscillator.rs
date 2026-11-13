@@ -36,7 +36,7 @@ impl Wave {
 
 /// A periodic wave. As video it draws stripes across each row; as audio it is a tone.
 ///
-/// Each pixel gets one value shared by its colour channels. An unmodulated oscillator computes its
+/// Each pixel gets one value shared by its color channels. An unmodulated oscillator computes its
 /// phase from the sample's position, so seeking is exact. A modulated frequency has to accumulate
 /// phase, so the oscillator's phase then depends on where the render started. In cycles per beat
 /// or bar, an unmodulated wave starts its cycle on the beat grid of the project tempo.

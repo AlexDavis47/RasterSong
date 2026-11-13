@@ -40,14 +40,14 @@ use rastersong_engine::{
 };
 use rastersong_lang::{tr, tr_args};
 
-use crate::name_edit::{rename_field, start_rename};
+use crate::name_edit::{name_label, start_rename};
 use crate::theme::{ItemColors, SMALL_SIZE, Theme};
 
 /// Width of the track header column.
 pub const HEADER_WIDTH: f32 = 220.0;
 /// Gap between the headers and the lanes.
 const GAP: f32 = 6.0;
-/// How far a header's widgets sit from its left edge, past the bar of its kind's colour.
+/// How far a header's widgets sit from its left edge, past the bar of its kind's color.
 const KIND_INSET: f32 = 18.0;
 /// Size of a track's name in its header.
 const NAME_SIZE: f32 = 12.5;
@@ -176,7 +176,7 @@ impl TrackView {
 #[derive(Debug, Clone)]
 pub struct ResourceView {
     pub name: String,
-    /// Its label colour, which its items are drawn in.
+    /// Its label color, which its items are drawn in.
     pub color: Option<LabelColor>,
     /// Its length in seconds, once known. Unbounded for a graph: a graph item always has an end
     /// of its own.
@@ -192,7 +192,7 @@ pub struct ResourceView {
 }
 
 impl ResourceView {
-    /// A resource with nothing known of it yet but its name and colour.
+    /// A resource with nothing known of it yet but its name and color.
     pub fn new(name: impl Into<String>, color: Option<LabelColor>) -> Self {
         Self {
             name: name.into(),
@@ -246,7 +246,7 @@ pub struct TimelineModel<'a> {
     pub open_graphs_on_click: bool,
     /// The resources the track menu can place on a new track: id, name and the kind of track.
     pub resources: Vec<(ResourceId, String, TrackKind)>,
-    /// The resources items play, which they are named, coloured, measured and drawn after.
+    /// The resources items play, which they are named, colored, measured and drawn after.
     pub resource_views: HashMap<ResourceId, ResourceView>,
     /// Resources being dragged from the Resources panel, for the drop preview.
     pub drop_ghost: Option<DropGhost>,
@@ -2005,12 +2005,12 @@ impl Lane<'_> {
             (&moved, block.translate(offset), bar.translate(offset))
         };
         let visible = block.intersect(self.clip);
-        // Every item is named and coloured after the resource it plays.
+        // Every item is named and colored after the resource it plays.
         let resource = model.resource_of(item);
         let (name, color) = resource.map_or_else(Default::default, |r| (r.name.clone(), r.color));
         let colors = theme.item_colors(track.kind, color);
         let dim = item.muted || track.silenced;
-        // A graph item without a colour of its own is outlined in the graph colour.
+        // A graph item without a color of its own is outlined in the graph color.
         let edge = (track.kind == TrackKind::Graph && color.is_none() && !selected)
             .then_some(theme.graph_block);
         item_body(painter, block, colors, edge, hovered, dim);
@@ -2340,7 +2340,7 @@ fn mute_button(bar: Rect, clip: Rect) -> Option<Rect> {
 }
 
 /// An item's body in `block`: its fill, a step lighter while `hovered`, faded while `dim`,
-/// outlined in `edge`, or else in its bar's colour.
+/// outlined in `edge`, or else in its bar's color.
 fn item_body(
     painter: &egui::Painter,
     block: Rect,
@@ -2842,11 +2842,20 @@ fn track_header(ui: &mut Ui, model: &TimelineModel, row: usize, response: &mut T
     ui.allocate_ui_with_layout(column, egui::Layout::top_down(egui::Align::Min), |ui| {
         ui.set_width(column.x);
         ui.spacing_mut().item_spacing.y = 2.0;
-        let (name, committed) = header_name(ui, track_name_id(row), &track.name);
-        if name.on_hover_text(tr("timeline.track.name.help")).clicked() {
+        let name = name_label(
+            ui,
+            track_name_id(row),
+            &track.name,
+            crate::theme::medium(NAME_SIZE),
+        );
+        if name
+            .response
+            .on_hover_text(tr("timeline.track.name.help"))
+            .clicked()
+        {
             response.actions.push(TrackAction::Select(row));
         }
-        if let Some(name) = committed {
+        if let Some(name) = name.committed {
             response.actions.push(TrackAction::Rename(row, name));
         }
         if !info {
@@ -2958,7 +2967,7 @@ fn header(ui: &mut Ui, rect: Rect, clip: Rect, contents: impl FnOnce(&mut Ui)) {
     contents(&mut child);
 }
 
-/// The bar of a track's kind colour at the left of its header, named `label` for screen readers
+/// The bar of a track's kind color at the left of its header, named `label` for screen readers
 /// (and tests). It only senses hovering, so a drag that starts on it reaches the header below.
 fn kind_bar(
     ui: &mut Ui,
@@ -2986,46 +2995,6 @@ fn kind_bar(
 /// The id of the name in the header of track `row`, which F2 renames.
 fn track_name_id(row: usize) -> egui::Id {
     egui::Id::new(("track-name", row))
-}
-
-/// A header's name: plain text, outlined while hovered, that a double-click (or F2 over the
-/// timeline, for the selected track) turns into a field in place, outlined in the accent.
-/// Returns the name's response and the new name once one is committed.
-fn header_name(ui: &mut Ui, id: egui::Id, name: &str) -> (egui::Response, Option<String>) {
-    let theme = Theme::of(ui.ctx());
-    let font = crate::theme::medium(NAME_SIZE);
-    let color = ui.visuals().text_color();
-    let width = ui.available_width();
-    let mut job = egui::text::LayoutJob::simple_singleline(name.to_owned(), font.clone(), color);
-    job.wrap = egui::text::TextWrapping::truncate_at_width(width);
-    let galley = ui.painter().layout_job(job);
-    let (rect, response) = ui.allocate_exact_size(vec2(width, galley.size().y), Sense::click());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, name));
-    if response.double_clicked() {
-        start_rename(ui.ctx(), id);
-    }
-    let edit = rename_field(ui, id, rect, name, |e| {
-        e.frame(egui::Frame::NONE)
-            .margin(egui::Margin::ZERO)
-            .font(font)
-    });
-    let outline = match &edit {
-        Some(_) => Some(theme.accent),
-        None if response.hovered() => Some(theme.surfaces.border),
-        None => None,
-    };
-    if edit.is_none() {
-        ui.painter().galley(rect.left_top(), galley, color);
-    }
-    if let Some(color) = outline {
-        ui.painter().rect_stroke(
-            rect.expand2(vec2(3.0, 1.0)),
-            3,
-            Stroke::new(1.0, color),
-            egui::StrokeKind::Outside,
-        );
-    }
-    (response, edit.and_then(|e| e.committed))
 }
 
 /// A header's M or S button: outlined, and filled with `fill` while on.

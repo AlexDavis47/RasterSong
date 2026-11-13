@@ -18,7 +18,8 @@ this page is the short list. If a rule here and a document disagree, fix the doc
 4. **Before writing a widget, helper or code path, search for an existing one** (`rg` the crate, look in
    `crates/rastersong-gui/src/widgets/` and the shared modules). Reuse or extend it. Never copy-paste.
 5. **Things of one kind share one component.** Every resource card (media, graphs, later more) is drawn by
-   `resource_card`; every renamable name uses `name_edit`; channel counts are named by `channels_label`. A new
+   `resource_card`; every renamable name is plain text renamed in place through `name_edit` (`name_label`, or
+   `rename_field` inside a card), never an always-open text field; channel counts are named by `channels_label`. A new
    kind gets a new `Card` value, not a new widget.
 6. No parallel code paths for the same job (two ways to rename, label, drag, load). If a second one seems
    needed, change the first.

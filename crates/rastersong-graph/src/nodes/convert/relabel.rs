@@ -47,7 +47,7 @@ choice! {
 }
 
 /// Changes only what a signal is said to be, not its samples: for deliberately reading video as
-/// audio, three channels as something other than RGB, and so on. Affects wire colours and
+/// audio, three channels as something other than RGB, and so on. Affects wire colors and
 /// warnings, nothing else.
 #[derive(Debug)]
 pub struct Relabel {

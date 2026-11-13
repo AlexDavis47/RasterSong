@@ -1,6 +1,7 @@
 //! The node editor: the graph as the user edits it, drawn and edited on a pannable, zoomable
 //! canvas. The project's [`GraphDesc`] stays the model; the editor converts to and from it.
 
+mod annotations;
 mod canvas;
 mod graph_stats;
 mod inspect;
@@ -49,6 +50,12 @@ pub struct EditorNode {
     pub bypass: bool,
     /// Top-left corner in graph space.
     pub pos: Pos2,
+    /// The user's note about what the node does, drawn under it (inside a comment or a note).
+    pub description: Option<String>,
+    /// A comment's box, when the user resized it.
+    pub size: Option<Vec2>,
+    /// The node a note is attached to: the note moves with it and points at it.
+    pub attached: Option<NodeKey>,
     /// How connected signals move parameters, by parameter name.
     pub modulation: BTreeMap<String, Modulation>,
     /// The number parameters rounded to whole numbers.
@@ -84,6 +91,8 @@ impl Default for View {
 
 pub struct GraphEditor {
     registry: &'static Registry,
+    /// What the graph does, as the graph file says; kept for presets.
+    description: Option<String>,
     nodes: Vec<EditorNode>,
     wires: Vec<Wire>,
     next_key: NodeKey,
@@ -98,6 +107,9 @@ pub struct GraphEditor {
     /// Fit the view to the graph the next time it's drawn.
     fit_pending: bool,
     interaction: canvas::Interaction,
+    /// The nodes moving along with the dragged ones: those inside a dragged comment, and notes
+    /// attached to what moves. Set when a drag starts.
+    carried: BTreeSet<NodeKey>,
     search: Option<search::SearchMenu>,
     node_menu: Option<search::NodeMenu>,
     /// The canvas and node layout as last drawn, for hit-testing from outside (tests).
@@ -148,6 +160,7 @@ impl GraphEditor {
     pub fn new(graph: &GraphDesc) -> Self {
         let mut editor = Self {
             registry: Registry::shared(),
+            description: None,
             nodes: Vec::new(),
             wires: Vec::new(),
             next_key: 1,
@@ -157,6 +170,7 @@ impl GraphEditor {
             view: View::default(),
             fit_pending: true,
             interaction: canvas::Interaction::default(),
+            carried: BTreeSet::new(),
             search: None,
             node_menu: None,
             last_canvas: Rect::NOTHING,
@@ -217,6 +231,7 @@ impl GraphEditor {
         self.node_menu = None;
         self.interaction = canvas::Interaction::Idle;
         self.warnings.clear();
+        self.description = graph.description.clone();
         let positions = auto_layout(graph);
         let mut keys = HashMap::new();
         for (i, node) in graph.nodes.iter().enumerate() {
@@ -234,12 +249,16 @@ impl GraphEditor {
                 layout: node.layout,
                 bypass: node.bypass,
                 pos: node.position.map_or(positions[i], |[x, y]| pos2(x, y)),
+                description: node.description.clone(),
+                size: node.size.map(|[w, h]| vec2(w, h)),
+                attached: None,
                 modulation: node.modulation.clone(),
                 integer: node.integer.iter().cloned().collect(),
                 ranges: node.ranges.clone(),
                 exposed: node.exposed.as_ref().map(|e| e.iter().cloned().collect()),
             });
         }
+        self.attach_notes(&graph.nodes, &keys);
         for c in &graph.connections {
             match (
                 self.endpoint(&keys, &c.from, false),
@@ -269,6 +288,24 @@ impl GraphEditor {
     fn fresh_key(&mut self) -> NodeKey {
         self.next_key += 1;
         self.next_key
+    }
+
+    /// Attaches the notes of `nodes` (read from a graph file, now at `keys`) to the nodes they
+    /// name, where those are among `keys` too.
+    fn attach_notes(&mut self, nodes: &[NodeDesc], keys: &HashMap<&str, NodeKey>) {
+        for desc in nodes {
+            let (Some(&key), Some(&target)) = (
+                keys.get(desc.id.as_str()),
+                desc.attached.as_deref().and_then(|t| keys.get(t)),
+            ) else {
+                continue;
+            };
+            if key != target
+                && let Some(node) = self.node_mut(key)
+            {
+                node.attached = Some(target);
+            }
+        }
     }
 
     /// Resolves `"node.port"` to a node and port index.
@@ -330,6 +367,7 @@ impl GraphEditor {
         });
         GraphDesc {
             version: FORMAT_VERSION,
+            description: self.description.clone(),
             nodes: self
                 .nodes
                 .iter()
@@ -344,6 +382,12 @@ impl GraphEditor {
                     bypass: n.bypass,
                     label: n.label.clone(),
                     position: Some([n.pos.x.round(), n.pos.y.round()]),
+                    description: n.description.clone(),
+                    size: n.size.map(|s| [s.x.round(), s.y.round()]),
+                    attached: n
+                        .attached
+                        .and_then(|k| self.node(k))
+                        .map(|target| target.id.clone()),
                     modulation: n.modulation.clone(),
                     integer: n.integer.iter().cloned().collect(),
                     ranges: n.ranges.clone(),
@@ -580,6 +624,9 @@ impl GraphEditor {
             layout: GeneratorLayout::default(),
             bypass: false,
             pos,
+            description: None,
+            size: None,
+            attached: None,
             modulation: BTreeMap::new(),
             integer: BTreeSet::new(),
             ranges: BTreeMap::new(),
@@ -639,6 +686,12 @@ impl GraphEditor {
 
     fn remove_nodes_unchecked(&mut self, keys: &BTreeSet<NodeKey>) {
         self.nodes.retain(|n| !keys.contains(&n.key));
+        // A note outlives the node it pointed at, as a loose note.
+        for node in &mut self.nodes {
+            if node.attached.is_some_and(|k| keys.contains(&k)) {
+                node.attached = None;
+            }
+        }
         self.wires
             .retain(|w| !keys.contains(&w.from.0) && !keys.contains(&w.to.0));
         self.selected.retain(|k| !keys.contains(k));
@@ -710,12 +763,15 @@ impl GraphEditor {
             node.layout = desc.layout;
             node.bypass = desc.bypass;
             node.label = desc.label.clone();
+            node.description = desc.description.clone();
+            node.size = desc.size.map(|[w, h]| vec2(w, h));
             node.modulation = desc.modulation.clone();
             node.integer = desc.integer.iter().cloned().collect();
             node.ranges = desc.ranges.clone();
             node.exposed = desc.exposed.as_ref().map(|e| e.iter().cloned().collect());
             keys.insert(desc.id.as_str(), key);
         }
+        self.attach_notes(&fragment.nodes, &keys);
         for c in &fragment.connections {
             let source = c.from.split('.').next().unwrap_or("");
             let sources = if keys.contains_key(source) {
@@ -803,12 +859,15 @@ impl GraphEditor {
         self.toggle_bypass(&selected);
     }
 
-    /// Bypasses `nodes`, or restores them if they are all bypassed already.
+    /// Bypasses `nodes`, or restores them if they are all bypassed already. The output, comments
+    /// and notes are left alone: they have nothing to bypass.
     pub(crate) fn toggle_bypass(&mut self, nodes: &BTreeSet<NodeKey>) {
         let keys: Vec<NodeKey> = nodes
             .iter()
             .copied()
-            .filter(|&k| self.node(k).is_some_and(|n| n.kind != ports::OUTPUT))
+            .filter(|&k| {
+                self.node(k).is_some_and(|n| n.kind != ports::OUTPUT) && !self.is_annotation(k)
+            })
             .collect();
         let all = keys.iter().all(|&k| self.node(k).is_some_and(|n| n.bypass));
         for k in keys {
@@ -843,13 +902,17 @@ pub(crate) fn editor_outputs(kind: &NodeType) -> &'static [OutputSpec] {
     }
 }
 
-/// Removes everything that doesn't affect rendering (positions, names and the order nodes and
-/// connections are listed in), so moving or renaming nodes doesn't re-render.
+/// Removes everything that doesn't affect rendering (positions, names, descriptions, comments and
+/// notes, and the order nodes and connections are listed in), so moving, renaming or annotating
+/// nodes doesn't re-render.
 pub fn without_layout(graph: &GraphDesc) -> GraphDesc {
-    let mut graph = graph.clone();
+    let mut graph = rastersong_engine::without_annotations(graph, Registry::shared())
+        .unwrap_or_else(|| graph.clone());
+    graph.description = None;
     for node in &mut graph.nodes {
         node.position = None;
         node.label = None;
+        node.description = None;
         node.exposed = None;
     }
     graph.nodes.sort_by(|a, b| a.id.cmp(&b.id));
@@ -891,6 +954,7 @@ fn auto_layout(graph: &GraphDesc) -> Vec<Pos2> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rastersong_engine::NOTE;
 
     const GRAPH: &str = include_str!("../../../../examples/graphs/am_bands.json");
 
@@ -1227,5 +1291,47 @@ mod tests {
         let x = |id: &str| positions[graph.nodes.iter().position(|n| n.id == id).unwrap()].x;
         assert!(x("video") < x("split") && x("split") < x("am_red") && x("am_red") < x("combine"));
         assert!(x("combine") < x("out"));
+    }
+
+    #[test]
+    fn notes_keep_their_node_through_saving_pasting_and_its_removal() {
+        let mut editor = GraphEditor::new(&graph());
+        let split = editor.key_of("split").unwrap();
+        let note = editor.add_note_to(split).unwrap();
+        editor.node_mut(note).unwrap().description = Some("hello".into());
+        // Saved and loaded again, it still points at Split.
+        let saved = editor.to_desc();
+        let back = GraphEditor::new(&saved);
+        let note_back = back.nodes.iter().find(|n| n.kind == NOTE).unwrap();
+        assert_eq!(back.attached_to(note_back.key), back.key_of("split"));
+        assert_eq!(note_back.description.as_deref(), Some("hello"));
+        // Copied with its node, the copy points at the copy; copied alone, at nothing.
+        editor.duplicate(&BTreeSet::from([note, split]), false);
+        let copies: Vec<_> = editor.selected.iter().copied().collect();
+        let (copy_note, copy_split) = if editor.node(copies[0]).unwrap().kind == NOTE {
+            (copies[0], copies[1])
+        } else {
+            (copies[1], copies[0])
+        };
+        assert_eq!(editor.attached_to(copy_note), Some(copy_split));
+        editor.duplicate(&BTreeSet::from([note]), false);
+        let lone = *editor.selected.iter().next().unwrap();
+        assert_eq!(editor.attached_to(lone), None);
+        // Removing the node keeps the note, loose.
+        editor.remove_nodes(&BTreeSet::from([split]));
+        assert_eq!(editor.attached_to(note), None);
+        assert!(editor.node(note).is_some());
+    }
+
+    #[test]
+    fn annotations_and_descriptions_do_not_count_as_edits() {
+        let mut editor = GraphEditor::new(&graph());
+        let before = without_layout(&editor.to_desc());
+        let split = editor.key_of("split").unwrap();
+        editor.add_note_to(split);
+        editor.add_node(rastersong_engine::COMMENT, pos2(0.0, 0.0));
+        editor.node_mut(split).unwrap().description = Some("three colors".into());
+        assert_eq!(editor.node_count(), 12);
+        assert_eq!(without_layout(&editor.to_desc()), before);
     }
 }

@@ -41,7 +41,7 @@ Our own editor, drawn on a pannable, zoomable canvas (see [Decisions](decisions.
 A header over the canvas names the open graph (**Graph › name ▾**: click the name for a menu of the project's
 graphs, and pick one to edit it instead; which graph is open isn't saved, and a project opens on its first graph),
 counts its problems
-("1 error · 1 warning"), and holds **+ Add node** and **Frame graph** (as F). Each node has a
+("1 error · 1 warning"), and holds **Presets** (see [Presets](#presets)), **+ Add node** and **Frame graph** (as F). Each node has a
 strip in its category's colour along its top edge, with its title under it. Opening a graph frames it, zooming out
 no further than 85%: a graph wider than that starts from its inputs on the left, and the rest is a pan away.
 
@@ -118,6 +118,31 @@ no further than 85%: a graph wider than that starts from its inputs on the left,
   message, and the bar has no node to show.
 - Moving or renaming nodes doesn't re-render; any other edit does.
 
+### Comments, notes and descriptions
+
+Three ways to explain a graph, none of which changes the render, moves a rendered frame or counts in the graph's
+node total:
+
+- **Descriptions.** Every node's inspector starts with a **Description** field. What is typed there is drawn in
+  small text under the node, to say what it does in this graph.
+- **Comments** (Annotations in the node search, or **Comment around it** in a node's right-click menu, which boxes
+  the selection) are boxes drawn behind the nodes, in a neutral slate colour. The title (the node's name) and the
+  description are drawn **above** the box, never over what is inside it; long text grows upward. Drag the title
+  to move the comment and every node inside its box with it (comments inside it, and the notes attached to what
+  moves, come too). The box itself is canvas: box selection and right-click work in it as anywhere. Drag its
+  bottom-right corner to resize it. Box selection picks a comment only when it holds the whole of it.
+- **Notes** are sticky notes drawn over the nodes, showing their text (set in the inspector, under **Note**). A
+  small tab sits in each note's top-right corner: **drag the tab onto a node** to attach the note to it (a line follows the pointer
+  and the node a drop would attach to is outlined), and drop it on empty canvas to loosen it. **Add note** in any
+  node's right-click menu adds a note already attached to it. Any node takes notes, comments and other notes too;
+  dropped anywhere in a comment's box, the note attaches to the comment. Attached, a note moves with its node and
+  points at it with a speech bubble's tail, drawn under everything it crosses; the tab's dot is solid. The note's
+  inspector says what it points at, with **Detach**. Drag a note to place it around its node. Removing the node leaves the note, loose;
+  copying both keeps the copy attached to the copy.
+
+Comments and notes are nodes (see [Decisions](decisions.md#comments-and-notes-are-nodes-november-2026)), so
+selecting, copying, duplicating, deleting and undoing work on them as on any node; they can't be bypassed.
+
 ## Inspector
 
 The inspector follows the selection: the track whose header was clicked last, else the selected item when it is
@@ -125,7 +150,9 @@ the only one (of any kind), else the active node. Clicking a node or an item tak
 kind uses one layout: a header with the kind (NODE, ITEM, TRACK) and a tag in its colour (the node's category, the
 item's or track's kind),
 the actions that apply (a node's **Bypass**, Alt+click on the canvas does the same), the name in large type, and
-a line about it; then sections under capital labels.
+a line about it; then sections under capital labels. The name is renamed in place as every name is (the
+resource cards, the track headers): double-click it, or pick **Rename** in its right-click menu, and it becomes a
+text field with the whole name selected; Enter or clicking away commits, Esc cancels.
 
 A **track** of any kind shows its name (renamed as in its header), the resources its items play and how many
 items, and a **Mix** section: Mute, Solo, and where the kind has a level (audio) its Volume (a slider and box like a
@@ -135,7 +162,9 @@ An **item** of any kind shows the resource it plays and its track, and a **Playi
 its kind can do: **Pre-roll** for a graph item, the **Speed** it plays its file at for a video or audio item
 (changed by Alt+dragging an edge). What a graph reads is set on its own source nodes, not on its items.
 
-A **node** shows its name (shown on the node instead of its type; it changes on Enter or clicking away, and the type's own name unnames it), what it does (the type's description), its notes and
+A **node** shows its name (shown on the node instead of its type; **F2** over the canvas renames the selected node,
+committing the type's own name unnames it, and **Restore default name** in the name's right-click menu does the
+same), its **type** in small text under the name, whatever it is named, what it does (the type's description), its notes and
 warnings, its **Meters** for nodes that have them, its shared settings (Resampling, Grouping, Channels, and
 Layout for generators; see
 [Node behavior](node-behavior.md#shared-node-settings)) and its parameters, with units, sliders (always linear) reset-to-default buttons, and an `int` toggle on numbers that are not whole-only (on lengths and rates, **Free / Sync** at the top of the unit menu each carries on its value box, with **Per / Every** for a rate) (which rounds the value and, when a signal modulates it, every sample). Parameters that only make sense whole (Beat numerator, denominator and steps, Pack channels, Chorus voices, Phaser stages, Noise seed, Sample & Hold levels, Resample width and height) are declared `.integer()` in their spec: the slider handle jumps between whole values, typed numbers round, and they have no toggle. Each slider covers the parameter's
@@ -201,8 +230,8 @@ Until it is found, the tracks that play it read as gaps and say so in their lane
 second, so a file that comes back (a drive plugged in) is picked up by itself.
 
 **Graphs** are resources too, kept in the project and listed in their own tab; their names share one set with the
-media's. A project can hold any number; **+ New** adds the template (the video wired to Video Output, the sound to
-Audio Output) and opens it. Double-click a graph (or right-click → Open in editor, or pick it from the canvas
+media's. A project can hold any number; **+ New** opens the **New graph** picker (see [Presets](#presets)), and the
+graph made from the pick opens. Double-click a graph (or right-click → Open in editor, or pick it from the canvas
 header's graph menu) to show it in the node editor instead of the open one; with **Open graphs with a single click**
 on in Settings, one click opens it. Opening a graph changes nothing in the render. The open graph is shown in bold,
 its card raised. A graph
@@ -211,10 +240,34 @@ and the CLI play the plain mixes, and the open graph is only a description to ed
 duplicates, colours, places (Add to Timeline puts it on a new graph track at the playhead) or removes a graph;
 removing one removes its graph items and leaves their graph tracks, as removing media does. Removing the open graph
 opens the graph after it in the panel (or the one before); removing the last graph leaves the canvas empty, saying
-*No graph is open* with a **+ New graph** button, and File → Import Graph… then makes a new graph to load into.
+*No graph is open* with a **+ New graph** button (which opens the same picker), and File → Import Graph… then makes
+a new graph to load into.
 Undoing back to before a graph was made shows the first graph again. Drag a graph
 card into the Graphs section of the timeline to place it. **File → Import Graph…** and **Export Graph…** read and
-write a graph as its own file.
+write a graph as its own file; importing replaces what the open graph holds, as loading a preset does.
+
+### Presets
+
+A **preset** is a graph to start from. Using one copies its graph into the project, so editing the project's graph
+never changes the preset. **Factory presets** ship with RasterSong, each annotated with comments and notes that
+explain the idea it shows, from **Start Here** (the picture made brighter, the sound passed through) to
+**Datamosh**. **Your presets** are graph files in the **preset folder** (Settings → Application → Presets;
+`%APPDATA%\RasterSong\Library` on Windows by default, with **Open folder**, **Change…** and a reset button). A
+preset is named after its file, and the graph's description says what it does. Any graph file copied into the
+folder becomes a preset; files that can't be read are counted under the list. **Folders are categories**, for the
+factory presets and yours alike, and can nest: `tutorial/Learn The Basics.json` is *Learn The Basics* in
+*tutorial*. A category is a submenu in Load preset and a section that opens in the New graph picker, named after
+its folder.
+
+- **New graph** (the Graphs tab's **+ New**, or **+ New graph** on an empty canvas) opens a picker: **Empty graph**
+  (the video wired to Video Output, the sound to Audio Output), then the factory presets and yours, each a card
+  with what it does. Click one and **Create**, or double-click it. The new graph is named after the preset.
+- The canvas header's **Presets** menu: **Load preset** lists the factory presets and yours, and replaces what the
+  open graph holds with the one picked (its name and its items on the timeline stay; Ctrl+Z brings the old nodes
+  back). **Save as preset…** asks for a name (the graph's to begin with) and saves the open graph in the preset
+  folder; a name that is taken asks before replacing it. **Open preset folder** shows the folder.
+
+Adding a graph to the timeline is unchanged: drag its card, or Add to Timeline.
 
 ## Timeline
 
@@ -386,7 +439,7 @@ processing time, graph statistics, keeping input connections when duplicating an
 single click in Resources and on the timeline, how loud the playback stays while listening to a connection), the
 view hovering an audio connection or
 any other connection shows, and **Rendering** (the default preview resolution, the cache size in MiB and how many
-seconds to render ahead, each with a reset button).
+seconds to render ahead, each with a reset button), and **Presets** (the preset folder, see [Presets](#presets)).
 **Project** is saved in the project file: the **picture** (resolution and frame rate, from 23.976 to 60 fps with
 NTSC rates as exact fractions; until one is set the fields show the first video's and say so, and the reset button
 goes back to following it), tempo (bpm, beats per bar, first beat), *Max warmup frames* (how much
@@ -440,7 +493,8 @@ and Paste also keep the node's input connections, unless **File → Settings →
 (Ctrl+Shift+D, Ctrl+Shift+V) does the opposite for one action. Connections to nodes that don't exist in the target
 project are skipped. Over the timeline, S splits, Delete removes the selected items, Ctrl+C, Ctrl+X and Ctrl+V
 copy, cut and paste them, and Ctrl+G and Ctrl+Shift+G group and ungroup them (see [Timeline](#timeline)). F2
-renames the selected track over the timeline, and the selected card over the Resources panel. Esc leaves the
+renames the selected track over the timeline, the selected card over the Resources panel, and the selected node
+over the canvas. Esc leaves the
 fullscreen preview.
 
 ## Undo
